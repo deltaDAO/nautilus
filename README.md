@@ -1,6 +1,6 @@
 # Nautilus
 
-A script library that enables configurable automated publishing and consumption of assets in any ocean ecosystem.
+A script library helping to navigate the OCEAN, by enabling configurable automated publishing and consumption of assets in any [Ocean Protocol](https://oceanprotocol.com) ecosystem.
 
 - [Configuration](#configuration)
 - [Automated Publishing](#automated-publishing)
@@ -13,8 +13,8 @@ A script library that enables configurable automated publishing and consumption 
 The following `.env` variables can be set. For an example file see `.example.env`
 
 ```bash
-PRIVATE_KEY="xxx"
-CHAIN_ID="100"
+PRIVATE_KEY="xxx" # private key of the wallet used to sign any automated transactions
+CHAIN_ID="100" # the chain id of the network to use
 PROVIDER_URI="https://provider.v4.genx.delta-dao.com"
 AQUARIUS_URI="https://aquarius.v4.delta-dao.com"
 RESULT_FOLDER="/results"
