@@ -1,13 +1,22 @@
 {
   "name": "@deltadao/nautilus",
+  "source": "./src/index.ts",
   "version": "0.0.1",
   "description": "A typescript library enabling automated publish & consume in Ocean Protocol ecosystems",
-  "main": "./dist/lib/index.js",
-  "types": "./dist/types/index.d.ts",
+  "main": "./dist/lib.js",
+  "umd:main": "./dist/lib.umd.js",
+  "module": "./dist/lib.module.js",
+  "exports": {
+    "require": "./dist/lib.js",
+    "default": "./dist/lib.modern.js"
+  },
+  "types": "./dist/src/index.d.ts",
   "scripts": {
-    "start": "ts-node ./src/index.ts",
-    "build": "tsc",
-    "test": "jest"
+    "start": "npm run clean && tsc -w",
+    "build": "npm run clean && microbundle build --format modern,esm,cjs,umd --compress --tsconfig tsconfig.json",
+    "clean": "rm -rf ./dist/",
+    "lint": "eslint --ignore-path .gitignore --ext .ts && npm run type-check",
+    "type-check": "tsc --noEmit"
   },
   "repository": {
     "type": "git",
@@ -19,13 +28,21 @@
     "url": "https://github.com/deltaDAO/nautilus/issues"
   },
   "homepage": "https://github.com/deltaDAO/nautilus#readme",
+  "dependencies": {
+    "@oceanprotocol/lib": "^2.7.0",
+    "web3": "^1.9.0"
+  },
   "devDependencies": {
-    "jest": "^29.5.0",
+    "@typescript-eslint/eslint-plugin": "^5.56.0",
+    "@typescript-eslint/parser": "^5.56.0",
+    "eslint": "^8.36.0",
+    "eslint-config-oceanprotocol": "^2.0.4",
+    "eslint-config-prettier": "^8.8.0",
+    "eslint-plugin-prettier": "^4.2.1",
+    "microbundle": "^0.15.1",
     "prettier": "^2.8.7",
     "ts-node": "^10.9.1",
+    "typedoc": "^0.23.28",
     "typescript": "^5.0.2"
-  },
-  "dependencies": {
-    "@oceanprotocol/lib": "^2.7.0"
   }
 }
