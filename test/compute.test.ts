@@ -45,7 +45,7 @@ describe('Compute', () => {
     })
 
     response.forEach((job) => {
-      LoggerInstance.log('Got results', job.results)
+      LoggerInstance.log('Got status', job.results)
     })
   })
 
