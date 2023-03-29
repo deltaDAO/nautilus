@@ -1,4 +1,4 @@
-import { Asset, ProviderFees } from '@oceanprotocol/lib'
+import { Asset, Config, ProviderFees } from '@oceanprotocol/lib'
 import Web3 from 'web3'
 
 export interface ComputeConfigOptions {
@@ -11,11 +11,15 @@ export interface ComputeConfig {
   datasetDid: string
   algorithmDid: string
   web3: Web3
+  config: Config
   options?: ComputeConfigOptions
 }
 
 export interface ComputeResultConfig {
   jobId: string
+  web3: Web3
+  config: Config
+  resultIndex?: number
 }
 
 export interface TokenInfo {

@@ -6,8 +6,8 @@ import {
   ComputeAsset,
   ComputeEnvironment,
   ComputeOutput,
+  Config,
   Datatoken,
-  DDO,
   Dispenser,
   FixedRateExchange,
   FreOrderParams,
@@ -21,7 +21,9 @@ import {
   unitsToAmount,
   ZERO_ADDRESS
 } from '@oceanprotocol/lib'
+import Decimal from 'decimal.js'
 import { OperationContext, OperationResult } from 'urql'
+import Web3 from 'web3'
 import {
   AccessDetails,
   AssetWithAccessDetails,
@@ -33,24 +35,17 @@ import {
   TokenPriceQuery,
   TokenPriceQuery_token as TokenPrice
 } from '../@types/subgraph/TokenPriceQuery'
+import { getDatatokenBalance, getServiceById, getServiceByName } from '../utils'
 import { getAsset } from '../utils/aquarius'
-import { fetchData, getAccessDetailsFromTokenPrice } from '../utils/subgraph'
-import { tokenPriceQuery } from '../utils/subgraph/queries'
 import {
   approveProviderFee,
   initializeProviderForCompute
 } from '../utils/provider'
-import Web3 from 'web3'
-import Decimal from 'decimal.js'
-import {
-  getDatatokenBalance,
-  getOceanConfig,
-  getServiceById,
-  getServiceByName
-} from '../utils'
+import { fetchData, getAccessDetailsFromTokenPrice } from '../utils/subgraph'
+import { tokenPriceQuery } from '../utils/subgraph/queries'
 
-export async function compute(config: ComputeConfig) {
-  const { datasetDid, algorithmDid, web3 } = config
+export async function compute(computeConfig: ComputeConfig) {
+  const { datasetDid, algorithmDid, web3, config } = computeConfig
   const account = web3?.defaultAccount
 
   if (!datasetDid || !algorithmDid || !web3 || !account) {
@@ -71,13 +66,13 @@ export async function compute(config: ComputeConfig) {
   )
 
   try {
-    LoggerInstance.debug(`Using account: ${config.web3.defaultAccount}`)
+    LoggerInstance.debug(`Using account: ${computeConfig.web3.defaultAccount}`)
     LoggerInstance.debug('Retrieve assets from metadata cache ...')
     const controller = new AbortController()
 
     const assets = await Promise.all([
-      getAsset(config.datasetDid, controller.signal),
-      getAsset(config.algorithmDid, controller.signal)
+      getAsset(computeConfig.datasetDid, controller.signal),
+      getAsset(computeConfig.algorithmDid, controller.signal)
     ])
 
     LoggerInstance.debug('Retrieve access details for assets from subgraph ...')
@@ -87,7 +82,7 @@ export async function compute(config: ComputeConfig) {
           process.env.SUBGRAPH_URI,
           a.datatokens[0].address,
           a.services[0].timeout,
-          config.web3.eth.accounts[0]
+          computeConfig.web3.eth.accounts[0]
         )
       )
     )
@@ -116,7 +111,7 @@ export async function compute(config: ComputeConfig) {
     const providerInitializeResults = await initializeProviderForCompute(
       dataset,
       algo,
-      config.web3.defaultAccount,
+      web3.defaultAccount,
       computeEnv
     )
 
@@ -129,6 +124,7 @@ export async function compute(config: ComputeConfig) {
     const datasetPriceAndFees = await getOrderPriceAndFees(
       dataset,
       web3,
+      config,
       providerInitializeResults?.datasets?.[0]?.providerFee
     )
     if (!datasetPriceAndFees)
@@ -137,6 +133,7 @@ export async function compute(config: ComputeConfig) {
     const algorithmOrderPriceAndFees = await getOrderPriceAndFees(
       algo,
       web3,
+      config,
       providerInitializeResults.algorithm.providerFee
     )
     if (!algorithmOrderPriceAndFees)
@@ -154,6 +151,7 @@ export async function compute(config: ComputeConfig) {
       web3.defaultAccount,
       algoDatatokenBalance >= 1,
       providerInitializeResults.algorithm,
+      config,
       computeEnv.consumerAddress
     )
     if (!algorithmOrderTx) throw new Error('Failed to order algorithm.')
@@ -170,6 +168,7 @@ export async function compute(config: ComputeConfig) {
       web3.defaultAccount,
       datasetDatatokenBalance >= 1,
       providerInitializeResults.datasets[0],
+      config,
       computeEnv.consumerAddress
     )
     if (!datasetOrderTx) throw new Error('Failed to order dataset.')
@@ -204,13 +203,73 @@ export async function compute(config: ComputeConfig) {
     if (!response) throw new Error('Error starting compute job.')
 
     LoggerInstance.log('[compute] Starting compute job response: ', response)
+    return response
   } catch (e) {
     LoggerInstance.error(e)
     LoggerInstance.error('Failed computation:', e.message)
   }
 }
 
-export async function retrieveResult(config: ComputeResultConfig) {}
+export async function getStatus(computeStatusConfig: any) {
+  const { jobId, web3, config } = computeStatusConfig
+  LoggerInstance.debug('[compute] Retrieve job status:', {
+    jobId,
+    config,
+    account: web3.defaultAccount
+  })
+  try {
+    let response = await ProviderInstance.computeStatus(
+      config.providerUri,
+      web3.defaultAccount,
+      jobId
+    )
+    LoggerInstance.log('[compute] computeStatus response: ', response)
+    if (!Array.isArray(response)) response = [response]
+    return response
+  } catch (e) {
+    LoggerInstance.error(e)
+  }
+}
+
+export async function retrieveResult(computeResultConfig: ComputeResultConfig) {
+  const { config, web3, jobId, resultIndex } = computeResultConfig
+  const jobs = await getStatus(computeResultConfig)
+  const job = jobs.find((j) => jobId === j.jobId)
+
+  if (job?.status !== 70) {
+    LoggerInstance.log(
+      '[compute] Retrieve results: job does not exist or is not yet finished.'
+    )
+    return
+  }
+
+  if (!job?.results || job.results.length < 1) {
+    LoggerInstance.error(
+      '[compute] Retrieve results: could not find results for the job.'
+    )
+    return
+  }
+
+  const index =
+    resultIndex ||
+    job.results.indexOf(job.results.find((result) => result.type === 'output'))
+
+  if (index < 0) {
+    LoggerInstance.error(
+      '[compute] Retrieve results: resultIndex needs to be specified. No default output result found.'
+    )
+    return
+  }
+
+  LoggerInstance.debug(`[compute] Build result url...`)
+  return await ProviderInstance.getComputeResultUrl(
+    config.providerUri,
+    web3,
+    web3.defaultAccount,
+    jobId,
+    index
+  )
+}
 
 export async function getComputeEnviroment(
   asset: Asset
@@ -309,6 +368,7 @@ export async function getAccessDetails(
 export async function getOrderPriceAndFees(
   asset: AssetWithAccessDetails,
   web3: Web3,
+  config: Config,
   providerFees?: ProviderFees
 ): Promise<OrderPriceAndFees> {
   const orderPriceAndFee = {
@@ -335,7 +395,7 @@ export async function getOrderPriceAndFees(
 
   // fetch price and swap fees
   if (asset?.accessDetails?.type === 'fixed') {
-    const fixed = await getFixedBuyPrice(asset?.accessDetails, web3)
+    const fixed = await getFixedBuyPrice(asset?.accessDetails, config, web3)
     orderPriceAndFee.price = fixed.baseTokenAmount
     orderPriceAndFee.opcFee = fixed.oceanFeeAmount
   }
@@ -358,13 +418,9 @@ export async function getOrderPriceAndFees(
  */
 export async function getFixedBuyPrice(
   accessDetails: AccessDetails,
-  web3?: Web3
+  config: Config,
+  web3: Web3
 ): Promise<PriceAndFees> {
-  if (!web3)
-    throw new Error("web3 and chainId can't be undefined at the same time!")
-
-  const config = getOceanConfig(await web3.eth.net.getId())
-
   const fixed = new FixedRateExchange(config.fixedRateExchangeAddress, web3)
   const estimatedPrice = await fixed.calcBaseInGivenDatatokensOut(
     accessDetails.addressOrId,
@@ -381,6 +437,7 @@ export async function handleComputeOrder(
   accountId: string,
   hasDatatoken: boolean,
   initializeData: ProviderComputeInitialize,
+  config: Config,
   computeConsumerAddress?: string
 ): Promise<string> {
   LoggerInstance.log(
@@ -437,6 +494,7 @@ export async function handleComputeOrder(
       accountId,
       hasDatatoken,
       initializeData,
+      config,
       computeConsumerAddress
     )
     LoggerInstance.log('[compute] Order succeeded', txStartOrder)
@@ -453,6 +511,7 @@ async function startOrder(
   accountId: string,
   hasDatatoken: boolean,
   initializeData: ProviderComputeInitialize,
+  config: Config,
   computeConsumerAddress?: string
 ): Promise<any> {
   const tx = await order(
@@ -461,7 +520,8 @@ async function startOrder(
     orderPriceAndFees,
     accountId,
     initializeData.providerFee,
-    computeConsumerAddress
+    computeConsumerAddress,
+    config
   )
   LoggerInstance.log('[compute] Asset ordered:', tx)
   return tx
@@ -492,10 +552,10 @@ export async function order(
   orderPriceAndFees: OrderPriceAndFees,
   accountId: string,
   providerFees: ProviderFees,
-  computeConsumerAddress: string
+  computeConsumerAddress: string,
+  config: Config
 ): Promise<any> {
   const datatoken = new Datatoken(web3)
-  const config = getOceanConfig(asset.chainId)
 
   const orderParams = {
     consumer: computeConsumerAddress || accountId,
