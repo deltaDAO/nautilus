@@ -218,14 +218,16 @@ export async function getStatus(computeStatusConfig: any) {
     account: web3.defaultAccount
   })
   try {
-    let response = await ProviderInstance.computeStatus(
+    const status = await ProviderInstance.computeStatus(
       config.providerUri,
       web3.defaultAccount,
       jobId
     )
-    LoggerInstance.log('[compute] computeStatus response: ', response)
-    if (!Array.isArray(response)) response = [response]
-    return response
+    LoggerInstance.log('[compute] computeStatus response: ', status)
+
+    return Array.isArray(status)
+      ? status.find((job) => job.jobId === jobId)
+      : status
   } catch (e) {
     LoggerInstance.error(e)
   }

@@ -1,6 +1,7 @@
 import { Config, LoggerInstance, LogLevel } from '@oceanprotocol/lib'
 import * as dotenv from 'dotenv'
 import fs from 'fs'
+import assert from 'assert'
 
 import Web3 from 'web3'
 import { compute, getStatus, retrieveResult } from '../src'
@@ -38,24 +39,39 @@ describe('Compute', () => {
   })
 
   it('should get compute status', async () => {
-    const response = await getStatus({
+    const jobStatus = await getStatus({
       jobId,
       web3,
       config
     })
 
-    response.forEach((job) => {
-      LoggerInstance.log('Got status', job.results)
-    })
+    assert.ok(jobStatus.status > 0, 'Received unsupported status for job')
   })
 
-  it('should get retrieve results', async () => {
-    const response = await retrieveResult({
+  it('should retrieve results', async () => {
+    const resultIndex = 0
+    const resultUrl = await retrieveResult({
       jobId,
       web3,
-      config
+      config,
+      resultIndex
     })
 
-    LoggerInstance.log('Got compute result:', response)
+    // regex to check that returned url is valid
+    // 1. endpoint is /computeResult
+    // 2. all necessary parameters are set and match input
+    // TODO: test if signature is valid
+    // TODO: could get computeResult endpoiunt dynamically via provider.getEndpoints
+    const paramGroupRegex = `((consumerAddress=${web3.defaultAccount}|jobId=${jobId}|index=${resultIndex}|nonce=\\d+|signature=0x(\\d|[a-zA-Z])+)&?){5}`
+
+    // remove trailing slash
+    const cleanedProviderUri = config.providerUri.replace(/\/$/, '')
+
+    // eslint-disable-next-line security/detect-non-literal-regexp
+    const regex = new RegExp(
+      `${cleanedProviderUri}\\/api\\/services\\/computeResult\\?${paramGroupRegex}`
+    )
+
+    assert.match(resultUrl, regex, 'Invalid result received')
   })
 })
