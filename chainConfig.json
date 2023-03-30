@@ -15,6 +15,7 @@
   "transactionConfirmationBlocks": 1,
   "transactionPollingTimeout": 750,
   "gasFeeMultiplier": 1.1,
+  "erc721FactoryAddress": "0x6cb85858183B82154921f68b434299EC4281da53",
   "nftFactoryAddress": "0x6cb85858183B82154921f68b434299EC4281da53",
   "opfCommunityFeeCollector": "0x2e0C9e15A45c9884F7768BB852E7399B9153525d",
   "veAllocate": "0x3fa1d5AC45ab1Ff9CFAe227c5583Ec0484b54Ef9",
