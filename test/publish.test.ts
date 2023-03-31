@@ -57,7 +57,7 @@ describe('Publishing tests', () => {
     // withMint: false // add FixedPriced contract as minter if withMint == true // TODO find out why oyu would do this
   }
 
-  it.only('publish a fixed rate dataset for download', async () => {
+  it('publish a fixed rate dataset for download', async () => {
     const assetConfig: AssetConfig = {
       chainConfig,
       metadata: {
@@ -69,10 +69,14 @@ describe('Publishing tests', () => {
       },
       services: [
         {
-          id: 'test-fake-id',
           type: 'access',
-          files: 'PLACEHOLDER FOR ENCRYPTED FILES', // TODO adjust interface
-          datatokenAddress: 'PLACEHOLDER', // TODO adjust interface
+          files: [
+            {
+              type: 'url',
+              url: 'https://raw.githubusercontent.com/oceanprotocol/testdatasets/main/shs_dataset_test.txt',
+              method: 'GET'
+            }
+          ],
           serviceEndpoint: chainConfig.providerUri,
           timeout: 0
         }
@@ -82,20 +86,14 @@ describe('Publishing tests', () => {
       tokenParamaters: {
         datatokenParams,
         nftParams
-      },
-      servicesFiles: [
-        {
-          type: 'url',
-          url: 'https://raw.githubusercontent.com/oceanprotocol/testdatasets/main/shs_dataset_test.txt',
-          method: 'GET'
-        }
-      ]
+      }
     }
 
     const result = await publishAsset(assetConfig)
     LoggerInstance.log(result)
   })
-  it.skip('publish a free download dataset', async () => {
+
+  it('publish a free download dataset', async () => {
     const assetConfig: AssetConfig = {
       chainConfig,
       metadata: {
@@ -107,11 +105,15 @@ describe('Publishing tests', () => {
       },
       services: [
         {
-          id: '1',
           type: 'access',
           description: 'Download service',
-          files: 'PLACEHOLDER FOR ENCRYPTED FILES', // TODO adjust interface
-          datatokenAddress: 'PLACEHOLDER', // TODO adjust interface
+          files: [
+            {
+              type: 'url',
+              url: 'https://raw.githubusercontent.com/oceanprotocol/testdatasets/main/shs_dataset_test.txt',
+              method: 'GET'
+            }
+          ],
           serviceEndpoint: chainConfig.providerUri,
           timeout: 600
         }
@@ -121,20 +123,14 @@ describe('Publishing tests', () => {
       tokenParamaters: {
         datatokenParams,
         nftParams
-      },
-      servicesFiles: [
-        {
-          type: 'url',
-          url: 'https://raw.githubusercontent.com/oceanprotocol/testdatasets/main/shs_dataset_test.txt',
-          method: 'GET'
-        }
-      ]
+      }
     }
 
     const result = await publishAsset(assetConfig)
 
     LoggerInstance.log(result)
   })
+
   it('publish a free compute dataset', async () => {
     // TODO to implement
     // TODO add compute property to services
@@ -150,11 +146,15 @@ describe('Publishing tests', () => {
       },
       services: [
         {
-          id: '1',
           type: 'compute',
           description: 'Download service',
-          files: 'PLACEHOLDER FOR ENCRYPTED FILES', // TODO adjust interface
-          datatokenAddress: 'PLACEHOLDER', // TODO adjust interface
+          files: [
+            {
+              type: 'url',
+              url: 'https://raw.githubusercontent.com/oceanprotocol/testdatasets/main/shs_dataset_test.txt',
+              method: 'GET'
+            }
+          ],
           serviceEndpoint: chainConfig.providerUri,
           timeout: 600,
           compute: {
@@ -180,29 +180,19 @@ describe('Publishing tests', () => {
       tokenParamaters: {
         datatokenParams,
         nftParams
-      },
-      servicesFiles: [
-        {
-          type: 'url',
-          url: 'https://raw.githubusercontent.com/oceanprotocol/testdatasets/main/shs_dataset_test.txt',
-          method: 'GET'
-        }
-      ]
+      }
     }
 
     const result = await publishAsset(assetConfig)
     LoggerInstance.log(result)
   })
+
   it.skip('publish a fixed compute dataset', async () => {
     // TODO to implement
     // TODO add compute property to services
   })
+
   it.skip('publish a fixed rate algorithm', async () => {
-    // TODO to implement
-    // add algorithm to metadata
-    // "type": "algorithm"
-  })
-  it.skip('publish a free compute algorithm', async () => {
     // TODO to implement
     const assetConfig: AssetConfig = {
       chainConfig,
@@ -226,11 +216,15 @@ describe('Publishing tests', () => {
       },
       services: [
         {
-          id: '1',
           type: 'compute',
           description: 'Algo service',
-          files: 'PLACEHOLDER FOR ENCRYPTED FILES', // TODO adjust interface
-          datatokenAddress: 'PLACEHOLDER', // TODO adjust interface
+          files: [
+            {
+              type: 'url',
+              url: 'https://github.com/deltaDAO/files/blob/main/product_quantity_computation.js',
+              method: 'GET'
+            }
+          ],
           serviceEndpoint: chainConfig.providerUri,
           timeout: 600
         }
@@ -240,14 +234,55 @@ describe('Publishing tests', () => {
       tokenParamaters: {
         datatokenParams,
         nftParams
-      },
-      servicesFiles: [
-        {
-          type: 'url',
-          url: 'https://github.com/deltaDAO/files/blob/main/product_quantity_computation.js',
-          method: 'GET'
+      }
+    }
+
+    const result = await publishAsset(assetConfig)
+  })
+
+  it('publish a fixed compute algorithm', async () => {
+    // TODO to implement
+    const assetConfig: AssetConfig = {
+      chainConfig,
+      metadata: {
+        type: 'algorithm',
+        name: 'Test Algo Fixed',
+        description: 'This is a super cool description',
+        author: 'publish-script-test',
+        license: 'MIT',
+        algorithm: {
+          language: 'Node.js',
+          version: '1.0.0',
+          container: {
+            entrypoint: 'node $ALGO',
+            image: 'node',
+            tag: 'latest',
+            checksum:
+              'sha256:026026d98942438e4df232b3e8cd7ca32416b385918977ce5ec0c6333618c423'
+          }
         }
-      ]
+      },
+      services: [
+        {
+          type: 'compute',
+          description: 'Algo service',
+          files: [
+            {
+              type: 'url',
+              url: 'https://github.com/deltaDAO/files/blob/main/product_quantity_computation.js',
+              method: 'GET'
+            }
+          ],
+          serviceEndpoint: chainConfig.providerUri,
+          timeout: 600
+        }
+      ],
+      web3,
+      pricing: { type: 'fixed', freCreationParams: freParams },
+      tokenParamaters: {
+        datatokenParams,
+        nftParams
+      }
     }
 
     const result = await publishAsset(assetConfig)

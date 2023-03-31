@@ -1,6 +1,9 @@
 import {
+  Config,
   Credentials,
   DatatokenCreateParams,
+  DDO,
+  Files,
   FreCreationParams,
   Metadata,
   NftCreateData,
@@ -26,12 +29,19 @@ interface TokenParameters {
   datatokenParams: DatatokenCreateParams
 }
 
+type ServiceConfig = Omit<Service, 'id' | 'datatokenAddress' | 'files'> & {
+  files: Files['files']
+}
+
+export type PrePublishDDO = Omit<DDO, 'services'> & {
+  services: ServiceConfig[]
+}
+
 export interface AssetConfig {
-  chainConfig: any // TODO create interface chain + provider + aquarius
+  chainConfig: Config
   metadata: MetadataConfig
-  services: Service[]
+  services: ServiceConfig[]
   web3: Web3
   pricing: PricingConfig
   tokenParamaters: TokenParameters
-  servicesFiles: any[] // TODO use right type
 }
