@@ -9,6 +9,7 @@ import {
   getHash,
   DispenserCreationParams
 } from '@oceanprotocol/lib'
+import { SHA256 } from 'crypto-js'
 
 export async function publishAsset(assetConfig: AssetConfig) {
   // TODO don't forget to set return type
@@ -69,6 +70,7 @@ export async function publishAsset(assetConfig: AssetConfig) {
   )
 
   // add encrypted files to DDO
+  ddo.services[0].id = SHA256(encryptedFiles).toString()
   ddo.services[0].files = encryptedFiles
   ddo.services[0].datatokenAddress = datatokenAddress
 
@@ -89,7 +91,7 @@ export async function publishAsset(assetConfig: AssetConfig) {
 
   const metadataHash = getHash(JSON.stringify(ddo))
   const LIFECYCLE_STATE_ACTIVE = 0
-  const FLAGS = '0x02' // market sets '0x02' instead of '0x2', theoretically used by aquarius or provider, not implemented yet, will remain hardcoded
+  const FLAGS = '0x2' // market sets '0x02' instead of '0x2', theoretically used by aquarius or provider, not implemented yet, will remain hardcoded
   const setNftMetadataResult = await nft.setMetadata(
     erc721Address,
     publisherAccount,
