@@ -35,12 +35,12 @@ describe('Publishing tests', () => {
     name: 'TEST_FRE_DT_NAME',
     symbol: 'TEST_FRE_DT_SYMBOL',
     templateIndex: 1, // TODO market uses 2, docs say 1
-    cap: '115792089237316195423570985008687907853269984665640564039457',
+    cap: '100000',
     feeAmount: '0',
     paymentCollector: publisherAccount,
-    feeToken: chainConfig.oceanTokenAddress,
     minter: publisherAccount,
-    mpFeeAddress: publisherAccount // replace with market fee address
+    mpFeeAddress: '0x0000000000000000000000000000000000000000', // replace with market fee address
+    feeToken: '0x0000000000000000000000000000000000000000'
   }
 
   const freParams: FreCreationParams = {
@@ -51,27 +51,26 @@ describe('Publishing tests', () => {
     baseTokenDecimals: 18, // should come from a token config
     datatokenDecimals: 18, // should come from a token config
     fixedRate: '1', // PRICE
-    marketFee: '0',
+    marketFee: '0'
     // Optional parameters
     // allowedConsumer: '0x0000000000000000000000000000000000000000', //  only account that consume the exhchange
-    withMint: false // add FixedPriced contract as minter if withMint == true // TODO find out why oyu would do this
+    // withMint: false // add FixedPriced contract as minter if withMint == true // TODO find out why oyu would do this
   }
 
-  it.skip('publish a fixed rate dataset for download', async () => {
+  it.only('publish a fixed rate dataset for download', async () => {
     const assetConfig: AssetConfig = {
       chainConfig,
       metadata: {
         type: 'dataset',
         name: 'Test Dataset fixed rate',
-        description: 'This is a super cool description',
+        description: 'Automated Publishing Test on GEN-X',
         author: 'publish-script-test',
         license: 'MIT'
       },
       services: [
         {
-          id: '1',
+          id: 'test-fake-id',
           type: 'access',
-          description: 'Download service',
           files: 'PLACEHOLDER FOR ENCRYPTED FILES', // TODO adjust interface
           datatokenAddress: 'PLACEHOLDER', // TODO adjust interface
           serviceEndpoint: chainConfig.providerUri,
@@ -96,7 +95,7 @@ describe('Publishing tests', () => {
     const result = await publishAsset(assetConfig)
     LoggerInstance.log(result)
   })
-  it.skip('publish a free dataset for download', async () => {
+  it.skip('publish a free download dataset', async () => {
     const assetConfig: AssetConfig = {
       chainConfig,
       metadata: {
@@ -136,7 +135,7 @@ describe('Publishing tests', () => {
 
     LoggerInstance.log(result)
   })
-  it('publish a free dataset for compute', async () => {
+  it('publish a free compute dataset', async () => {
     // TODO to implement
     // TODO add compute property to services
 
@@ -194,7 +193,7 @@ describe('Publishing tests', () => {
     const result = await publishAsset(assetConfig)
     LoggerInstance.log(result)
   })
-  it.skip('publish a fixed rate dataset for compute', async () => {
+  it.skip('publish a fixed compute dataset', async () => {
     // TODO to implement
     // TODO add compute property to services
   })
@@ -203,7 +202,7 @@ describe('Publishing tests', () => {
     // add algorithm to metadata
     // "type": "algorithm"
   })
-  it.skip('publish a free algorithm', async () => {
+  it.skip('publish a free compute algorithm', async () => {
     // TODO to implement
     const assetConfig: AssetConfig = {
       chainConfig,
