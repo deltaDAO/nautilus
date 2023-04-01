@@ -235,8 +235,7 @@ export async function getStatus(computeStatusConfig: any) {
 
 export async function retrieveResult(computeResultConfig: ComputeResultConfig) {
   const { config, web3, jobId, resultIndex } = computeResultConfig
-  const jobs = await getStatus(computeResultConfig)
-  const job = jobs.find((j) => jobId === j.jobId)
+  const job = await getStatus(computeResultConfig)
 
   if (job?.status !== 70) {
     LoggerInstance.log(
