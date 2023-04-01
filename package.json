@@ -14,6 +14,7 @@
   "scripts": {
     "start": "npm run clean && tsc -w",
     "build": "npm run clean && microbundle build --format modern,esm,cjs,umd --compress --tsconfig tsconfig.json",
+    "changelog": "auto-changelog -p",
     "clean": "rm -rf ./dist/",
     "mocha": "TS_NODE_PROJECT='./test/tsconfig.json' mocha --config=test/.mocharc.json --node-env=test --exit",
     "test": "npm run lint && npm run mocha -- test/**/*.test.ts",
@@ -46,6 +47,7 @@
     "@typescript-eslint/eslint-plugin": "^5.56.0",
     "@typescript-eslint/parser": "^5.56.0",
     "apollo": "^2.34.0",
+    "auto-changelog": "^2.4.0",
     "eslint": "^8.36.0",
     "eslint-config-oceanprotocol": "^2.0.4",
     "eslint-config-prettier": "^8.8.0",
@@ -60,5 +62,23 @@
   },
   "overrides": {
     "graphql": "15.8.0"
+  },
+  "release-it": {
+    "hooks": {
+      "after:bump": "npm run build && npm run changelog"
+    },
+    "plugins": {},
+    "git": {
+      "tagName": "v${version}"
+    },
+    "github": {
+      "release": true,
+      "assets": [
+        "dist/lib.json"
+      ]
+    },
+    "npm": {
+      "publish": false
+    }
   }
 }
