@@ -17,6 +17,7 @@
     "clean": "rm -rf ./dist/",
     "mocha": "TS_NODE_PROJECT='./test/tsconfig.json' mocha --config=test/.mocharc.json --node-env=test --exit",
     "test": "npm run lint && npm run mocha -- test/**/*.test.ts",
+    "release": "release-it",
     "lint": "eslint --ignore-path .gitignore --ext .ts && npm run type-check",
     "codegen:apollo": "apollo client:codegen --endpoint=https://subgraph.v4.genx.minimal-gaia-x.eu/subgraphs/name/oceanprotocol/ocean-subgraph --target typescript --tsFileExtension=d.ts --outputFlat src/@types/subgraph/",
     "type-check": "tsc --noEmit"
