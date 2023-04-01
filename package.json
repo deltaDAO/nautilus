@@ -52,6 +52,7 @@
     "microbundle": "^0.15.1",
     "mocha": "^10.2.0",
     "prettier": "^2.8.7",
+    "release-it": "^15.10.0",
     "ts-node": "^10.9.1",
     "typedoc": "^0.23.28",
     "typescript": "^5.0.2"
