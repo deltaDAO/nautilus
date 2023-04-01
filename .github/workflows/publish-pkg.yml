@@ -20,7 +20,7 @@ jobs:
       - uses: actions/setup-node@v2
         with:
           node-version: '16'
-          registry-url: ${{ input.registry-url }}
+          registry-url: ${{ inputs.registry-url }}
       - run: npm ci
 
       # pre-releases, triggered by `next` as part of git tag
