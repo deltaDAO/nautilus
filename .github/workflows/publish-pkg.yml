@@ -1,8 +1,14 @@
-name: 'Publish npm package'
+name: 'Publish package'
 
 on:
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      registry-url:
+        required: true
+        type: string
+    secrets:
+      NODE_AUTH_TOKEN:
+        required: true
 
 jobs:
   publish:

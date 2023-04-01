@@ -1,0 +1,19 @@
+name: 'Publish to package registries'
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  release-to-npmjs:
+    uses: deltaDAO/nautilus/.github/workflows/publish-pkg.yml@main
+    with:
+      registry-url: https://registry.npmjs.org/
+    secrets:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+  release-to-github:
+    uses: deltaDAO/nautilus/.github/workflows/publish-pkg.yml@main
+    with:
+      registry-url: https://npm.pkg.github.com/
+    secrets:
+      NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
