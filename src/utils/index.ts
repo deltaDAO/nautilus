@@ -5,20 +5,15 @@ import {
   Datatoken,
   Service
 } from '@oceanprotocol/lib'
-import fs from 'fs'
 import Web3 from 'web3'
 
-export function getOceanConfig(chainId: number): Config {
-  try {
-    const chainConfig = JSON.parse(
-      fs.readFileSync(process.env.CHAIN_CONFIG_FILEPATH).toString()
-    )
-    if (chainConfig.chainId === chainId) return chainConfig
-  } catch {}
-
+export function getOceanConfig(
+  chainId: number,
+  infuraProjectId?: string
+): Config {
   const config = new ConfigHelper().getConfig(
     chainId,
-    process.env.INFURA_PROJECT_ID
+    infuraProjectId
   ) as Config
 
   return config as Config
