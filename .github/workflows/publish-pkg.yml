@@ -6,6 +6,10 @@ on:
       registry-url:
         required: true
         type: string
+      access:
+        required: false
+        default: 'restricted'
+        type: string
     secrets:
       NODE_AUTH_TOKEN:
         required: true
@@ -24,9 +28,9 @@ jobs:
       - run: npm ci
 
       # pre-releases, triggered by `next` as part of git tag
-      - run: npm publish --tag next
+      - run: npm publish --tag next --access ${{ inputs.access }}
         if: ${{ contains(github.ref, 'next') }}
 
       # production releases
-      - run: npm publish
+      - run: npm publish --access ${{ inputs.access }}
         if: ${{ !contains(github.ref, 'next') }}
