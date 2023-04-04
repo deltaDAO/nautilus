@@ -28,14 +28,39 @@ Now you can use the builder to construct a new `Nautilus` instance:
 
 ```ts
 const builder = new NautilusBuilder()
-const nautilus = builder
+builder
   .setWeb3(web3)
   // automatically loads the OceanConfig for chainId = 4 (Rinkeby)
   .setConfig(4)
-  .build()
 ```
 
-This instance can now be used to publish and consume assets on the Rinkeby network.
+If want to use a custom configuration, you can set an additional parameter in the `setConfig` call. For guidance on which configurations are needed you can have a look at the [Ocean Library Docs](https://docs.oceanprotocol.com/building-with-ocean/using-ocean-libraries/configuration#create-a-configuration-file).
+
+```ts
+const chainId = 4
+
+// Custom config, e.g.:
+const customConfig = {
+  ...new ConfigHelper().getConfig(chainId),
+  oceanTokenAddress: '0x...',
+  nodeUri: 'https://rpc.node.uri/'
+  // ...
+}
+
+// Reference the docs linked above for a complete overview
+
+builder.setConfig(chainId, customConfig)
+```
+
+Finally, after the configuration is complete, we can now build the `Nautilus` instance to be used to publish and consume assets on the specified network:
+
+```ts
+const nautilus = builder.build()
+
+// You can now use the Nautilus functions like
+// nautilus.publish() etc.
+// See a detailed flow below.
+```
 
 ## Automated Publishing
 
@@ -48,7 +73,7 @@ const builder = new AssetBuilder()
 const owner = web3.defaultAccount
 ```
 
-With this we can now continue to set a few metadata informations for the asset:
+With this we can now continue to setup the metadata information for the asset:
 
 ```ts
 builder
@@ -57,42 +82,6 @@ builder
   .setDescription('A publish asset building test on GEN-X') // supports markdown
   .setAuthor('testAuthor')
   .setLicense('MIT') // SPDX license identifier
-```
-
-Next we need to specify where our asset is actually located. In Ocean we can do this using the `Services` of the [DDO](https://docs.oceanprotocol.com/core-concepts/did-ddo#ddo).
-
-As we can see from the DDO specifications above, a single Service needs the following information:
-
-```ts
-const accessService = {
-  type: 'access', // 'access' or 'compute'
-  files: [
-    {
-      type: 'url', // there are multiple supported types. See the docs above for more info
-      url: 'https://link.to/my/asset',
-      method: 'GET'
-    }
-  ],
-  serviceEndpoint: 'https://ocean-provider.to/use', // the access controller to be in control of this asset
-  timeout: 0 // in seconds, 0 = infinite
-}
-```
-
-In addition to that, we want to also specify the pricing for our asset. The `AssetBuilder` provides a few functions for this that we can make use of:
-
-```ts
-builder.addService(accessService).setPricing({
-  type: 'fixed', // 'fixed' or 'free'
-  // freCreationParams can be ommitted for 'free' pricing schemas
-  freCreationParams: {
-    fixedRateAddress: fixedRateExchangeAddress,
-    baseTokenAddress: oceanTokenAddress,
-    baseTokenDecimals: 18,
-    datatokenDecimals: 18,
-    fixedRate: '1', // PRICE
-    marketFee: '0'
-  }
-})
 ```
 
 If we want to publish an algorithm instead of a dataset, we have to specify additonal metadata, to make sure the orchestration knows which image to prepare for the algorithm to be able to run correctly:
@@ -114,6 +103,66 @@ Now we can set this metadata using the builder:
 
 ```ts
 builder.setAlgorithm(algoMetadata)
+```
+
+Next we need to specify where our asset is actually located. In Ocean we can do this using the `Services` array specified in the [DDO](https://docs.oceanprotocol.com/core-concepts/did-ddo#ddo).
+
+As we can see in the [DDO specifications](https://docs.oceanprotocol.com/core-concepts/did-ddo#ddo), a single Service needs to specify the following information:
+
+```ts
+const accessService = {
+  type: 'access', // 'access' or 'compute'
+  files: [
+    {
+      type: 'url', // there are multiple supported types. See the docs above for more info
+      url: 'https://link.to/my/asset',
+      method: 'GET'
+    }
+  ],
+  serviceEndpoint: 'https://ocean-provider.to/use', // the access controller to be in control of this asset
+  timeout: 0 // in seconds, 0 = infinite
+}
+
+builder.addService(accessService)
+```
+
+In addition to that, we want to also specify the pricing for our asset. The `AssetBuilder` provides a function for this that we can make use of:
+
+```ts
+// Example of a fixed asset
+builder.setPricing({
+  type: 'fixed', // 'fixed' or 'free'
+  // freCreationParams can be ommitted for 'free' pricing schemas
+  freCreationParams: {
+    fixedRateAddress: '0x...',
+    baseTokenAddress: '0x...',
+    baseTokenDecimals: 18,
+    datatokenDecimals: 18,
+    fixedRate: '1', // PRICE
+    marketFee: '0'
+  }
+})
+
+// Example of a free asset
+builder.setPricing({
+  type: 'free'
+})
+```
+
+We also have to make sure we specify the owner of the asset, that will be used for the publishing process:
+
+```ts
+// Set the owner using the web3 instance we setup in the initial nautilus configuration
+builder.setOwner(web3.defaultAccount)
+```
+
+Optionally, we can specify some information for the access token, like the name and symbol, to be used. This will be displayed in Ocean Markets and also can be used to identify your service in the network (e.g., when visiting block explorers).
+
+```ts
+const name = 'My Datatoken Name'
+const symbol = 'SYMBOL'
+
+builder.setDatatokenNameAndSymbol(name, symbol)
 ```
 
 Finally, if all is configured, we are able to build and publish the asset:
