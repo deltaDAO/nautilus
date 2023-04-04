@@ -21,7 +21,7 @@ export async function getEncryptedFiles(
     const response = await ProviderInstance.encrypt(files, chainId, providerUrl)
     return response
   } catch (error) {
-    console.error('Error parsing json: ' + error.message)
+    LoggerInstance.error('Error parsing json: ' + error.message)
   }
 }
 

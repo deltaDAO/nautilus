@@ -362,8 +362,6 @@ export async function getAccessDetails(
       queryContext
     )
 
-    console.log(tokenQueryResult)
-
     const tokenPrice: TokenPrice = tokenQueryResult.data.token
     const accessDetails = getAccessDetailsFromTokenPrice(tokenPrice, timeout)
     return accessDetails
