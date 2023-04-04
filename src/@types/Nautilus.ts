@@ -7,7 +7,12 @@ import {
 import Web3 from 'web3'
 import { NautilusAsset } from '../nautilus/asset/asset'
 import { Nautilus } from '../nautilus/nautilus'
-import { PricingConfig, ServiceConfig } from './Publish'
+import {
+  DatatokenCreateParamsWithoutOwner,
+  NftCreateDataWithoutOwner,
+  PricingConfig,
+  ServiceConfig
+} from './Publish'
 
 export interface IBuilder<T> {
   build: () => T
@@ -26,7 +31,11 @@ export interface IAssetBuilder extends IBuilder<NautilusAsset> {
   setAuthor: (author: Metadata['author']) => IAssetBuilder
   setPricing: (pricing: PricingConfig) => IAssetBuilder
   addService: (service: ServiceConfig) => IAssetBuilder
-  setNftData: (tokenData: NftCreateData) => IAssetBuilder
-  setDatatokenData: (tokenData: DatatokenCreateParams) => IAssetBuilder
+  setNftData: (nftCreateData: NftCreateDataWithoutOwner) => IAssetBuilder
+  setDatatokenData: (
+    datatokenCreateData: DatatokenCreateParamsWithoutOwner
+  ) => IAssetBuilder
   setAlgorithm: (algorithm: Metadata['algorithm']) => IAssetBuilder
+  setOwner: (owner: string) => IAssetBuilder
+  setDatatokenNameAndSymbol: (dtName: string, dtSymbol: string) => IAssetBuilder
 }

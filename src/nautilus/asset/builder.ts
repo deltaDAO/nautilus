@@ -5,7 +5,9 @@ import {
 } from '@oceanprotocol/lib'
 import { IAssetBuilder } from '../../@types/Nautilus'
 import {
+  DatatokenCreateParamsWithoutOwner,
   MetadataConfig,
+  NftCreateDataWithoutOwner,
   PricingConfig,
   ServiceConfig
 } from '../../@types/Publish'
@@ -66,14 +68,30 @@ export class AssetBuilder implements IAssetBuilder {
     return this
   }
 
-  setNftData(tokenData: NftCreateData) {
-    this.asset.tokenParamaters.nftParams = tokenData
+  setNftData(tokenData: NftCreateDataWithoutOwner) {
+    this.asset.nftCreateData = tokenData
 
     return this
   }
 
-  setDatatokenData(tokenData: DatatokenCreateParams) {
-    this.asset.tokenParamaters.datatokenParams = tokenData
+  setDatatokenData(tokenData: DatatokenCreateParamsWithoutOwner) {
+    this.asset.datatokenCreateParams = tokenData
+
+    return this
+  }
+
+  setDatatokenNameAndSymbol(dtName: string, dtSymbol: string) {
+    this.asset.datatokenCreateParams = {
+      ...this.asset.datatokenCreateParams,
+      name: dtName,
+      symbol: dtSymbol
+    }
+
+    return this
+  }
+
+  setOwner(owner: string) {
+    this.asset.owner = owner
 
     return this
   }

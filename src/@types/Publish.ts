@@ -22,6 +22,13 @@ export interface PricingConfig {
   freCreationParams?: FreCreationParams
 }
 
+export type DatatokenCreateParamsWithoutOwner = Omit<
+  DatatokenCreateParams,
+  'paymentCollector' | 'minter'
+>
+
+export type NftCreateDataWithoutOwner = Omit<NftCreateData, 'owner'>
+
 export interface TokenParameters {
   nftParams: NftCreateData
   datatokenParams: DatatokenCreateParams
