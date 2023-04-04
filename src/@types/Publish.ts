@@ -17,17 +17,20 @@ export type MetadataConfig = Omit<Metadata, 'created' | 'updated'>
 
 type PricingType = 'fixed' | 'free'
 
-interface PricingConfig {
+export interface PricingConfig {
   type: PricingType
   freCreationParams?: FreCreationParams
 }
 
-interface TokenParameters {
+export interface TokenParameters {
   nftParams: NftCreateData
   datatokenParams: DatatokenCreateParams
 }
 
-type ServiceConfig = Omit<Service, 'id' | 'datatokenAddress' | 'files'> & {
+export type ServiceConfig = Omit<
+  Service,
+  'id' | 'datatokenAddress' | 'files'
+> & {
   files: Files['files']
 }
 
