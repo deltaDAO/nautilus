@@ -5,23 +5,28 @@ import {
   NftCreateData
 } from '@oceanprotocol/lib'
 import Web3 from 'web3'
+import { NautilusAsset } from '../nautilus/asset/asset'
+import { Nautilus } from '../nautilus/nautilus'
 import { PricingConfig, ServiceConfig } from './Publish'
 
-export interface INautilusBuilder {
-  setConfig: (config: Config) => INautilusBuilder
-  setWeb3: (web3: Web3) => INautilusBuilder
+export interface IBuilder<T> {
+  build: () => T
   reset: () => void
 }
+export interface INautilusBuilder extends IBuilder<Nautilus> {
+  setConfig: (chainId: number, config?: Config) => INautilusBuilder
+  setWeb3: (web3: Web3) => INautilusBuilder
+}
 
-export interface IPublisherBuilder extends INautilusBuilder {
-  setType: (type: Metadata['type']) => IPublisherBuilder
-  setName: (name: Metadata['name']) => IPublisherBuilder
-  setDescription: (description: Metadata['description']) => IPublisherBuilder
-  setLicense: (license: Metadata['license']) => IPublisherBuilder
-  setAuthor: (author: Metadata['author']) => IPublisherBuilder
-  setAlgorithm: (algorithm: Metadata['algorithm']) => IPublisherBuilder
-  setPricing: (pricing: PricingConfig) => IPublisherBuilder
-  addService: (service: ServiceConfig) => IPublisherBuilder
-  setNftData: (tokenData: NftCreateData) => IPublisherBuilder
-  setDatatokenData: (tokenData: DatatokenCreateParams) => IPublisherBuilder
+export interface IAssetBuilder extends IBuilder<NautilusAsset> {
+  setType: (type: Metadata['type']) => IAssetBuilder
+  setName: (name: Metadata['name']) => IAssetBuilder
+  setDescription: (description: Metadata['description']) => IAssetBuilder
+  setLicense: (license: Metadata['license']) => IAssetBuilder
+  setAuthor: (author: Metadata['author']) => IAssetBuilder
+  setPricing: (pricing: PricingConfig) => IAssetBuilder
+  addService: (service: ServiceConfig) => IAssetBuilder
+  setNftData: (tokenData: NftCreateData) => IAssetBuilder
+  setDatatokenData: (tokenData: DatatokenCreateParams) => IAssetBuilder
+  setAlgorithm: (algorithm: Metadata['algorithm']) => IAssetBuilder
 }

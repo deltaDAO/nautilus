@@ -1,13 +1,14 @@
 import { ZERO_ADDRESS } from '@oceanprotocol/lib'
 import {
+  AssetConfig,
   MetadataConfig,
   PricingConfig,
   ServiceConfig,
   TokenParameters
 } from '../../@types/Publish'
-import { Nautilus } from '../nautilus'
 
-export class NautilusPublisher extends Nautilus {
+/* @internal */
+export class NautilusAsset {
   metadata: MetadataConfig
   services: ServiceConfig[] = []
   pricing: PricingConfig
@@ -17,7 +18,6 @@ export class NautilusPublisher extends Nautilus {
   }
 
   constructor() {
-    super()
     this.initMetadata()
     this.initPricing()
     this.initNftData()
@@ -62,6 +62,26 @@ export class NautilusPublisher extends Nautilus {
       minter: ZERO_ADDRESS,
       mpFeeAddress: ZERO_ADDRESS,
       feeToken: ZERO_ADDRESS
+    }
+  }
+
+  getConfig(): Omit<AssetConfig, 'web3' | 'chainConfig'> {
+    if (
+      !this.metadata ||
+      this.services.length < 1 ||
+      !this.pricing ||
+      !this.tokenParamaters.datatokenParams ||
+      !this.tokenParamaters.nftParams
+    )
+      throw new Error(
+        'Metadata, Services, Pricing and TokenParameters are required.'
+      )
+
+    return {
+      metadata: this.metadata,
+      services: this.services,
+      pricing: this.pricing,
+      tokenParamaters: this.tokenParamaters
     }
   }
 }
