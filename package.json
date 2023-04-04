@@ -18,6 +18,7 @@
     "clean": "rm -rf ./dist/",
     "mocha": "TS_NODE_PROJECT='./test/tsconfig.json' mocha --config=test/.mocharc.json --node-env=test --exit",
     "test": "npm run lint && npm run mocha -- test/**/*.test.ts",
+    "test:mocha": "npm run mocha -- test/**/*.test.ts",
     "release": "release-it",
     "prepublishOnly": "npm run build",
     "lint": "eslint --ignore-path .gitignore --ext .ts && npm run type-check",
@@ -43,12 +44,13 @@
     "web3": "^1.9.0"
   },
   "devDependencies": {
-    "dotenv": "^16.0.3",
     "@types/mocha": "^10.0.1",
+    "@types/node": "^18.15.11",
     "@typescript-eslint/eslint-plugin": "^5.56.0",
     "@typescript-eslint/parser": "^5.56.0",
     "apollo": "^2.34.0",
     "auto-changelog": "^2.4.0",
+    "dotenv": "^16.0.3",
     "eslint": "^8.36.0",
     "eslint-config-oceanprotocol": "^2.0.4",
     "eslint-config-prettier": "^8.8.0",
