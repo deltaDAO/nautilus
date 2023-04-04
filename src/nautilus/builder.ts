@@ -3,7 +3,6 @@ import Web3 from 'web3'
 import { INautilusBuilder } from '../@types/Nautilus'
 import { Nautilus } from './nautilus'
 
-/* @internal */
 export class NautilusBuilder implements INautilusBuilder {
   private nautilus: Nautilus = new Nautilus()
 
