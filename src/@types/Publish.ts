@@ -13,9 +13,7 @@ import Web3 from 'web3'
 
 export interface CredentialConfig extends Credentials {}
 
-export interface MetadataConfig extends Omit<Metadata, 'created' | 'updated'> {}
-
-// TODO consider type MetadataConfig = Omit<Metadata, "created" | "updated">;
+export type MetadataConfig = Omit<Metadata, 'created' | 'updated'>
 
 type PricingType = 'fixed' | 'free'
 

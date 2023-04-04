@@ -1,13 +1,14 @@
 import { Asset, LoggerInstance } from '@oceanprotocol/lib'
-import axios, { AxiosResponse, CancelToken } from 'axios'
-
-const metadataCacheUri =
-  process.env.AQUARIUS_URI || 'https://aquarius.v4.delta-dao.com'
+import axios, { AxiosResponse } from 'axios'
 
 export async function getAsset(
+  metadataCacheUri: string,
   did: string,
-  signal: AbortSignal
+  signal?: AbortSignal
 ): Promise<Asset> {
+  LoggerInstance.debug(
+    `[aquarius] Retrieve asset ${did} using cache at ${metadataCacheUri}`
+  )
   try {
     const response: AxiosResponse<Asset> = await axios.get(
       `${metadataCacheUri}/api/aquarius/assets/ddo/${did}`,

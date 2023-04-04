@@ -12,6 +12,7 @@ import {
   FixedRateExchange,
   FreOrderParams,
   LoggerInstance,
+  LogLevel,
   OrderParams,
   PriceAndFees,
   ProviderComputeInitialize,
@@ -57,32 +58,39 @@ export async function compute(computeConfig: ComputeConfig) {
     throw new Error('Cannot start compute. Missing config(s).')
   }
   LoggerInstance.log(
-    'Starting compute order for dataset ',
+    '[compute] Starting compute order for dataset',
     datasetDid,
-    ' with algorithm ',
+    '\nwith algorithm',
     algorithmDid,
-    ' for ',
+    '\nfor account',
     account
   )
 
   try {
-    LoggerInstance.debug(`Using account: ${computeConfig.web3.defaultAccount}`)
     LoggerInstance.debug('Retrieve assets from metadata cache ...')
     const controller = new AbortController()
 
     const assets = await Promise.all([
-      getAsset(computeConfig.datasetDid, controller.signal),
-      getAsset(computeConfig.algorithmDid, controller.signal)
+      getAsset(
+        config.metadataCacheUri,
+        computeConfig.datasetDid,
+        controller.signal
+      ),
+      getAsset(
+        config.metadataCacheUri,
+        computeConfig.algorithmDid,
+        controller.signal
+      )
     ])
 
     LoggerInstance.debug('Retrieve access details for assets from subgraph ...')
     const assetAccessDetails = await Promise.all(
       assets.map((a) =>
         getAccessDetails(
-          process.env.SUBGRAPH_URI,
+          config.subgraphUri,
           a.datatokens[0].address,
           a.services[0].timeout,
-          computeConfig.web3.eth.accounts[0]
+          web3.defaultAccount
         )
       )
     )
@@ -202,7 +210,7 @@ export async function compute(computeConfig: ComputeConfig) {
     )
     if (!response) throw new Error('Error starting compute job.')
 
-    LoggerInstance.log('[compute] Starting compute job response: ', response)
+    LoggerInstance.debug('[compute] Starting compute job response: ', response)
     return response
   } catch (e) {
     LoggerInstance.error(e)
@@ -223,7 +231,7 @@ export async function getStatus(computeStatusConfig: any) {
       web3.defaultAccount,
       jobId
     )
-    LoggerInstance.log('[compute] computeStatus response: ', status)
+    LoggerInstance.debug('[compute] computeStatus response: ', status)
 
     return Array.isArray(status)
       ? status.find((job) => job.jobId === jobId)
@@ -334,17 +342,18 @@ export async function isOrderable(
 }
 
 export async function getAccessDetails(
-  subgraphuri: string,
+  subgraphUri: string,
   datatokenAddress: string,
   timeout?: number,
   account = ''
 ): Promise<AccessDetails> {
   try {
-    const queryContext = getQueryContext(subgraphuri)
+    const queryContext = getQueryContext(subgraphUri)
     const tokenQueryResult: OperationResult<
       TokenPriceQuery,
       { datatokenId: string; account: string }
     > = await fetchData(
+      subgraphUri,
       tokenPriceQuery,
       {
         datatokenId: datatokenAddress.toLowerCase(),
@@ -352,6 +361,8 @@ export async function getAccessDetails(
       },
       queryContext
     )
+
+    console.log(tokenQueryResult)
 
     const tokenPrice: TokenPrice = tokenQueryResult.data.token
     const accessDetails = getAccessDetailsFromTokenPrice(tokenPrice, timeout)
@@ -441,17 +452,16 @@ export async function handleComputeOrder(
   config: Config,
   computeConsumerAddress?: string
 ): Promise<string> {
-  LoggerInstance.log(
+  LoggerInstance.debug(
     '[compute] Handle compute order for asset type: ',
     asset.metadata.type
   )
-  LoggerInstance.log('[compute] Using initializeData: ', initializeData)
 
   try {
     // Return early when valid order is found, and no provider fees
     // are to be paid
     if (initializeData?.validOrder && !initializeData.providerFee) {
-      LoggerInstance.log(
+      LoggerInstance.debug(
         '[compute] Has valid order: ',
         initializeData.validOrder
       )
@@ -470,11 +480,14 @@ export async function handleComputeOrder(
       if (!txApproveProvider)
         throw new Error('Failed to approve provider fees!')
 
-      LoggerInstance.log('[compute] Approved provider fees:', txApproveProvider)
+      LoggerInstance.debug(
+        '[compute] Approved provider fees:',
+        txApproveProvider
+      )
     }
 
     if (initializeData?.validOrder) {
-      LoggerInstance.log('[compute] Calling reuseOrder ...', initializeData)
+      LoggerInstance.debug('[compute] Calling reuseOrder ...', initializeData)
       const txReuseOrder = await reuseOrder(
         web3,
         asset,
@@ -483,11 +496,11 @@ export async function handleComputeOrder(
         initializeData.providerFee
       )
       if (!txReuseOrder) throw new Error('Failed to reuse order!')
-      LoggerInstance.log('[compute] Reused order:', txReuseOrder)
+      LoggerInstance.debug('[compute] Reused order:', txReuseOrder)
       return txReuseOrder?.transactionHash
     }
 
-    LoggerInstance.log('[compute] Calling order ...', initializeData)
+    LoggerInstance.debug('[compute] Calling order ...', initializeData)
     const txStartOrder = await startOrder(
       web3,
       asset,
@@ -498,7 +511,7 @@ export async function handleComputeOrder(
       config,
       computeConsumerAddress
     )
-    LoggerInstance.log('[compute] Order succeeded', txStartOrder)
+    LoggerInstance.debug('[compute] Order succeeded', txStartOrder)
     return txStartOrder?.transactionHash
   } catch (error) {
     LoggerInstance.error(`[compute] ${error.message}`)
@@ -524,7 +537,7 @@ async function startOrder(
     computeConsumerAddress,
     config
   )
-  LoggerInstance.log('[compute] Asset ordered:', tx)
+  LoggerInstance.debug('[compute] Asset ordered:', tx)
   return tx
 }
 
@@ -565,11 +578,13 @@ export async function order(
     _consumeMarketFee: {
       consumeMarketFeeAddress: ZERO_ADDRESS,
       consumeMarketFeeAmount: '0',
-      consumeMarketFeeToken:
-        asset?.accessDetails?.baseToken?.address ||
-        '0x0000000000000000000000000000000000000000'
+      consumeMarketFeeToken: '0x0000000000000000000000000000000000000000'
     }
   } as OrderParams
+
+  LoggerInstance.debug('[order] orderParams', orderParams)
+
+  LoggerInstance.debug('[order] order type', asset.accessDetails?.type)
 
   switch (asset.accessDetails?.type) {
     case 'fixed': {
@@ -649,14 +664,25 @@ export async function order(
       break
     }
     case 'free': {
+      LoggerInstance.debug(
+        '[order] order with type "free" for templateId:',
+        asset.accessDetails.templateId
+      )
+
       if (asset.accessDetails.templateId === 1) {
         const dispenser = new Dispenser(config.dispenserAddress, web3)
+        LoggerInstance.debug('[order] free order: dispenser', dispenser.address)
         const dispenserTx = await dispenser.dispense(
           asset.accessDetails?.datatoken.address,
           accountId,
           '1',
           accountId
         )
+        LoggerInstance.debug(
+          '[order] free order: dispenser tx',
+          dispenserTx.transactionHash
+        )
+
         return await datatoken.startOrder(
           asset.accessDetails.datatoken.address,
           accountId,
@@ -667,12 +693,22 @@ export async function order(
         )
       }
       if (asset.accessDetails.templateId === 2) {
-        return await datatoken.buyFromDispenserAndOrder(
-          asset.services[0].datatokenAddress,
+        LoggerInstance.debug('[order] buying from datatoken', {
+          datatoken: asset.services[0].datatokenAddress,
           accountId,
           orderParams,
-          config.dispenserAddress
-        )
+          dispenser: config.dispenserAddress
+        })
+        try {
+          return await datatoken.buyFromDispenserAndOrder(
+            asset.services[0].datatokenAddress,
+            accountId,
+            orderParams,
+            config.dispenserAddress
+          )
+        } catch (e) {
+          throw new Error(e)
+        }
       }
     }
   }

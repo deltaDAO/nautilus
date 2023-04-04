@@ -24,12 +24,13 @@ export function geturqlClient(subgraphUri) {
 }
 
 export async function fetchData(
+  subgraphUri: string,
   query: TypedDocumentNode,
   variables: any,
   context: OperationContext
 ): Promise<any> {
   try {
-    const client = geturqlClient(process.env.SUBGRAPH_URI)
+    const client = geturqlClient(subgraphUri)
 
     const response = await client.query(query, variables, context).toPromise()
     return response

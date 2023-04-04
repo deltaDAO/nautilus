@@ -31,9 +31,9 @@ export async function publishAsset(assetConfig: AssetConfig) {
   if (!isSuccess) throw new Error('No Token created. Please try again.')
 
   // TODO add these to return
-  LoggerInstance.log('[publish] createTokensAndPricing tx', txHash)
-  LoggerInstance.log('[publish] erc721Address', erc721Address)
-  LoggerInstance.log('[publish] datatokenAddress', datatokenAddress)
+  LoggerInstance.debug('[publish] createTokensAndPricing tx', txHash)
+  LoggerInstance.debug('[publish] erc721Address', erc721Address)
+  LoggerInstance.debug('[publish] datatokenAddress', datatokenAddress)
 
   // --------------------------------------------------
   // 2. Construct and encrypt DDO
@@ -109,8 +109,8 @@ export async function publishAsset(assetConfig: AssetConfig) {
     '0x' + metadataHash
   )
 
-  LoggerInstance.log(`DID: ${ddo.id}`)
-  LoggerInstance.log('Endresult:', setNftMetadataResult)
+  LoggerInstance.debug(`DID: ${ddo.id}`)
+  LoggerInstance.debug('Endresult:', setNftMetadataResult)
 
   return { erc721Address, datatokenAddress, txHash, DID: ddo.id } // TODO return all kinds of addresses and ids, create interface
 }
