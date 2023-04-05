@@ -531,9 +531,9 @@ async function startOrder(
     asset,
     orderPriceAndFees,
     accountId,
+    config,
     initializeData.providerFee,
-    computeConsumerAddress,
-    config
+    computeConsumerAddress
   )
   LoggerInstance.debug('[compute] Asset ordered:', tx)
   return tx
@@ -563,9 +563,9 @@ export async function order(
   asset: AssetWithAccessDetails,
   orderPriceAndFees: OrderPriceAndFees,
   accountId: string,
-  providerFees: ProviderFees,
-  computeConsumerAddress: string,
-  config: Config
+  config: Config,
+  providerFees?: ProviderFees,
+  computeConsumerAddress?: string
 ): Promise<any> {
   const datatoken = new Datatoken(web3)
 

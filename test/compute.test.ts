@@ -1,7 +1,7 @@
-import { Config, LoggerInstance, LogLevel } from '@oceanprotocol/lib'
-import * as dotenv from 'dotenv'
-import fs from 'fs'
+import { LoggerInstance, LogLevel } from '@oceanprotocol/lib'
 import assert from 'assert'
+import * as dotenv from 'dotenv'
+import chainConfig from './fixtures/chainConfig.json'
 
 import Web3 from 'web3'
 import { compute, getStatus, retrieveResult } from '../src'
@@ -9,14 +9,10 @@ dotenv.config()
 
 describe('Compute', () => {
   let web3: Web3
-  let config: Config
   const jobId = 'cda858f7df4244799713896986a93a84'
+  const config = chainConfig
 
   before(() => {
-    config = JSON.parse(
-      fs.readFileSync(process.env.CHAIN_CONFIG_FILEPATH).toString()
-    )
-
     web3 = new Web3(config.nodeUri)
     const account = web3.eth.accounts.privateKeyToAccount(
       process.env.PRIVATE_KEY

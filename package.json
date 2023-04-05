@@ -17,7 +17,7 @@
     "changelog": "auto-changelog -p",
     "clean": "rm -rf ./dist/",
     "mocha": "TS_NODE_PROJECT='./test/tsconfig.json' mocha --config=test/.mocharc.json --node-env=test --exit",
-    "test": "npm run lint && npm run mocha -- test/**/*.test.ts",
+    "test": "npm run lint && npm run mocha -- test/**/*.test.ts test/*.test.ts",
     "test:mocha": "npm run mocha -- test/**/*.test.ts",
     "release": "release-it",
     "prepublishOnly": "npm run build",
