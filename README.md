@@ -27,19 +27,22 @@ web3.defaultAccount = account.address // currently required, will be optional in
 Now you can use the builder to construct a new `Nautilus` instance:
 
 ```ts
-const builder = new NautilusBuilder()
-builder
+import { NautilusBuilder } from '@delta-dao/nautilus'
+
+const chainId = 4
+
+const nautilusBuilder = new NautilusBuilder()
+nautilusBuilder
   .setWeb3(web3)
-  // automatically loads the OceanConfig for chainId = 4 (Rinkeby)
-  .setConfig(4)
+  // load the OceanConfig for chainId = 4 (Rinkeby)
+  .setConfig(chainId)
 ```
 
 If want to use a custom configuration, you can set an additional parameter in the `setConfig` call. For guidance on which configurations are needed you can have a look at the [Ocean Library Docs](https://docs.oceanprotocol.com/building-with-ocean/using-ocean-libraries/configuration#create-a-configuration-file).
 
 ```ts
-const chainId = 4
-
 // Custom config, e.g.:
+// Reference the docs linked above for a complete overview
 const customConfig = {
   ...new ConfigHelper().getConfig(chainId),
   oceanTokenAddress: '0x...',
@@ -47,15 +50,14 @@ const customConfig = {
   // ...
 }
 
-// Reference the docs linked above for a complete overview
-
-builder.setConfig(chainId, customConfig)
+// Setting the custom config in addition to the chainId
+nautilusBuilder.setConfig(chainId, customConfig)
 ```
 
 Finally, after the configuration is complete, we can now build the `Nautilus` instance to be used to publish and consume assets on the specified network:
 
 ```ts
-const nautilus = builder.build()
+const nautilus = nautilusBuilder.build()
 
 // You can now use the Nautilus functions like
 // nautilus.publish() etc.
@@ -69,14 +71,15 @@ You can use the `AssetBuilder` class to build an asset and publish it with the `
 Let's start by creating the builder and specifying the account that will be the owner/publisher of the new asset:
 
 ```ts
-const builder = new AssetBuilder()
-const owner = web3.defaultAccount
+import { AssetBuilder } from '@delta-dao/nautilus'
+
+const assetBuilder = new AssetBuilder()
 ```
 
 With this we can now continue to setup the metadata information for the asset:
 
 ```ts
-builder
+assetBuilder
   .setType('dataset') // 'dataset' or 'algorithm'
   .setName('My New Asset')
   .setDescription('A publish asset building test on GEN-X') // supports markdown
@@ -84,7 +87,7 @@ builder
   .setLicense('MIT') // SPDX license identifier
 ```
 
-If we want to publish an algorithm instead of a dataset, we have to specify additonal metadata, to make sure the orchestration knows which image to prepare for the algorithm to be able to run correctly:
+If we want to publish an algorithm instead of a dataset, we have to specify [additonal metadata](https://docs.oceanprotocol.com/core-concepts/did-ddo#algorithm-metadata), to make sure the orchestration knows which image to prepare for the algorithm to be able to run correctly:
 
 ```ts
 const algoMetadata = {
@@ -102,7 +105,7 @@ const algoMetadata = {
 Now we can set this metadata using the builder:
 
 ```ts
-builder.setAlgorithm(algoMetadata)
+assetBuilder.setAlgorithm(algoMetadata)
 ```
 
 Next we need to specify where our asset is actually located. In Ocean we can do this using the `Services` array specified in the [DDO](https://docs.oceanprotocol.com/core-concepts/did-ddo#ddo).
@@ -123,14 +126,14 @@ const accessService = {
   timeout: 0 // in seconds, 0 = infinite
 }
 
-builder.addService(accessService)
+assetBuilder.addService(accessService)
 ```
 
 In addition to that, we want to also specify the pricing for our asset. The `AssetBuilder` provides a function for this that we can make use of:
 
 ```ts
 // Example of a fixed asset
-builder.setPricing({
+assetBuilder.setPricing({
   type: 'fixed', // 'fixed' or 'free'
   // freCreationParams can be ommitted for 'free' pricing schemas
   freCreationParams: {
@@ -144,7 +147,7 @@ builder.setPricing({
 })
 
 // Example of a free asset
-builder.setPricing({
+assetBuilder.setPricing({
   type: 'free'
 })
 ```
@@ -153,7 +156,9 @@ We also have to make sure we specify the owner of the asset, that will be used f
 
 ```ts
 // Set the owner using the web3 instance we setup in the initial nautilus configuration
-builder.setOwner(web3.defaultAccount)
+const owner = web3.defaultAccount
+
+assetBuilder.setOwner(owner)
 ```
 
 Optionally, we can specify some information for the access token, like the name and symbol, to be used. This will be displayed in Ocean Markets and also can be used to identify your service in the network (e.g., when visiting block explorers).
@@ -162,13 +167,13 @@ Optionally, we can specify some information for the access token, like the name 
 const name = 'My Datatoken Name'
 const symbol = 'SYMBOL'
 
-builder.setDatatokenNameAndSymbol(name, symbol)
+assetBuilder.setDatatokenNameAndSymbol(name, symbol)
 ```
 
 Finally, if all is configured, we are able to build and publish the asset:
 
 ```ts
-const asset = builder.build()
+const asset = assetBuilder.build()
 
 const result = await nautilus.publish(asset)
 /*
