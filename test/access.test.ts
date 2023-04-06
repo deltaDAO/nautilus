@@ -1,6 +1,6 @@
 import { LoggerInstance, LogLevel } from '@oceanprotocol/lib'
 import { access } from '../src'
-import chainConfig from './fixtures/chainConfig.json'
+import { getConfig } from './fixtures/Config'
 import { getWeb3 } from './fixtures/Web3'
 
 describe('Access', () => {
@@ -10,12 +10,16 @@ describe('Access', () => {
 
   it('should download a free dataset', async () => {
     const assetDid =
-      'did:op:8e3f2acad2b9d856038f23c86190c7052ba9f7472675e302bd44867d6bb974e0'
+      'did:op:2ca1ddd4af1e3abf92b80ab62e102534baf26816db839310785e540b2837dc27'
+    const serialNumber = 'f139a417-fcfb-4059-93aa-ef7656fc4589'
 
     const fileUrl = await access({
       assetDid,
       web3: getWeb3(),
-      config: chainConfig
+      config: getConfig(),
+      userdata: {
+        serialNumber
+      }
     })
 
     LoggerInstance.log(fileUrl)

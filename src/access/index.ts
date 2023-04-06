@@ -1,12 +1,25 @@
-import { LoggerInstance, ProviderInstance } from '@oceanprotocol/lib'
+import {
+  LoggerInstance,
+  ProviderInstance,
+  UserCustomParameters
+} from '@oceanprotocol/lib'
 import Web3 from 'web3'
 import { AccessConfig } from '../@types/Access'
 import { AccessDetails, AssetWithAccessDetails } from '../@types/Compute'
 import { getAccessDetails, getAssetWithPrice, startOrder } from '../compute'
 import { getAsset } from '../utils/aquarius'
 
+/**
+ * @param {AccessConfig} accessConfig Configuration of the access request
+ * @param {string} accessConfig.assetDid The document id of the asset to access
+ * @param {Web3} accessConfig.web3 The web3 instance to use to make the access request
+ * @param {Config} accessConfig.config The Ocean Configuration needed to make the access requests
+ * @param {number} [accessConfig.fileIndex=0] The file index of the asset to be requested.
+ * @param {UserCustomParameters} [accessConfig.userdata] Custom userdata that is needed for the access request.
+ * @returns
+ */
 export async function access(accessConfig: AccessConfig) {
-  const { assetDid, config, web3, fileIndex } = accessConfig
+  const { assetDid, config, web3, fileIndex, userdata } = accessConfig
 
   const asset = await getAsset(config.metadataCacheUri, assetDid)
 
@@ -22,11 +35,18 @@ export async function access(accessConfig: AccessConfig) {
     accessDetails
   }
 
+  LoggerInstance.debug('[access] AccessDetails:', accessDetails)
+
   if (isOwned(accessDetails)) {
     LoggerInstance.debug(
       `Found valid order for ${asset.id} with datatoken ${accessDetails.datatoken.address}`
     )
-    return await downloadAssetFile({ ...asset, accessDetails }, web3, fileIndex)
+    return await downloadAssetFile(
+      { ...asset, accessDetails },
+      web3,
+      fileIndex,
+      userdata
+    )
   }
 
   const assetWithPrice = await getAssetWithPrice(
@@ -43,8 +63,13 @@ export async function access(accessConfig: AccessConfig) {
     config
   )
 
-  assetWithAccessDetails.accessDetails.validOrderTx = orderTx
-  return await downloadAssetFile(assetWithAccessDetails, web3, fileIndex)
+  assetWithAccessDetails.accessDetails.validOrderTx = orderTx.transactionHash
+  return await downloadAssetFile(
+    assetWithAccessDetails,
+    web3,
+    fileIndex,
+    userdata
+  )
 }
 
 function isOwned(accessDetails: AccessDetails) {
@@ -55,7 +80,8 @@ function isOwned(accessDetails: AccessDetails) {
 async function downloadAssetFile(
   asset: AssetWithAccessDetails,
   web3: Web3,
-  fileIndex?: number
+  fileIndex?: number,
+  userCustomParameters?: UserCustomParameters
 ) {
   LoggerInstance.debug(`Requesting download url for asset ${asset.id}`)
   const downloadUrl: string = await ProviderInstance.getDownloadUrl(
@@ -65,7 +91,8 @@ async function downloadAssetFile(
     fileIndex || 0,
     asset.accessDetails.validOrderTx,
     asset.services[0].serviceEndpoint,
-    web3
+    web3,
+    userCustomParameters
   )
 
   return downloadUrl

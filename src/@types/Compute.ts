@@ -1,4 +1,10 @@
-import { Asset, Config, ProviderFees } from '@oceanprotocol/lib'
+import {
+  Asset,
+  ComputeAlgorithm,
+  ComputeAsset,
+  Config,
+  ProviderFees
+} from '@oceanprotocol/lib'
 import Web3 from 'web3'
 
 export interface DidAndServiceId {
@@ -6,9 +12,9 @@ export interface DidAndServiceId {
   serviceId?: string
 }
 export interface ComputeConfigOptions {
-  datasetServiceParams?: any
-  algorithmServiceParams?: any
-  algoCustomData?: any
+  datasetServiceParams?: ComputeAsset['userdata']
+  algorithmServiceParams?: ComputeAlgorithm['userdata']
+  algocustomdata?: ComputeAlgorithm['algocustomdata']
 }
 
 export interface ComputeConfig {

@@ -48,8 +48,14 @@ import { fetchData, getAccessDetailsFromTokenPrice } from '../utils/subgraph'
 import { tokenPriceQuery } from '../utils/subgraph/queries'
 
 export async function compute(computeConfig: ComputeConfig) {
-  const { datasetDid, algorithmDid, web3, config, additionalDatasetDids } =
-    computeConfig
+  const {
+    datasetDid,
+    algorithmDid,
+    web3,
+    config,
+    additionalDatasetDids,
+    options
+  } = computeConfig
   const account = web3?.defaultAccount
 
   if (!datasetDid || !algorithmDid || !web3 || !account) {
@@ -69,10 +75,15 @@ export async function compute(computeConfig: ComputeConfig) {
     account
   )
 
+  const assetIdentifiers = [datasetDid, algorithmDid]
+  additionalDatasetDids?.forEach((id) => {
+    assetIdentifiers.push(id)
+  })
+
   try {
     // 1. Get all assets and access details from DIDs
     const assets = await getAssetsWithAccessDetails(
-      [datasetDid, algorithmDid, ...additionalDatasetDids],
+      assetIdentifiers,
       config,
       web3
     )
@@ -188,7 +199,8 @@ export async function compute(computeConfig: ComputeConfig) {
       {
         documentId: algo.id,
         serviceId: algo.services[0].id,
-        transferTxId: algorithmOrderTx
+        transferTxId: algorithmOrderTx,
+        algocustomdata: options.algocustomdata
       },
       controller.signal,
       null,
@@ -225,10 +237,12 @@ export async function getAssetsWithAccessDetails(
   )
   const assetAccessDetails = await Promise.all(
     assets.map((asset, i) => {
-      const serviceIndex =
+      const serviceIndex = Math.max(
         asset.services.findIndex(
           (service) => service.id === identifiers[i].serviceId
-        ) || 0
+        ),
+        0
+      )
 
       return getAccessDetails(
         config.subgraphUri,
@@ -562,14 +576,14 @@ export async function startOrder(
   config: Config,
   initializeData?: ProviderComputeInitialize,
   computeConsumerAddress?: string
-): Promise<any> {
+) {
   const tx = await order(
     web3,
     asset,
     orderPriceAndFees,
     accountId,
     config,
-    initializeData?.providerFee,
+    initializeData?.providerFee || orderPriceAndFees.providerFee,
     computeConsumerAddress
   )
   LoggerInstance.debug('[compute] Asset ordered:', tx)
@@ -603,7 +617,7 @@ async function order(
   config: Config,
   providerFees?: ProviderFees,
   computeConsumerAddress?: string
-): Promise<any> {
+) {
   const datatoken = new Datatoken(web3)
 
   const orderParams = {

@@ -9,6 +9,7 @@ export async function getAsset(
   LoggerInstance.debug(
     `[aquarius] Retrieve asset ${did} using cache at ${metadataCacheUri}`
   )
+  if (!did || !metadataCacheUri) return
   try {
     const response: AxiosResponse<Asset> = await axios.get(
       `${metadataCacheUri}/api/aquarius/assets/ddo/${did}`,
