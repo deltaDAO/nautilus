@@ -10,6 +10,10 @@ import {
   Service
 } from '@oceanprotocol/lib'
 import Web3 from 'web3'
+import {
+  ConsumerParameterType,
+  NautilusConsumerParameter
+} from '../nautilus/asset/consumerParameters/consumerParameter'
 
 export interface CredentialConfig extends Credentials {}
 
@@ -39,6 +43,7 @@ export type ServiceConfig = Omit<
   'id' | 'datatokenAddress' | 'files'
 > & {
   files: Files['files']
+  consumerParameters?: NautilusConsumerParameter<ConsumerParameterType>[]
 }
 
 export type PrePublishDDO = Omit<DDO, 'services'> & {

@@ -25,10 +25,12 @@ describe('Compute', () => {
 
   it('should start a compute job', async () => {
     const computeJob = await compute({
-      datasetDid:
-        'did:op:bd2d41775c5041361d899f30734920af6383c3ca5838d06fa4649cba9c94192e',
-      algorithmDid:
-        'did:op:ca69686d534777405c8cb0a4437bca408a3f8bd1e479d429beed64b9f932b69f',
+      datasetDid: {
+        did: 'did:op:bd2d41775c5041361d899f30734920af6383c3ca5838d06fa4649cba9c94192e'
+      },
+      algorithmDid: {
+        did: 'did:op:ca69686d534777405c8cb0a4437bca408a3f8bd1e479d429beed64b9f932b69f'
+      },
       web3,
       config
     })

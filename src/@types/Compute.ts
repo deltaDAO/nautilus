@@ -1,6 +1,10 @@
 import { Asset, Config, ProviderFees } from '@oceanprotocol/lib'
 import Web3 from 'web3'
 
+export interface DidAndServiceId {
+  did: string
+  serviceId?: string
+}
 export interface ComputeConfigOptions {
   datasetServiceParams?: any
   algorithmServiceParams?: any
@@ -8,10 +12,11 @@ export interface ComputeConfigOptions {
 }
 
 export interface ComputeConfig {
-  datasetDid: string
-  algorithmDid: string
+  datasetDid: DidAndServiceId
+  algorithmDid: DidAndServiceId
   web3: Web3
   config: Config
+  additionalDatasetDids?: DidAndServiceId[]
   options?: ComputeConfigOptions
 }
 
@@ -42,14 +47,18 @@ export interface AccessDetails {
   publisherMarketOrderFee: string
 }
 
-export interface AssetWithAccessDetails extends Asset {
-  accessDetails: AccessDetails
-}
-
 export interface OrderPriceAndFees {
   price: string
   publisherMarketOrderFee: string
   consumeMarketOrderFee: string
   providerFee: ProviderFees
   opcFee: string
+}
+
+export interface AssetWithAccessDetails extends Asset {
+  accessDetails: AccessDetails
+}
+
+export interface AssetWithAccessDetailsAndPrice extends AssetWithAccessDetails {
+  orderPriceAndFees: OrderPriceAndFees
 }

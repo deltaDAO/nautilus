@@ -28,8 +28,10 @@ import Web3 from 'web3'
 import {
   AccessDetails,
   AssetWithAccessDetails,
+  AssetWithAccessDetailsAndPrice,
   ComputeConfig,
   ComputeResultConfig,
+  DidAndServiceId,
   OrderPriceAndFees
 } from '../@types/Compute'
 import {
@@ -46,7 +48,8 @@ import { fetchData, getAccessDetailsFromTokenPrice } from '../utils/subgraph'
 import { tokenPriceQuery } from '../utils/subgraph/queries'
 
 export async function compute(computeConfig: ComputeConfig) {
-  const { datasetDid, algorithmDid, web3, config } = computeConfig
+  const { datasetDid, algorithmDid, web3, config, additionalDatasetDids } =
+    computeConfig
   const account = web3?.defaultAccount
 
   if (!datasetDid || !algorithmDid || !web3 || !account) {
@@ -67,36 +70,23 @@ export async function compute(computeConfig: ComputeConfig) {
   )
 
   try {
-    LoggerInstance.debug('Retrieve assets from metadata cache ...')
-    const controller = new AbortController()
-
-    const assets = await Promise.all([
-      getAsset(
-        config.metadataCacheUri,
-        computeConfig.datasetDid,
-        controller.signal
-      ),
-      getAsset(
-        config.metadataCacheUri,
-        computeConfig.algorithmDid,
-        controller.signal
-      )
-    ])
-
-    LoggerInstance.debug('Retrieve access details for assets from subgraph ...')
-    const assetAccessDetails = await Promise.all(
-      assets.map((a) =>
-        getAccessDetails(
-          config.subgraphUri,
-          a.datatokens[0].address,
-          a.services[0].timeout,
-          web3.defaultAccount
-        )
-      )
+    // 1. Get all assets and access details from DIDs
+    const assets = await getAssetsWithAccessDetails(
+      [datasetDid, algorithmDid, ...additionalDatasetDids],
+      config,
+      web3
     )
 
-    const dataset = { ...assets[0], accessDetails: assetAccessDetails[0] }
-    const algo = { ...assets[1], accessDetails: assetAccessDetails[1] }
+    const dataset = assets.find((asset) => asset.id === datasetDid.did)
+    const algo = assets.find((asset) => asset.id === algorithmDid.did)
+    const additionalDatasets = additionalDatasetDids
+      ? assets.filter((asset) =>
+          additionalDatasetDids.map((did) => did.did).includes(asset.id)
+        )
+      : []
+
+    // 2. Check if the asset is orderable
+    // TODO: consider to do this first before loading all other assets
     const computeService = getServiceByName(dataset, 'compute')
     const allowed = await isOrderable(
       dataset,
@@ -113,6 +103,7 @@ export async function compute(computeConfig: ComputeConfig) {
         'Dataset is not orderable in combination with given algorithm.'
       )
 
+    // 3. Initialize the provider
     const computeEnv = await getComputeEnviroment(dataset)
 
     LoggerInstance.debug('Initializing provider for compute')
@@ -123,28 +114,23 @@ export async function compute(computeConfig: ComputeConfig) {
       computeEnv
     )
 
-    const providerFeeAmount = await unitsToAmount(
-      web3,
-      providerInitializeResults?.datasets?.[0]?.providerFee?.providerFeeToken,
-      providerInitializeResults?.datasets?.[0]?.providerFee?.providerFeeAmount
-    )
-
-    const datasetPriceAndFees = await getOrderPriceAndFees(
+    // 4. Get prices and fees for the assets
+    const datasetWithPrice = await getAssetWithPrice(
       dataset,
       web3,
       config,
       providerInitializeResults?.datasets?.[0]?.providerFee
     )
-    if (!datasetPriceAndFees)
+    if (!datasetWithPrice?.orderPriceAndFees)
       throw new Error('Error setting dataset price and fees!')
 
-    const algorithmOrderPriceAndFees = await getOrderPriceAndFees(
+    const algorithmWithPrice = await getAssetWithPrice(
       algo,
       web3,
       config,
       providerInitializeResults.algorithm.providerFee
     )
-    if (!algorithmOrderPriceAndFees)
+    if (!algorithmWithPrice?.orderPriceAndFees)
       throw new Error('Error setting algorithm price and fees!')
 
     const algoDatatokenBalance = await getDatatokenBalance(
@@ -155,9 +141,8 @@ export async function compute(computeConfig: ComputeConfig) {
     const algorithmOrderTx = await handleComputeOrder(
       web3,
       algo,
-      algorithmOrderPriceAndFees,
+      algorithmWithPrice?.orderPriceAndFees,
       web3.defaultAccount,
-      algoDatatokenBalance >= 1,
       providerInitializeResults.algorithm,
       config,
       computeEnv.consumerAddress
@@ -172,9 +157,8 @@ export async function compute(computeConfig: ComputeConfig) {
     const datasetOrderTx = await handleComputeOrder(
       web3,
       dataset,
-      datasetPriceAndFees,
+      datasetWithPrice?.orderPriceAndFees,
       web3.defaultAccount,
-      datasetDatatokenBalance >= 1,
       providerInitializeResults.datasets[0],
       config,
       computeEnv.consumerAddress
@@ -192,6 +176,8 @@ export async function compute(computeConfig: ComputeConfig) {
       publishAlgorithmLog: true,
       publishOutput: true
     }
+
+    const controller = new AbortController()
 
     const response = await ProviderInstance.computeStart(
       dataset.services[0].serviceEndpoint,
@@ -216,6 +202,47 @@ export async function compute(computeConfig: ComputeConfig) {
     LoggerInstance.error(e)
     LoggerInstance.error('Failed computation:', e.message)
   }
+}
+
+export async function getAssetsWithAccessDetails(
+  identifiers: DidAndServiceId[],
+  config: Config,
+  web3: Web3
+): Promise<AssetWithAccessDetails[]> {
+  const controller = new AbortController()
+  LoggerInstance.debug(
+    `Retrieving ${identifiers.length} assets from metadata cache ...`
+  )
+
+  const assets = await Promise.all(
+    identifiers.map((didAndService) =>
+      getAsset(config.metadataCacheUri, didAndService.did, controller.signal)
+    )
+  )
+
+  LoggerInstance.debug(
+    `Retrieve access details for ${identifiers.length} assets from subgraph ...`
+  )
+  const assetAccessDetails = await Promise.all(
+    assets.map((asset, i) => {
+      const serviceIndex =
+        asset.services.findIndex(
+          (service) => service.id === identifiers[i].serviceId
+        ) || 0
+
+      return getAccessDetails(
+        config.subgraphUri,
+        asset.datatokens[serviceIndex].address,
+        asset.services[serviceIndex].timeout,
+        web3.defaultAccount
+      )
+    })
+  )
+
+  return assets.map((asset, i) => ({
+    ...asset,
+    accessDetails: assetAccessDetails[i]
+  }))
 }
 
 export async function getStatus(computeStatusConfig: any) {
@@ -370,18 +397,31 @@ export async function getAccessDetails(
   }
 }
 
+export async function getAssetsWithPrice(
+  assets: AssetWithAccessDetails[],
+  web3: Web3,
+  config: Config,
+  providerFees?: ProviderFees
+): Promise<AssetWithAccessDetailsAndPrice[]> {
+  const assetsWithPrices = await Promise.all(
+    assets.map((asset) => getAssetWithPrice(asset, web3, config, providerFees))
+  )
+
+  return assetsWithPrices
+}
+
 /**
  * This will be used to get price including fees before ordering
- * @param {AssetExtended} asset
- * @return {Promise<OrdePriceAndFee>}
+ * @param {AssetWithAccessDetails} asset
+ * @return {Promise<AssetWithAccessDetailsAndPrice>}
  */
-export async function getOrderPriceAndFees(
+export async function getAssetWithPrice(
   asset: AssetWithAccessDetails,
   web3: Web3,
   config: Config,
   providerFees?: ProviderFees
-): Promise<OrderPriceAndFees> {
-  const orderPriceAndFee = {
+): Promise<AssetWithAccessDetailsAndPrice> {
+  const orderPriceAndFees = {
     price: '0',
     publisherMarketOrderFee: asset.accessDetails.publisherMarketOrderFee,
     consumeMarketOrderFee: '0',
@@ -401,22 +441,22 @@ export async function getOrderPriceAndFees(
       web3.defaultAccount,
       asset?.services[0].serviceEndpoint
     ))
-  orderPriceAndFee.providerFee = providerFees || initializeData.providerFee
+  orderPriceAndFees.providerFee = providerFees || initializeData.providerFee
 
   // fetch price and swap fees
   if (asset?.accessDetails?.type === 'fixed') {
     const fixed = await getFixedBuyPrice(asset?.accessDetails, config, web3)
-    orderPriceAndFee.price = fixed.baseTokenAmount
-    orderPriceAndFee.opcFee = fixed.oceanFeeAmount
+    orderPriceAndFees.price = fixed.baseTokenAmount
+    orderPriceAndFees.opcFee = fixed.oceanFeeAmount
   }
 
   // calculate full price, we assume that all the values are in ocean, otherwise this will be incorrect
-  orderPriceAndFee.price = new Decimal(+orderPriceAndFee.price || 0)
-    .add(new Decimal(+orderPriceAndFee?.consumeMarketOrderFee || 0))
-    .add(new Decimal(+orderPriceAndFee?.publisherMarketOrderFee || 0))
+  orderPriceAndFees.price = new Decimal(+orderPriceAndFees.price || 0)
+    .add(new Decimal(+orderPriceAndFees?.consumeMarketOrderFee || 0))
+    .add(new Decimal(+orderPriceAndFees?.publisherMarketOrderFee || 0))
     .toString()
 
-  return orderPriceAndFee
+  return { ...asset, orderPriceAndFees }
 }
 
 /**
@@ -445,7 +485,6 @@ export async function handleComputeOrder(
   asset: AssetWithAccessDetails,
   orderPriceAndFees: OrderPriceAndFees,
   accountId: string,
-  hasDatatoken: boolean,
   initializeData: ProviderComputeInitialize,
   config: Config,
   computeConsumerAddress?: string
@@ -504,9 +543,8 @@ export async function handleComputeOrder(
       asset,
       orderPriceAndFees,
       accountId,
-      hasDatatoken,
-      initializeData,
       config,
+      initializeData,
       computeConsumerAddress
     )
     LoggerInstance.debug('[compute] Order succeeded', txStartOrder)
@@ -516,14 +554,13 @@ export async function handleComputeOrder(
   }
 }
 
-async function startOrder(
+export async function startOrder(
   web3: Web3,
   asset: AssetWithAccessDetails,
   orderPriceAndFees: OrderPriceAndFees,
   accountId: string,
-  hasDatatoken: boolean,
-  initializeData: ProviderComputeInitialize,
   config: Config,
+  initializeData?: ProviderComputeInitialize,
   computeConsumerAddress?: string
 ): Promise<any> {
   const tx = await order(
@@ -532,7 +569,7 @@ async function startOrder(
     orderPriceAndFees,
     accountId,
     config,
-    initializeData.providerFee,
+    initializeData?.providerFee,
     computeConsumerAddress
   )
   LoggerInstance.debug('[compute] Asset ordered:', tx)
@@ -558,7 +595,7 @@ export async function reuseOrder(
   return tx
 }
 
-export async function order(
+async function order(
   web3: Web3,
   asset: AssetWithAccessDetails,
   orderPriceAndFees: OrderPriceAndFees,

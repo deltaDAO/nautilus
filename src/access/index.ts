@@ -2,7 +2,7 @@ import { LoggerInstance, ProviderInstance } from '@oceanprotocol/lib'
 import Web3 from 'web3'
 import { AccessConfig } from '../@types/Access'
 import { AccessDetails, AssetWithAccessDetails } from '../@types/Compute'
-import { getAccessDetails, getOrderPriceAndFees, order } from '../compute'
+import { getAccessDetails, getAssetWithPrice, startOrder } from '../compute'
 import { getAsset } from '../utils/aquarius'
 
 export async function access(accessConfig: AccessConfig) {
@@ -29,19 +29,18 @@ export async function access(accessConfig: AccessConfig) {
     return await downloadAssetFile({ ...asset, accessDetails }, web3, fileIndex)
   }
 
-  const orderPricesAndFees = await getOrderPriceAndFees(
+  const assetWithPrice = await getAssetWithPrice(
     assetWithAccessDetails,
     web3,
     config
   )
 
-  const orderTx = await order(
+  const orderTx = await startOrder(
     web3,
     assetWithAccessDetails,
-    orderPricesAndFees,
+    assetWithPrice.orderPriceAndFees,
     web3.defaultAccount,
-    config,
-    orderPricesAndFees.providerFee
+    config
   )
 
   assetWithAccessDetails.accessDetails.validOrderTx = orderTx

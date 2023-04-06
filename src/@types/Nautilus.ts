@@ -1,12 +1,5 @@
-import {
-  Config,
-  DatatokenCreateParams,
-  Metadata,
-  NftCreateData
-} from '@oceanprotocol/lib'
-import Web3 from 'web3'
+import { Config, Metadata } from '@oceanprotocol/lib'
 import { NautilusAsset } from '../nautilus/asset/asset'
-import { Nautilus } from '../nautilus/nautilus'
 import {
   DatatokenCreateParamsWithoutOwner,
   NftCreateDataWithoutOwner,
@@ -14,13 +7,16 @@ import {
   ServiceConfig
 } from './Publish'
 
+// TODO: check if all required configs are covered
+export type NautilusConfig = Omit<Config, 'chainId'>
+
+export interface NautilusOptions {
+  skipDefaultConfig: boolean
+}
+
 export interface IBuilder<T> {
   build: () => T
   reset: () => void
-}
-export interface INautilusBuilder extends IBuilder<Nautilus> {
-  setConfig: (chainId: number, config?: Config) => INautilusBuilder
-  setWeb3: (web3: Web3) => INautilusBuilder
 }
 
 export interface IAssetBuilder extends IBuilder<NautilusAsset> {
