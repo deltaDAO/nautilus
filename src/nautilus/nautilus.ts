@@ -4,6 +4,8 @@ import { NautilusConfig } from '../@types/Nautilus'
 import { AssetConfig } from '../@types/Publish'
 import { publishAsset } from '../publish'
 import { NautilusAsset } from './asset/asset'
+import { AccessConfig } from '../@types/Access'
+import { access } from '../access'
 
 export class Nautilus {
   private web3: Web3
@@ -25,6 +27,8 @@ export class Nautilus {
       )
     }
   }
+
+  logger = LoggerInstance
 
   private loadOceanConfig() {
     return new ConfigHelper().getConfig(this.chainId)
@@ -61,5 +65,12 @@ export class Nautilus {
     }
 
     return await publishAsset(config)
+  }
+
+  async access(accessConfig: Omit<AccessConfig, 'web3' | 'chainConfig'>) {
+    return await access({
+      ...accessConfig,
+      ...this.getChainConfig()
+    })
   }
 }

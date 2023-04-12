@@ -1,17 +1,12 @@
-import {
-  DatatokenCreateParams,
-  MetadataAlgorithm,
-  NftCreateData
-} from '@oceanprotocol/lib'
+import { MetadataAlgorithm } from '@oceanprotocol/lib'
 import { IAssetBuilder } from '../../@types/Nautilus'
 import {
   DatatokenCreateParamsWithoutOwner,
   MetadataConfig,
   NftCreateDataWithoutOwner,
-  PricingConfig,
   ServiceConfig
 } from '../../@types/Publish'
-import { NautilusAsset } from './asset'
+import { NautilusAsset, PricingConfigWithoutOwner } from './asset'
 
 export class AssetBuilder implements IAssetBuilder {
   private asset: NautilusAsset = new NautilusAsset()
@@ -56,7 +51,7 @@ export class AssetBuilder implements IAssetBuilder {
     return this
   }
 
-  setPricing(pricing: PricingConfig) {
+  setPricing(pricing: PricingConfigWithoutOwner) {
     this.asset.pricing = pricing
 
     return this

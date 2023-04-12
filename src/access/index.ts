@@ -23,7 +23,13 @@ import { getAsset } from '../utils/aquarius'
  * @returns
  */
 export async function access(accessConfig: AccessConfig) {
-  const { assetDid, config, web3, fileIndex, userdata } = accessConfig
+  const {
+    assetDid,
+    chainConfig: config,
+    web3,
+    fileIndex,
+    userdata
+  } = accessConfig
 
   const asset = await getAsset(config.metadataCacheUri, assetDid)
 

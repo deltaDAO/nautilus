@@ -11,11 +11,16 @@ import {
 import { params } from './constants/datatoken.constants'
 import { createData } from './constants/nft.constants'
 
+export type PricingConfigWithoutOwner = {
+  type: PricingConfig['type']
+  freCreationParams?: Omit<PricingConfig['freCreationParams'], 'owner'>
+}
+
 /* @internal */
 export class NautilusAsset {
   metadata: MetadataConfig
   services: ServiceConfig[] = []
-  pricing: PricingConfig
+  pricing: PricingConfigWithoutOwner
   nftCreateData: NftCreateDataWithoutOwner
   datatokenCreateParams: DatatokenCreateParamsWithoutOwner
   owner: string

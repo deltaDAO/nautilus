@@ -435,7 +435,7 @@ export async function getAssetWithPrice(
   web3: Web3,
   config: Config,
   providerFees?: ProviderFees,
-  userCustomparameters?: UserCustomParameters
+  userCustomParameters?: UserCustomParameters
 ): Promise<AssetWithAccessDetailsAndPrice> {
   const orderPriceAndFees = {
     price: '0',
@@ -457,7 +457,7 @@ export async function getAssetWithPrice(
       web3.defaultAccount,
       asset?.services[0].serviceEndpoint,
       undefined,
-      userCustomparameters
+      userCustomParameters
     ))
   LoggerInstance.debug('HERE I AM', initializeData)
   orderPriceAndFees.providerFee = providerFees || initializeData.providerFee
