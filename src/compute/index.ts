@@ -20,6 +20,7 @@ import {
   ProviderInstance,
   Service,
   unitsToAmount,
+  UserCustomParameters,
   ZERO_ADDRESS
 } from '@oceanprotocol/lib'
 import Decimal from 'decimal.js'
@@ -433,7 +434,8 @@ export async function getAssetWithPrice(
   asset: AssetWithAccessDetails,
   web3: Web3,
   config: Config,
-  providerFees?: ProviderFees
+  providerFees?: ProviderFees,
+  userCustomparameters?: UserCustomParameters
 ): Promise<AssetWithAccessDetailsAndPrice> {
   const orderPriceAndFees = {
     price: '0',
@@ -453,8 +455,11 @@ export async function getAssetWithPrice(
       asset?.services[0].id,
       0,
       web3.defaultAccount,
-      asset?.services[0].serviceEndpoint
+      asset?.services[0].serviceEndpoint,
+      undefined,
+      userCustomparameters
     ))
+  LoggerInstance.debug('HERE I AM', initializeData)
   orderPriceAndFees.providerFee = providerFees || initializeData.providerFee
 
   // fetch price and swap fees

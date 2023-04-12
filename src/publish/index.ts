@@ -57,6 +57,8 @@ export async function publishAsset(assetConfig: AssetConfig) {
     services
   }
 
+  LoggerInstance.debug({ prePublishDDO })
+
   // encrypt files
   const assetURL = {
     datatokenAddress,

@@ -34,4 +34,7 @@ export interface IAssetBuilder extends IBuilder<NautilusAsset> {
   setAlgorithm: (algorithm: Metadata['algorithm']) => IAssetBuilder
   setOwner: (owner: string) => IAssetBuilder
   setDatatokenNameAndSymbol: (dtName: string, dtSymbol: string) => IAssetBuilder
+  addAdditionalInformation: (addtionalInformation: {
+    [key: string]: any
+  }) => IAssetBuilder
 }

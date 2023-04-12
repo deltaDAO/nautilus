@@ -5,7 +5,11 @@ import {
 } from '@oceanprotocol/lib'
 import Web3 from 'web3'
 import { AccessConfig } from '../@types/Access'
-import { AccessDetails, AssetWithAccessDetails } from '../@types/Compute'
+import {
+  AccessDetails,
+  AssetWithAccessDetails,
+  AssetWithAccessDetailsAndPrice
+} from '../@types/Compute'
 import { getAccessDetails, getAssetWithPrice, startOrder } from '../compute'
 import { getAsset } from '../utils/aquarius'
 
@@ -37,23 +41,25 @@ export async function access(accessConfig: AccessConfig) {
 
   LoggerInstance.debug('[access] AccessDetails:', accessDetails)
 
+  const assetWithPrice = await getAssetWithPrice(
+    assetWithAccessDetails,
+    web3,
+    config,
+    undefined,
+    userdata
+  )
+
+  LoggerInstance.debug(
+    '[access] AssetWithprice:',
+    assetWithPrice.orderPriceAndFees
+  )
+
   if (isOwned(accessDetails)) {
     LoggerInstance.debug(
       `Found valid order for ${asset.id} with datatoken ${accessDetails.datatoken.address}`
     )
-    return await downloadAssetFile(
-      { ...asset, accessDetails },
-      web3,
-      fileIndex,
-      userdata
-    )
+    return await downloadAssetFile(assetWithPrice, web3, fileIndex, userdata)
   }
-
-  const assetWithPrice = await getAssetWithPrice(
-    assetWithAccessDetails,
-    web3,
-    config
-  )
 
   const orderTx = await startOrder(
     web3,
@@ -64,12 +70,7 @@ export async function access(accessConfig: AccessConfig) {
   )
 
   assetWithAccessDetails.accessDetails.validOrderTx = orderTx.transactionHash
-  return await downloadAssetFile(
-    assetWithAccessDetails,
-    web3,
-    fileIndex,
-    userdata
-  )
+  return await downloadAssetFile(assetWithPrice, web3, fileIndex, userdata)
 }
 
 function isOwned(accessDetails: AccessDetails) {
@@ -78,12 +79,13 @@ function isOwned(accessDetails: AccessDetails) {
 }
 
 async function downloadAssetFile(
-  asset: AssetWithAccessDetails,
+  asset: AssetWithAccessDetailsAndPrice,
   web3: Web3,
   fileIndex?: number,
   userCustomParameters?: UserCustomParameters
 ) {
   LoggerInstance.debug(`Requesting download url for asset ${asset.id}`)
+  LoggerInstance.debug({ asset, userCustomParameters })
   const downloadUrl: string = await ProviderInstance.getDownloadUrl(
     asset.id,
     web3.defaultAccount,

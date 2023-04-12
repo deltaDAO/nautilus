@@ -59,6 +59,7 @@ export class Nautilus {
       ...asset.getConfig(),
       ...this.getChainConfig()
     }
+
     return await publishAsset(config)
   }
 }

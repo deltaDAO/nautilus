@@ -96,6 +96,15 @@ export class AssetBuilder implements IAssetBuilder {
     return this
   }
 
+  addAdditionalInformation(addtionalInformation: { [key: string]: any }) {
+    this.asset.metadata.additionalInformation = {
+      ...this.asset.metadata.additionalInformation,
+      addtionalInformation
+    }
+
+    return this
+  }
+
   build() {
     // TODO: look for errors / missing input
     return this.asset
