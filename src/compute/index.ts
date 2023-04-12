@@ -12,14 +12,12 @@ import {
   FixedRateExchange,
   FreOrderParams,
   LoggerInstance,
-  LogLevel,
   OrderParams,
   PriceAndFees,
   ProviderComputeInitialize,
   ProviderFees,
   ProviderInstance,
   Service,
-  unitsToAmount,
   UserCustomParameters,
   ZERO_ADDRESS
 } from '@oceanprotocol/lib'
@@ -30,14 +28,14 @@ import {
   AccessDetails,
   AssetWithAccessDetails,
   AssetWithAccessDetailsAndPrice,
+  ComputeAsset as NautilusComputeAsset,
   ComputeConfig,
   ComputeResultConfig,
-  DidAndServiceId,
   OrderPriceAndFees
 } from '../@types/Compute'
 import {
-  TokenPriceQuery,
-  TokenPriceQuery_token as TokenPrice
+  TokenPriceQuery_token as TokenPrice,
+  TokenPriceQuery
 } from '../@types/subgraph/TokenPriceQuery'
 import { getDatatokenBalance, getServiceById, getServiceByName } from '../utils'
 import { getAsset } from '../utils/aquarius'
@@ -50,23 +48,26 @@ import { tokenPriceQuery } from '../utils/subgraph/queries'
 
 export async function compute(computeConfig: ComputeConfig) {
   const {
-    datasetDid,
-    algorithmDid,
+    dataset: datasetConfig,
+    algorithm: algorithmConfig,
     web3,
     config,
-    additionalDatasetDids,
-    options
+    additionalDatasets: additionalDatasetsConfig
   } = computeConfig
   const account = web3?.defaultAccount
 
-  if (!datasetDid || !algorithmDid || !web3 || !account) {
+  if (!datasetConfig || !algorithmConfig || !web3 || !account) {
     LoggerInstance.error('Missing config(s)', {
-      datasetDid,
-      algorithmDid,
+      datasetConfig,
+      algorithmConfig,
       account
     })
     throw new Error('Cannot start compute. Missing config(s).')
   }
+
+  const datasetDid = datasetConfig.did
+  const algorithmDid = algorithmConfig.did
+
   LoggerInstance.log(
     '[compute] Starting compute order for dataset',
     datasetDid,
@@ -76,9 +77,9 @@ export async function compute(computeConfig: ComputeConfig) {
     account
   )
 
-  const assetIdentifiers = [datasetDid, algorithmDid]
-  additionalDatasetDids?.forEach((id) => {
-    assetIdentifiers.push(id)
+  const assetIdentifiers = [datasetConfig, algorithmConfig]
+  additionalDatasetsConfig?.forEach((dataset) => {
+    assetIdentifiers.push(dataset)
   })
 
   try {
@@ -89,11 +90,13 @@ export async function compute(computeConfig: ComputeConfig) {
       web3
     )
 
-    const dataset = assets.find((asset) => asset.id === datasetDid.did)
-    const algo = assets.find((asset) => asset.id === algorithmDid.did)
-    const additionalDatasets = additionalDatasetDids
+    const dataset = assets.find((asset) => asset.id === datasetDid)
+    const algo = assets.find((asset) => asset.id === algorithmDid)
+    const additionalDatasets = additionalDatasetsConfig
       ? assets.filter((asset) =>
-          additionalDatasetDids.map((did) => did.did).includes(asset.id)
+          additionalDatasetsConfig
+            .map((dataset) => dataset.did)
+            .includes(asset.id)
         )
       : []
 
@@ -179,9 +182,10 @@ export async function compute(computeConfig: ComputeConfig) {
 
     LoggerInstance.log('[compute] Starting compute job.')
     const computeAsset: ComputeAsset = {
-      documentId: dataset.id,
+      documentId: datasetConfig.did,
       serviceId: dataset.services[0].id,
-      transferTxId: datasetOrderTx
+      transferTxId: datasetOrderTx,
+      ...datasetConfig
     }
 
     const output: ComputeOutput = {
@@ -198,10 +202,10 @@ export async function compute(computeConfig: ComputeConfig) {
       computeEnv?.id,
       computeAsset,
       {
-        documentId: algo.id,
+        documentId: algorithmConfig.did,
         serviceId: algo.services[0].id,
         transferTxId: algorithmOrderTx,
-        algocustomdata: options.algocustomdata
+        ...algorithmConfig
       },
       controller.signal,
       null,
@@ -218,7 +222,7 @@ export async function compute(computeConfig: ComputeConfig) {
 }
 
 export async function getAssetsWithAccessDetails(
-  identifiers: DidAndServiceId[],
+  identifiers: NautilusComputeAsset[],
   config: Config,
   web3: Web3
 ): Promise<AssetWithAccessDetails[]> {
@@ -228,8 +232,8 @@ export async function getAssetsWithAccessDetails(
   )
 
   const assets = await Promise.all(
-    identifiers.map((didAndService) =>
-      getAsset(config.metadataCacheUri, didAndService.did, controller.signal)
+    identifiers.map((asset) =>
+      getAsset(config.metadataCacheUri, asset.did, controller.signal)
     )
   )
 
@@ -459,7 +463,6 @@ export async function getAssetWithPrice(
       undefined,
       userCustomParameters
     ))
-  LoggerInstance.debug('HERE I AM', initializeData)
   orderPriceAndFees.providerFee = providerFees || initializeData.providerFee
 
   // fetch price and swap fees
