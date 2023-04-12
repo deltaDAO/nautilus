@@ -77,6 +77,13 @@ export function getAssetConfig(
   const owner = web3.defaultAccount
 
   const service = type === 'dataset' ? datasetService : algorithmService
+  if (serviceType === 'compute')
+    service.compute = {
+      allowRawAlgorithm: false,
+      allowNetworkAccess: false,
+      publisherTrustedAlgorithmPublishers: [],
+      publisherTrustedAlgorithms: []
+    }
   const services = [{ ...service, type: serviceType }]
 
   const config: AssetConfig = {
