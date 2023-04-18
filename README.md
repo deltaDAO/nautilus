@@ -3,6 +3,7 @@
 A typescript library helping to navigate the OCEAN. It enables configurable automated publishing and consumption of assets in any [Ocean Protocol](https://oceanprotocol.com) ecosystem.
 
 - [Automated Publishing](#automated-publishing)
+- [Automated Compute Jobs](#automated-compute-jobs)
 
 ## Configuring a new Nautilus Instance
 
@@ -180,5 +181,79 @@ const result = await nautilus.publish(asset)
 If all went well, you should be able to browse the asset on any OceanMarket connected to the network that was published on, by simply using its DID, e.g.:
 `https://market.oceanprotocol.com/asset/{did}`
 
-<!-- TODO: Add Compute -->
+## Automated Compute Jobs
+
+The `Nautilus` instance we created in the setup step provides access to a `compute()` function that we can use to start new compute jobs.
+This includes all potentially necessary orders for required datatokens as well as the signed request towards Ocean Provider to start the compute job itself.
+
+The following values are required to start a new compute job:
+
+```ts
+const dataset = {
+  did: 'did:op:123abc...' // any 'compute' dataset
+}
+
+const algorithm = {
+  did: 'did:op:123abc...' // any algorithm allowed to be run on the given dataset
+}
+
+const computeConfig = {
+  dataset,
+  algorithm
+}
+```
+
+To start the new compute job simply call the compute function:
+
+```ts
+const computeJob = await nautilus.compute(computeConfig)
+```
+
+In addition to that you can also specify some optional properties if needed.
+Both the dataset and algorithm support custom userdata that might be passed to the services:
+
+```ts
+const datasetOrAlgorithm = {
+  did: 'did:op:123abc',
+  userdata: {
+    myParam: 'myValue',
+    anotherParam: 123,
+    booleanParam: false
+  }
+}
+```
+
+For algorithms you are also able to pass `algocustomdata` that is needed for the algorithm to run according to user requirements:
+
+```ts
+const algorithm = {
+  did: 'did:op:123abc',
+  algocustomdata: {
+    myParam: 'myValue',
+    anotherParam: 123,
+    booleanParam: false
+  }
+}
+```
+
+Additionally, it is possible to pass a specific serviceId for datasets and algorithms. This will be used when selecting the service of the asset to be used for computation:
+
+> **Please note that this feature is not fully supported yet.**
+
+```ts
+const datasetOrAlgorithm = {
+  ...datasetOrAlgorithm,
+  serviceId: 'specific-serviceId-of-compute-service'
+}
+```
+
+When you are happy with the configuration you can use the `Nautilus` instance just as before to start the new compute job:
+
+```ts
+const computeJob = await nautilus.compute({
+  dataset: datasetOrAlgorithm,
+  algorithm
+})
+```
+
 <!-- TODO: Add Access -->
