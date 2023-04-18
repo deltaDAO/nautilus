@@ -6,7 +6,7 @@ A typescript library helping to navigate the OCEAN. It enables configurable auto
 
 ## Configuring a new Nautilus Instance
 
-You can use the `NautilusBuilder` class provided to setup a new `Nautilus` instance to perform automated tasks, like publish & consume.
+Setting up a new `Nautilus` instance to perform automated tasks, like publish & consume, is rather simple.
 
 First make sure to setup the `Web3` instance to use:
 
@@ -14,7 +14,7 @@ First make sure to setup the `Web3` instance to use:
 const web3 = new Web3('https://rpc.genx.minimal-gaia-x.eu') // can be replaced with any Ocean Protocol supported network
 ```
 
-Then you have to add the account you want to use for the automations:
+Next, add the account you want to use for the automations:
 
 ```ts
 // This example assumes you have an environment variable named PRIVATE_KEY
@@ -24,45 +24,34 @@ web3.eth.accounts.wallet.add(account)
 web3.defaultAccount = account.address // currently required, will be optional in later versions
 ```
 
-Now you can use the builder to construct a new `Nautilus` instance:
+Now you can use the static `create()` method of the `Nautilus` class to construct a new instance:
 
 ```ts
-import { NautilusBuilder } from '@deltadao/nautilus'
+// import the Natilus class
+import { Nautilus } from '@deltadao/nautilus'
 
-const chainId = 4
-
-const nautilusBuilder = new NautilusBuilder()
-nautilusBuilder
-  .setWeb3(web3)
-  // load the OceanConfig for chainId = 4 (Rinkeby)
-  .setConfig(chainId)
+// create the instance
+const nautilus = await Nautilus.create(web3)
 ```
 
-If want to use a custom configuration, you can set an additional parameter in the `setConfig` call. For guidance on which configurations are needed you can have a look at the [Ocean Library Docs](https://docs.oceanprotocol.com/building-with-ocean/using-ocean-libraries/configuration#create-a-configuration-file).
+If want to use a custom configuration, you can set an additional parameter in the `create` call. For guidance on which configurations are needed you can have a look at the [Ocean Library Docs](https://docs.oceanprotocol.com/building-with-ocean/using-ocean-libraries/configuration#create-a-configuration-file).
 
 ```ts
 // Custom config, e.g.:
 // Reference the docs linked above for a complete overview
+// The provided values will overwrite the default values loaded via ocean.js (see docs linked above)
 const customConfig = {
-  ...new ConfigHelper().getConfig(chainId),
-  oceanTokenAddress: '0x...',
+  metadataCacheUri: 'https://link.to.my/aquarius/instance',
+  providerUri: 'https://link.to.my/ocean/provider',
   nodeUri: 'https://rpc.node.uri/'
   // ...
 }
 
 // Setting the custom config in addition to the chainId
-nautilusBuilder.setConfig(chainId, customConfig)
+const customNautilus = await Nautilus.create(web3, customConfig)
 ```
 
-Finally, after the configuration is complete, we can now build the `Nautilus` instance to be used to publish and consume assets on the specified network:
-
-```ts
-const nautilus = nautilusBuilder.build()
-
-// You can now use the Nautilus functions like
-// nautilus.publish() etc.
-// See a detailed flow below.
-```
+We now have a `Nautilus` instance that can be used to publish and consume assets on the specified network.
 
 ## Automated Publishing
 
