@@ -16,7 +16,7 @@ describe('Access', () => {
     const fileUrl = await access({
       assetDid,
       web3: getWeb3(),
-      config: getConfig(),
+      chainConfig: getConfig(),
       userdata: {
         serialNumber
       }

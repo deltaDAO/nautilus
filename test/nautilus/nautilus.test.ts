@@ -9,15 +9,14 @@ describe('Nautilus', () => {
     LoggerInstance.setLevel(LogLevel.Verbose)
   })
 
-  it('should initialize correctly', () => {
+  it('should initialize correctly', async () => {
     const web3 = getWeb3()
-    const { chainId, ...config } = chainConfig
 
-    const nautilus = new Nautilus(web3, chainId, config)
+    const nautilus = await Nautilus.create(web3, chainConfig)
 
     // TODO: ignoring errors because of private attributes
     // @ts-ignore
-    assert.ok(nautilus.config.chainId === chainId)
+    assert.ok(nautilus.config.chainId === chainConfig.chainId)
     // @ts-ignore
     assert.deepEqual(nautilus.web3, web3)
     // @ts-ignore

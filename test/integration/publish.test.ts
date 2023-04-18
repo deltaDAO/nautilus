@@ -10,7 +10,7 @@ import { getWeb3 } from '../fixtures/Web3'
 describe('Publishing Integration Test', () => {
   it('publishes an asset built with AssetBuilder and Nautilus instance', async () => {
     const web3 = getWeb3()
-    const nautilus = new Nautilus(web3, 100, getConfig())
+    const nautilus = await Nautilus.create(web3, getConfig())
 
     const assetBuilder = new AssetBuilder()
 
