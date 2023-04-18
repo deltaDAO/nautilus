@@ -1,4 +1,4 @@
-import { Config, Metadata } from '@oceanprotocol/lib'
+import { Metadata } from '@oceanprotocol/lib'
 import { NautilusAsset } from '../nautilus/asset/asset'
 import {
   DatatokenCreateParamsWithoutOwner,
@@ -6,9 +6,6 @@ import {
   PricingConfig,
   ServiceConfig
 } from './Publish'
-
-// TODO: check if all required configs are covered
-export type NautilusConfig = Omit<Config, 'chainId'>
 
 export interface NautilusOptions {
   skipDefaultConfig: boolean

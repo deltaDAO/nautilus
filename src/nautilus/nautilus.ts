@@ -1,37 +1,53 @@
 import { Config, ConfigHelper, LoggerInstance } from '@oceanprotocol/lib'
 import Web3 from 'web3'
-import { NautilusConfig } from '../@types/Nautilus'
+import { AccessConfig } from '../@types/Access'
+import { ComputeConfig } from '../@types/Compute'
 import { AssetConfig } from '../@types/Publish'
+import { access } from '../access'
+import { compute } from '../compute'
 import { publishAsset } from '../publish'
 import { NautilusAsset } from './asset/asset'
-import { AccessConfig } from '../@types/Access'
-import { access } from '../access'
 
 export class Nautilus {
   private web3: Web3
-  private chainId: number
   private config: Config
 
-  constructor(web3: Web3, chainId: number, config?: NautilusConfig) {
+  private constructor(web3: Web3) {
     this.web3 = web3
-    this.chainId = chainId
-
-    this.config = { ...this.loadOceanConfig(), chainId }
-
-    if (config) this.config = { ...this.config, ...config }
-
-    LoggerInstance.debug(this.config)
-    if (!this.hasValidConfig()) {
-      throw Error(
-        'Could not initialize. No default config found for given chainId.'
-      )
-    }
   }
 
   logger = LoggerInstance
 
-  private loadOceanConfig() {
-    return new ConfigHelper().getConfig(this.chainId)
+  static async create(web3: Web3, config?: Partial<Config>) {
+    const instance = new Nautilus(web3)
+
+    await instance.init(config)
+
+    return instance
+  }
+
+  // #region private helpers
+  private async init(config?: Partial<Config>) {
+    await this.loadOceanConfig(config)
+  }
+
+  private async loadOceanConfig(config?: Partial<Config>) {
+    const chainId = await this.web3.eth.getChainId()
+
+    const oceanConfig = new ConfigHelper().getConfig(chainId)
+    if (!oceanConfig)
+      LoggerInstance.debug('No default config found for given chainId')
+
+    this.config = {
+      ...oceanConfig,
+      // overwrite user defined properties
+      ...config
+    }
+
+    // TODO: improve error message
+    if (!this.hasValidConfig()) {
+      throw Error('Cannot initialize using the given config & web3.')
+    }
   }
 
   // TODO: check if additional props are required
@@ -57,14 +73,14 @@ export class Nautilus {
       chainConfig: this.config
     }
   }
+  // #endregion
 
+  // #region public functions
   async publish(asset: NautilusAsset) {
-    const config: AssetConfig = {
+    return await publishAsset({
       ...asset.getConfig(),
       ...this.getChainConfig()
-    }
-
-    return await publishAsset(config)
+    })
   }
 
   async access(accessConfig: Omit<AccessConfig, 'web3' | 'chainConfig'>) {
@@ -73,4 +89,12 @@ export class Nautilus {
       ...this.getChainConfig()
     })
   }
+
+  async compute(computeConfig: Omit<ComputeConfig, 'web3' | 'chainConfig'>) {
+    return await compute({
+      ...computeConfig,
+      ...this.getChainConfig()
+    })
+  }
+  // #endregion
 }
