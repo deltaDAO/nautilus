@@ -1,5 +1,5 @@
 {
-  "name": "@delta-dao/nautilus",
+  "name": "@deltadao/nautilus",
   "source": "./src/index.ts",
   "version": "0.1.0-alpha.6",
   "description": "A typescript library enabling automated publish & consume in Ocean Protocol ecosystems",

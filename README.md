@@ -27,7 +27,7 @@ web3.defaultAccount = account.address // currently required, will be optional in
 Now you can use the builder to construct a new `Nautilus` instance:
 
 ```ts
-import { NautilusBuilder } from '@delta-dao/nautilus'
+import { NautilusBuilder } from '@deltadao/nautilus'
 
 const chainId = 4
 
