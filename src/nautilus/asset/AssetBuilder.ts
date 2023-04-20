@@ -6,7 +6,12 @@ import {
   NftCreateDataWithoutOwner,
   ServiceConfig
 } from '../../@types/Publish'
-import { NautilusAsset, PricingConfigWithoutOwner } from './asset'
+import { NautilusAsset, PricingConfigWithoutOwner } from './NautilusAsset'
+import {
+  FileTypes,
+  NautilusService,
+  ServiceTypes
+} from './service/NautilusService'
 
 export class AssetBuilder implements IAssetBuilder {
   private asset: NautilusAsset = new NautilusAsset()
@@ -57,7 +62,7 @@ export class AssetBuilder implements IAssetBuilder {
     return this
   }
 
-  addService(service: ServiceConfig) {
+  addService(service: NautilusService<ServiceTypes, FileTypes>) {
     this.asset.services.push(service)
 
     return this

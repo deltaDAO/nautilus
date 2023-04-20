@@ -3,7 +3,7 @@ import {
   ConsumerParameterSelectOption,
   ConsumerParameterType,
   NautilusConsumerParameter
-} from './consumerParameter'
+} from './NautilusConsumerParameter'
 
 export class ConsumerParameterBuilder<T extends ConsumerParameterType>
   implements IBuilder<NautilusConsumerParameter<T>>

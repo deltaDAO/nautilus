@@ -1,11 +1,15 @@
 import assert from 'assert'
 import { AssetBuilder, Nautilus } from '../../src'
-import { ServiceConfig } from '../../src/@types/Publish'
 import { ConsumerParameterBuilder } from '../../src/nautilus/asset/consumerParameters'
-import { datasetService } from '../fixtures/AssetConfig'
+import {
+  FileTypes,
+  ServiceTypes,
+  ServiceBuilder
+} from '../../src/nautilus/asset/service'
 import { getConfig } from '../fixtures/Config'
 import { nftParams } from '../fixtures/NftCreateData'
 import { getWeb3 } from '../fixtures/Web3'
+import { datasetService } from '../fixtures/AssetConfig'
 
 describe('Publishing Integration Test', () => {
   it('publishes an asset built with AssetBuilder and Nautilus instance', async () => {
@@ -23,17 +27,17 @@ describe('Publishing Integration Test', () => {
       .setRequired(false)
       .build()
 
-    const service: ServiceConfig = {
-      ...datasetService,
-      files: [
-        {
-          type: 'url',
-          method: 'GET',
-          url: 'https://642ef38e2b883abc641b2d94.mockapi.io/sockets'
-        }
-      ],
-      consumerParameters: [serialNumberParam]
-    }
+    const serviceBuilder = new ServiceBuilder(
+      ServiceTypes.ACCESS,
+      FileTypes.URL
+    )
+
+    const service = serviceBuilder
+      .setServiceEndpoint(datasetService.serviceEndpoint)
+      .setTimeout(datasetService.timeout)
+      .addFile(datasetService.files[0])
+      .addConsumerParameter(serialNumberParam)
+      .build()
 
     const asset = assetBuilder
       .setAuthor('testAuthor')

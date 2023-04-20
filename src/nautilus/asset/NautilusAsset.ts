@@ -10,6 +10,11 @@ import {
 } from '../../@types/Publish'
 import { params } from './constants/datatoken.constants'
 import { createData } from './constants/nft.constants'
+import {
+  FileTypes,
+  NautilusService,
+  ServiceTypes
+} from './service/NautilusService'
 
 export type PricingConfigWithoutOwner = {
   type: PricingConfig['type']
@@ -19,7 +24,7 @@ export type PricingConfigWithoutOwner = {
 /* @internal */
 export class NautilusAsset {
   metadata: MetadataConfig
-  services: ServiceConfig[] = []
+  services: NautilusService<ServiceTypes, FileTypes>[] = []
   pricing: PricingConfigWithoutOwner
   nftCreateData: NftCreateDataWithoutOwner
   datatokenCreateParams: DatatokenCreateParamsWithoutOwner
@@ -77,7 +82,7 @@ export class NautilusAsset {
 
     return {
       metadata: this.metadata,
-      services: this.services,
+      services: this.services.map((service) => service.getConfig()),
       pricing: {
         ...this.pricing,
         freCreationParams: {

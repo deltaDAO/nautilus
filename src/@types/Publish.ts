@@ -13,7 +13,7 @@ import Web3 from 'web3'
 import {
   ConsumerParameterType,
   NautilusConsumerParameter
-} from '../nautilus/asset/consumerParameters/consumerParameter'
+} from '../nautilus/asset/consumerParameters/NautilusConsumerParameter'
 
 export interface CredentialConfig extends Credentials {}
 
