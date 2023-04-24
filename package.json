@@ -62,7 +62,6 @@
     "prettier": "^2.8.7",
     "release-it": "^15.10.0",
     "ts-node": "^10.9.1",
-    "typedoc": "^0.24.6",
     "typescript": "^5.0.2"
   },
   "overrides": {
@@ -85,13 +84,5 @@
     "npm": {
       "publish": false
     }
-  },
-  "typedoc": {
-    "entryPoints": [
-      "src/index.ts",
-      "src/@types/index.ts"
-    ],
-    "readmeFile": "./README.md",
-    "out": "docs"
   }
 }

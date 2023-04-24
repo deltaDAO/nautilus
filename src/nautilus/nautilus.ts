@@ -90,6 +90,9 @@ export class Nautilus {
     })
   }
 
+  /**
+   * @param accessConfig configuration object
+   */
   async access(accessConfig: Omit<AccessConfig, 'web3' | 'chainConfig'>) {
     return await access({
       ...accessConfig,
