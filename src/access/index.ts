@@ -15,11 +15,6 @@ import { getAsset } from '../utils/aquarius'
 
 /**
  * @param {AccessConfig} accessConfig Configuration of the access request
- * @param {string} accessConfig.assetDid The document id of the asset to access
- * @param {Web3} accessConfig.web3 The web3 instance to use to make the access request
- * @param {Config} accessConfig.config The Ocean Configuration needed to make the access requests
- * @param {number} [accessConfig.fileIndex=0] The file index of the asset to be requested.
- * @param {UserCustomParameters} [accessConfig.userdata] Custom userdata that is needed for the access request.
  * @returns url of the downloadable file
  */
 export async function access(accessConfig: AccessConfig) {

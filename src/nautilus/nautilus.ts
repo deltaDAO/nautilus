@@ -9,6 +9,7 @@ import { publishAsset } from '../publish'
 import { NautilusAsset } from './asset/asset'
 
 /**
+ * @class
  * Nautilus class
  */
 export class Nautilus {
@@ -23,11 +24,8 @@ export class Nautilus {
 
   /**
    * Creates a new Nautilus instance
-   * @param web3 Web3 instance to use with Nautilus
-   * @param config Optional OceanConfig
-   * @returns {Nautilus} created instance
    */
-  static async create(web3: Web3, config?: Partial<Config>) {
+  static async create(web3: Web3, config?: Partial<Config>): Promise<Nautilus> {
     const instance = new Nautilus(web3)
 
     await instance.init(config)

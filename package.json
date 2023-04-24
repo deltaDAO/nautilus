@@ -14,6 +14,8 @@
   "scripts": {
     "start": "npm run clean && tsc -w",
     "build": "npm run clean && microbundle build --format modern,esm,cjs,umd --compress --tsconfig tsconfig.json",
+    "docs:build": "typedoc",
+    "docs:watch": "typedoc --watch",
     "changelog": "auto-changelog -p",
     "clean": "rm -rf ./dist/",
     "mocha": "TS_NODE_PROJECT='./test/tsconfig.json' mocha --config=test/.mocharc.json --node-env=test --exit",
@@ -44,7 +46,6 @@
     "web3": "^1.9.0"
   },
   "devDependencies": {
-    "@babel/preset-typescript": "^7.21.4",
     "@types/mocha": "^10.0.1",
     "@types/node": "^18.15.11",
     "@typescript-eslint/eslint-plugin": "^5.56.0",
@@ -56,12 +57,12 @@
     "eslint-config-oceanprotocol": "^2.0.4",
     "eslint-config-prettier": "^8.8.0",
     "eslint-plugin-prettier": "^4.2.1",
-    "jsdoc-babel": "^0.5.0",
     "microbundle": "^0.15.1",
     "mocha": "^10.2.0",
     "prettier": "^2.8.7",
     "release-it": "^15.10.0",
     "ts-node": "^10.9.1",
+    "typedoc": "^0.24.6",
     "typescript": "^5.0.2"
   },
   "overrides": {
@@ -84,5 +85,13 @@
     "npm": {
       "publish": false
     }
+  },
+  "typedoc": {
+    "entryPoints": [
+      "src/index.ts",
+      "src/@types/index.ts"
+    ],
+    "readmeFile": "./README.md",
+    "out": "docs"
   }
 }
