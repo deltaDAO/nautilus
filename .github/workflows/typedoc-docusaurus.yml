@@ -37,20 +37,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
       - name: Install dependencies
+        run: npm ci
+      - name: Install docusaurus dependencies
         working-directory: ./docs
         run: npm ci
       - name: Setup Pages
-        working-directory: ./docs
         uses: actions/configure-pages@v3
+      - name: Set version env
+        run: echo "DOCS_VERSION=${{ inputs.version || env.GITHUB_REF_NAME || 'test' }}" >> $GITHUB_ENV
       - name: Create new docs version
         working-directory: ./docs
-        run: npm run docusaurus docs:version ${{ inputs.version }}
+        run: npm run docusaurus docs:version ${{ env.DOCS_VERSION }}
       - name: Build Docs
         working-directory: ./docs
-        run: npm run build && mv build _site
+        run: npm run build
       - name: Upload artifact
-        working-directory: ./docs
         uses: actions/upload-pages-artifact@v1
+        with:
+          path: './docs/build'
 
   # Deployment job
   deploy:
