@@ -3,7 +3,7 @@ name: Deploy jsDocs to GitHub Pages
 on:
   push:
     branches:
-      - main
+      - feat/docs
   workflow_call:
     inputs:
       version:
