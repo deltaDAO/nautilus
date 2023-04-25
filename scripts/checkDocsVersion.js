@@ -25,9 +25,10 @@ function checkVersion(version) {
 }
 
 function handleVersionDoesNotExist(version) {
-  throw new Error(
-    `The version (${version}) you are trying to release has not docs ready to use. Make sure to generate the docs first and re-run the release command.`
+  process.stderr(
+    `\u274C The version (${version}) you are trying to release has not docs ready to use. Make sure to generate the docs first and re-run the release command.`
   )
+  throw new Error(``)
 }
 
 const version = process.argv

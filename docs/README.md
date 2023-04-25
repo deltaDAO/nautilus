@@ -1,17 +1,27 @@
-# Website
+# Nautilus Docs
 
-This website is built using [Docusaurus 2](https://docusaurus.io/), a modern static website generator.
+## Release
 
-### Installation
+To build new docs make sure to run the `start` command first, which generates the lates version of the documentation via [typedoc](https://typedoc.org/). See also: https://www.npmjs.com/package/docusaurus-plugin-typedoc
+
+Once you are happy with the documentation, make sure the version you are trying to release has the docs generated correctly:
 
 ```
-$ yarn
+$ npm run docusaurus docs:version {{ YOUR_VERSION }}
+```
+
+This will create a folder in the `versioned_docs` directory holding the documentation for your release version.
+
+For example, releasing version `1.0.0` expects that the docs previously have been generated using
+
+```
+$ npm run docusaurus docs:version 1.0.0
 ```
 
 ### Local Development
 
 ```
-$ yarn start
+$ npm start
 ```
 
 This command starts a local development server and opens up a browser window. Most changes are reflected live without having to restart the server.
@@ -19,23 +29,7 @@ This command starts a local development server and opens up a browser window. Mo
 ### Build
 
 ```
-$ yarn build
+$ npm build
 ```
 
 This command generates static content into the `build` directory and can be served using any static contents hosting service.
-
-### Deployment
-
-Using SSH:
-
-```
-$ USE_SSH=true yarn deploy
-```
-
-Not using SSH:
-
-```
-$ GIT_USER=<Your GitHub username> yarn deploy
-```
-
-If you are using GitHub pages for hosting, this command is a convenient way to build the website and push to the `gh-pages` branch.
