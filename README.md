@@ -256,4 +256,30 @@ const computeJob = await nautilus.compute({
 })
 ```
 
-<!-- TODO: Add Access -->
+## Access
+
+To access assets or more specifically their respective services, we can make use of the `access()` function provided by the `Nautilus` instance we created in the setup step.
+This includes all potentially necessary orders for required datatokens as well as the signed request towards Ocean Provider needed to grant the access to the service.
+
+In the most basic version, nothing else than the did of the asset to be accessed is needed:
+
+```ts
+const accessUrl = await nautilus.access({
+  assetDid: 'did:op:123abc'
+})
+```
+
+In addition to that, just as with Computejobs, you can also provide custom userdata that may be needed to consume the asset:
+
+```ts
+const accessConfig = {
+  assetDid: 'did:op:123abc',
+  userdata: {
+    myParam: 'myValue',
+    anotherParam: 123,
+    booleanParam: false
+  }
+}
+
+const accessUrl = await nautilus.access(accessConfig)
+```
