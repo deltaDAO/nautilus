@@ -36,18 +36,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-      - name: Install dependencies
-        run: npm ci
       - name: Install docusaurus dependencies
         working-directory: ./docs
         run: npm ci
       - name: Setup Pages
         uses: actions/configure-pages@v3
-      - name: Set version env
-        run: echo "DOCS_VERSION=${{ inputs.version || env.GITHUB_REF_NAME || 'test' }}" >> $GITHUB_ENV
-      - name: Create new docs version
-        working-directory: ./docs
-        run: npm run docusaurus docs:version ${{ env.DOCS_VERSION }}
       - name: Build Docs
         working-directory: ./docs
         run: npm run build

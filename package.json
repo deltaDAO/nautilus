@@ -69,6 +69,7 @@
   },
   "release-it": {
     "hooks": {
+      "before:bump": "node scripts/checkDocsVersion version=${version}",
       "after:bump": "npm run build && npm run changelog"
     },
     "plugins": {},
