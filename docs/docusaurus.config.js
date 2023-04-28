@@ -68,6 +68,11 @@ const config = {
             label: 'API'
           },
           {
+            type: 'docsVersionDropdown',
+            position: 'right',
+            dropdownActiveClassDisabled: true
+          },
+          {
             href: 'https://www.npmjs.com/package/@deltadao/nautilus',
             label: 'npm',
             position: 'right'
