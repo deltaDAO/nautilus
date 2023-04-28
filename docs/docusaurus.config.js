@@ -16,7 +16,7 @@ const config = {
   // For GitHub pages deployment, it is often '/<projectName>/'
   baseUrl: '/nautilus',
 
-  plugins: ['docusaurus-plugin-typedoc'],
+  plugins: [['docusaurus-plugin-typedoc', { id: 'default' }]],
 
   // GitHub pages deployment config.
   // If you aren't using GitHub pages, you don't need these.
