@@ -20,7 +20,7 @@ import { getAsset } from '../utils/aquarius'
  * @param {Config} accessConfig.config The Ocean Configuration needed to make the access requests
  * @param {number} [accessConfig.fileIndex=0] The file index of the asset to be requested.
  * @param {UserCustomParameters} [accessConfig.userdata] Custom userdata that is needed for the access request.
- * @returns
+ * @returns url of the downloadable file
  */
 export async function access(accessConfig: AccessConfig) {
   const {

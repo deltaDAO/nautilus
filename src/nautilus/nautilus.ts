@@ -8,6 +8,9 @@ import { compute } from '../compute'
 import { publishAsset } from '../publish'
 import { NautilusAsset } from './asset/NautilusAsset'
 
+/**
+ * Nautilus class
+ */
 export class Nautilus {
   private web3: Web3
   private config: Config
@@ -18,6 +21,12 @@ export class Nautilus {
 
   logger = LoggerInstance
 
+  /**
+   * Creates a new Nautilus instance
+   * @param web3 Web3 instance to use with Nautilus
+   * @param config Optional OceanConfig
+   * @returns {Nautilus} created instance
+   */
   static async create(web3: Web3, config?: Partial<Config>) {
     const instance = new Nautilus(web3)
 
