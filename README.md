@@ -138,7 +138,7 @@ For more info on the different types and their available configuration, please r
 
 It is also possible to publish assets with `consumerParameters`. These are parameters that consumers can provide values for during consumption. For examples and the full overview on these parameters you can refer to the [Consumer Parameters section of the Ocean Protocol Docs](https://docs.oceanprotocol.com/core-concepts/did-ddo#consumer-parameters).
 
-We can use the `ServiceBuilder` in combination with the `ConsumerParameterBuilder` to create this with the Nautilus API:
+We can use the `ServiceBuilder` in combination with the `ConsumerParameterBuilder` to create this with the Nautilus API. The supported types are `'text'`, `'number'`, `'boolean'` and `'select'`.
 
 ```ts
 const consumerParameterBuilder = new ConsumerParameterBuilder('text')
@@ -153,8 +153,6 @@ const textParam = consumerParameterBuilder
 
 serviceBuilder.addConsumerParameter(textParam)
 ```
-
-The supported types are `text`, `number`, `boolean` and `select`.
 
 For `select` type parameters you have access to an additional function, to add options that the consumer can choose from:
 
