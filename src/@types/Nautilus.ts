@@ -1,6 +1,7 @@
 import { Metadata, PublisherTrustedAlgorithm } from '@oceanprotocol/lib'
 import { NautilusAsset } from '../nautilus/asset/NautilusAsset'
 import {
+  ConsumerParameterType,
   DatatokenCreateParamsWithoutOwner,
   NftCreateDataWithoutOwner,
   PricingConfig,
@@ -12,10 +13,7 @@ import {
   ServiceFileType,
   ServiceTypes
 } from '../nautilus/asset/service/NautilusService'
-import {
-  ConsumerParameterType,
-  NautilusConsumerParameter
-} from '../nautilus/asset/consumerParameters'
+import { NautilusConsumerParameter } from '../nautilus/asset/consumerParameters'
 
 export interface NautilusOptions {
   skipDefaultConfig: boolean
@@ -56,7 +54,7 @@ export interface IServiceBuilder<S extends ServiceTypes, F extends FileTypes>
   setServiceEndpoint: (endpoint: string) => IServiceBuilder<S, F>
   addFile: (file: ServiceFileType<F>) => IServiceBuilder<S, F>
   addConsumerParameter: (
-    parameter: NautilusConsumerParameter<ConsumerParameterType>
+    parameter: NautilusConsumerParameter
   ) => IServiceBuilder<S, F>
   addTrustedAlgorithmPublisher: (publisher: string) => IServiceBuilder<S, F>
   addTrustedAlgorithm: (

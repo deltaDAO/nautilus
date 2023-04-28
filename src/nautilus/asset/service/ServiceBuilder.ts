@@ -6,10 +6,8 @@ import {
   ServiceFileType,
   ServiceTypes
 } from './NautilusService'
-import {
-  ConsumerParameterType,
-  NautilusConsumerParameter
-} from '../consumerParameters'
+import { NautilusConsumerParameter } from '../consumerParameters'
+import { ConsumerParameterType } from '../../../@types/Publish'
 
 export class ServiceBuilder<
   ServiceType extends ServiceTypes,
@@ -61,9 +59,7 @@ export class ServiceBuilder<
     return this
   }
 
-  addConsumerParameter(
-    parameter: NautilusConsumerParameter<ConsumerParameterType>
-  ) {
+  addConsumerParameter(parameter: NautilusConsumerParameter) {
     this.service.consumerParameters.push(parameter)
 
     return this

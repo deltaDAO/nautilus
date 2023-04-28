@@ -1,22 +1,23 @@
-export type ConsumerParameterType = 'text' | 'number' | 'boolean' | 'select'
+import {
+  ConsumerParameter,
+  ConsumerParameterSelectOption,
+  ConsumerParameterType
+} from '../../../@types/Publish'
 
-export type ConsumerParameterSelectOption = {
-  [value: string]: string
-}
-
-export class NautilusConsumerParameter<T extends ConsumerParameterType> {
+export class NautilusConsumerParameter implements ConsumerParameter {
   name: string
-  type: T
+  type: ConsumerParameterType
   label: string
   required: boolean = false
   description: string
-  default: T extends 'number'
-    ? number
-    : T extends 'boolean'
-    ? boolean
-    : T extends 'select'
-    ? ConsumerParameterSelectOption[]
-    : string
+  default: string
 
   options?: ConsumerParameterSelectOption[]
+
+  getConfig() {
+    return {
+      ...this,
+      options: this.options ? JSON.stringify(this.options) : undefined
+    }
+  }
 }

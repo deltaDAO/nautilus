@@ -1,23 +1,24 @@
+import { LoggerInstance } from '@oceanprotocol/lib'
 import { IBuilder } from '../../../@types/Nautilus'
 import {
   ConsumerParameterSelectOption,
-  ConsumerParameterType,
-  NautilusConsumerParameter
-} from './NautilusConsumerParameter'
+  ConsumerParameterType
+} from '../../../@types/Publish'
+import { NautilusConsumerParameter } from './NautilusConsumerParameter'
 
-export class ConsumerParameterBuilder<T extends ConsumerParameterType>
-  implements IBuilder<NautilusConsumerParameter<T>>
+export class ConsumerParameterBuilder
+  implements IBuilder<NautilusConsumerParameter>
 {
-  private consumerParameter = new NautilusConsumerParameter<T>()
-
-  constructor(type: T) {
-    this.consumerParameter.type = type
-
-    if (type === 'select') this.consumerParameter.options = []
-  }
+  private consumerParameter = new NautilusConsumerParameter()
 
   reset() {
-    this.consumerParameter = new NautilusConsumerParameter<T>()
+    this.consumerParameter = new NautilusConsumerParameter()
+  }
+
+  setType(type: ConsumerParameterType) {
+    this.consumerParameter.type = type
+
+    return this
   }
 
   setName(name: string) {
@@ -44,14 +45,20 @@ export class ConsumerParameterBuilder<T extends ConsumerParameterType>
     return this
   }
 
-  setDefault(value: NautilusConsumerParameter<T>['default']) {
+  setDefault(value: string) {
     this.consumerParameter.default = value
 
     return this
   }
 
   addOption(option: ConsumerParameterSelectOption) {
-    if (this.consumerParameter.type !== 'select') return this
+    if (this.consumerParameter.type !== 'select') {
+      throw new Error(
+        "[ConsumerParameterBuilder] Options can only be added for 'selet' type parameters."
+      )
+    }
+    if (!this.consumerParameter.options) this.consumerParameter.options = []
+
     this.consumerParameter.options.push(option)
 
     return this

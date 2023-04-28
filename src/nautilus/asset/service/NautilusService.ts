@@ -6,11 +6,8 @@ import {
   Smartcontract,
   UrlFile
 } from '@oceanprotocol/lib'
-import { ServiceConfig } from '../../../@types/Publish'
-import {
-  ConsumerParameterType,
-  NautilusConsumerParameter
-} from '../consumerParameters'
+import { ConsumerParameterType, ServiceConfig } from '../../../@types/Publish'
+import { NautilusConsumerParameter } from '../consumerParameters'
 
 export enum FileTypes {
   URL = 'url',
@@ -54,14 +51,17 @@ export class NautilusService<
 
   compute?: ServiceComputeOptions
 
-  consumerParameters?: NautilusConsumerParameter<ConsumerParameterType>[] = []
+  consumerParameters?: NautilusConsumerParameter[] = []
   additionalInformation?: { [key: string]: any } = {}
 
   // TODO: config transformation
   getConfig(): ServiceConfig {
     return {
       ...this,
-      files: this.files as ServiceConfig['files']
+      files: this.files as ServiceConfig['files'],
+      consumerParameters: this.consumerParameters.map((param) =>
+        param.getConfig()
+      )
     }
   }
 }

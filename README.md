@@ -141,9 +141,10 @@ It is also possible to publish assets with `consumerParameters`. These are param
 We can use the `ServiceBuilder` in combination with the `ConsumerParameterBuilder` to create this with the Nautilus API. The supported types are `'text'`, `'number'`, `'boolean'` and `'select'`.
 
 ```ts
-const consumerParameterBuilder = new ConsumerParameterBuilder('text')
+const consumerParameterBuilder = new ConsumerParameterBuilder()
 
 const textParam = consumerParameterBuilder
+  .setType('text')
   .setName('myParam')
   .setLabel('My Param')
   .setDescription('A description of my param for the enduser.')
@@ -157,9 +158,11 @@ serviceBuilder.addConsumerParameter(textParam)
 For `select` type parameters you have access to an additional function, to add options that the consumer can choose from:
 
 ```ts
-const consumerParameterBuilder = new ConsumerParameterBuilder('select')
+// Reset helper if the builder was used to built another parameter before
+consumerParameterBuilder.reset()
 
 const selectParam = consumerParameterBuilder
+  .setType('select')
   .setName('selectParam')
   .setLabel('My Select Param')
   .setDescription('A description of my select param for the enduser.')
@@ -167,7 +170,7 @@ const selectParam = consumerParameterBuilder
   .addOption({ value: 'label' })
   .addOption({ otherValue: 'Other Label' })
   .addOption({ 'longer-option-value': 'Another Label' })
-  .setDefault([{ value: 'label' }])
+  .setDefault('otherValue')
   .build()
 
 serviceBuilder.addConsumerParameter(selectParam)

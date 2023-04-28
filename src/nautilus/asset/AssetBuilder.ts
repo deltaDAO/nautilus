@@ -50,7 +50,7 @@ export class AssetBuilder implements IAssetBuilder {
     return this
   }
 
-  setAlgorithm(algorithm: MetadataAlgorithm) {
+  setAlgorithm(algorithm: MetadataConfig['algorithm']) {
     this.asset.metadata.algorithm = algorithm
 
     return this
