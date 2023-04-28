@@ -2,10 +2,20 @@
 
 A typescript library helping to navigate the OCEAN. It enables configurable automated publishing and consumption of assets in any [Ocean Protocol](https://oceanprotocol.com) ecosystem.
 
-- [Automated Publishing](#automated-publishing)
-- [Automated Compute Jobs](#automated-compute-jobs)
+## Table of Contents
 
-## Configuring a new Nautilus Instance
+- [⚙️ Configuring a new Nautilus instance](#configuring-a-new-nautilus-instance)
+- [🌐 Automated Publishing](#automated-publishing)
+  - [Services](#services)
+  - [Consumer Parameters](#consumer-parameters)
+  - [Pricing](#pricing)
+  - [Owner and optional configs](#owner-and-optional-configs)
+- [🤖 Automated Compute Jobs](#automated-compute-jobs)
+- [🔐 Automated Access](#automated-access)
+- [📚 API Documentation](#api-documentation)
+- [🏛️ License](#api-documentation)
+
+## Configuring a new Nautilus instance
 
 Setting up a new `Nautilus` instance to perform automated tasks, like publish & consume, is rather simple.
 
@@ -315,7 +325,7 @@ const computeJob = await nautilus.compute({
 })
 ```
 
-## Access
+## Automated Access
 
 To access assets or more specifically their respective services, we can make use of the `access()` function provided by the `Nautilus` instance we created in the setup step.
 This includes all potentially necessary orders for required datatokens as well as the signed request towards Ocean Provider needed to grant the access to the service.
@@ -341,4 +351,27 @@ const accessConfig = {
 }
 
 const accessUrl = await nautilus.access(accessConfig)
+```
+
+## API Documentation
+
+If you want to learn more about Nautilus, we provide a more detailed documentation of the library, including a typedoc API documentation:
+https://deltadao.github.io/nautilus
+
+## License
+
+```
+Copyright ((C)) 2023 deltaDAO AG
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 ```
