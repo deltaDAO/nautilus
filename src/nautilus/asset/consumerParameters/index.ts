@@ -1,2 +1,2 @@
-export * from './builder'
-export * from './consumerParameter'
+export * from './ConsumerParameterBuilder'
+export * from './NautilusConsumerParameter'

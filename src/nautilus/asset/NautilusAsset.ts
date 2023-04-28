@@ -5,11 +5,15 @@ import {
   DatatokenCreateParamsWithoutOwner,
   MetadataConfig,
   NftCreateDataWithoutOwner,
-  PricingConfig,
-  ServiceConfig
+  PricingConfig
 } from '../../@types/Publish'
 import { params } from './constants/datatoken.constants'
 import { createData } from './constants/nft.constants'
+import {
+  FileTypes,
+  NautilusService,
+  ServiceTypes
+} from './service/NautilusService'
 
 export type PricingConfigWithoutOwner = {
   type: PricingConfig['type']
@@ -19,7 +23,7 @@ export type PricingConfigWithoutOwner = {
 /* @internal */
 export class NautilusAsset {
   metadata: MetadataConfig
-  services: ServiceConfig[] = []
+  services: NautilusService<ServiceTypes, FileTypes>[] = []
   pricing: PricingConfigWithoutOwner
   nftCreateData: NftCreateDataWithoutOwner
   datatokenCreateParams: DatatokenCreateParamsWithoutOwner
@@ -76,8 +80,16 @@ export class NautilusAsset {
       throw new Error('Owner needs to be a valid address')
 
     return {
-      metadata: this.metadata,
-      services: this.services,
+      metadata: {
+        ...this.metadata,
+        algorithm: {
+          ...this.metadata.algorithm,
+          consumerParameters: this.metadata.algorithm.consumerParameters.map(
+            (param) => param.getConfig()
+          )
+        }
+      },
+      services: this.services.map((service) => service.getConfig()),
       pricing: {
         ...this.pricing,
         freCreationParams: {

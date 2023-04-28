@@ -6,7 +6,7 @@ import { AssetConfig } from '../@types/Publish'
 import { access } from '../access'
 import { compute } from '../compute'
 import { publishAsset } from '../publish'
-import { NautilusAsset } from './asset/asset'
+import { NautilusAsset } from './asset/NautilusAsset'
 
 /**
  * Nautilus class

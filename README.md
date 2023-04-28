@@ -98,28 +98,87 @@ Now we can set this metadata using the builder:
 assetBuilder.setAlgorithm(algoMetadata)
 ```
 
+### Services
+
 Next we need to specify where our asset is actually located. In Ocean we can do this using the `Services` array specified in the [DDO](https://docs.oceanprotocol.com/core-concepts/did-ddo#ddo).
 
-As we can see in the [DDO specifications](https://docs.oceanprotocol.com/core-concepts/did-ddo#ddo), a single Service needs to specify the following information:
+A single Service needs to specify information following the [DDO specifications](https://docs.oceanprotocol.com/core-concepts/did-ddo#ddo).
+
+Nautilus provides a `ServiceBuilder` class that can help us creating new services for our asset:
 
 ```ts
-const accessService = {
-  type: 'access', // 'access' or 'compute'
-  files: [
-    {
-      type: 'url', // there are multiple supported types. See the docs above for more info
-      url: 'https://link.to/my/asset',
-      method: 'GET'
-    }
-  ],
-  serviceEndpoint: 'https://ocean-provider.to/use', // the access controller to be in control of this asset
-  timeout: 0 // in seconds, 0 = infinite
+import { FileTypes, ServiceTypes, ServiceBuilder } from '@deltadao/nautilus'
+
+// Create a new 'access' type service serving 'url' files
+const serviceBuilder = new ServiceBuilder(ServiceTypes.ACCESS, FileTypes.URL)
+
+const urlFile = {
+  type: 'url', // there are multiple supported types. See the docs above for more info
+  url: 'https://link.to/my/asset',
+  method: 'GET'
 }
 
-assetBuilder.addService(accessService)
+const service = serviceBuilder
+  .setServiceEndpoint('https://ocean.provider.to/use') // the access controller to be in control of this asset
+  .setTimeout(0) // Timeout in seconds (0 means unlimited access after purchase)
+  .addFile(urlFile)
+  .build()
+
+assetBuilder.addService(service)
 ```
 
-In addition to that, we want to also specify the pricing for our asset. The `AssetBuilder` provides a function for this that we can make use of:
+The code above will build a new `access` service, serving a `url` type file that is available at `https://link.to/my/asset`. The service will be accessible via the ocean provider hosted at `https://ocean.provider.to/use`.
+
+The supported `ServiceTypes` are `ACCESS` and `COMPUTE`.
+<br>The supported `FileTypes` are `URL`, `GRAPHQL`, `ARWEAVE`, `IPFS` and `SMARTCONTRACT`.
+
+For more info on the different types and their available configuration, please refer to the official [Ocean Protocl Documentation](https://docs.oceanprotocol.com/core-concepts/did-ddo#files).
+
+### Consumer Parameters
+
+It is also possible to publish assets with `consumerParameters`. These are parameters that consumers can provide values for during consumption. For examples and the full overview on these parameters you can refer to the [Consumer Parameters section of the Ocean Protocol Docs](https://docs.oceanprotocol.com/core-concepts/did-ddo#consumer-parameters).
+
+We can use the `ServiceBuilder` in combination with the `ConsumerParameterBuilder` to create this with the Nautilus API. The supported types are `'text'`, `'number'`, `'boolean'` and `'select'`.
+
+```ts
+const consumerParameterBuilder = new ConsumerParameterBuilder()
+
+const textParam = consumerParameterBuilder
+  .setType('text')
+  .setName('myParam')
+  .setLabel('My Param')
+  .setDescription('A description of my param for the enduser.')
+  .setDefault('default-value')
+  .setRequired(true)
+  .build()
+
+serviceBuilder.addConsumerParameter(textParam)
+```
+
+For `select` type parameters you have access to an additional function, to add options that the consumer can choose from:
+
+```ts
+// Reset helper if the builder was used to built another parameter before
+consumerParameterBuilder.reset()
+
+const selectParam = consumerParameterBuilder
+  .setType('select')
+  .setName('selectParam')
+  .setLabel('My Select Param')
+  .setDescription('A description of my select param for the enduser.')
+  .setRequired(false)
+  .addOption({ value: 'label' })
+  .addOption({ otherValue: 'Other Label' })
+  .addOption({ 'longer-option-value': 'Another Label' })
+  .setDefault('otherValue')
+  .build()
+
+serviceBuilder.addConsumerParameter(selectParam)
+```
+
+### Pricing
+
+We also want to also specify the pricing for our asset. The `AssetBuilder` provides a function for this that we can make use of:
 
 ```ts
 // Example of a fixed asset
@@ -141,6 +200,8 @@ assetBuilder.setPricing({
   type: 'free'
 })
 ```
+
+### Owner and optional configs
 
 We also have to make sure we specify the owner of the asset, that will be used for the publishing process:
 

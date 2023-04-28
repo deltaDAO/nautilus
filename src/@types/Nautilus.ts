@@ -1,11 +1,19 @@
-import { Metadata } from '@oceanprotocol/lib'
-import { NautilusAsset } from '../nautilus/asset/asset'
+import { Metadata, PublisherTrustedAlgorithm } from '@oceanprotocol/lib'
+import { NautilusAsset } from '../nautilus/asset/NautilusAsset'
 import {
+  ConsumerParameterType,
   DatatokenCreateParamsWithoutOwner,
   NftCreateDataWithoutOwner,
   PricingConfig,
   ServiceConfig
 } from './Publish'
+import {
+  FileTypes,
+  NautilusService,
+  ServiceFileType,
+  ServiceTypes
+} from '../nautilus/asset/service/NautilusService'
+import { NautilusConsumerParameter } from '../nautilus/asset/consumerParameters'
 
 export interface NautilusOptions {
   skipDefaultConfig: boolean
@@ -23,7 +31,9 @@ export interface IAssetBuilder extends IBuilder<NautilusAsset> {
   setLicense: (license: Metadata['license']) => IAssetBuilder
   setAuthor: (author: Metadata['author']) => IAssetBuilder
   setPricing: (pricing: PricingConfig) => IAssetBuilder
-  addService: (service: ServiceConfig) => IAssetBuilder
+  addService: (
+    service: NautilusService<ServiceTypes, FileTypes>
+  ) => IAssetBuilder
   setNftData: (nftCreateData: NftCreateDataWithoutOwner) => IAssetBuilder
   setDatatokenData: (
     datatokenCreateData: DatatokenCreateParamsWithoutOwner
@@ -34,4 +44,22 @@ export interface IAssetBuilder extends IBuilder<NautilusAsset> {
   addAdditionalInformation: (addtionalInformation: {
     [key: string]: any
   }) => IAssetBuilder
+}
+
+export interface IServiceBuilder<S extends ServiceTypes, F extends FileTypes>
+  extends IBuilder<NautilusService<S, F>> {
+  setName: (name: string) => IServiceBuilder<S, F>
+  setTimeout: (timeout: number) => IServiceBuilder<S, F>
+  setDescription: (description: string) => IServiceBuilder<S, F>
+  setServiceEndpoint: (endpoint: string) => IServiceBuilder<S, F>
+  addFile: (file: ServiceFileType<F>) => IServiceBuilder<S, F>
+  addConsumerParameter: (
+    parameter: NautilusConsumerParameter
+  ) => IServiceBuilder<S, F>
+  addTrustedAlgorithmPublisher: (publisher: string) => IServiceBuilder<S, F>
+  addTrustedAlgorithm: (
+    algorithm: PublisherTrustedAlgorithm
+  ) => IServiceBuilder<S, F>
+  allowRawAlgorithms: (allow?: boolean) => IServiceBuilder<S, F>
+  allowAlgorithmNetworkAccess: (allow?: boolean) => IServiceBuilder<S, F>
 }

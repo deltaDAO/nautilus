@@ -6,18 +6,38 @@ import {
   Files,
   FreCreationParams,
   Metadata,
+  MetadataAlgorithm,
   NftCreateData,
   Service
 } from '@oceanprotocol/lib'
 import Web3 from 'web3'
-import {
-  ConsumerParameterType,
-  NautilusConsumerParameter
-} from '../nautilus/asset/consumerParameters/consumerParameter'
+import { NautilusConsumerParameter } from '../nautilus/asset/consumerParameters'
 
 export interface CredentialConfig extends Credentials {}
 
-export type MetadataConfig = Omit<Metadata, 'created' | 'updated'>
+export type ConsumerParameterType = 'text' | 'number' | 'boolean' | 'select'
+
+export type ConsumerParameterSelectOption = {
+  [value: string]: string
+}
+export interface ConsumerParameter {
+  name: string
+  type: ConsumerParameterType
+  label: string
+  required: boolean
+  description: string
+  default: string
+  options?: ConsumerParameterSelectOption[]
+}
+
+export type MetadataConfig = Omit<
+  Metadata,
+  'created' | 'updated' | 'algorithm'
+> & {
+  algorithm?: MetadataAlgorithm & {
+    consumerParameters?: NautilusConsumerParameter[]
+  }
+}
 
 type PricingType = 'fixed' | 'free'
 
@@ -43,7 +63,7 @@ export type ServiceConfig = Omit<
   'id' | 'datatokenAddress' | 'files'
 > & {
   files: Files['files']
-  consumerParameters?: NautilusConsumerParameter<ConsumerParameterType>[]
+  consumerParameters?: ConsumerParameter[]
 }
 
 export type PrePublishDDO = Omit<DDO, 'services'> & {
