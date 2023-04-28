@@ -69,10 +69,11 @@
   },
   "release-it": {
     "hooks": {
-      "before:bump": "node scripts/checkDocsVersion version=${version}",
       "after:bump": "npm run build && npm run changelog"
     },
-    "plugins": {},
+    "plugins": {
+      "./scripts/release-it-documentation-checker-plugin.mjs": {}
+    },
     "git": {
       "tagName": "v${version}"
     },
