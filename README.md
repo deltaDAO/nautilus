@@ -140,7 +140,7 @@ assetBuilder.addService(service)
 The code above will build a new `access` service, serving a `url` type file that is available at `https://link.to/my/asset`. The service will be accessible via the ocean provider hosted at `https://ocean.provider.to/use`.
 
 The supported `ServiceTypes` are `ACCESS` and `COMPUTE`.
-<br>The supported `FileTypes` are `URL`, `GRAPHQL`, `ARWEAVE`, `IPFS` and `SMARTCONTRACT`.
+<br />The supported `FileTypes` are `URL`, `GRAPHQL`, `ARWEAVE`, `IPFS` and `SMARTCONTRACT`.
 
 For more info on the different types and their available configuration, please refer to the official [Ocean Protocl Documentation](https://docs.oceanprotocol.com/core-concepts/did-ddo#files).
 
@@ -283,12 +283,12 @@ const computeJob = await nautilus.compute(computeConfig)
 In addition to that you can also specify some optional properties if needed.
 Both the dataset and algorithm support custom `userdata` that might be passed to the services. For algorithms you can also specify a `algocustomdata` property.
 
-| Property         | Required | Supported for          | Description                                                                                                                                                 |
-| ---------------- | -------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `did`            | Required | `dataset \| algorithm` | The DID of the asset to use for computation                                                                                                                 |
-| `serviceId`      | Optional | `dataset \| algorithm` | <!-- TODO: Remove alpha note once supported --> Feature in alpha. Not fully supported yet.<br/>The specific service of the asset to be used for computation |
-| `userdata`       | Optional | `dataset \| algorithm` | Optional userdata to be passed to the service                                                                                                               |
-| `algocustomdata` | Optional | `algorithm`            | Optional custom data to be passed to the algorithm at computation                                                                                           |
+| Property         | Required | Supported for          | Description                                                                                                                                                  |
+| ---------------- | -------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `did`            | Required | `dataset \| algorithm` | The DID of the asset to use for computation                                                                                                                  |
+| `serviceId`      | Optional | `dataset \| algorithm` | <!-- TODO: Remove alpha note once supported --> Feature in alpha. Not fully supported yet.<br />The specific service of the asset to be used for computation |
+| `userdata`       | Optional | `dataset \| algorithm` | Optional userdata to be passed to the service                                                                                                                |
+| `algocustomdata` | Optional | `algorithm`            | Optional custom data to be passed to the algorithm at computation                                                                                            |
 
 ```ts
 // Example of a CtD dataset config
