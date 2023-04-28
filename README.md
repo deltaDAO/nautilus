@@ -249,7 +249,7 @@ When you are happy with the configuration you can use the `Nautilus` instance ju
 
 ```ts
 const computeJob = await nautilus.compute({
-  dataset: datasetOrAlgorithm,
+  dataset,
   algorithm
 })
 ```
