@@ -6,7 +6,7 @@ on:
 
 jobs:
   build-docs:
-    uses: deltaDAO/nautilus/.github/workflows/docusaurus.yaml@main
+    uses: deltaDAO/nautilus/.github/workflows/typedoc-docusaurus.yml@main
     with:
       version: ${{ github.event.release.tag_name }}
   release-to-npmjs:
