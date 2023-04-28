@@ -3,10 +3,11 @@
 A typescript library helping to navigate the OCEAN. It enables configurable automated publishing and consumption of assets in any [Ocean Protocol](https://oceanprotocol.com) ecosystem.
 
 - [Automated Publishing](#automated-publishing)
+- [Automated Compute Jobs](#automated-compute-jobs)
 
 ## Configuring a new Nautilus Instance
 
-You can use the `NautilusBuilder` class provided to setup a new `Nautilus` instance to perform automated tasks, like publish & consume.
+Setting up a new `Nautilus` instance to perform automated tasks, like publish & consume, is rather simple.
 
 First make sure to setup the `Web3` instance to use:
 
@@ -14,7 +15,7 @@ First make sure to setup the `Web3` instance to use:
 const web3 = new Web3('https://rpc.genx.minimal-gaia-x.eu') // can be replaced with any Ocean Protocol supported network
 ```
 
-Then you have to add the account you want to use for the automations:
+Next, add the account you want to use for the automations:
 
 ```ts
 // This example assumes you have an environment variable named PRIVATE_KEY
@@ -24,45 +25,34 @@ web3.eth.accounts.wallet.add(account)
 web3.defaultAccount = account.address // currently required, will be optional in later versions
 ```
 
-Now you can use the builder to construct a new `Nautilus` instance:
+Now you can use the static `create()` method of the `Nautilus` class to construct a new instance:
 
 ```ts
-import { NautilusBuilder } from '@deltadao/nautilus'
+// import the Natilus class
+import { Nautilus } from '@deltadao/nautilus'
 
-const chainId = 4
-
-const nautilusBuilder = new NautilusBuilder()
-nautilusBuilder
-  .setWeb3(web3)
-  // load the OceanConfig for chainId = 4 (Rinkeby)
-  .setConfig(chainId)
+// create the instance
+const nautilus = await Nautilus.create(web3)
 ```
 
-If want to use a custom configuration, you can set an additional parameter in the `setConfig` call. For guidance on which configurations are needed you can have a look at the [Ocean Library Docs](https://docs.oceanprotocol.com/building-with-ocean/using-ocean-libraries/configuration#create-a-configuration-file).
+If want to use a custom configuration, you can set an additional parameter in the `create` call. For guidance on which configurations are needed you can have a look at the [Ocean Library Docs](https://docs.oceanprotocol.com/building-with-ocean/using-ocean-libraries/configuration#create-a-configuration-file).
 
 ```ts
 // Custom config, e.g.:
 // Reference the docs linked above for a complete overview
+// The provided values will overwrite the default values loaded via ocean.js (see docs linked above)
 const customConfig = {
-  ...new ConfigHelper().getConfig(chainId),
-  oceanTokenAddress: '0x...',
+  metadataCacheUri: 'https://link.to.my/aquarius/instance',
+  providerUri: 'https://link.to.my/ocean/provider',
   nodeUri: 'https://rpc.node.uri/'
   // ...
 }
 
 // Setting the custom config in addition to the chainId
-nautilusBuilder.setConfig(chainId, customConfig)
+const customNautilus = await Nautilus.create(web3, customConfig)
 ```
 
-Finally, after the configuration is complete, we can now build the `Nautilus` instance to be used to publish and consume assets on the specified network:
-
-```ts
-const nautilus = nautilusBuilder.build()
-
-// You can now use the Nautilus functions like
-// nautilus.publish() etc.
-// See a detailed flow below.
-```
+We now have a `Nautilus` instance that can be used to publish and consume assets on the specified network.
 
 ## Automated Publishing
 
@@ -108,28 +98,87 @@ Now we can set this metadata using the builder:
 assetBuilder.setAlgorithm(algoMetadata)
 ```
 
+### Services
+
 Next we need to specify where our asset is actually located. In Ocean we can do this using the `Services` array specified in the [DDO](https://docs.oceanprotocol.com/core-concepts/did-ddo#ddo).
 
-As we can see in the [DDO specifications](https://docs.oceanprotocol.com/core-concepts/did-ddo#ddo), a single Service needs to specify the following information:
+A single Service needs to specify information following the [DDO specifications](https://docs.oceanprotocol.com/core-concepts/did-ddo#ddo).
+
+Nautilus provides a `ServiceBuilder` class that can help us creating new services for our asset:
 
 ```ts
-const accessService = {
-  type: 'access', // 'access' or 'compute'
-  files: [
-    {
-      type: 'url', // there are multiple supported types. See the docs above for more info
-      url: 'https://link.to/my/asset',
-      method: 'GET'
-    }
-  ],
-  serviceEndpoint: 'https://ocean-provider.to/use', // the access controller to be in control of this asset
-  timeout: 0 // in seconds, 0 = infinite
+import { FileTypes, ServiceTypes, ServiceBuilder } from '@deltadao/nautilus'
+
+// Create a new 'access' type service serving 'url' files
+const serviceBuilder = new ServiceBuilder(ServiceTypes.ACCESS, FileTypes.URL)
+
+const urlFile = {
+  type: 'url', // there are multiple supported types. See the docs above for more info
+  url: 'https://link.to/my/asset',
+  method: 'GET'
 }
 
-assetBuilder.addService(accessService)
+const service = serviceBuilder
+  .setServiceEndpoint('https://ocean.provider.to/use') // the access controller to be in control of this asset
+  .setTimeout(0) // Timeout in seconds (0 means unlimited access after purchase)
+  .addFile(urlFile)
+  .build()
+
+assetBuilder.addService(service)
 ```
 
-In addition to that, we want to also specify the pricing for our asset. The `AssetBuilder` provides a function for this that we can make use of:
+The code above will build a new `access` service, serving a `url` type file that is available at `https://link.to/my/asset`. The service will be accessible via the ocean provider hosted at `https://ocean.provider.to/use`.
+
+The supported `ServiceTypes` are `ACCESS` and `COMPUTE`.
+<br>The supported `FileTypes` are `URL`, `GRAPHQL`, `ARWEAVE`, `IPFS` and `SMARTCONTRACT`.
+
+For more info on the different types and their available configuration, please refer to the official [Ocean Protocl Documentation](https://docs.oceanprotocol.com/core-concepts/did-ddo#files).
+
+### Consumer Parameters
+
+It is also possible to publish assets with `consumerParameters`. These are parameters that consumers can provide values for during consumption. For examples and the full overview on these parameters you can refer to the [Consumer Parameters section of the Ocean Protocol Docs](https://docs.oceanprotocol.com/core-concepts/did-ddo#consumer-parameters).
+
+We can use the `ServiceBuilder` in combination with the `ConsumerParameterBuilder` to create this with the Nautilus API. The supported types are `'text'`, `'number'`, `'boolean'` and `'select'`.
+
+```ts
+const consumerParameterBuilder = new ConsumerParameterBuilder()
+
+const textParam = consumerParameterBuilder
+  .setType('text')
+  .setName('myParam')
+  .setLabel('My Param')
+  .setDescription('A description of my param for the enduser.')
+  .setDefault('default-value')
+  .setRequired(true)
+  .build()
+
+serviceBuilder.addConsumerParameter(textParam)
+```
+
+For `select` type parameters you have access to an additional function, to add options that the consumer can choose from:
+
+```ts
+// Reset helper if the builder was used to built another parameter before
+consumerParameterBuilder.reset()
+
+const selectParam = consumerParameterBuilder
+  .setType('select')
+  .setName('selectParam')
+  .setLabel('My Select Param')
+  .setDescription('A description of my select param for the enduser.')
+  .setRequired(false)
+  .addOption({ value: 'label' })
+  .addOption({ otherValue: 'Other Label' })
+  .addOption({ 'longer-option-value': 'Another Label' })
+  .setDefault('otherValue')
+  .build()
+
+serviceBuilder.addConsumerParameter(selectParam)
+```
+
+### Pricing
+
+We also want to also specify the pricing for our asset. The `AssetBuilder` provides a function for this that we can make use of:
 
 ```ts
 // Example of a fixed asset
@@ -151,6 +200,8 @@ assetBuilder.setPricing({
   type: 'free'
 })
 ```
+
+### Owner and optional configs
 
 We also have to make sure we specify the owner of the asset, that will be used for the publishing process:
 
@@ -191,5 +242,103 @@ const result = await nautilus.publish(asset)
 If all went well, you should be able to browse the asset on any OceanMarket connected to the network that was published on, by simply using its DID, e.g.:
 `https://market.oceanprotocol.com/asset/{did}`
 
-<!-- TODO: Add Compute -->
-<!-- TODO: Add Access -->
+## Automated Compute Jobs
+
+The `Nautilus` instance we created in the setup step provides access to a `compute()` function that we can use to start new compute jobs.
+This includes all potentially necessary orders for required datatokens as well as the signed request towards Ocean Provider to start the compute job itself.
+
+The following values are required to start a new compute job:
+
+```ts
+const dataset = {
+  did: 'did:op:123abc...' // any 'compute' dataset
+}
+
+const algorithm = {
+  did: 'did:op:123abc...' // any algorithm allowed to be run on the given dataset
+}
+
+const computeConfig = {
+  dataset,
+  algorithm
+}
+```
+
+To start the new compute job simply call the compute function:
+
+```ts
+const computeJob = await nautilus.compute(computeConfig)
+```
+
+In addition to that you can also specify some optional properties if needed.
+Both the dataset and algorithm support custom `userdata` that might be passed to the services. For algorithms you can also specify a `algocustomdata` property.
+
+| Property         | Required | Supported for          | Description                                                                                                                                                 |
+| ---------------- | -------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `did`            | Required | `dataset \| algorithm` | The DID of the asset to use for computation                                                                                                                 |
+| `serviceId`      | Optional | `dataset \| algorithm` | <!-- TODO: Remove alpha note once supported --> Feature in alpha. Not fully supported yet.<br/>The specific service of the asset to be used for computation |
+| `userdata`       | Optional | `dataset \| algorithm` | Optional userdata to be passed to the service                                                                                                               |
+| `algocustomdata` | Optional | `algorithm`            | Optional custom data to be passed to the algorithm at computation                                                                                           |
+
+```ts
+// Example of a CtD dataset config
+const dataset = {
+  did: 'did:op:123abc',
+  serviceId: 'specific-serviceId-of-compute-service'
+  userdata: {
+    myParam: 'myValue',
+    booleanParam: false
+  }
+}
+
+// Example of a CtD algorithm config
+const algorithm = {
+  did: 'did:op:123abc',
+  serviceId: 'specific-serviceId-of-compute-service'
+  userdata: {
+    myParam: 'myValue',
+    booleanParam: false
+  },
+  algocustomdata: {
+    myParam: 'myValue',
+    numberParam: 123
+  }
+}
+```
+
+When you are happy with the configuration you can use the `Nautilus` instance just as before to start the new compute job:
+
+```ts
+const computeJob = await nautilus.compute({
+  dataset,
+  algorithm
+})
+```
+
+## Access
+
+To access assets or more specifically their respective services, we can make use of the `access()` function provided by the `Nautilus` instance we created in the setup step.
+This includes all potentially necessary orders for required datatokens as well as the signed request towards Ocean Provider needed to grant the access to the service.
+
+In the most basic version, nothing else than the did of the asset to be accessed is needed:
+
+```ts
+const accessUrl = await nautilus.access({
+  assetDid: 'did:op:123abc'
+})
+```
+
+In addition to that, just as with Computejobs, you can also provide custom userdata that may be needed to consume the asset:
+
+```ts
+const accessConfig = {
+  assetDid: 'did:op:123abc',
+  userdata: {
+    myParam: 'myValue',
+    anotherParam: 123,
+    booleanParam: false
+  }
+}
+
+const accessUrl = await nautilus.access(accessConfig)
+```

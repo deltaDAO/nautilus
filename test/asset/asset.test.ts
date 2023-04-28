@@ -1,5 +1,5 @@
 import assert from 'assert'
-import { NautilusAsset } from '../../src/nautilus/asset/asset'
+import { NautilusAsset } from '../../src/nautilus/asset/NautilusAsset'
 import {
   datasetMetadata,
   datasetService,
@@ -7,6 +7,11 @@ import {
 } from '../fixtures/AssetConfig'
 import { freParams } from '../fixtures/FixedRateExchangeParams'
 import { getWeb3 } from '../fixtures/Web3'
+import {
+  FileTypes,
+  NautilusService,
+  ServiceTypes
+} from '../../src/nautilus/asset/service'
 
 describe('NautilusAsset', () => {
   const web3 = getWeb3()
@@ -15,7 +20,9 @@ describe('NautilusAsset', () => {
   it('configures owner correctly', () => {
     const asset = new NautilusAsset()
     asset.metadata = datasetMetadata
-    asset.services.push(datasetService)
+    asset.services.push(
+      datasetService as NautilusService<ServiceTypes.ACCESS, FileTypes.URL>
+    )
     asset.pricing = { ...fixedPricing, freCreationParams: freParams as any }
     asset.owner = owner
 

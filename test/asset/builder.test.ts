@@ -8,6 +8,11 @@ import {
 } from '../fixtures/AssetConfig'
 import { datatokenParams } from '../fixtures/DatatokenParams'
 import { nftParams } from '../fixtures/NftCreateData'
+import {
+  FileTypes,
+  NautilusService,
+  ServiceTypes
+} from '../../src/nautilus/asset/service'
 
 describe('AssetBuilder', () => {
   it('builds asset.metadata correctly', async () => {
@@ -46,11 +51,15 @@ describe('AssetBuilder', () => {
 
   it('builds asset.services correctly', async () => {
     const builder = new AssetBuilder()
+    const service = datasetService as NautilusService<
+      ServiceTypes.ACCESS,
+      FileTypes.URL
+    >
 
-    const asset = builder.addService(datasetService).build()
+    const asset = builder.addService(service).build()
 
     assert.ok(
-      asset.services.includes(datasetService),
+      asset.services.includes(service),
       `asset.services does not contain the given input service`
     )
   })
