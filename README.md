@@ -210,40 +210,38 @@ const computeJob = await nautilus.compute(computeConfig)
 ```
 
 In addition to that you can also specify some optional properties if needed.
-Both the dataset and algorithm support custom userdata that might be passed to the services:
+Both the dataset and algorithm support custom `userdata` that might be passed to the services. For algorithms you can also specify a `algocustomdata` property.
+
+| Property         | Required  | Supported for          | Description                                                                                                 |
+| ---------------- | --------- | ---------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `did`            | Required  | `dataset \| algorithm` | The DID of the asset to use for computation                                                                 |
+| `serviceId`      |  Optional | `dataset \| algorithm` | Feature in alpha. Not fully supported yet.<br/>The specific service of the asset to be used for computation |
+| `userdata`       |  Optional | `dataset \| algorithm` | Optional userdata to be passed to the service                                                               |
+| `algocustomdata` |  Optional | `algorithm`            | Optional custom data to be passed to the algorithm at computation                                           |
 
 ```ts
-const datasetOrAlgorithm = {
+// Example of a CtD dataset config
+const dataset = {
   did: 'did:op:123abc',
+  serviceId: 'specific-serviceId-of-compute-service'
   userdata: {
     myParam: 'myValue',
-    anotherParam: 123,
     booleanParam: false
   }
 }
-```
 
-For algorithms you are also able to pass `algocustomdata` that is needed for the algorithm to run according to user requirements:
-
-```ts
+// Example of a CtD algorithm config
 const algorithm = {
   did: 'did:op:123abc',
+  serviceId: 'specific-serviceId-of-compute-service'
+  userdata: {
+    myParam: 'myValue',
+    booleanParam: false
+  },
   algocustomdata: {
     myParam: 'myValue',
-    anotherParam: 123,
-    booleanParam: false
+    numberParam: 123
   }
-}
-```
-
-Additionally, it is possible to pass a specific serviceId for datasets and algorithms. This will be used when selecting the service of the asset to be used for computation:
-
-> **Please note that this feature is not fully supported yet.**
-
-```ts
-const datasetOrAlgorithm = {
-  ...datasetOrAlgorithm,
-  serviceId: 'specific-serviceId-of-compute-service'
 }
 ```
 
