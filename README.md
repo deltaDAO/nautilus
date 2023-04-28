@@ -3,10 +3,11 @@
 A typescript library helping to navigate the OCEAN. It enables configurable automated publishing and consumption of assets in any [Ocean Protocol](https://oceanprotocol.com) ecosystem.
 
 - [Automated Publishing](#automated-publishing)
+- [Automated Compute Jobs](#automated-compute-jobs)
 
 ## Configuring a new Nautilus Instance
 
-You can use the `NautilusBuilder` class provided to setup a new `Nautilus` instance to perform automated tasks, like publish & consume.
+Setting up a new `Nautilus` instance to perform automated tasks, like publish & consume, is rather simple.
 
 First make sure to setup the `Web3` instance to use:
 
@@ -14,7 +15,7 @@ First make sure to setup the `Web3` instance to use:
 const web3 = new Web3('https://rpc.genx.minimal-gaia-x.eu') // can be replaced with any Ocean Protocol supported network
 ```
 
-Then you have to add the account you want to use for the automations:
+Next, add the account you want to use for the automations:
 
 ```ts
 // This example assumes you have an environment variable named PRIVATE_KEY
@@ -24,45 +25,34 @@ web3.eth.accounts.wallet.add(account)
 web3.defaultAccount = account.address // currently required, will be optional in later versions
 ```
 
-Now you can use the builder to construct a new `Nautilus` instance:
+Now you can use the static `create()` method of the `Nautilus` class to construct a new instance:
 
 ```ts
-import { NautilusBuilder } from '@deltadao/nautilus'
+// import the Natilus class
+import { Nautilus } from '@deltadao/nautilus'
 
-const chainId = 4
-
-const nautilusBuilder = new NautilusBuilder()
-nautilusBuilder
-  .setWeb3(web3)
-  // load the OceanConfig for chainId = 4 (Rinkeby)
-  .setConfig(chainId)
+// create the instance
+const nautilus = await Nautilus.create(web3)
 ```
 
-If want to use a custom configuration, you can set an additional parameter in the `setConfig` call. For guidance on which configurations are needed you can have a look at the [Ocean Library Docs](https://docs.oceanprotocol.com/building-with-ocean/using-ocean-libraries/configuration#create-a-configuration-file).
+If want to use a custom configuration, you can set an additional parameter in the `create` call. For guidance on which configurations are needed you can have a look at the [Ocean Library Docs](https://docs.oceanprotocol.com/building-with-ocean/using-ocean-libraries/configuration#create-a-configuration-file).
 
 ```ts
 // Custom config, e.g.:
 // Reference the docs linked above for a complete overview
+// The provided values will overwrite the default values loaded via ocean.js (see docs linked above)
 const customConfig = {
-  ...new ConfigHelper().getConfig(chainId),
-  oceanTokenAddress: '0x...',
+  metadataCacheUri: 'https://link.to.my/aquarius/instance',
+  providerUri: 'https://link.to.my/ocean/provider',
   nodeUri: 'https://rpc.node.uri/'
   // ...
 }
 
 // Setting the custom config in addition to the chainId
-nautilusBuilder.setConfig(chainId, customConfig)
+const customNautilus = await Nautilus.create(web3, customConfig)
 ```
 
-Finally, after the configuration is complete, we can now build the `Nautilus` instance to be used to publish and consume assets on the specified network:
-
-```ts
-const nautilus = nautilusBuilder.build()
-
-// You can now use the Nautilus functions like
-// nautilus.publish() etc.
-// See a detailed flow below.
-```
+We now have a `Nautilus` instance that can be used to publish and consume assets on the specified network.
 
 ## Automated Publishing
 
@@ -191,5 +181,103 @@ const result = await nautilus.publish(asset)
 If all went well, you should be able to browse the asset on any OceanMarket connected to the network that was published on, by simply using its DID, e.g.:
 `https://market.oceanprotocol.com/asset/{did}`
 
-<!-- TODO: Add Compute -->
-<!-- TODO: Add Access -->
+## Automated Compute Jobs
+
+The `Nautilus` instance we created in the setup step provides access to a `compute()` function that we can use to start new compute jobs.
+This includes all potentially necessary orders for required datatokens as well as the signed request towards Ocean Provider to start the compute job itself.
+
+The following values are required to start a new compute job:
+
+```ts
+const dataset = {
+  did: 'did:op:123abc...' // any 'compute' dataset
+}
+
+const algorithm = {
+  did: 'did:op:123abc...' // any algorithm allowed to be run on the given dataset
+}
+
+const computeConfig = {
+  dataset,
+  algorithm
+}
+```
+
+To start the new compute job simply call the compute function:
+
+```ts
+const computeJob = await nautilus.compute(computeConfig)
+```
+
+In addition to that you can also specify some optional properties if needed.
+Both the dataset and algorithm support custom `userdata` that might be passed to the services. For algorithms you can also specify a `algocustomdata` property.
+
+| Property         | Required | Supported for          | Description                                                                                                                                                 |
+| ---------------- | -------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `did`            | Required | `dataset \| algorithm` | The DID of the asset to use for computation                                                                                                                 |
+| `serviceId`      | Optional | `dataset \| algorithm` | <!-- TODO: Remove alpha note once supported --> Feature in alpha. Not fully supported yet.<br/>The specific service of the asset to be used for computation |
+| `userdata`       | Optional | `dataset \| algorithm` | Optional userdata to be passed to the service                                                                                                               |
+| `algocustomdata` | Optional | `algorithm`            | Optional custom data to be passed to the algorithm at computation                                                                                           |
+
+```ts
+// Example of a CtD dataset config
+const dataset = {
+  did: 'did:op:123abc',
+  serviceId: 'specific-serviceId-of-compute-service'
+  userdata: {
+    myParam: 'myValue',
+    booleanParam: false
+  }
+}
+
+// Example of a CtD algorithm config
+const algorithm = {
+  did: 'did:op:123abc',
+  serviceId: 'specific-serviceId-of-compute-service'
+  userdata: {
+    myParam: 'myValue',
+    booleanParam: false
+  },
+  algocustomdata: {
+    myParam: 'myValue',
+    numberParam: 123
+  }
+}
+```
+
+When you are happy with the configuration you can use the `Nautilus` instance just as before to start the new compute job:
+
+```ts
+const computeJob = await nautilus.compute({
+  dataset,
+  algorithm
+})
+```
+
+## Access
+
+To access assets or more specifically their respective services, we can make use of the `access()` function provided by the `Nautilus` instance we created in the setup step.
+This includes all potentially necessary orders for required datatokens as well as the signed request towards Ocean Provider needed to grant the access to the service.
+
+In the most basic version, nothing else than the did of the asset to be accessed is needed:
+
+```ts
+const accessUrl = await nautilus.access({
+  assetDid: 'did:op:123abc'
+})
+```
+
+In addition to that, just as with Computejobs, you can also provide custom userdata that may be needed to consume the asset:
+
+```ts
+const accessConfig = {
+  assetDid: 'did:op:123abc',
+  userdata: {
+    myParam: 'myValue',
+    anotherParam: 123,
+    booleanParam: false
+  }
+}
+
+const accessUrl = await nautilus.access(accessConfig)
+```
