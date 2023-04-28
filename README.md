@@ -212,12 +212,12 @@ const computeJob = await nautilus.compute(computeConfig)
 In addition to that you can also specify some optional properties if needed.
 Both the dataset and algorithm support custom `userdata` that might be passed to the services. For algorithms you can also specify a `algocustomdata` property.
 
-| Property         | Required  | Supported for          | Description                                                                                                 |
-| ---------------- | --------- | ---------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `did`            | Required  | `dataset \| algorithm` | The DID of the asset to use for computation                                                                 |
-| `serviceId`      |  Optional | `dataset \| algorithm` | Feature in alpha. Not fully supported yet.<br/>The specific service of the asset to be used for computation |
-| `userdata`       |  Optional | `dataset \| algorithm` | Optional userdata to be passed to the service                                                               |
-| `algocustomdata` |  Optional | `algorithm`            | Optional custom data to be passed to the algorithm at computation                                           |
+| Property         | Required | Supported for          | Description                                                                                                                                                 |
+| ---------------- | -------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `did`            | Required | `dataset \| algorithm` | The DID of the asset to use for computation                                                                                                                 |
+| `serviceId`      | Optional | `dataset \| algorithm` | <!-- TODO: Remove alpha note once supported --> Feature in alpha. Not fully supported yet.<br/>The specific service of the asset to be used for computation |
+| `userdata`       | Optional | `dataset \| algorithm` | Optional userdata to be passed to the service                                                                                                               |
+| `algocustomdata` | Optional | `algorithm`            | Optional custom data to be passed to the algorithm at computation                                                                                           |
 
 ```ts
 // Example of a CtD dataset config
