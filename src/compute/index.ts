@@ -28,7 +28,7 @@ import {
   AccessDetails,
   AssetWithAccessDetails,
   AssetWithAccessDetailsAndPrice,
-  ComputeAsset as NautilusComputeAsset,
+  ComputeAsset as NautilusComputeAsset, // TODO why do we need both names?
   ComputeConfig,
   ComputeResultConfig,
   OrderPriceAndFees
@@ -92,7 +92,7 @@ export async function compute(computeConfig: ComputeConfig) {
 
     const dataset = assets.find((asset) => asset.id === datasetDid)
     const algo = assets.find((asset) => asset.id === algorithmDid)
-    const additionalDatasets = additionalDatasetsConfig
+    const additionalDatasets = additionalDatasetsConfig // TODO remove? never used
       ? assets.filter((asset) =>
           additionalDatasetsConfig
             .map((dataset) => dataset.did)
@@ -104,6 +104,7 @@ export async function compute(computeConfig: ComputeConfig) {
     // TODO: consider to do this first before loading all other assets
     const computeService = getServiceByName(dataset, 'compute')
     const allowed = await isOrderable(
+      // TODO consider isAllowed or similar for boolean
       dataset,
       computeService.id,
       {
@@ -148,6 +149,7 @@ export async function compute(computeConfig: ComputeConfig) {
     if (!algorithmWithPrice?.orderPriceAndFees)
       throw new Error('Error setting algorithm price and fees!')
 
+    // TODO remove? never used
     const algoDatatokenBalance = await getDatatokenBalance(
       web3,
       algo.services[0].datatokenAddress
@@ -164,6 +166,7 @@ export async function compute(computeConfig: ComputeConfig) {
     )
     if (!algorithmOrderTx) throw new Error('Failed to order algorithm.')
 
+    // TODO remove? never used
     const datasetDatatokenBalance = await getDatatokenBalance(
       web3,
       algo.services[0].datatokenAddress
