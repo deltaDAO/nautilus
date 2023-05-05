@@ -38,6 +38,7 @@ describe('Compute', () => {
     console.log(computeJob)
   })
 
+  // TODO test is failing, hardcoded jobId?
   it('should get compute status', async () => {
     const jobStatus = await getStatus({
       jobId,

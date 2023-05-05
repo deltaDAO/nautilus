@@ -15,6 +15,7 @@ import {
   OrderParams,
   PriceAndFees,
   ProviderComputeInitialize,
+  ProviderComputeInitializeResults,
   ProviderFees,
   ProviderInstance,
   Service,
@@ -48,7 +49,7 @@ import { tokenPriceQuery } from '../utils/subgraph/queries'
 
 export async function compute(computeConfig: ComputeConfig) {
   const {
-    dataset: datasetConfig,
+    dataset: datasetConfig, // TODO consider syncing naming with type to prevent renaming
     algorithm: algorithmConfig,
     web3,
     config,
@@ -129,32 +130,22 @@ export async function compute(computeConfig: ComputeConfig) {
       web3.defaultAccount,
       computeEnv
     )
-
     // 4. Get prices and fees for the assets
-    const datasetWithPrice = await getAssetWithPrice(
+    const { datasetWithPrice, algorithmWithPrice } = await getAssetPrices(
+      algo,
       dataset,
       web3,
       config,
-      providerInitializeResults?.datasets?.[0]?.providerFee
+      providerInitializeResults
     )
-    if (!datasetWithPrice?.orderPriceAndFees)
-      throw new Error('Error setting dataset price and fees!')
 
-    const algorithmWithPrice = await getAssetWithPrice(
-      algo,
-      web3,
-      config,
-      providerInitializeResults.algorithm.providerFee
-    )
-    if (!algorithmWithPrice?.orderPriceAndFees)
-      throw new Error('Error setting algorithm price and fees!')
-
-    // TODO remove? never used
+    // TODO remove? never used. maybe missing feature to check if datatoken already in wallet?
     const algoDatatokenBalance = await getDatatokenBalance(
       web3,
       algo.services[0].datatokenAddress
     )
 
+    // TODO ==== Extract asset ordering start ====
     const algorithmOrderTx = await handleComputeOrder(
       web3,
       algo,
@@ -166,7 +157,7 @@ export async function compute(computeConfig: ComputeConfig) {
     )
     if (!algorithmOrderTx) throw new Error('Failed to order algorithm.')
 
-    // TODO remove? never used
+    // TODO remove? never used. maybe missing feature to check if datatoken already in wallet?
     const datasetDatatokenBalance = await getDatatokenBalance(
       web3,
       algo.services[0].datatokenAddress
@@ -183,6 +174,9 @@ export async function compute(computeConfig: ComputeConfig) {
     )
     if (!datasetOrderTx) throw new Error('Failed to order dataset.')
 
+    // ==== Extract asset ordering end ====
+
+    // TODO ==== Extract compute job execution start ====
     LoggerInstance.log('[compute] Starting compute job.')
     const computeAsset: ComputeAsset = {
       documentId: datasetConfig.did,
@@ -192,8 +186,8 @@ export async function compute(computeConfig: ComputeConfig) {
     }
 
     const output: ComputeOutput = {
-      publishAlgorithmLog: true,
-      publishOutput: true
+      publishAlgorithmLog: true, // TODO should be configuarable
+      publishOutput: true // TODO should be configuarable
     }
 
     const controller = new AbortController()
@@ -216,12 +210,41 @@ export async function compute(computeConfig: ComputeConfig) {
     )
     if (!response) throw new Error('Error starting compute job.')
 
+    // ==== Extract compute job execution end ====
     LoggerInstance.debug('[compute] Starting compute job response: ', response)
     return response
   } catch (e) {
     LoggerInstance.error(e)
     LoggerInstance.error('Failed computation:', e.message)
   }
+}
+
+async function getAssetPrices(
+  algo: AssetWithAccessDetails,
+  dataset: AssetWithAccessDetails,
+  web3: Web3,
+  config: Config,
+  providerInitializeResults: ProviderComputeInitializeResults
+) {
+  const datasetWithPrice = await getAssetWithPrice(
+    dataset,
+    web3,
+    config,
+    providerInitializeResults?.datasets?.[0]?.providerFee
+  )
+  if (!datasetWithPrice?.orderPriceAndFees)
+    throw new Error('Error setting dataset price and fees!')
+
+  const algorithmWithPrice = await getAssetWithPrice(
+    algo,
+    web3,
+    config,
+    providerInitializeResults.algorithm.providerFee
+  )
+  if (!algorithmWithPrice?.orderPriceAndFees)
+    throw new Error('Error setting algorithm price and fees!')
+
+  return { datasetWithPrice, algorithmWithPrice }
 }
 
 export async function getAssetsWithAccessDetails(
