@@ -9,7 +9,7 @@ dotenv.config()
 
 describe('Compute', () => {
   let web3: Web3
-  const jobId = 'cda858f7df4244799713896986a93a84'
+  const jobId = '915992c3b4174272877af1cb32529a5a' // TODO use config or dynamic jobId
   const config = chainConfig
 
   before(() => {
@@ -49,6 +49,7 @@ describe('Compute', () => {
     assert.ok(jobStatus.status > 0, 'Received unsupported status for job')
   })
 
+  // TODO fix test
   it('should retrieve results', async () => {
     const resultIndex = 0
     const resultUrl = await retrieveResult({
@@ -73,6 +74,7 @@ describe('Compute', () => {
       `${cleanedProviderUri}\\/api\\/services\\/computeResult\\?${paramGroupRegex}`
     )
 
+    console.log('HERE', resultUrl)
     assert.match(resultUrl, regex, 'Invalid result received')
   })
 })
