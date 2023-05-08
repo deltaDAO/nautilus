@@ -51,7 +51,7 @@ export async function compute(computeConfig: ComputeConfig) {
     dataset: datasetConfig,
     algorithm: algorithmConfig,
     web3,
-    config,
+    chainConfig,
     additionalDatasets: additionalDatasetsConfig
   } = computeConfig
   const account = web3?.defaultAccount
@@ -86,7 +86,7 @@ export async function compute(computeConfig: ComputeConfig) {
     // 1. Get all assets and access details from DIDs
     const assets = await getAssetsWithAccessDetails(
       assetIdentifiers,
-      config,
+      chainConfig,
       web3
     )
 
@@ -133,7 +133,7 @@ export async function compute(computeConfig: ComputeConfig) {
     const datasetWithPrice = await getAssetWithPrice(
       dataset,
       web3,
-      config,
+      chainConfig,
       providerInitializeResults?.datasets?.[0]?.providerFee
     )
     if (!datasetWithPrice?.orderPriceAndFees)
@@ -142,7 +142,7 @@ export async function compute(computeConfig: ComputeConfig) {
     const algorithmWithPrice = await getAssetWithPrice(
       algo,
       web3,
-      config,
+      chainConfig,
       providerInitializeResults.algorithm.providerFee
     )
     if (!algorithmWithPrice?.orderPriceAndFees)
@@ -159,7 +159,7 @@ export async function compute(computeConfig: ComputeConfig) {
       algorithmWithPrice?.orderPriceAndFees,
       web3.defaultAccount,
       providerInitializeResults.algorithm,
-      config,
+      chainConfig,
       computeEnv.consumerAddress
     )
     if (!algorithmOrderTx) throw new Error('Failed to order algorithm.')
@@ -175,7 +175,7 @@ export async function compute(computeConfig: ComputeConfig) {
       datasetWithPrice?.orderPriceAndFees,
       web3.defaultAccount,
       providerInitializeResults.datasets[0],
-      config,
+      chainConfig,
       computeEnv.consumerAddress
     )
     if (!datasetOrderTx) throw new Error('Failed to order dataset.')

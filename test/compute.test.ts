@@ -3,23 +3,16 @@ import assert from 'assert'
 import * as dotenv from 'dotenv'
 import chainConfig from './fixtures/chainConfig.json'
 
-import Web3 from 'web3'
 import { compute, getStatus, retrieveResult } from '../src'
+import { getWeb3 } from './fixtures/Web3'
 dotenv.config()
 
 describe('Compute', () => {
-  let web3: Web3
+  const web3 = getWeb3()
   const jobId = 'cda858f7df4244799713896986a93a84'
   const config = chainConfig
 
   before(() => {
-    web3 = new Web3(config.nodeUri)
-    const account = web3.eth.accounts.privateKeyToAccount(
-      process.env.PRIVATE_KEY
-    )
-    web3.eth.accounts.wallet.add(account)
-    web3.defaultAccount = account.address
-
     LoggerInstance.setLevel(LogLevel.Verbose)
   })
 
@@ -32,7 +25,7 @@ describe('Compute', () => {
         did: 'did:op:ca69686d534777405c8cb0a4437bca408a3f8bd1e479d429beed64b9f932b69f'
       },
       web3,
-      config
+      chainConfig
     })
 
     console.log(computeJob)
