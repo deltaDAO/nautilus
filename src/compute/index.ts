@@ -52,7 +52,7 @@ export async function compute(computeConfig: ComputeConfig) {
     dataset: datasetConfig, // TODO consider syncing naming with type to prevent renaming
     algorithm: algorithmConfig,
     web3,
-    config,
+    chainConfig,
     additionalDatasets: additionalDatasetsConfig
   } = computeConfig
   const account = web3?.defaultAccount
@@ -87,7 +87,7 @@ export async function compute(computeConfig: ComputeConfig) {
     // 1. Get all assets and access details from DIDs
     const assets = await getAssetsWithAccessDetails(
       assetIdentifiers,
-      config,
+      chainConfig,
       web3
     )
 
@@ -135,9 +135,14 @@ export async function compute(computeConfig: ComputeConfig) {
       algo,
       dataset,
       web3,
-      config,
+      chainConfig,
       providerInitializeResults
     )
+    if (!datasetWithPrice?.orderPriceAndFees)
+      throw new Error('Error setting dataset price and fees!')
+
+    if (!algorithmWithPrice?.orderPriceAndFees)
+      throw new Error('Error setting algorithm price and fees!')
 
     // TODO remove? never used. maybe missing feature to check if datatoken already in wallet?
     const algoDatatokenBalance = await getDatatokenBalance(
@@ -152,7 +157,7 @@ export async function compute(computeConfig: ComputeConfig) {
       algorithmWithPrice?.orderPriceAndFees,
       web3.defaultAccount,
       providerInitializeResults.algorithm,
-      config,
+      chainConfig,
       computeEnv.consumerAddress
     )
     if (!algorithmOrderTx) throw new Error('Failed to order algorithm.')
@@ -169,7 +174,7 @@ export async function compute(computeConfig: ComputeConfig) {
       datasetWithPrice?.orderPriceAndFees,
       web3.defaultAccount,
       providerInitializeResults.datasets[0],
-      config,
+      chainConfig,
       computeEnv.consumerAddress
     )
     if (!datasetOrderTx) throw new Error('Failed to order dataset.')

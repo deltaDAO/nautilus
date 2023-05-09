@@ -19,7 +19,7 @@ export interface ComputeConfig {
   dataset: ComputeAsset
   algorithm: ComputeAlgorithm
   web3: Web3
-  config: Config
+  chainConfig: Config
   additionalDatasets?: ComputeAsset[]
 }
 
