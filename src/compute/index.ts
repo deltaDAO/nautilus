@@ -1,51 +1,31 @@
 import {
-  amountToUnits,
-  approve,
   Asset,
-  ComputeAlgorithm,
   ComputeAsset,
   ComputeEnvironment,
   ComputeOutput,
   Config,
-  Datatoken,
-  Dispenser,
-  FixedRateExchange,
-  FreOrderParams,
   LoggerInstance,
-  OrderParams,
-  PriceAndFees,
   ProviderComputeInitialize,
   ProviderComputeInitializeResults,
-  ProviderFees,
-  ProviderInstance,
-  Service,
-  UserCustomParameters,
-  ZERO_ADDRESS
+  ProviderInstance
 } from '@oceanprotocol/lib'
-import Decimal from 'decimal.js'
-import { OperationContext, OperationResult } from 'urql'
 import Web3 from 'web3'
 import {
-  AccessDetails,
   AssetWithAccessDetails,
-  AssetWithAccessDetailsAndPrice,
-  ComputeAsset as NautilusComputeAsset, // TODO why do we need both names?
   ComputeConfig,
   ComputeResultConfig,
   OrderPriceAndFees
 } from '../@types/Compute'
+import { getDatatokenBalance, getServiceByName } from '../utils'
 import {
-  TokenPriceQuery_token as TokenPrice,
-  TokenPriceQuery
-} from '../@types/subgraph/TokenPriceQuery'
-import { getDatatokenBalance, getServiceById, getServiceByName } from '../utils'
-import { getAsset } from '../utils/aquarius'
+  getAssetsWithAccessDetails,
+  getAssetWithPrice
+} from '../utils/helpers/assets'
+import { isOrderable, reuseOrder, startOrder } from '../utils/order'
 import {
   approveProviderFee,
   initializeProviderForCompute
 } from '../utils/provider'
-import { fetchData, getAccessDetailsFromTokenPrice } from '../utils/subgraph'
-import { tokenPriceQuery } from '../utils/subgraph/queries'
 
 export async function compute(computeConfig: ComputeConfig) {
   const {
@@ -131,13 +111,14 @@ export async function compute(computeConfig: ComputeConfig) {
       computeEnv
     )
     // 4. Get prices and fees for the assets
-    const { datasetWithPrice, algorithmWithPrice } = await getAssetPrices(
-      algo,
-      dataset,
-      web3,
-      chainConfig,
-      providerInitializeResults
-    )
+    const { datasetWithPrice, algorithmWithPrice } =
+      await getComputeAssetPrices(
+        algo,
+        dataset,
+        web3,
+        chainConfig,
+        providerInitializeResults
+      )
     if (!datasetWithPrice?.orderPriceAndFees)
       throw new Error('Error setting dataset price and fees!')
 
@@ -224,7 +205,7 @@ export async function compute(computeConfig: ComputeConfig) {
   }
 }
 
-async function getAssetPrices(
+async function getComputeAssetPrices(
   algo: AssetWithAccessDetails,
   dataset: AssetWithAccessDetails,
   web3: Web3,
@@ -250,49 +231,6 @@ async function getAssetPrices(
     throw new Error('Error setting algorithm price and fees!')
 
   return { datasetWithPrice, algorithmWithPrice }
-}
-
-export async function getAssetsWithAccessDetails(
-  identifiers: NautilusComputeAsset[],
-  config: Config,
-  web3: Web3
-): Promise<AssetWithAccessDetails[]> {
-  const controller = new AbortController()
-  LoggerInstance.debug(
-    `Retrieving ${identifiers.length} assets from metadata cache ...`
-  )
-
-  const assets = await Promise.all(
-    identifiers.map((asset) =>
-      getAsset(config.metadataCacheUri, asset.did, controller.signal)
-    )
-  )
-
-  LoggerInstance.debug(
-    `Retrieve access details for ${identifiers.length} assets from subgraph ...`
-  )
-  const assetAccessDetails = await Promise.all(
-    assets.map((asset, i) => {
-      const serviceIndex = Math.max(
-        asset.services.findIndex(
-          (service) => service.id === identifiers[i].serviceId
-        ),
-        0
-      )
-
-      return getAccessDetails(
-        config.subgraphUri,
-        asset.datatokens[serviceIndex].address,
-        asset.services[serviceIndex].timeout,
-        web3.defaultAccount
-      )
-    })
-  )
-
-  return assets.map((asset, i) => ({
-    ...asset,
-    accessDetails: assetAccessDetails[i]
-  }))
 }
 
 export async function getStatus(computeStatusConfig: any) {
@@ -372,158 +310,6 @@ export async function getComputeEnviroment(
   }
 }
 
-export function getQueryContext(subgraphUri: string): OperationContext {
-  try {
-    const queryContext: OperationContext = {
-      url: `${subgraphUri}/subgraphs/name/oceanprotocol/ocean-subgraph`,
-      requestPolicy: 'network-only'
-    }
-    return queryContext
-  } catch (error) {
-    LoggerInstance.error('Get query context error: ', error.message)
-  }
-}
-
-export async function isOrderable(
-  asset: Asset,
-  serviceId: string,
-  algorithm: ComputeAlgorithm,
-  algorithmAsset: Asset
-): Promise<boolean> {
-  const datasetService: Service = getServiceById(asset, serviceId)
-  if (!datasetService) return false
-
-  if (datasetService.type === 'compute') {
-    if (algorithm.meta) {
-      // check if raw algo is allowed
-      if (datasetService.compute.allowRawAlgorithm) return true
-      LoggerInstance.error('ERROR: This service does not allow raw algorithm')
-      return false
-    }
-    if (algorithm.documentId) {
-      const algoService: Service = getServiceById(
-        algorithmAsset,
-        algorithm.serviceId
-      )
-      if (algoService && algoService.type === 'compute') {
-        if (algoService.serviceEndpoint !== datasetService.serviceEndpoint) {
-          LoggerInstance.error(
-            'ERROR: Both assets with compute service are not served by the same provider'
-          )
-          return false
-        }
-      }
-    }
-  }
-  return true
-}
-
-export async function getAccessDetails(
-  subgraphUri: string,
-  datatokenAddress: string,
-  timeout?: number,
-  account = ''
-): Promise<AccessDetails> {
-  try {
-    const queryContext = getQueryContext(subgraphUri)
-    const tokenQueryResult: OperationResult<
-      TokenPriceQuery,
-      { datatokenId: string; account: string }
-    > = await fetchData(
-      subgraphUri,
-      tokenPriceQuery,
-      {
-        datatokenId: datatokenAddress.toLowerCase(),
-        account: account?.toLowerCase()
-      },
-      queryContext
-    )
-
-    const tokenPrice: TokenPrice = tokenQueryResult.data.token
-    const accessDetails = getAccessDetailsFromTokenPrice(tokenPrice, timeout)
-    return accessDetails
-  } catch (error) {
-    LoggerInstance.error('Error getting access details: ', error.message)
-  }
-}
-
-export async function getAssetsWithPrice(
-  assets: AssetWithAccessDetails[],
-  web3: Web3,
-  config: Config,
-  providerFees?: ProviderFees
-): Promise<AssetWithAccessDetailsAndPrice[]> {
-  const assetsWithPrices = await Promise.all(
-    assets.map((asset) => getAssetWithPrice(asset, web3, config, providerFees))
-  )
-
-  return assetsWithPrices
-}
-
-export async function getAssetWithPrice(
-  asset: AssetWithAccessDetails,
-  web3: Web3,
-  config: Config,
-  providerFees?: ProviderFees,
-  userCustomParameters?: UserCustomParameters
-): Promise<AssetWithAccessDetailsAndPrice> {
-  const orderPriceAndFees = {
-    price: '0',
-    publisherMarketOrderFee: asset.accessDetails.publisherMarketOrderFee,
-    consumeMarketOrderFee: '0',
-    providerFee: {
-      providerFeeAmount: '0'
-    },
-    opcFee: '0'
-  } as OrderPriceAndFees
-
-  // fetch provider fee
-  const initializeData =
-    !providerFees &&
-    (await ProviderInstance.initialize(
-      asset?.id,
-      asset?.services[0].id,
-      0,
-      web3.defaultAccount,
-      asset?.services[0].serviceEndpoint,
-      undefined,
-      userCustomParameters
-    ))
-  orderPriceAndFees.providerFee = providerFees || initializeData.providerFee
-
-  // fetch price and swap fees
-  if (asset?.accessDetails?.type === 'fixed') {
-    const fixed = await getFixedBuyPrice(asset?.accessDetails, config, web3)
-    orderPriceAndFees.price = fixed.baseTokenAmount
-    orderPriceAndFees.opcFee = fixed.oceanFeeAmount
-  }
-
-  // calculate full price, we assume that all the values are in ocean, otherwise this will be incorrect
-  orderPriceAndFees.price = new Decimal(+orderPriceAndFees.price || 0)
-    .add(new Decimal(+orderPriceAndFees?.consumeMarketOrderFee || 0))
-    .add(new Decimal(+orderPriceAndFees?.publisherMarketOrderFee || 0))
-    .toString()
-
-  return { ...asset, orderPriceAndFees }
-}
-
-/**
- * This is used to calculate the price to buy one datatoken from a fixed rate exchange. You need to pass either a web3 object or a chainId. If you pass a chainId a dummy web3 object will be created
- */
-export async function getFixedBuyPrice(
-  accessDetails: AccessDetails,
-  config: Config,
-  web3: Web3
-): Promise<PriceAndFees> {
-  const fixed = new FixedRateExchange(config.fixedRateExchangeAddress, web3)
-  const estimatedPrice = await fixed.calcBaseInGivenDatatokensOut(
-    accessDetails.addressOrId,
-    '1',
-    '0'
-  )
-  return estimatedPrice
-}
-
 export async function handleComputeOrder(
   web3: Web3,
   asset: AssetWithAccessDetails,
@@ -595,200 +381,5 @@ export async function handleComputeOrder(
     return txStartOrder?.transactionHash
   } catch (error) {
     LoggerInstance.error(`[compute] ${error.message}`)
-  }
-}
-
-export async function startOrder(
-  web3: Web3,
-  asset: AssetWithAccessDetails,
-  orderPriceAndFees: OrderPriceAndFees,
-  accountId: string,
-  config: Config,
-  initializeData?: ProviderComputeInitialize,
-  computeConsumerAddress?: string
-) {
-  const tx = await order(
-    web3,
-    asset,
-    orderPriceAndFees,
-    accountId,
-    config,
-    initializeData?.providerFee || orderPriceAndFees.providerFee,
-    computeConsumerAddress
-  )
-  LoggerInstance.debug('[compute] Asset ordered:', tx)
-  return tx
-}
-
-export async function reuseOrder(
-  web3: Web3,
-  asset: AssetWithAccessDetails,
-  accountId: string,
-  validOrderTx: string,
-  providerFees: ProviderFees
-): Promise<any> {
-  const datatoken = new Datatoken(web3)
-
-  const tx = await datatoken.reuseOrder(
-    asset.accessDetails.datatoken.address,
-    accountId,
-    validOrderTx,
-    providerFees
-  )
-
-  return tx
-}
-
-async function order(
-  web3: Web3,
-  asset: AssetWithAccessDetails,
-  orderPriceAndFees: OrderPriceAndFees,
-  accountId: string,
-  config: Config,
-  providerFees?: ProviderFees,
-  computeConsumerAddress?: string
-) {
-  const datatoken = new Datatoken(web3)
-
-  const orderParams = {
-    consumer: computeConsumerAddress || accountId,
-    serviceIndex: 0,
-    _providerFee: providerFees,
-    _consumeMarketFee: {
-      consumeMarketFeeAddress: ZERO_ADDRESS,
-      consumeMarketFeeAmount: '0',
-      consumeMarketFeeToken: '0x0000000000000000000000000000000000000000'
-    }
-  } as OrderParams
-
-  LoggerInstance.debug('[order] orderParams', orderParams)
-
-  LoggerInstance.debug('[order] order type', asset.accessDetails?.type)
-
-  switch (asset.accessDetails?.type) {
-    case 'fixed': {
-      // this assumes all fees are in ocean
-
-      const freParams = {
-        exchangeContract: config.fixedRateExchangeAddress,
-        exchangeId: asset.accessDetails.addressOrId,
-        maxBaseTokenAmount: orderPriceAndFees.price,
-        baseTokenAddress: asset?.accessDetails?.baseToken?.address,
-        baseTokenDecimals: asset?.accessDetails?.baseToken?.decimals || 18,
-        swapMarketFee: '0',
-        marketFeeAddress: ZERO_ADDRESS
-      } as FreOrderParams
-
-      if (asset.accessDetails.templateId === 1) {
-        // buy datatoken
-        const txApprove = await approve(
-          web3,
-          config,
-          accountId,
-          asset.accessDetails.baseToken.address,
-          config.fixedRateExchangeAddress,
-          await amountToUnits(
-            web3,
-            asset?.accessDetails?.baseToken?.address,
-            orderPriceAndFees.price
-          ),
-          false
-        )
-        if (!txApprove) {
-          return
-        }
-        const fre = new FixedRateExchange(config.fixedRateExchangeAddress, web3)
-        const freTx = await fre.buyDatatokens(
-          accountId,
-          asset.accessDetails?.addressOrId,
-          '1',
-          orderPriceAndFees.price,
-          ZERO_ADDRESS,
-          '0'
-        )
-
-        return await datatoken.startOrder(
-          asset.accessDetails.datatoken.address,
-          accountId,
-          orderParams.consumer,
-          orderParams.serviceIndex,
-          orderParams._providerFee,
-          orderParams._consumeMarketFee
-        )
-      }
-      if (asset.accessDetails.templateId === 2) {
-        const txApprove = await approve(
-          web3,
-          config,
-          accountId,
-          asset.accessDetails.baseToken.address,
-          asset.accessDetails.datatoken.address,
-          await amountToUnits(
-            web3,
-            asset?.accessDetails?.baseToken?.address,
-            orderPriceAndFees.price
-          ),
-          false
-        )
-        if (!txApprove) {
-          return
-        }
-        return await datatoken.buyFromFreAndOrder(
-          asset.accessDetails.datatoken.address,
-          accountId,
-          orderParams,
-          freParams
-        )
-      }
-      break
-    }
-    case 'free': {
-      LoggerInstance.debug(
-        '[order] order with type "free" for templateId:',
-        asset.accessDetails.templateId
-      )
-
-      if (asset.accessDetails.templateId === 1) {
-        const dispenser = new Dispenser(config.dispenserAddress, web3)
-        LoggerInstance.debug('[order] free order: dispenser', dispenser.address)
-        const dispenserTx = await dispenser.dispense(
-          asset.accessDetails?.datatoken.address,
-          accountId,
-          '1',
-          accountId
-        )
-        LoggerInstance.debug(
-          '[order] free order: dispenser tx',
-          dispenserTx.transactionHash
-        )
-
-        return await datatoken.startOrder(
-          asset.accessDetails.datatoken.address,
-          accountId,
-          orderParams.consumer,
-          orderParams.serviceIndex,
-          orderParams._providerFee,
-          orderParams._consumeMarketFee
-        )
-      }
-      if (asset.accessDetails.templateId === 2) {
-        LoggerInstance.debug('[order] buying from datatoken', {
-          datatoken: asset.services[0].datatokenAddress,
-          accountId,
-          orderParams,
-          dispenser: config.dispenserAddress
-        })
-        try {
-          return await datatoken.buyFromDispenserAndOrder(
-            asset.services[0].datatokenAddress,
-            accountId,
-            orderParams,
-            config.dispenserAddress
-          )
-        } catch (e) {
-          throw new Error(e)
-        }
-      }
-    }
   }
 }

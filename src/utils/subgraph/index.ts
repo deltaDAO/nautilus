@@ -13,6 +13,18 @@ import { TokenPriceQuery_token as TokenPrice } from '../../@types/subgraph/Token
 
 let client: Client
 
+export function getQueryContext(subgraphUri: string): OperationContext {
+  try {
+    const queryContext: OperationContext = {
+      url: `${subgraphUri}/subgraphs/name/oceanprotocol/ocean-subgraph`,
+      requestPolicy: 'network-only'
+    }
+    return queryContext
+  } catch (error) {
+    LoggerInstance.error('Get query context error: ', error.message)
+  }
+}
+
 export function geturqlClient(subgraphUri) {
   if (!client)
     client = createClient({
