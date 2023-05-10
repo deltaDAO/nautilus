@@ -31,6 +31,7 @@ describe('Compute', () => {
     console.log(computeJob)
   })
 
+  // TODO test is failing, hardcoded jobId?
   it('should get compute status', async () => {
     const jobStatus = await getStatus({
       jobId,
@@ -41,6 +42,7 @@ describe('Compute', () => {
     assert.ok(jobStatus.status > 0, 'Received unsupported status for job')
   })
 
+  // TODO fix test
   it('should retrieve results', async () => {
     const resultIndex = 0
     const resultUrl = await retrieveResult({
@@ -65,6 +67,7 @@ describe('Compute', () => {
       `${cleanedProviderUri}\\/api\\/services\\/computeResult\\?${paramGroupRegex}`
     )
 
+    console.log('HERE', resultUrl)
     assert.match(resultUrl, regex, 'Invalid result received')
   })
 })

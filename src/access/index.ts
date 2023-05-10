@@ -10,8 +10,10 @@ import {
   AssetWithAccessDetails,
   AssetWithAccessDetailsAndPrice
 } from '../@types/Compute'
-import { getAccessDetails, getAssetWithPrice, startOrder } from '../compute'
 import { getAsset } from '../utils/aquarius'
+import { getAccessDetails } from '../utils/helpers/access-details'
+import { getAssetWithPrice } from '../utils/helpers/assets'
+import { startOrder } from '../utils/order'
 
 /**
  * @param {AccessConfig} accessConfig Configuration of the access request
