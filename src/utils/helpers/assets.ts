@@ -57,19 +57,6 @@ export async function getAssetsWithAccessDetails(
   }))
 }
 
-// export async function getAssetsWithPrice(
-//   assets: AssetWithAccessDetails[],
-//   web3: Web3,
-//   config: Config,
-//   providerFees?: ProviderFees
-// ): Promise<AssetWithAccessDetailsAndPrice[]> {
-//   const assetsWithPrices = await Promise.all(
-//     assets.map((asset) => getAssetWithPrice(asset, web3, config, providerFees))
-//   )
-
-//   return assetsWithPrices
-// }
-
 export async function getAssetWithPrice(
   asset: AssetWithAccessDetails,
   web3: Web3,
