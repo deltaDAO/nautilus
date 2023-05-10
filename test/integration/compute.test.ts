@@ -1,13 +1,11 @@
-import { LogLevel } from '@oceanprotocol/lib'
-import { Nautilus } from '../../src/nautilus'
+import { Nautilus, LogLevel } from '../../src/nautilus'
 import { getWeb3 } from '../fixtures/Web3'
 
 describe('Compute to Data Integration Test', () => {
   it('starts a compute job via nautilus instance on mumbai', async () => {
-    const web3 = getWeb3('https://matic-mumbai.chainstacklabs.com')
+    const web3 = getWeb3()
+    Nautilus.setLogLevel(LogLevel.Verbose)
     const nautilus = await Nautilus.create(web3)
-
-    nautilus.logger.setLevel(LogLevel.Verbose)
 
     const computeJob = await nautilus.compute({
       dataset: {

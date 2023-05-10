@@ -1,10 +1,11 @@
-import chainConfig, { providerUri } from './chainConfig.json'
+import { Nautilus, NautilusAsset } from '../../src'
 import {
   AssetConfig,
   MetadataConfig,
   PricingConfig,
   ServiceConfig
 } from '../../src/@types/Publish'
+import { getOceanConfig } from '../../src/utils'
 import { datatokenParams } from './DatatokenParams'
 import { freParams } from './FixedRateExchangeParams'
 import { nftParams } from './NftCreateData'
@@ -37,7 +38,7 @@ export const algorithmMetadata: MetadataConfig = {
   }
 }
 
-export const datasetService: ServiceConfig = {
+export const datasetService: Omit<ServiceConfig, 'serviceEndpoint'> = {
   type: 'access',
   files: [
     {
@@ -46,11 +47,10 @@ export const datasetService: ServiceConfig = {
       method: 'GET'
     }
   ],
-  serviceEndpoint: providerUri,
   timeout: 0
 }
 
-export const algorithmService: ServiceConfig = {
+export const algorithmService: Omit<ServiceConfig, 'serviceEndpoint'> = {
   type: 'compute',
   files: [
     {
@@ -59,7 +59,6 @@ export const algorithmService: ServiceConfig = {
       method: 'GET'
     }
   ],
-  serviceEndpoint: providerUri,
   timeout: 600
 }
 
@@ -72,7 +71,7 @@ export function getAssetConfig(
   type: 'dataset' | 'algorithm',
   price: 'free' | 'fixed',
   serviceType: 'access' | 'compute'
-): AssetConfig {
+) {
   const web3 = getWeb3()
   const owner = web3.defaultAccount
 
@@ -86,27 +85,16 @@ export function getAssetConfig(
     }
   const services = [{ ...service, type: serviceType }]
 
-  const config: AssetConfig = {
-    chainConfig,
+  const asset = {
     metadata: type === 'dataset' ? datasetMetadata : algorithmMetadata,
     services,
-    web3,
     pricing:
       price === 'free'
         ? freePricing
         : { ...fixedPricing, freCreationParams: { ...freParams, owner } },
-    tokenParamaters: {
-      datatokenParams: {
-        ...datatokenParams,
-        paymentCollector: owner,
-        minter: owner
-      },
-      nftParams: {
-        ...nftParams,
-        owner
-      }
-    }
+    datatokenCreateParams: datatokenParams,
+    nftCreateData: nftParams
   }
 
-  return config
+  return asset
 }

@@ -1,5 +1,5 @@
 import assert from 'assert'
-import { AssetBuilder, Nautilus } from '../../src'
+import { AssetBuilder, Nautilus, LogLevel } from '../../src'
 import { ConsumerParameterBuilder } from '../../src/nautilus/asset/consumerParameters'
 import {
   FileTypes,
@@ -7,14 +7,24 @@ import {
   ServiceTypes
 } from '../../src/nautilus/asset/service'
 import { algorithmMetadata, algorithmService } from '../fixtures/AssetConfig'
-import { getConfig } from '../fixtures/Config'
+import { getTestConfig } from '../fixtures/Config'
 import { nftParams } from '../fixtures/NftCreateData'
 import { getWeb3 } from '../fixtures/Web3'
+import { Aquarius } from '@oceanprotocol/lib'
 
-describe('Publishing Integration Test', () => {
-  it('publishes an asset built with AssetBuilder and Nautilus instance', async () => {
-    const web3 = getWeb3()
-    const nautilus = await Nautilus.create(web3, getConfig())
+const nodeUri = 'https://matic-mumbai.chainstacklabs.com'
+
+describe.only('Nautilus access flow integration test', () => {
+  let downloadAssetDid: string
+
+  // 1. Publish Download Asset -> store did
+  it('publishes a download asset', async () => {
+    // Setup Nautilus instance for publisher (PRIVATE_KEY_TESTS_1)
+    const web3 = getWeb3(1, nodeUri)
+    Nautilus.setLogLevel(LogLevel.Verbose)
+    const nautilus = await Nautilus.create(web3, await getTestConfig(web3))
+
+    const { providerUri } = nautilus.getOceanConfig()
 
     const assetBuilder = new AssetBuilder()
 
@@ -66,7 +76,7 @@ describe('Publishing Integration Test', () => {
     )
 
     const service = serviceBuilder
-      .setServiceEndpoint(algorithmService.serviceEndpoint)
+      .setServiceEndpoint(providerUri)
       .setTimeout(algorithmService.timeout)
       .addFile(algorithmService.files[0])
       .addConsumerParameter(numberParameter)
@@ -91,7 +101,25 @@ describe('Publishing Integration Test', () => {
 
     const result = await nautilus.publish(asset)
 
-    console.log('Published!', result)
     assert(result)
+
+    downloadAssetDid = result.DID
   })
+
+  // 2. Access the Download Asset (1.)
+  it('accesses a download asset', async () => {
+    // Setup Nautilus instance for consumer (PRIVATE_KEY_TESTS_2)
+    const web3 = getWeb3(2, nodeUri)
+    const nautilus = await Nautilus.create(web3, await getTestConfig(web3))
+
+    // wait until ddo is found in metadata cache
+    const aquarius = new Aquarius(nautilus.getOceanConfig().metadataCacheUri)
+    await aquarius.waitForAqua(downloadAssetDid)
+
+    const accessUrl = await nautilus.access({
+      assetDid: downloadAssetDid
+    })
+
+    assert(accessUrl)
+  }).timeout(30000)
 })

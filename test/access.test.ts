@@ -1,27 +1,24 @@
-import { LoggerInstance, LogLevel } from '@oceanprotocol/lib'
-import { access } from '../src'
-import { getConfig } from './fixtures/Config'
+import { LoggerInstance } from '@oceanprotocol/lib'
+import { Nautilus, LogLevel } from '../src'
 import { getWeb3 } from './fixtures/Web3'
+import assert from 'assert'
 
 describe('Access', () => {
-  before(() => {
-    LoggerInstance.setLevel(LogLevel.Verbose)
+  let nautilus: Nautilus
+  before(async () => {
+    Nautilus.setLogLevel(LogLevel.Verbose)
+    nautilus = await Nautilus.create(getWeb3())
   })
 
   it('should download a free dataset', async () => {
     const assetDid =
-      'did:op:2ca1ddd4af1e3abf92b80ab62e102534baf26816db839310785e540b2837dc27'
-    const serialNumber = 'f139a417-fcfb-4059-93aa-ef7656fc4589'
+      'did:op:9422c781bda5e4a3d64c0d92f14d0f1e3db4939907e8dab3852618b2fecb3696'
 
-    const fileUrl = await access({
-      assetDid,
-      web3: getWeb3(),
-      chainConfig: getConfig(),
-      userdata: {
-        serialNumber
-      }
+    const fileUrl = await nautilus.access({
+      assetDid
     })
 
     LoggerInstance.log(fileUrl)
+    assert(fileUrl)
   })
 })
