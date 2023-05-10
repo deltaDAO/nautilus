@@ -1,4 +1,9 @@
-import { Config, ConfigHelper, LoggerInstance } from '@oceanprotocol/lib'
+import {
+  Config,
+  ConfigHelper,
+  LogLevel,
+  LoggerInstance
+} from '@oceanprotocol/lib'
 import Web3 from 'web3'
 import { AccessConfig } from '../@types/Access'
 import { ComputeConfig } from '../@types/Compute'
@@ -7,6 +12,8 @@ import { access } from '../access'
 import { compute } from '../compute'
 import { publishAsset } from '../publish'
 import { NautilusAsset } from './asset/NautilusAsset'
+
+export { LogLevel } from '@oceanprotocol/lib'
 
 /**
  * @class
@@ -20,8 +27,6 @@ export class Nautilus {
     this.web3 = web3
   }
 
-  logger = LoggerInstance
-
   /**
    * Creates a new Nautilus instance
    */
@@ -31,6 +36,14 @@ export class Nautilus {
     await instance.init(config)
 
     return instance
+  }
+
+  /**
+   * Set the log level for Nautilus
+   * ocean.js LoggerInstance is used for logging
+   */
+  static setLogLevel(level: LogLevel) {
+    LoggerInstance.setLevel(level)
   }
 
   // #region private helpers
@@ -53,6 +66,9 @@ export class Nautilus {
 
     // TODO: improve error message
     if (!this.hasValidConfig()) {
+      LoggerInstance.error({
+        config: this.config
+      })
       throw Error('Cannot initialize using the given config & web3.')
     }
   }
@@ -83,6 +99,10 @@ export class Nautilus {
   // #endregion
 
   // #region public functions
+  getOceanConfig() {
+    return this.config
+  }
+
   async publish(asset: NautilusAsset) {
     return await publishAsset({
       ...asset.getConfig(),
