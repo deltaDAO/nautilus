@@ -22,7 +22,7 @@ Setting up a new `Nautilus` instance to perform automated tasks, like publish & 
 First make sure to setup the `Web3` instance to use:
 
 ```ts
-const web3 = new Web3('https://rpc.genx.minimal-gaia-x.eu') // can be replaced with any Ocean Protocol supported network
+const web3 = new Web3('https://matic-mumbai.chainstacklabs.com') // can be replaced with any Ocean Protocol supported network
 ```
 
 Next, add the account you want to use for the automations:
