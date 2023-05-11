@@ -9,6 +9,14 @@ import {
 import { ServiceConfig } from '../../../@types/Publish'
 import { NautilusConsumerParameter } from '../ConsumerParameters'
 
+export {
+  Arweave,
+  GraphqlQuery,
+  Ipfs,
+  Smartcontract,
+  UrlFile
+} from '@oceanprotocol/lib'
+
 export enum FileTypes {
   URL = 'url',
   GRAPHQL = 'graphql',
