@@ -14,14 +14,17 @@ import { Aquarius } from '@oceanprotocol/lib'
 
 const nodeUri = 'https://matic-mumbai.chainstacklabs.com'
 
-describe.only('Nautilus access flow integration test', () => {
+describe('Nautilus access flow integration test', () => {
   let downloadAssetDid: string
+
+  before(() => {
+    Nautilus.setLogLevel(LogLevel.Verbose)
+  })
 
   // 1. Publish Download Asset -> store did
   it('publishes a download asset', async () => {
     // Setup Nautilus instance for publisher (PRIVATE_KEY_TESTS_1)
     const web3 = getWeb3(1, nodeUri)
-    Nautilus.setLogLevel(LogLevel.Verbose)
     const nautilus = await Nautilus.create(web3, await getTestConfig(web3))
 
     const { providerUri } = nautilus.getOceanConfig()
