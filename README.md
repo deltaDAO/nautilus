@@ -4,24 +4,39 @@ A typescript library helping to navigate the OCEAN. It enables configurable auto
 
 ## Table of Contents
 
-- [⚙️ Configuring a new Nautilus instance](#configuring-a-new-nautilus-instance)
-- [🌐 Automated Publishing](#automated-publishing)
-  - [Services](#services)
-  - [Consumer Parameters](#consumer-parameters)
-  - [Pricing](#pricing)
-  - [Owner and optional configs](#owner-and-optional-configs)
-- [🤖 Automated Compute Jobs](#automated-compute-jobs)
-- [🔐 Automated Access](#automated-access)
-- [📚 API Documentation](#api-documentation)
-- [🏛️ License](#api-documentation)
+- [Nautilus](#nautilus)
+  - [Table of Contents](#table-of-contents)
+  - [Configuring a new Nautilus instance](#configuring-a-new-nautilus-instance)
+  - [Automated Publishing](#automated-publishing)
+    - [Services](#services)
+    - [Consumer Parameters](#consumer-parameters)
+    - [Pricing](#pricing)
+    - [Owner and optional configs](#owner-and-optional-configs)
+  - [Automated Compute Jobs](#automated-compute-jobs)
+    - [Basic Config](#basic-config)
+    - [Optional Settings](#optional-settings)
+    - [Start compute job](#start-compute-job)
+  - [Automated Access](#automated-access)
+  - [API Documentation](#api-documentation)
+  - [License](#license)
 
 ## Configuring a new Nautilus instance
 
 Setting up a new `Nautilus` instance to perform automated tasks, like publish & consume, is rather simple.
 
-First make sure to setup the `Web3` instance to use:
+First make youre you have [web3](https://www.npmjs.com/package/web3) installed:
+
+
+
+```shell
+npm install web3
+```
+
+Setup the `Web3` instance to use:
 
 ```ts
+import Web3 from 'web3'
+
 const web3 = new Web3('https://matic-mumbai.chainstacklabs.com') // can be replaced with any Ocean Protocol supported network
 ```
 
@@ -71,7 +86,7 @@ You can use the `AssetBuilder` class to build an asset and publish it with the `
 Let's start by creating the builder and specifying the account that will be the owner/publisher of the new asset:
 
 ```ts
-import { AssetBuilder } from '@delta-dao/nautilus'
+import { AssetBuilder } from '@deltadao/nautilus'
 
 const assetBuilder = new AssetBuilder()
 ```
@@ -82,7 +97,7 @@ With this we can now continue to setup the metadata information for the asset:
 assetBuilder
   .setType('dataset') // 'dataset' or 'algorithm'
   .setName('My New Asset')
-  .setDescription('A publish asset building test on GEN-X') // supports markdown
+  .setDescription('This is a publish asset building test using Nautilus') // supports markdown
   .setAuthor('testAuthor')
   .setLicense('MIT') // SPDX license identifier
 ```
@@ -257,6 +272,8 @@ If all went well, you should be able to browse the asset on any OceanMarket conn
 The `Nautilus` instance we created in the setup step provides access to a `compute()` function that we can use to start new compute jobs.
 This includes all potentially necessary orders for required datatokens as well as the signed request towards Ocean Provider to start the compute job itself.
 
+### Basic Config
+
 The following values are required to start a new compute job:
 
 ```ts
@@ -274,11 +291,7 @@ const computeConfig = {
 }
 ```
 
-To start the new compute job simply call the compute function:
-
-```ts
-const computeJob = await nautilus.compute(computeConfig)
-```
+### Optional Settings
 
 In addition to that you can also specify some optional properties if needed.
 Both the dataset and algorithm support custom `userdata` that might be passed to the services. For algorithms you can also specify a `algocustomdata` property.
@@ -316,7 +329,9 @@ const algorithm = {
 }
 ```
 
-When you are happy with the configuration you can use the `Nautilus` instance just as before to start the new compute job:
+### Start compute job
+
+When you are happy with the configuration you can use the `Nautilus` instance to start the new compute job:
 
 ```ts
 const computeJob = await nautilus.compute({
@@ -356,7 +371,7 @@ const accessUrl = await nautilus.access(accessConfig)
 ## API Documentation
 
 If you want to learn more about Nautilus, we provide a more detailed documentation of the library, including a typedoc API documentation:
-https://deltadao.github.io/nautilus
+https://deltadao.github.io/nautilus/docs/api/
 
 ## License
 
