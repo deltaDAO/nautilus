@@ -17,7 +17,7 @@ describe('NautilusAsset', () => {
   const web3 = getWeb3()
   const owner = web3.defaultAccount
 
-  it('configures owner correctly', () => {
+  it('configures owner correctly', async () => {
     const asset = new NautilusAsset()
     asset.metadata = datasetMetadata
     asset.services.push(
@@ -26,7 +26,7 @@ describe('NautilusAsset', () => {
     asset.pricing = { ...fixedPricing, freCreationParams: freParams as any }
     asset.owner = owner
 
-    const config = asset.getConfig()
+    const config = await asset.getConfig()
 
     assert.equal(
       config.tokenParamaters.datatokenParams.paymentCollector,

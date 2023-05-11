@@ -105,7 +105,7 @@ export class Nautilus {
 
   async publish(asset: NautilusAsset) {
     return await publishAsset({
-      ...asset.getConfig(),
+      ...(await asset.getConfig()),
       ...this.getChainConfig()
     })
   }

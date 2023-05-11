@@ -56,7 +56,7 @@ export class NautilusAsset {
     this.datatokenCreateParams = params
   }
 
-  getConfig(): Omit<AssetConfig, 'web3' | 'chainConfig'> {
+  async getConfig(): Promise<Omit<AssetConfig, 'web3' | 'chainConfig'>> {
     // TODO: improve & add checks / errors
     if (!this.hasValidMetadata())
       throw new Error(
@@ -75,6 +75,10 @@ export class NautilusAsset {
     )
       throw new Error('Owner needs to be a valid address')
 
+    const services = await Promise.all(
+      this.services.map((service) => service.getConfig())
+    )
+
     return {
       metadata: {
         ...this.metadata,
@@ -88,7 +92,7 @@ export class NautilusAsset {
             }
           : undefined
       },
-      services: this.services.map((service) => service.getConfig()),
+      services,
       pricing: {
         ...this.pricing,
         freCreationParams: {

@@ -2,6 +2,7 @@ import {
   Arweave,
   GraphqlQuery,
   Ipfs,
+  ProviderInstance,
   ServiceComputeOptions,
   Smartcontract,
   UrlFile
@@ -63,7 +64,11 @@ export class NautilusService<
   additionalInformation?: { [key: string]: any } = {}
 
   // TODO: config transformation
-  getConfig(): ServiceConfig {
+  async getConfig(): Promise<ServiceConfig> {
+    // validate provider
+    if (!(await ProviderInstance.isValidProvider(this.serviceEndpoint)))
+      throw new Error('Provided serviceEndpoint is not a valid Ocean Provider')
+
     return {
       ...this,
       files: this.files as ServiceConfig['files'],
