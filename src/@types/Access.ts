@@ -8,6 +8,7 @@ export interface AccessConfig {
   assetDid: string
   web3: Web3
   chainConfig: Config
+  serviceId?: string
   fileIndex?: number
   userdata?: UserCustomParameters
 }
