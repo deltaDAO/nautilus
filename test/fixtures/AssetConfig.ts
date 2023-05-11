@@ -55,7 +55,7 @@ export const algorithmService: Omit<ServiceConfig, 'serviceEndpoint'> = {
   files: [
     {
       type: 'url',
-      url: 'https://github.com/deltaDAO/files/blob/main/product_quantity_computation.js',
+      url: 'https://raw.githubusercontent.com/deltaDAO/files/main/main.js',
       method: 'GET'
     }
   ],
