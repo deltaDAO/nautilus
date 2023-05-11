@@ -13,7 +13,7 @@ import {
 import { getAsset } from '../utils/aquarius'
 import { getAccessDetails } from '../utils/helpers/access-details'
 import { getAssetWithPrice } from '../utils/helpers/assets'
-import { startOrder } from '../utils/order'
+import { order } from '../utils/order'
 
 /**
  * @param {AccessConfig} accessConfig Configuration of the access request
@@ -48,7 +48,6 @@ export async function access(accessConfig: AccessConfig) {
     assetWithAccessDetails,
     web3,
     config,
-    undefined,
     userdata
   )
 
@@ -64,7 +63,7 @@ export async function access(accessConfig: AccessConfig) {
     return await downloadAssetFile(assetWithPrice, web3, fileIndex, userdata)
   }
 
-  const orderTx = await startOrder(
+  const orderTx = await order(
     web3,
     assetWithAccessDetails,
     assetWithPrice.orderPriceAndFees,
