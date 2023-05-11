@@ -18,10 +18,10 @@ import {
 } from '../@types/Compute'
 import { getDatatokenBalance, getServiceByName } from '../utils'
 import {
-  getAssetsWithAccessDetails,
-  getAssetWithPrice
+  getAssetWithPrice,
+  getAssetsWithAccessDetails
 } from '../utils/helpers/assets'
-import { isOrderable, reuseOrder, startOrder } from '../utils/order'
+import { isOrderable, order, reuseOrder } from '../utils/order'
 import {
   approveProviderFee,
   initializeProviderForCompute
@@ -212,21 +212,11 @@ async function getComputeAssetPrices(
   config: Config,
   providerInitializeResults: ProviderComputeInitializeResults
 ) {
-  const datasetWithPrice = await getAssetWithPrice(
-    dataset,
-    web3,
-    config,
-    providerInitializeResults?.datasets?.[0]?.providerFee
-  )
+  const datasetWithPrice = await getAssetWithPrice(dataset, web3, config)
   if (!datasetWithPrice?.orderPriceAndFees)
     throw new Error('Error setting dataset price and fees!')
 
-  const algorithmWithPrice = await getAssetWithPrice(
-    algo,
-    web3,
-    config,
-    providerInitializeResults.algorithm.providerFee
-  )
+  const algorithmWithPrice = await getAssetWithPrice(algo, web3, config)
   if (!algorithmWithPrice?.orderPriceAndFees)
     throw new Error('Error setting algorithm price and fees!')
 
@@ -300,11 +290,27 @@ export async function getComputeEnviroment(
 ): Promise<ComputeEnvironment> {
   if (asset?.services[0]?.type !== 'compute') return null
   try {
-    const computeEnvs = await ProviderInstance.getComputeEnvironments(
+    // TODO: revisit once ocean.js types are updated
+    const computeEnvs: any = await ProviderInstance.getComputeEnvironments(
       asset.services[0].serviceEndpoint
     )
-    if (!computeEnvs[0]) return null
-    return computeEnvs[0]
+
+    const chains = computeEnvs as {
+      [chainId: string]: ComputeEnvironment[]
+    }
+
+    const chainComputeEnvs: ComputeEnvironment[] =
+      chains[
+        Object.keys(chains).find(
+          (chainId) => chainId === asset.chainId.toString()
+        )
+      ]
+
+    // TODO: provide way to select compute env
+    const computeEnv = chainComputeEnvs[0]
+
+    if (!computeEnv) return null
+    return computeEnv
   } catch (e) {
     LoggerInstance.error('[compute] Fetch compute enviroment: ', e.message)
   }
@@ -368,13 +374,13 @@ export async function handleComputeOrder(
     }
 
     LoggerInstance.debug('[compute] Calling order ...', initializeData)
-    const txStartOrder = await startOrder(
+    const txStartOrder = await order(
       web3,
       asset,
       orderPriceAndFees,
       accountId,
       config,
-      initializeData,
+      initializeData.providerFee,
       computeConsumerAddress
     )
     LoggerInstance.debug('[compute] Order succeeded', txStartOrder)

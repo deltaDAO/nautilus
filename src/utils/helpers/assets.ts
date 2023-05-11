@@ -61,16 +61,10 @@ export async function getAssetWithPrice(
   asset: AssetWithAccessDetails,
   web3: Web3,
   config: Config,
-  providerFees?: ProviderFees,
   userCustomParameters?: UserCustomParameters
 ): Promise<AssetWithAccessDetailsAndPrice> {
   return {
     ...asset,
-    orderPriceAndFees: await getOrderPriceAndFees(
-      asset,
-      web3,
-      config,
-      providerFees
-    )
+    orderPriceAndFees: await getOrderPriceAndFees(asset, web3, config)
   }
 }
