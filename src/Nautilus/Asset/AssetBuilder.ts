@@ -1,10 +1,8 @@
-import { MetadataAlgorithm } from '@oceanprotocol/lib'
 import { IAssetBuilder } from '../../@types/Nautilus'
 import {
   DatatokenCreateParamsWithoutOwner,
   MetadataConfig,
-  NftCreateDataWithoutOwner,
-  ServiceConfig
+  NftCreateDataWithoutOwner
 } from '../../@types/Publish'
 import { NautilusAsset, PricingConfigWithoutOwner } from './NautilusAsset'
 import {
