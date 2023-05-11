@@ -80,7 +80,7 @@ export class NautilusAsset {
         ...this.metadata,
         algorithm: {
           ...this.metadata.algorithm,
-          consumerParameters: this.metadata.algorithm.consumerParameters.map(
+          consumerParameters: this.metadata.algorithm.consumerParameters?.map(
             (param) => param.getConfig()
           )
         }

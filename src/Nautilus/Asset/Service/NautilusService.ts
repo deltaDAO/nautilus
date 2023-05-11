@@ -59,7 +59,7 @@ export class NautilusService<
     return {
       ...this,
       files: this.files as ServiceConfig['files'],
-      consumerParameters: this.consumerParameters.map((param) =>
+      consumerParameters: this.consumerParameters?.map((param) =>
         param.getConfig()
       )
     }
