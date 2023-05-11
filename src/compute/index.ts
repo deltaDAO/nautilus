@@ -14,6 +14,7 @@ import {
   AssetWithAccessDetails,
   ComputeConfig,
   ComputeResultConfig,
+  ComputeStatusConfig,
   OrderPriceAndFees
 } from '../@types/Compute'
 import { getDatatokenBalance, getServiceByName } from '../utils'
@@ -223,16 +224,16 @@ async function getComputeAssetPrices(
   return { datasetWithPrice, algorithmWithPrice }
 }
 
-export async function getStatus(computeStatusConfig: any) {
-  const { jobId, web3, config } = computeStatusConfig
+export async function getStatus(computeStatusConfig: ComputeStatusConfig) {
+  const { jobId, web3, providerUri } = computeStatusConfig
   LoggerInstance.debug('[compute] Retrieve job status:', {
     jobId,
-    config,
+    providerUri,
     account: web3.defaultAccount
   })
   try {
     const status = await ProviderInstance.computeStatus(
-      config.providerUri,
+      providerUri,
       web3.defaultAccount,
       jobId
     )
@@ -247,7 +248,7 @@ export async function getStatus(computeStatusConfig: any) {
 }
 
 export async function retrieveResult(computeResultConfig: ComputeResultConfig) {
-  const { config, web3, jobId, resultIndex } = computeResultConfig
+  const { providerUri, web3, jobId, resultIndex } = computeResultConfig
   const job = await getStatus(computeResultConfig)
 
   if (job?.status !== 70) {
@@ -277,7 +278,7 @@ export async function retrieveResult(computeResultConfig: ComputeResultConfig) {
 
   LoggerInstance.debug(`[compute] Build result url...`)
   return await ProviderInstance.getComputeResultUrl(
-    config.providerUri,
+    providerUri,
     web3,
     web3.defaultAccount,
     jobId,

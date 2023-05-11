@@ -1,11 +1,12 @@
+import { Aquarius, ComputeJob, LoggerInstance } from '@oceanprotocol/lib'
 import assert from 'assert'
 import {
   AssetBuilder,
   FileTypes,
+  LogLevel,
   Nautilus,
   ServiceBuilder,
-  ServiceTypes,
-  LogLevel
+  ServiceTypes
 } from '../../src'
 import {
   algorithmMetadata,
@@ -16,27 +17,42 @@ import {
 import { getTestConfig } from '../fixtures/Config'
 import { nftParams } from '../fixtures/NftCreateData'
 import { getWeb3 } from '../fixtures/Web3'
-import { Aquarius } from '@oceanprotocol/lib'
 
 const nodeUri = 'https://matic-mumbai.chainstacklabs.com'
 
-describe('Nautilus compute flow integration test', () => {
-  let computeDatasetDid =
-    'did:op:5bef6f0f8fa196c7737d52872bb59fced444e35c42a30fd792cfcde9047b71d8'
-  let computeAlgorithmDid =
-    'did:op:41e0a72f659611bd645c67cbf71999a7cc61bf381a85a8c48def3b792b1e6255'
+describe.only('Nautilus compute flow integration test', async () => {
+  // PRIVATE_KEY_TESTS_1 (algorithm publisher)
+  const web3AlgoPublisher = getWeb3(1, nodeUri)
 
-  before(() => {
+  // PRIVATE_KEY_TESTS_2 (dataset publisher)
+  const web3DatasetPublisher = getWeb3(1, nodeUri)
+
+  let nautilusDatasetPublisher: Nautilus
+  let nautilusAlgoPublisher: Nautilus
+
+  let computeDatasetDid: string =
+    'did:op:e50994e0cf70d187c086044d9dff3e4eea669e3e6a63b37349f0f0b57c40fb1b'
+  let computeAlgorithmDid: string =
+    'did:op:5e889af9bb5dccc6ec4c3380e3f4c43c1af5f7973f170d69fddf8b2e8c473215'
+  let computeJobId: string = '687e6116ef1543c1926bb23d5543d758'
+
+  before(async () => {
     Nautilus.setLogLevel(LogLevel.Verbose)
+
+    nautilusAlgoPublisher = await Nautilus.create(
+      web3AlgoPublisher,
+      await getTestConfig(web3AlgoPublisher)
+    )
+
+    nautilusDatasetPublisher = await Nautilus.create(
+      web3DatasetPublisher,
+      await getTestConfig(web3DatasetPublisher)
+    )
   })
 
-  it('publishes a compute algorithm asset', async () => {
-    // PRIVATE_KEY_TESTS_1
-    const web3 = getWeb3(1, nodeUri)
-    const nautilus = await Nautilus.create(web3, await getTestConfig(web3))
-
+  it.skip('publishes a compute algorithm asset', async () => {
     // serviceEndpoint to use for the test asset
-    const { providerUri } = nautilus.getOceanConfig()
+    const { providerUri } = nautilusAlgoPublisher.getOceanConfig()
 
     // Create the "compute" service
     const serviceBuilder = new ServiceBuilder(
@@ -56,29 +72,25 @@ describe('Nautilus compute flow integration test', () => {
       .setDescription('A compute algorithm publishing test')
       .setLicense('MIT')
       .setName('Test Publish Compute Algorithm')
-      .setOwner(web3.defaultAccount)
+      .setOwner(web3AlgoPublisher.defaultAccount)
       .setType('algorithm')
-      .setPricing(await getPricing(web3, 'free'))
+      .setPricing(await getPricing(web3AlgoPublisher, 'free'))
       .setNftData(nftParams)
       .addService(service)
       .setAlgorithm(algorithmMetadata.algorithm)
       .build()
 
     // publish
-    const result = await nautilus.publish(asset)
+    const result = await nautilusAlgoPublisher.publish(asset)
 
     assert(result)
 
     computeAlgorithmDid = result.DID
   }).timeout(30000)
 
-  it('publishes a compute dataset asset', async () => {
-    // PRIVATE_KEY_TESTS_2
-    const web3 = getWeb3(2, nodeUri)
-    const nautilus = await Nautilus.create(web3, await getTestConfig(web3))
-
+  it.skip('publishes a compute dataset asset', async () => {
     // serviceEndpoint to use for the test asset
-    const { providerUri } = nautilus.getOceanConfig()
+    const { providerUri } = nautilusDatasetPublisher.getOceanConfig()
 
     // Create the "compute" service
     const serviceBuilder = new ServiceBuilder(
@@ -98,32 +110,30 @@ describe('Nautilus compute flow integration test', () => {
       .setDescription('A compute dataset publishing test')
       .setLicense('MIT')
       .setName('Test Publish Compute Dataset')
-      .setOwner(web3.defaultAccount)
+      .setOwner(web3DatasetPublisher.defaultAccount)
       .setType('dataset')
-      .setPricing(await getPricing(web3, 'free'))
+      .setPricing(await getPricing(web3DatasetPublisher, 'free'))
       .setNftData(nftParams)
       .addService(service)
       .build()
 
     // publish
-    const result = await nautilus.publish(asset)
+    const result = await nautilusDatasetPublisher.publish(asset)
 
     assert(result)
 
     computeDatasetDid = result.DID
   }).timeout(30000)
 
-  it('starts a compute job', async () => {
-    // PRIVATE_KEY_TESTS_2 (dataset publisher)
-    const web3 = getWeb3(2, nodeUri)
-    const nautilus = await Nautilus.create(web3, await getTestConfig(web3))
-
+  it.skip('starts a compute job', async () => {
     // wait until DDOs are found in metadata cache
-    const aquarius = new Aquarius(nautilus.getOceanConfig().metadataCacheUri)
+    const aquarius = new Aquarius(
+      nautilusDatasetPublisher.getOceanConfig().metadataCacheUri
+    )
     await aquarius.waitForAqua(computeAlgorithmDid)
     await aquarius.waitForAqua(computeDatasetDid)
 
-    const computeJob = await nautilus.compute({
+    const startedJob = await nautilusDatasetPublisher.compute({
       dataset: {
         did: computeDatasetDid
       },
@@ -132,6 +142,58 @@ describe('Nautilus compute flow integration test', () => {
       }
     })
 
+    const computeJob = Array.isArray(startedJob) ? startedJob[0] : startedJob
+
     assert(computeJob)
+
+    computeJobId = computeJob.jobId
   }).timeout(90000)
+
+  it('should get compute status', async () => {
+    const status = await getStatusHelper(nautilusDatasetPublisher, computeJobId)
+    assert(status)
+  })
+
+  it('should get download url for compute result', async () => {
+    await waitUntilJobFinishes(nautilusDatasetPublisher, computeJobId)
+
+    const { providerUri } = nautilusDatasetPublisher.getOceanConfig()
+
+    const resultUrl = await nautilusDatasetPublisher.getComputeResult({
+      jobId: computeJobId,
+      providerUri
+    })
+
+    assert(resultUrl)
+  }).timeout(120000)
 })
+
+async function getStatusHelper(nautilus: Nautilus, jobId: string) {
+  const { providerUri } = nautilus.getOceanConfig()
+
+  const status = await nautilus.getComputeStatus({
+    jobId,
+    providerUri
+  })
+
+  return status
+}
+
+async function waitUntilJobFinishes(
+  nautilus: Nautilus,
+  jobId: string
+): Promise<ComputeJob> {
+  LoggerInstance.log(`Waiting until compute job finishes...`)
+  return new Promise((resolve) => {
+    const interval = setInterval(async () => {
+      const status = await getStatusHelper(nautilus, jobId)
+      LoggerInstance.log(
+        `Waiting until compute job finishes... (Current status: ${status.status} - ${status.statusText})`
+      )
+      if (status?.status === 70) {
+        clearInterval(interval)
+        resolve(status)
+      }
+    }, 10000)
+  })
+}

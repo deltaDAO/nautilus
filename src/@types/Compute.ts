@@ -23,10 +23,13 @@ export interface ComputeConfig {
   additionalDatasets?: ComputeAsset[]
 }
 
-export interface ComputeResultConfig {
+export interface ComputeStatusConfig {
   jobId: string
+  providerUri: string
   web3: Web3
-  config: Config
+}
+
+export interface ComputeResultConfig extends ComputeStatusConfig {
   resultIndex?: number
 }
 

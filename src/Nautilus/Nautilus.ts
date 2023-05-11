@@ -6,10 +6,14 @@ import {
 } from '@oceanprotocol/lib'
 import Web3 from 'web3'
 import { AccessConfig } from '../@types/Access'
-import { ComputeConfig } from '../@types/Compute'
+import {
+  ComputeConfig,
+  ComputeResultConfig,
+  ComputeStatusConfig
+} from '../@types/Compute'
 import { AssetConfig } from '../@types/Publish'
 import { access } from '../access'
-import { compute } from '../compute'
+import { compute, getStatus, retrieveResult } from '../compute'
 import { publishAsset } from '../publish'
 import { NautilusAsset } from './Asset/NautilusAsset'
 
@@ -124,6 +128,24 @@ export class Nautilus {
     return await compute({
       ...computeConfig,
       ...this.getChainConfig()
+    })
+  }
+
+  async getComputeStatus(
+    computeStatusConfig: Omit<ComputeStatusConfig, 'web3'>
+  ) {
+    return await getStatus({
+      ...computeStatusConfig,
+      web3: this.web3
+    })
+  }
+
+  async getComputeResult(
+    computeResultConfig: Omit<ComputeResultConfig, 'web3'>
+  ) {
+    return await retrieveResult({
+      ...computeResultConfig,
+      web3: this.web3
     })
   }
   // #endregion
