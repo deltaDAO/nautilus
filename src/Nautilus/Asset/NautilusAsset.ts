@@ -57,12 +57,6 @@ export class NautilusAsset {
   }
 
   async getConfig(): Promise<Omit<AssetConfig, 'web3' | 'chainConfig'>> {
-    // TODO: improve & add checks / errors
-    if (!this.hasValidMetadata())
-      throw new Error(
-        'Metadata needs to be configures. To learn more visit https://docs.oceanprotocol.com/core-concepts/did-ddo#metadata'
-      )
-
     if (this.services?.length < 1)
       throw new Error('At least one service needs to be defined.')
 
@@ -114,24 +108,7 @@ export class NautilusAsset {
     }
   }
 
-  private hasValidMetadata() {
-    return (
-      this.metadata?.name?.length > 0 &&
-      this.metadata?.description?.length > 0 &&
-      this.metadata?.author?.length > 0 &&
-      this.metadata?.license?.length > 0 &&
-      ['dataset', 'algorithm'].includes(this.metadata?.type) &&
-      (this.metadata?.type === 'algorithm'
-        ? this.metadata?.algorithm?.container?.checksum?.length > 0 &&
-          this.metadata?.algorithm?.container?.entrypoint?.length > 0 &&
-          this.metadata?.algorithm?.container?.image?.length > 0 &&
-          this.metadata?.algorithm?.container?.tag?.length > 0
-        : true)
-    )
-  }
-
   private hasValidPricing() {
-    console.log(this.pricing)
     return (
       ['free', 'fixed'].includes(this.pricing?.type) &&
       (this.pricing?.type === 'fixed'
