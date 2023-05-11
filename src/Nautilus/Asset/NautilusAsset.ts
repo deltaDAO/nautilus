@@ -78,12 +78,15 @@ export class NautilusAsset {
     return {
       metadata: {
         ...this.metadata,
-        algorithm: {
-          ...this.metadata.algorithm,
-          consumerParameters: this.metadata.algorithm.consumerParameters?.map(
-            (param) => param.getConfig()
-          )
-        }
+        algorithm: this.metadata.algorithm
+          ? {
+              ...this.metadata.algorithm,
+              consumerParameters:
+                this.metadata.algorithm?.consumerParameters?.map((param) =>
+                  param.getConfig()
+                )
+            }
+          : undefined
       },
       services: this.services.map((service) => service.getConfig()),
       pricing: {

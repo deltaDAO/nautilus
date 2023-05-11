@@ -109,6 +109,8 @@ export async function publishAsset(assetConfig: AssetConfig) {
   const aquarius = new Aquarius(chainConfig.metadataCacheUri)
   const validateResult = await aquarius.validate(ddo)
 
+  if (!validateResult.valid) throw new Error('Validating Metadata failed')
+
   const LIFECYCLE_STATE_ACTIVE = 0
   const FLAGS = '0x2' // market sets '0x02' insteadconst validateResult = await aquariusInstance.validate(ddo) of '0x2', theoretically used by aquarius or provider, not implemented yet, will remain hardcoded
 
