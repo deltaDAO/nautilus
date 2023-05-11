@@ -8,6 +8,7 @@ import {
   UrlFile
 } from '@oceanprotocol/lib'
 import { ServiceConfig } from '../../../@types/Publish'
+import { getFileInfo } from '../../../utils/provider'
 import { NautilusConsumerParameter } from '../ConsumerParameters'
 
 export {
@@ -68,6 +69,13 @@ export class NautilusService<
     // validate provider
     if (!(await ProviderInstance.isValidProvider(this.serviceEndpoint)))
       throw new Error('Provided serviceEndpoint is not a valid Ocean Provider')
+
+    // validate files
+    for (const file of this.files) {
+      const fileInfo = await getFileInfo(file, this.serviceEndpoint)
+      if (fileInfo.some((info) => !info.valid))
+        throw new Error('Provided files could not be validated')
+    }
 
     return {
       ...this,

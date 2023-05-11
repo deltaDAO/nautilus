@@ -1,11 +1,17 @@
 import {
   approveWei,
+  Arweave,
   ComputeAlgorithm,
   ComputeAsset,
   ComputeEnvironment,
+  FileInfo,
+  GraphqlQuery,
+  Ipfs,
   LoggerInstance,
   ProviderComputeInitializeResults,
-  ProviderInstance
+  ProviderInstance,
+  Smartcontract,
+  UrlFile
 } from '@oceanprotocol/lib'
 import Web3 from 'web3'
 import { getOceanConfig } from '.'
@@ -99,4 +105,12 @@ export async function approveProviderFee(
     providerFeeAmount
   )
   return txApproveWei
+}
+
+export async function getFileInfo(
+  file: UrlFile | Arweave | GraphqlQuery | Smartcontract | Ipfs,
+  providerUri: string,
+  withChecksum?: boolean
+): Promise<FileInfo[]> {
+  return await ProviderInstance.getFileInfo(file, providerUri, withChecksum)
 }
