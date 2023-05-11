@@ -20,7 +20,7 @@ import { getWeb3 } from '../fixtures/Web3'
 
 const nodeUri = 'https://matic-mumbai.chainstacklabs.com'
 
-describe.only('Nautilus compute flow integration test', async () => {
+describe('Nautilus compute flow integration test', async () => {
   // PRIVATE_KEY_TESTS_1 (algorithm publisher)
   const web3AlgoPublisher = getWeb3(1, nodeUri)
 
@@ -30,11 +30,9 @@ describe.only('Nautilus compute flow integration test', async () => {
   let nautilusDatasetPublisher: Nautilus
   let nautilusAlgoPublisher: Nautilus
 
-  let computeDatasetDid: string =
-    'did:op:e50994e0cf70d187c086044d9dff3e4eea669e3e6a63b37349f0f0b57c40fb1b'
-  let computeAlgorithmDid: string =
-    'did:op:5e889af9bb5dccc6ec4c3380e3f4c43c1af5f7973f170d69fddf8b2e8c473215'
-  let computeJobId: string = '687e6116ef1543c1926bb23d5543d758'
+  let computeDatasetDid: string
+  let computeAlgorithmDid: string
+  let computeJobId: string
 
   before(async () => {
     Nautilus.setLogLevel(LogLevel.Verbose)
@@ -50,7 +48,7 @@ describe.only('Nautilus compute flow integration test', async () => {
     )
   })
 
-  it.skip('publishes a compute algorithm asset', async () => {
+  it('publishes a compute algorithm asset', async () => {
     // serviceEndpoint to use for the test asset
     const { providerUri } = nautilusAlgoPublisher.getOceanConfig()
 
@@ -88,7 +86,7 @@ describe.only('Nautilus compute flow integration test', async () => {
     computeAlgorithmDid = result.DID
   }).timeout(30000)
 
-  it.skip('publishes a compute dataset asset', async () => {
+  it('publishes a compute dataset asset', async () => {
     // serviceEndpoint to use for the test asset
     const { providerUri } = nautilusDatasetPublisher.getOceanConfig()
 
@@ -125,7 +123,7 @@ describe.only('Nautilus compute flow integration test', async () => {
     computeDatasetDid = result.DID
   }).timeout(30000)
 
-  it.skip('starts a compute job', async () => {
+  it('starts a compute job', async () => {
     // wait until DDOs are found in metadata cache
     const aquarius = new Aquarius(
       nautilusDatasetPublisher.getOceanConfig().metadataCacheUri
