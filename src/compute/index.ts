@@ -333,7 +333,7 @@ export async function handleComputeOrder(
   try {
     // Return early when valid order is found, and no provider fees
     // are to be paid
-    if (initializeData?.validOrder && !initializeData.providerFee) {
+    if (initializeData?.validOrder && !initializeData?.providerFee) {
       LoggerInstance.debug(
         '[compute] Has valid order: ',
         initializeData.validOrder
@@ -342,7 +342,10 @@ export async function handleComputeOrder(
     }
 
     // Approve potential Provider fee amount first
-    if (initializeData?.providerFee?.providerFeeAmount !== '0') {
+    if (
+      initializeData?.providerFee?.providerFeeAmount &&
+      initializeData?.providerFee?.providerFeeAmount !== '0'
+    ) {
       const txApproveProvider = await approveProviderFee(
         asset,
         accountId,
@@ -380,7 +383,7 @@ export async function handleComputeOrder(
       orderPriceAndFees,
       accountId,
       config,
-      initializeData.providerFee,
+      initializeData?.providerFee,
       computeConsumerAddress
     )
     LoggerInstance.debug('[compute] Order succeeded', txStartOrder)
