@@ -20,7 +20,7 @@ import { MUMBAI_NODE_URI, getWeb3 } from '../fixtures/Web3'
 
 const nodeUri = MUMBAI_NODE_URI
 
-describe.only('Publish Integration tests', () => {
+describe('Publish Integration tests', () => {
   let web3: Web3
   let nautilus: Nautilus
   let providerUri: string
