@@ -1,11 +1,8 @@
-import { Nautilus, NautilusAsset } from '../../src'
 import {
-  AssetConfig,
   MetadataConfig,
   PricingConfig,
   ServiceConfig
 } from '../../src/@types/Publish'
-import { getOceanConfig } from '../../src/utils'
 import { datatokenParams } from './DatatokenParams'
 import { freParams } from './FixedRateExchangeParams'
 import { nftParams } from './NftCreateData'
@@ -33,7 +30,7 @@ export const algorithmMetadata: MetadataConfig = {
       image: 'node',
       tag: 'latest',
       checksum:
-        '026026d98942438e4df232b3e8cd7ca32416b385918977ce5ec0c6333618c423'
+        'sha256:026026d98942438e4df232b3e8cd7ca32416b385918977ce5ec0c6333618c423'
     }
   }
 }
