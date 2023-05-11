@@ -11,7 +11,7 @@ import {
   FileTypes,
   NautilusService,
   ServiceTypes
-} from './service/NautilusService'
+} from './Service/NautilusService'
 
 export class AssetBuilder implements IAssetBuilder {
   private asset: NautilusAsset = new NautilusAsset()

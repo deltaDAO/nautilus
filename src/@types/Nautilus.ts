@@ -1,5 +1,5 @@
 import { Metadata, PublisherTrustedAlgorithm } from '@oceanprotocol/lib'
-import { NautilusAsset } from '../nautilus/asset/NautilusAsset'
+import { NautilusAsset } from '../Nautilus/Asset/NautilusAsset'
 import {
   ConsumerParameterType,
   DatatokenCreateParamsWithoutOwner,
@@ -12,8 +12,8 @@ import {
   NautilusService,
   ServiceFileType,
   ServiceTypes
-} from '../nautilus/asset/service/NautilusService'
-import { NautilusConsumerParameter } from '../nautilus/asset/consumerParameters'
+} from '../Nautilus/Asset/Service/NautilusService'
+import { NautilusConsumerParameter } from '../Nautilus/Asset/ConsumerParameters'
 
 export interface NautilusOptions {
   skipDefaultConfig: boolean

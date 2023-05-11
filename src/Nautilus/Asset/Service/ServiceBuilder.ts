@@ -1,13 +1,12 @@
 import { PublisherTrustedAlgorithm } from '@oceanprotocol/lib'
 import { IServiceBuilder } from '../../../@types/Nautilus'
+import { NautilusConsumerParameter } from '../ConsumerParameters'
 import {
   FileTypes,
   NautilusService,
   ServiceFileType,
   ServiceTypes
 } from './NautilusService'
-import { NautilusConsumerParameter } from '../consumerParameters'
-import { ConsumerParameterType } from '../../../@types/Publish'
 
 export class ServiceBuilder<
   ServiceType extends ServiceTypes,

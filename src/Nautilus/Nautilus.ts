@@ -11,7 +11,7 @@ import { AssetConfig } from '../@types/Publish'
 import { access } from '../access'
 import { compute } from '../compute'
 import { publishAsset } from '../publish'
-import { NautilusAsset } from './asset/NautilusAsset'
+import { NautilusAsset } from './Asset/NautilusAsset'
 
 export { LogLevel } from '@oceanprotocol/lib'
 

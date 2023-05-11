@@ -1,6 +1,6 @@
 import assert from 'assert'
 import { ConsumerParameter } from '../../src/@types/Publish'
-import { ConsumerParameterBuilder } from '../../src/nautilus/asset/consumerParameters'
+import { ConsumerParameterBuilder } from '../../src/Nautilus/Asset/ConsumerParameters'
 
 describe('ConsumerParameterBuilder', () => {
   it('builds text consumerParameter correctly', () => {

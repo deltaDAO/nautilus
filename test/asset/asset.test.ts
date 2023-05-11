@@ -1,5 +1,5 @@
 import assert from 'assert'
-import { NautilusAsset } from '../../src/nautilus/asset/NautilusAsset'
+import { NautilusAsset } from '../../src/Nautilus/Asset/NautilusAsset'
 import {
   datasetMetadata,
   datasetService,
@@ -11,7 +11,7 @@ import {
   FileTypes,
   NautilusService,
   ServiceTypes
-} from '../../src/nautilus/asset/service'
+} from '../../src/Nautilus/Asset/Service'
 
 describe('NautilusAsset', () => {
   const web3 = getWeb3()

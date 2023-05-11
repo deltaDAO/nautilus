@@ -1,11 +1,11 @@
 import assert from 'assert'
 import { AssetBuilder, Nautilus, LogLevel } from '../../src'
-import { ConsumerParameterBuilder } from '../../src/nautilus/asset/consumerParameters'
+import { ConsumerParameterBuilder } from '../../src/Nautilus/Asset/ConsumerParameters'
 import {
   FileTypes,
   ServiceBuilder,
   ServiceTypes
-} from '../../src/nautilus/asset/service'
+} from '../../src/Nautilus/Asset/Service'
 import { algorithmMetadata, algorithmService } from '../fixtures/AssetConfig'
 import { getTestConfig } from '../fixtures/Config'
 import { nftParams } from '../fixtures/NftCreateData'

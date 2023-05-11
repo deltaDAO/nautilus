@@ -6,8 +6,8 @@ import {
   Smartcontract,
   UrlFile
 } from '@oceanprotocol/lib'
-import { ConsumerParameterType, ServiceConfig } from '../../../@types/Publish'
-import { NautilusConsumerParameter } from '../consumerParameters'
+import { ServiceConfig } from '../../../@types/Publish'
+import { NautilusConsumerParameter } from '../ConsumerParameters'
 
 export enum FileTypes {
   URL = 'url',

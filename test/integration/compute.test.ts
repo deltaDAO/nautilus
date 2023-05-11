@@ -1,4 +1,4 @@
-import { Nautilus, LogLevel } from '../../src/nautilus'
+import { Nautilus, LogLevel } from '../../src/Nautilus'
 import { getWeb3 } from '../fixtures/Web3'
 
 describe('Compute to Data Integration Test', () => {

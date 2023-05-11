@@ -9,11 +9,7 @@ import {
 } from '../../@types/Publish'
 import { params } from './constants/datatoken.constants'
 import { createData } from './constants/nft.constants'
-import {
-  FileTypes,
-  NautilusService,
-  ServiceTypes
-} from './service/NautilusService'
+import { FileTypes, NautilusService, ServiceTypes } from './Service'
 
 export type PricingConfigWithoutOwner = {
   type: PricingConfig['type']
