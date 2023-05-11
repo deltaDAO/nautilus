@@ -1,12 +1,12 @@
+import Web3 from 'web3'
+import { PricingConfigWithoutOwner } from '../../src'
 import {
   MetadataConfig,
   PricingConfig,
   ServiceConfig
 } from '../../src/@types/Publish'
-import { datatokenParams } from './DatatokenParams'
+import { getTestConfig } from './Config'
 import { freParams } from './FixedRateExchangeParams'
-import { nftParams } from './NftCreateData'
-import { getWeb3 } from './Web3'
 
 export const datasetMetadata: MetadataConfig = {
   type: 'dataset',
@@ -64,34 +64,24 @@ export const fixedPricing: PricingConfig = {
   type: 'fixed'
 }
 
-export function getAssetConfig(
-  type: 'dataset' | 'algorithm',
-  price: 'free' | 'fixed',
-  serviceType: 'access' | 'compute'
-) {
-  const web3 = getWeb3()
-  const owner = web3.defaultAccount
+export async function getPricing(
+  web3: Web3,
+  type?: PricingConfig['type']
+): Promise<PricingConfigWithoutOwner> {
+  const config = await getTestConfig(web3)
 
-  const service = type === 'dataset' ? datasetService : algorithmService
-  if (serviceType === 'compute')
-    service.compute = {
-      allowRawAlgorithm: false,
-      allowNetworkAccess: false,
-      publisherTrustedAlgorithmPublishers: [],
-      publisherTrustedAlgorithms: []
-    }
-  const services = [{ ...service, type: serviceType }]
-
-  const asset = {
-    metadata: type === 'dataset' ? datasetMetadata : algorithmMetadata,
-    services,
-    pricing:
-      price === 'free'
-        ? freePricing
-        : { ...fixedPricing, freCreationParams: { ...freParams, owner } },
-    datatokenCreateParams: datatokenParams,
-    nftCreateData: nftParams
+  switch (type) {
+    case 'fixed':
+      return {
+        type: 'fixed',
+        freCreationParams: {
+          ...freParams,
+          baseTokenAddress: config.oceanTokenAddress,
+          fixedRateAddress: config.fixedRateExchangeAddress
+        }
+      }
+    case 'free':
+    default:
+      return { type: 'free' }
   }
-
-  return asset
 }

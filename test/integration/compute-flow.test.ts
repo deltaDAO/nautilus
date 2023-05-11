@@ -10,7 +10,8 @@ import {
 import {
   algorithmMetadata,
   algorithmService,
-  datasetService
+  datasetService,
+  getPricing
 } from '../fixtures/AssetConfig'
 import { getTestConfig } from '../fixtures/Config'
 import { nftParams } from '../fixtures/NftCreateData'
@@ -57,7 +58,7 @@ describe('Nautilus compute flow integration test', () => {
       .setName('Test Publish Compute Algorithm')
       .setOwner(web3.defaultAccount)
       .setType('algorithm')
-      .setPricing({ type: 'free' })
+      .setPricing(await getPricing(web3, 'free'))
       .setNftData(nftParams)
       .addService(service)
       .setAlgorithm(algorithmMetadata.algorithm)
@@ -99,7 +100,7 @@ describe('Nautilus compute flow integration test', () => {
       .setName('Test Publish Compute Dataset')
       .setOwner(web3.defaultAccount)
       .setType('dataset')
-      .setPricing({ type: 'free' })
+      .setPricing(await getPricing(web3, 'free'))
       .setNftData(nftParams)
       .addService(service)
       .build()
