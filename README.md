@@ -112,7 +112,7 @@ const algoMetadata = {
     entrypoint: 'node $ALGO',
     image: 'node',
     tag: 'latest',
-    checksum: '026026d98942438e4df232b3e8cd7ca32416b385918977ce5ec0c6333618c423'
+    checksum: 'sha256:026026d98942438e4df232b3e8cd7ca32416b385918977ce5ec0c6333618c423'
   }
 }
 ```
@@ -151,6 +151,7 @@ const service = serviceBuilder
 
 assetBuilder.addService(service)
 ```
+> **_NOTE:_** If you want to publish an algorithm or dataset for computation make sure to set `ServiceBuilder(ServiceTypes.COMPUTE, ...)`.
 
 The code above will build a new `access` service, serving a `url` type file that is available at `https://link.to/my/asset`. The service will be accessible via the ocean provider hosted at `https://ocean.provider.to/use`.
 
@@ -211,12 +212,13 @@ assetBuilder.setPricing({
   type: 'fixed', // 'fixed' or 'free'
   // freCreationParams can be ommitted for 'free' pricing schemas
   freCreationParams: {
-    fixedRateAddress: '0x...',
-    baseTokenAddress: '0x...',
-    baseTokenDecimals: 18,
-    datatokenDecimals: 18,
+    fixedRateAddress: '0x25e1926E3d57eC0651e89C654AB0FA182C6D5CF7', // Fixed Rate Contract address on Mumbai network
+    baseTokenAddress: '0xd8992Ed72C445c35Cb4A2be468568Ed1079357c8', // OCEAN token contract address on Mumbai network
+    baseTokenDecimals: 18, // adjusted to OCEAN token
+    datatokenDecimals: 18, // adjusted to OCEAN token
     fixedRate: '1', // PRICE
-    marketFee: '0'
+    marketFee: '0',
+    marketFeeCollector: '0x0000000000000000000000000000000000000000'
   }
 })
 
