@@ -291,24 +291,14 @@ export async function getComputeEnviroment(
 ): Promise<ComputeEnvironment> {
   if (asset?.services[0]?.type !== 'compute') return null
   try {
-    // TODO: revisit once ocean.js types are updated
-    const computeEnvs: any = await ProviderInstance.getComputeEnvironments(
+    const computeEnvs = await ProviderInstance.getComputeEnvironments(
       asset.services[0].serviceEndpoint
     )
 
-    const chains = computeEnvs as {
-      [chainId: string]: ComputeEnvironment[]
-    }
-
-    const chainComputeEnvs: ComputeEnvironment[] =
-      chains[
-        Object.keys(chains).find(
-          (chainId) => chainId === asset.chainId.toString()
-        )
-      ]
-
     // TODO: provide way to select compute env
-    const computeEnv = chainComputeEnvs[0]
+    const computeEnv = Array.isArray(computeEnvs)
+      ? computeEnvs[0]
+      : computeEnvs[asset.chainId][0]
 
     if (!computeEnv) return null
     return computeEnv

@@ -163,7 +163,10 @@ describe('Nautilus compute flow integration test', async () => {
     })
 
     assert(resultUrl)
-  }).timeout(120000)
+  })
+    // TODO: either increase timeout or introduce different solution to wait for ctd to finish
+    // takes longer on live test networks (e.g. Mumbai ~4 minutes)
+    .timeout(120000)
 })
 
 async function getStatusHelper(nautilus: Nautilus, jobId: string) {
