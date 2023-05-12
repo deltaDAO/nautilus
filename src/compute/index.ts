@@ -271,7 +271,8 @@ export async function retrieveResult(computeResultConfig: ComputeResultConfig) {
 
   if (index < 0) {
     LoggerInstance.error(
-      '[compute] Retrieve results: resultIndex needs to be specified. No default output result found.'
+      '[compute] Retrieve results: resultIndex needs to be specified. No default output result found.',
+      index
     )
     return
   }

@@ -16,6 +16,8 @@ A typescript library helping to navigate the OCEAN. It enables configurable auto
     - [Basic Config](#basic-config)
     - [Optional Settings](#optional-settings)
     - [Start compute job](#start-compute-job)
+    - [Get compute job status](#get-compute-job-status)
+    - [Get compute job results](#get-compute-job-results)
   - [Automated Access](#automated-access)
   - [API Documentation](#api-documentation)
   - [License](#license)
@@ -25,8 +27,6 @@ A typescript library helping to navigate the OCEAN. It enables configurable auto
 Setting up a new `Nautilus` instance to perform automated tasks, like publish & consume, is rather simple.
 
 First make youre you have [web3](https://www.npmjs.com/package/web3) installed:
-
-
 
 ```shell
 npm install web3
@@ -112,7 +112,8 @@ const algoMetadata = {
     entrypoint: 'node $ALGO',
     image: 'node',
     tag: 'latest',
-    checksum: 'sha256:026026d98942438e4df232b3e8cd7ca32416b385918977ce5ec0c6333618c423'
+    checksum:
+      'sha256:026026d98942438e4df232b3e8cd7ca32416b385918977ce5ec0c6333618c423'
   }
 }
 ```
@@ -151,6 +152,7 @@ const service = serviceBuilder
 
 assetBuilder.addService(service)
 ```
+
 > **_NOTE:_** If you want to publish an algorithm or dataset for computation make sure to set `ServiceBuilder(ServiceTypes.COMPUTE, ...)`.
 
 The code above will build a new `access` service, serving a `url` type file that is available at `https://link.to/my/asset`. The service will be accessible via the ocean provider hosted at `https://ocean.provider.to/use`.
@@ -341,6 +343,94 @@ const computeJob = await nautilus.compute({
   algorithm
 })
 ```
+
+### Get compute job status
+
+Once you have started a compute job it is possible to get status reports via the `.getComputeStatus()` function.
+For this you need to have the `jobId` as well as the `providerUri` endpoint that is used for orchestrating and accessing the compute job.
+In most cases this will be the `serviceEndpoint` of the `compute` service of the dataset that was computed on.
+
+```ts
+const computeJob = await nautilus.getComputeStatus({
+  jobId,
+  providerUri
+})
+```
+
+Example compute job status:
+
+```json
+{
+  "agreementId": "0x1234abcd",
+  "jobId": "9876",
+  "owner": "0x1234",
+  "status": 70,
+  "statusText": "Job finished",
+  "dateCreated": "1683849268.012345",
+  "dateFinished": "1683849268.012345",
+  "results": [
+    {
+      "filename": "results.txt",
+      "filesize": 1234,
+      "type": "output"
+    },
+    {
+      "filename": "algorithm.log",
+      "filesize": 1234,
+      "type": "algorithmLog"
+    },
+    {
+      "filename": "configure.log",
+      "filesize": 1234,
+      "type": "configrationLog"
+    },
+    {
+      "filename": "publish.log",
+      "filesize": 0,
+      "type": "publishLog"
+    }
+  ],
+  "stopreq": 0,
+  "removed": 0,
+  "algoDID": "did:op:algo-did",
+  "inputDID": ["did:op:dataset-did"]
+}
+```
+
+### Get compute job results
+
+If a compute job has finished running and there are results available, you can access these utilizing Nautilus.
+Once again you will need the `jobId` as well as the `providerUri` as specified in the previous section on compute status.
+
+```ts
+const computeJob = await nautilus.getComputeResult({
+  jobId,
+  providerUri
+})
+```
+
+In addition, you can also specify a `resultIndex` to access a specific result file you are interested in. If you do not specify a `resultIndex`, the first result file will be used by default. For example, you could use this to get the algorithm log of a specific compute job:
+
+```ts
+const jobStatus = await nautilus.getComputeStatus({
+  jobId,
+  providerUri
+})
+
+if (jobStatus.status === 70) {
+  const resultIndexAlgorithmLog = status.results?.findIndex(
+    (result) => result.type === 'algorithmLog'
+  )
+  const computeJob = await nautilus.getComputeResult({
+    jobId,
+    providerUri,
+    resultIndex:
+      resultIndexAlgorithmLog > -1 ? resultIndexAlgorithmLog : undefined
+  })
+}
+```
+
+For more information on compute job status and result requests please refer to the [Ocean Provider API documentation](https://docs.oceanprotocol.com/api-references/provider-rest-api#status-and-result).
 
 ## Automated Access
 
