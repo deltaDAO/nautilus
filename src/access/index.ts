@@ -68,7 +68,7 @@ export async function access(accessConfig: AccessConfig) {
     LoggerInstance.debug(
       `Found valid order for ${asset.id} with datatoken ${accessDetails.datatoken.address}`
     )
-    return await downloadAssetFile(
+    return await getAssetDownloadUrl(
       assetWithPrice,
       web3,
       accessService,
@@ -95,7 +95,7 @@ export async function access(accessConfig: AccessConfig) {
   )
 
   assetWithAccessDetails.accessDetails.validOrderTx = orderTx.transactionHash
-  return await downloadAssetFile(
+  return await getAssetDownloadUrl(
     assetWithPrice,
     web3,
     accessService,
@@ -109,7 +109,7 @@ function isOwned(accessDetails: AccessDetails) {
   return accessDetails.isOwned && accessDetails.validOrderTx
 }
 
-async function downloadAssetFile(
+async function getAssetDownloadUrl(
   asset: AssetWithAccessDetailsAndPrice,
   web3: Web3,
   service: Service,
