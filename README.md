@@ -26,7 +26,13 @@ A typescript library helping to navigate the OCEAN. It enables configurable auto
 
 Setting up a new `Nautilus` instance to perform automated tasks, like publish & consume, is rather simple.
 
-First make youre you have [web3](https://www.npmjs.com/package/web3) installed:
+Install Nautilus:
+
+```shell
+npm install @deltadao/nautilus
+```
+
+Make sure you have [web3](https://www.npmjs.com/package/web3) installed:
 
 ```shell
 npm install web3
