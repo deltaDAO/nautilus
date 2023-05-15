@@ -342,18 +342,21 @@ const computeJob = await nautilus.compute({
   dataset,
   algorithm
 })
+
+const jobId = computeJob[0].jobId // make sure to save your jobId to retrieve results later
 ```
 
 ### Get compute job status
 
 Once you have started a compute job it is possible to get status reports via the `.getComputeStatus()` function.
 For this you need to have the `jobId` as well as the `providerUri` endpoint that is used for orchestrating and accessing the compute job.
-In most cases this will be the `serviceEndpoint` of the `compute` service of the dataset that was computed on.
+
+In most cases `providerUri` will be the `serviceEndpoint` of the `compute` service of the dataset that was computed on.
 
 ```ts
 const computeJob = await nautilus.getComputeStatus({
-  jobId,
-  providerUri
+  jobId, // use your previously saved jobId
+  providerUri: 'https://v4.provider.oceanprotocol.com/' // default ocean provider(serviceEndpoint)
 })
 ```
 
@@ -404,8 +407,8 @@ Once again you will need the `jobId` as well as the `providerUri` as specified i
 
 ```ts
 const computeJob = await nautilus.getComputeResult({
-  jobId,
-  providerUri
+  jobId, // use your previously saved jobId
+  providerUri: 'https://v4.provider.oceanprotocol.com/' // default ocean provider(serviceEndpoint)
 })
 ```
 
