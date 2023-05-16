@@ -1,12 +1,23 @@
-import { Config, ConfigHelper, LoggerInstance } from '@oceanprotocol/lib'
+import {
+  Config,
+  ConfigHelper,
+  LogLevel,
+  LoggerInstance
+} from '@oceanprotocol/lib'
 import Web3 from 'web3'
 import { AccessConfig } from '../@types/Access'
-import { ComputeConfig } from '../@types/Compute'
+import {
+  ComputeConfig,
+  ComputeResultConfig,
+  ComputeStatusConfig
+} from '../@types/Compute'
 import { AssetConfig } from '../@types/Publish'
 import { access } from '../access'
-import { compute } from '../compute'
+import { compute, getStatus, retrieveResult } from '../compute'
 import { publishAsset } from '../publish'
-import { NautilusAsset } from './asset/NautilusAsset'
+import { NautilusAsset } from './Asset/NautilusAsset'
+
+export { LogLevel } from '@oceanprotocol/lib'
 
 /**
  * @class
@@ -20,8 +31,6 @@ export class Nautilus {
     this.web3 = web3
   }
 
-  logger = LoggerInstance
-
   /**
    * Creates a new Nautilus instance
    */
@@ -31,6 +40,14 @@ export class Nautilus {
     await instance.init(config)
 
     return instance
+  }
+
+  /**
+   * Set the log level for Nautilus
+   * ocean.js LoggerInstance is used for logging
+   */
+  static setLogLevel(level: LogLevel) {
+    LoggerInstance.setLevel(level)
   }
 
   // #region private helpers
@@ -53,6 +70,9 @@ export class Nautilus {
 
     // TODO: improve error message
     if (!this.hasValidConfig()) {
+      LoggerInstance.error({
+        config: this.config
+      })
       throw Error('Cannot initialize using the given config & web3.')
     }
   }
@@ -83,9 +103,13 @@ export class Nautilus {
   // #endregion
 
   // #region public functions
+  getOceanConfig() {
+    return this.config
+  }
+
   async publish(asset: NautilusAsset) {
     return await publishAsset({
-      ...asset.getConfig(),
+      ...(await asset.getConfig()),
       ...this.getChainConfig()
     })
   }
@@ -104,6 +128,24 @@ export class Nautilus {
     return await compute({
       ...computeConfig,
       ...this.getChainConfig()
+    })
+  }
+
+  async getComputeStatus(
+    computeStatusConfig: Omit<ComputeStatusConfig, 'web3'>
+  ) {
+    return await getStatus({
+      ...computeStatusConfig,
+      web3: this.web3
+    })
+  }
+
+  async getComputeResult(
+    computeResultConfig: Omit<ComputeResultConfig, 'web3'>
+  ) {
+    return await retrieveResult({
+      ...computeResultConfig,
+      web3: this.web3
     })
   }
   // #endregion

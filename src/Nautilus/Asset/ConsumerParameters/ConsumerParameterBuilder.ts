@@ -1,4 +1,3 @@
-import { LoggerInstance } from '@oceanprotocol/lib'
 import { IBuilder } from '../../../@types/Nautilus'
 import {
   ConsumerParameterSelectOption,

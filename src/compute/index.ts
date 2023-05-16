@@ -14,14 +14,15 @@ import {
   AssetWithAccessDetails,
   ComputeConfig,
   ComputeResultConfig,
+  ComputeStatusConfig,
   OrderPriceAndFees
 } from '../@types/Compute'
 import { getDatatokenBalance, getServiceByName } from '../utils'
 import {
-  getAssetsWithAccessDetails,
-  getAssetWithPrice
+  getAssetWithPrice,
+  getAssetsWithAccessDetails
 } from '../utils/helpers/assets'
-import { isOrderable, reuseOrder, startOrder } from '../utils/order'
+import { isOrderable, order, reuseOrder } from '../utils/order'
 import {
   approveProviderFee,
   initializeProviderForCompute
@@ -212,37 +213,27 @@ async function getComputeAssetPrices(
   config: Config,
   providerInitializeResults: ProviderComputeInitializeResults
 ) {
-  const datasetWithPrice = await getAssetWithPrice(
-    dataset,
-    web3,
-    config,
-    providerInitializeResults?.datasets?.[0]?.providerFee
-  )
+  const datasetWithPrice = await getAssetWithPrice(dataset, web3, config)
   if (!datasetWithPrice?.orderPriceAndFees)
     throw new Error('Error setting dataset price and fees!')
 
-  const algorithmWithPrice = await getAssetWithPrice(
-    algo,
-    web3,
-    config,
-    providerInitializeResults.algorithm.providerFee
-  )
+  const algorithmWithPrice = await getAssetWithPrice(algo, web3, config)
   if (!algorithmWithPrice?.orderPriceAndFees)
     throw new Error('Error setting algorithm price and fees!')
 
   return { datasetWithPrice, algorithmWithPrice }
 }
 
-export async function getStatus(computeStatusConfig: any) {
-  const { jobId, web3, config } = computeStatusConfig
+export async function getStatus(computeStatusConfig: ComputeStatusConfig) {
+  const { jobId, web3, providerUri } = computeStatusConfig
   LoggerInstance.debug('[compute] Retrieve job status:', {
     jobId,
-    config,
+    providerUri,
     account: web3.defaultAccount
   })
   try {
     const status = await ProviderInstance.computeStatus(
-      config.providerUri,
+      providerUri,
       web3.defaultAccount,
       jobId
     )
@@ -257,7 +248,7 @@ export async function getStatus(computeStatusConfig: any) {
 }
 
 export async function retrieveResult(computeResultConfig: ComputeResultConfig) {
-  const { config, web3, jobId, resultIndex } = computeResultConfig
+  const { providerUri, web3, jobId, resultIndex } = computeResultConfig
   const job = await getStatus(computeResultConfig)
 
   if (job?.status !== 70) {
@@ -280,14 +271,15 @@ export async function retrieveResult(computeResultConfig: ComputeResultConfig) {
 
   if (index < 0) {
     LoggerInstance.error(
-      '[compute] Retrieve results: resultIndex needs to be specified. No default output result found.'
+      '[compute] Retrieve results: resultIndex needs to be specified. No default output result found.',
+      index
     )
     return
   }
 
   LoggerInstance.debug(`[compute] Build result url...`)
   return await ProviderInstance.getComputeResultUrl(
-    config.providerUri,
+    providerUri,
     web3,
     web3.defaultAccount,
     jobId,
@@ -303,8 +295,14 @@ export async function getComputeEnviroment(
     const computeEnvs = await ProviderInstance.getComputeEnvironments(
       asset.services[0].serviceEndpoint
     )
-    if (!computeEnvs[0]) return null
-    return computeEnvs[0]
+
+    // TODO: provide way to select compute env
+    const computeEnv = Array.isArray(computeEnvs)
+      ? computeEnvs[0]
+      : computeEnvs[asset.chainId][0]
+
+    if (!computeEnv) return null
+    return computeEnv
   } catch (e) {
     LoggerInstance.error('[compute] Fetch compute enviroment: ', e.message)
   }
@@ -327,7 +325,7 @@ export async function handleComputeOrder(
   try {
     // Return early when valid order is found, and no provider fees
     // are to be paid
-    if (initializeData?.validOrder && !initializeData.providerFee) {
+    if (initializeData?.validOrder && !initializeData?.providerFee) {
       LoggerInstance.debug(
         '[compute] Has valid order: ',
         initializeData.validOrder
@@ -336,7 +334,10 @@ export async function handleComputeOrder(
     }
 
     // Approve potential Provider fee amount first
-    if (initializeData?.providerFee?.providerFeeAmount !== '0') {
+    if (
+      initializeData?.providerFee?.providerFeeAmount &&
+      initializeData?.providerFee?.providerFeeAmount !== '0'
+    ) {
       const txApproveProvider = await approveProviderFee(
         asset,
         accountId,
@@ -368,13 +369,13 @@ export async function handleComputeOrder(
     }
 
     LoggerInstance.debug('[compute] Calling order ...', initializeData)
-    const txStartOrder = await startOrder(
+    const txStartOrder = await order(
       web3,
       asset,
       orderPriceAndFees,
       accountId,
       config,
-      initializeData,
+      initializeData?.providerFee,
       computeConsumerAddress
     )
     LoggerInstance.debug('[compute] Order succeeded', txStartOrder)

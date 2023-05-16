@@ -2,12 +2,22 @@ import {
   Arweave,
   GraphqlQuery,
   Ipfs,
+  ProviderInstance,
   ServiceComputeOptions,
   Smartcontract,
   UrlFile
 } from '@oceanprotocol/lib'
-import { ConsumerParameterType, ServiceConfig } from '../../../@types/Publish'
-import { NautilusConsumerParameter } from '../consumerParameters'
+import { ServiceConfig } from '../../../@types/Publish'
+import { getFileInfo } from '../../../utils/provider'
+import { NautilusConsumerParameter } from '../ConsumerParameters'
+
+export {
+  Arweave,
+  GraphqlQuery,
+  Ipfs,
+  Smartcontract,
+  UrlFile
+} from '@oceanprotocol/lib'
 
 export enum FileTypes {
   URL = 'url',
@@ -55,11 +65,22 @@ export class NautilusService<
   additionalInformation?: { [key: string]: any } = {}
 
   // TODO: config transformation
-  getConfig(): ServiceConfig {
+  async getConfig(): Promise<ServiceConfig> {
+    // validate provider
+    if (!(await ProviderInstance.isValidProvider(this.serviceEndpoint)))
+      throw new Error('Provided serviceEndpoint is not a valid Ocean Provider')
+
+    // validate files
+    for (const file of this.files) {
+      const fileInfo = await getFileInfo(file, this.serviceEndpoint)
+      if (fileInfo.some((info) => !info.valid))
+        throw new Error('Provided files could not be validated')
+    }
+
     return {
       ...this,
       files: this.files as ServiceConfig['files'],
-      consumerParameters: this.consumerParameters.map((param) =>
+      consumerParameters: this.consumerParameters?.map((param) =>
         param.getConfig()
       )
     }

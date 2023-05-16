@@ -9,11 +9,7 @@ import {
 } from '../../@types/Publish'
 import { params } from './constants/datatoken.constants'
 import { createData } from './constants/nft.constants'
-import {
-  FileTypes,
-  NautilusService,
-  ServiceTypes
-} from './service/NautilusService'
+import { FileTypes, NautilusService, ServiceTypes } from './Service'
 
 export type PricingConfigWithoutOwner = {
   type: PricingConfig['type']
@@ -60,13 +56,7 @@ export class NautilusAsset {
     this.datatokenCreateParams = params
   }
 
-  getConfig(): Omit<AssetConfig, 'web3' | 'chainConfig'> {
-    // TODO: improve & add checks / errors
-    if (!this.hasValidMetadata())
-      throw new Error(
-        'Metadata needs to be configures. To learn more visit https://docs.oceanprotocol.com/core-concepts/did-ddo#metadata'
-      )
-
+  async getConfig(): Promise<Omit<AssetConfig, 'web3' | 'chainConfig'>> {
     if (this.services?.length < 1)
       throw new Error('At least one service needs to be defined.')
 
@@ -79,17 +69,24 @@ export class NautilusAsset {
     )
       throw new Error('Owner needs to be a valid address')
 
+    const services = await Promise.all(
+      this.services.map((service) => service.getConfig())
+    )
+
     return {
       metadata: {
         ...this.metadata,
-        algorithm: {
-          ...this.metadata.algorithm,
-          consumerParameters: this.metadata.algorithm.consumerParameters.map(
-            (param) => param.getConfig()
-          )
-        }
+        algorithm: this.metadata.algorithm
+          ? {
+              ...this.metadata.algorithm,
+              consumerParameters:
+                this.metadata.algorithm?.consumerParameters?.map((param) =>
+                  param.getConfig()
+                )
+            }
+          : undefined
       },
-      services: this.services.map((service) => service.getConfig()),
+      services,
       pricing: {
         ...this.pricing,
         freCreationParams: {
@@ -111,24 +108,7 @@ export class NautilusAsset {
     }
   }
 
-  private hasValidMetadata() {
-    return (
-      this.metadata?.name?.length > 0 &&
-      this.metadata?.description?.length > 0 &&
-      this.metadata?.author?.length > 0 &&
-      this.metadata?.license?.length > 0 &&
-      ['dataset', 'algorithm'].includes(this.metadata?.type) &&
-      (this.metadata?.type === 'algorithm'
-        ? this.metadata?.algorithm?.container?.checksum?.length > 0 &&
-          this.metadata?.algorithm?.container?.entrypoint?.length > 0 &&
-          this.metadata?.algorithm?.container?.image?.length > 0 &&
-          this.metadata?.algorithm?.container?.tag?.length > 0
-        : true)
-    )
-  }
-
   private hasValidPricing() {
-    console.log(this.pricing)
     return (
       ['free', 'fixed'].includes(this.pricing?.type) &&
       (this.pricing?.type === 'fixed'

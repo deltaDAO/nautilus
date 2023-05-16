@@ -11,7 +11,7 @@ import {
   Service
 } from '@oceanprotocol/lib'
 import Web3 from 'web3'
-import { NautilusConsumerParameter } from '../nautilus/asset/consumerParameters'
+import { NautilusConsumerParameter } from '../Nautilus/Asset/ConsumerParameters'
 
 export interface CredentialConfig extends Credentials {}
 

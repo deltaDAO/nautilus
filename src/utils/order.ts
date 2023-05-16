@@ -8,7 +8,6 @@ import {
   FreOrderParams,
   LoggerInstance,
   OrderParams,
-  ProviderComputeInitialize,
   ProviderFees,
   Service,
   ZERO_ADDRESS,
@@ -53,28 +52,6 @@ export async function isOrderable(
   return true
 }
 
-export async function startOrder(
-  web3: Web3,
-  asset: AssetWithAccessDetails,
-  orderPriceAndFees: OrderPriceAndFees,
-  accountId: string,
-  config: Config,
-  initializeData?: ProviderComputeInitialize,
-  computeConsumerAddress?: string
-) {
-  const tx = await order(
-    web3,
-    asset,
-    orderPriceAndFees,
-    accountId,
-    config,
-    initializeData?.providerFee || orderPriceAndFees.providerFee,
-    computeConsumerAddress
-  )
-  LoggerInstance.debug('[compute] Asset ordered:', tx)
-  return tx
-}
-
 export async function reuseOrder(
   web3: Web3,
   asset: AssetWithAccessDetails,
@@ -94,7 +71,7 @@ export async function reuseOrder(
   return tx
 }
 
-async function order(
+export async function order(
   web3: Web3,
   asset: AssetWithAccessDetails,
   orderPriceAndFees: OrderPriceAndFees,

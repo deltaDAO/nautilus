@@ -1,9 +1,9 @@
 import { FreCreationParams, ZERO_ADDRESS } from '@oceanprotocol/lib'
-import { fixedRateExchangeAddress, oceanTokenAddress } from './chainConfig.json'
 
-export const freParams: Omit<FreCreationParams, 'owner'> = {
-  fixedRateAddress: fixedRateExchangeAddress,
-  baseTokenAddress: oceanTokenAddress,
+export const freParams: Omit<
+  FreCreationParams,
+  'owner' | 'fixedRateAddress' | 'baseTokenAddress'
+> = {
   marketFeeCollector: ZERO_ADDRESS, // optional
   baseTokenDecimals: 18, // should come from a token config
   datatokenDecimals: 18, // should come from a token config

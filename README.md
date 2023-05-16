@@ -4,25 +4,46 @@ A typescript library helping to navigate the OCEAN. It enables configurable auto
 
 ## Table of Contents
 
-- [⚙️ Configuring a new Nautilus instance](#configuring-a-new-nautilus-instance)
-- [🌐 Automated Publishing](#automated-publishing)
-  - [Services](#services)
-  - [Consumer Parameters](#consumer-parameters)
-  - [Pricing](#pricing)
-  - [Owner and optional configs](#owner-and-optional-configs)
-- [🤖 Automated Compute Jobs](#automated-compute-jobs)
-- [🔐 Automated Access](#automated-access)
-- [📚 API Documentation](#api-documentation)
-- [🏛️ License](#api-documentation)
+- [Nautilus](#nautilus)
+  - [Table of Contents](#table-of-contents)
+  - [Configuring a new Nautilus instance](#configuring-a-new-nautilus-instance)
+  - [Automated Publishing](#automated-publishing)
+    - [Services](#services)
+    - [Consumer Parameters](#consumer-parameters)
+    - [Pricing](#pricing)
+    - [Owner and optional configs](#owner-and-optional-configs)
+  - [Automated Compute Jobs](#automated-compute-jobs)
+    - [Basic Config](#basic-config)
+    - [Optional Settings](#optional-settings)
+    - [Start compute job](#start-compute-job)
+    - [Get compute job status](#get-compute-job-status)
+    - [Get compute job results](#get-compute-job-results)
+  - [Automated Access](#automated-access)
+  - [API Documentation](#api-documentation)
+  - [License](#license)
 
 ## Configuring a new Nautilus instance
 
 Setting up a new `Nautilus` instance to perform automated tasks, like publish & consume, is rather simple.
 
-First make sure to setup the `Web3` instance to use:
+Install Nautilus:
+
+```shell
+npm install @deltadao/nautilus
+```
+
+Make sure you have [web3](https://www.npmjs.com/package/web3) installed:
+
+```shell
+npm install web3
+```
+
+Setup the `Web3` instance to use:
 
 ```ts
-const web3 = new Web3('https://rpc.genx.minimal-gaia-x.eu') // can be replaced with any Ocean Protocol supported network
+import Web3 from 'web3'
+
+const web3 = new Web3('https://matic-mumbai.chainstacklabs.com') // can be replaced with any Ocean Protocol supported network
 ```
 
 Next, add the account you want to use for the automations:
@@ -71,7 +92,7 @@ You can use the `AssetBuilder` class to build an asset and publish it with the `
 Let's start by creating the builder and specifying the account that will be the owner/publisher of the new asset:
 
 ```ts
-import { AssetBuilder } from '@delta-dao/nautilus'
+import { AssetBuilder } from '@deltadao/nautilus'
 
 const assetBuilder = new AssetBuilder()
 ```
@@ -82,7 +103,7 @@ With this we can now continue to setup the metadata information for the asset:
 assetBuilder
   .setType('dataset') // 'dataset' or 'algorithm'
   .setName('My New Asset')
-  .setDescription('A publish asset building test on GEN-X') // supports markdown
+  .setDescription('This is a publish asset building test using Nautilus') // supports markdown
   .setAuthor('testAuthor')
   .setLicense('MIT') // SPDX license identifier
 ```
@@ -97,7 +118,8 @@ const algoMetadata = {
     entrypoint: 'node $ALGO',
     image: 'node',
     tag: 'latest',
-    checksum: '026026d98942438e4df232b3e8cd7ca32416b385918977ce5ec0c6333618c423'
+    checksum:
+      'sha256:026026d98942438e4df232b3e8cd7ca32416b385918977ce5ec0c6333618c423'
   }
 }
 ```
@@ -136,6 +158,8 @@ const service = serviceBuilder
 
 assetBuilder.addService(service)
 ```
+
+> **_NOTE:_** If you want to publish an algorithm or dataset for computation make sure to set `ServiceBuilder(ServiceTypes.COMPUTE, ...)`.
 
 The code above will build a new `access` service, serving a `url` type file that is available at `https://link.to/my/asset`. The service will be accessible via the ocean provider hosted at `https://ocean.provider.to/use`.
 
@@ -196,12 +220,13 @@ assetBuilder.setPricing({
   type: 'fixed', // 'fixed' or 'free'
   // freCreationParams can be ommitted for 'free' pricing schemas
   freCreationParams: {
-    fixedRateAddress: '0x...',
-    baseTokenAddress: '0x...',
-    baseTokenDecimals: 18,
-    datatokenDecimals: 18,
+    fixedRateAddress: '0x25e1926E3d57eC0651e89C654AB0FA182C6D5CF7', // Fixed Rate Contract address on Mumbai network
+    baseTokenAddress: '0xd8992Ed72C445c35Cb4A2be468568Ed1079357c8', // OCEAN token contract address on Mumbai network
+    baseTokenDecimals: 18, // adjusted to OCEAN token
+    datatokenDecimals: 18, // adjusted to OCEAN token
     fixedRate: '1', // PRICE
-    marketFee: '0'
+    marketFee: '0',
+    marketFeeCollector: '0x0000000000000000000000000000000000000000'
   }
 })
 
@@ -257,6 +282,8 @@ If all went well, you should be able to browse the asset on any OceanMarket conn
 The `Nautilus` instance we created in the setup step provides access to a `compute()` function that we can use to start new compute jobs.
 This includes all potentially necessary orders for required datatokens as well as the signed request towards Ocean Provider to start the compute job itself.
 
+### Basic Config
+
 The following values are required to start a new compute job:
 
 ```ts
@@ -274,11 +301,7 @@ const computeConfig = {
 }
 ```
 
-To start the new compute job simply call the compute function:
-
-```ts
-const computeJob = await nautilus.compute(computeConfig)
-```
+### Optional Settings
 
 In addition to that you can also specify some optional properties if needed.
 Both the dataset and algorithm support custom `userdata` that might be passed to the services. For algorithms you can also specify a `algocustomdata` property.
@@ -316,14 +339,107 @@ const algorithm = {
 }
 ```
 
-When you are happy with the configuration you can use the `Nautilus` instance just as before to start the new compute job:
+### Start compute job
+
+When you are happy with the configuration you can use the `Nautilus` instance to start the new compute job:
 
 ```ts
 const computeJob = await nautilus.compute({
   dataset,
   algorithm
 })
+
+const jobId = computeJob[0].jobId // make sure to save your jobId to retrieve results later
 ```
+
+### Get compute job status
+
+Once you have started a compute job it is possible to get status reports via the `.getComputeStatus()` function.
+For this you need to have the `jobId` as well as the `providerUri` endpoint that is used for orchestrating and accessing the compute job.
+
+In most cases `providerUri` will be the `serviceEndpoint` of the `compute` service of the dataset that was computed on.
+
+```ts
+const computeJob = await nautilus.getComputeStatus({
+  jobId, // use your previously saved jobId
+  providerUri: 'https://v4.provider.oceanprotocol.com/' // default ocean provider(serviceEndpoint)
+})
+```
+
+Example compute job status:
+
+```json
+{
+  "agreementId": "0x1234abcd",
+  "jobId": "9876",
+  "owner": "0x1234",
+  "status": 70,
+  "statusText": "Job finished",
+  "dateCreated": "1683849268.012345",
+  "dateFinished": "1683849268.012345",
+  "results": [
+    {
+      "filename": "results.txt",
+      "filesize": 1234,
+      "type": "output"
+    },
+    {
+      "filename": "algorithm.log",
+      "filesize": 1234,
+      "type": "algorithmLog"
+    },
+    {
+      "filename": "configure.log",
+      "filesize": 1234,
+      "type": "configrationLog"
+    },
+    {
+      "filename": "publish.log",
+      "filesize": 0,
+      "type": "publishLog"
+    }
+  ],
+  "stopreq": 0,
+  "removed": 0,
+  "algoDID": "did:op:algo-did",
+  "inputDID": ["did:op:dataset-did"]
+}
+```
+
+### Get compute job results
+
+If a compute job has finished running and there are results available, you can access these utilizing Nautilus.
+Once again you will need the `jobId` as well as the `providerUri` as specified in the previous section on compute status.
+
+```ts
+const computeJob = await nautilus.getComputeResult({
+  jobId, // use your previously saved jobId
+  providerUri: 'https://v4.provider.oceanprotocol.com/' // default ocean provider(serviceEndpoint)
+})
+```
+
+In addition, you can also specify a `resultIndex` to access a specific result file you are interested in. If you do not specify a `resultIndex`, the first result file will be used by default. For example, you could use this to get the algorithm log of a specific compute job:
+
+```ts
+const jobStatus = await nautilus.getComputeStatus({
+  jobId,
+  providerUri
+})
+
+if (jobStatus.status === 70) {
+  const resultIndexAlgorithmLog = status.results?.findIndex(
+    (result) => result.type === 'algorithmLog'
+  )
+  const computeJob = await nautilus.getComputeResult({
+    jobId,
+    providerUri,
+    resultIndex:
+      resultIndexAlgorithmLog > -1 ? resultIndexAlgorithmLog : undefined
+  })
+}
+```
+
+For more information on compute job status and result requests please refer to the [Ocean Provider API documentation](https://docs.oceanprotocol.com/api-references/provider-rest-api#status-and-result).
 
 ## Automated Access
 
@@ -356,7 +472,7 @@ const accessUrl = await nautilus.access(accessConfig)
 ## API Documentation
 
 If you want to learn more about Nautilus, we provide a more detailed documentation of the library, including a typedoc API documentation:
-https://deltadao.github.io/nautilus
+https://deltadao.github.io/nautilus/docs/api/
 
 ## License
 

@@ -1,11 +1,16 @@
 import Web3 from 'web3'
-import chainConfig from './chainConfig.json'
 import dotenv from 'dotenv'
 dotenv.config()
 
-export function getWeb3(nodeUri?: string) {
-  const web3 = new Web3(nodeUri || chainConfig.nodeUri)
-  const account = web3.eth.accounts.privateKeyToAccount(process.env.PRIVATE_KEY)
+export const MUMBAI_NODE_URI = 'https://matic-mumbai.chainstacklabs.com'
+
+export function getWeb3(key: 1 | 2 = 1, nodeUri?: string) {
+  const web3 = new Web3(nodeUri || 'http://127.0.0.1:8545')
+  const account = web3.eth.accounts.privateKeyToAccount(
+    key === 1
+      ? process.env.PRIVATE_KEY_TESTS_1
+      : process.env.PRIVATE_KEY_TESTS_2
+  )
   web3.eth.accounts.wallet.add(account)
   web3.defaultAccount = account.address
 

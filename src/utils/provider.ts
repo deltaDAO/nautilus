@@ -1,15 +1,24 @@
 import {
   approveWei,
+  Arweave,
   ComputeAlgorithm,
   ComputeAsset,
   ComputeEnvironment,
+  FileInfo,
+  GraphqlQuery,
+  Ipfs,
   LoggerInstance,
   ProviderComputeInitializeResults,
-  ProviderInstance
+  ProviderInstance,
+  Service,
+  Smartcontract,
+  UrlFile,
+  UserCustomParameters
 } from '@oceanprotocol/lib'
 import Web3 from 'web3'
-import { getOceanConfig } from '.'
+import { getOceanConfig, getServiceById, getServiceByName } from '.'
 import { AssetWithAccessDetails } from '../@types/Compute'
+import { ConsumerParameter } from '../@types'
 
 export async function getEncryptedFiles(
   files: any,
@@ -23,6 +32,24 @@ export async function getEncryptedFiles(
   } catch (error) {
     LoggerInstance.error('Error parsing json: ' + error.message)
   }
+}
+
+export async function initializeProvider(
+  asset: AssetWithAccessDetails,
+  accountId: string,
+  service: Service,
+  fileIndex = 0,
+  consumerParameters?: UserCustomParameters
+) {
+  return await ProviderInstance.initialize(
+    asset.id,
+    service.id,
+    fileIndex,
+    accountId,
+    service.serviceEndpoint,
+    undefined,
+    consumerParameters
+  )
 }
 
 export async function initializeProviderForCompute(
@@ -99,4 +126,12 @@ export async function approveProviderFee(
     providerFeeAmount
   )
   return txApproveWei
+}
+
+export async function getFileInfo(
+  file: UrlFile | Arweave | GraphqlQuery | Smartcontract | Ipfs,
+  providerUri: string,
+  withChecksum?: boolean
+): Promise<FileInfo[]> {
+  return await ProviderInstance.getFileInfo(file, providerUri, withChecksum)
 }

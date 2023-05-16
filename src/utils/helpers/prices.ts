@@ -35,7 +35,6 @@ export async function getOrderPriceAndFees(
   asset: AssetWithAccessDetails,
   web3: Web3,
   config: Config,
-  providerFees?: ProviderFees,
   userCustomParameters?: UserCustomParameters
 ): Promise<OrderPriceAndFees> {
   const orderPriceAndFees = {
@@ -49,18 +48,16 @@ export async function getOrderPriceAndFees(
   } as OrderPriceAndFees
 
   // fetch provider fee
-  const initializeData =
-    !providerFees &&
-    (await ProviderInstance.initialize(
-      asset?.id,
-      asset?.services[0].id,
-      0,
-      web3.defaultAccount,
-      asset?.services[0].serviceEndpoint,
-      undefined,
-      userCustomParameters
-    ))
-  orderPriceAndFees.providerFee = providerFees || initializeData.providerFee
+  const initializeData = await ProviderInstance.initialize(
+    asset?.id,
+    asset?.services[0].id,
+    0,
+    web3.defaultAccount,
+    asset?.services[0].serviceEndpoint,
+    undefined,
+    userCustomParameters
+  )
+  orderPriceAndFees.providerFee = initializeData.providerFee
 
   // fetch price and swap fees
   if (asset?.accessDetails?.type === 'fixed') {

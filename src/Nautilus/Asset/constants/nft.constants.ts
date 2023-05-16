@@ -1,7 +1,7 @@
 import { NftCreateDataWithoutOwner } from '../../../@types/Publish'
 
-const name = 'Ocean Dataservice NFT'
-const symbol = 'OCEAN-NFT'
+const name = 'Nautilus Dataservice NFT'
+const symbol = 'NAUTILUS-NFT'
 const templateIndex = 1
 const tokenURI = ''
 const transferable = false

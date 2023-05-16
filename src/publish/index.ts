@@ -8,7 +8,8 @@ import {
   ProviderInstance,
   getHash,
   DispenserCreationParams,
-  Service
+  Service,
+  Aquarius
 } from '@oceanprotocol/lib'
 import { SHA256 } from 'crypto-js'
 
@@ -59,6 +60,10 @@ export async function publishAsset(assetConfig: AssetConfig) {
 
   LoggerInstance.debug({ prePublishDDO })
 
+  LoggerInstance.debug(
+    '[publish] Encrypting files via',
+    chainConfig.providerUri
+  )
   // encrypt files
   const assetURL = {
     datatokenAddress,
@@ -71,6 +76,7 @@ export async function publishAsset(assetConfig: AssetConfig) {
     prePublishDDO.chainId,
     chainConfig.providerUri
   )
+  LoggerInstance.debug('[publish] Encrypted files:', encryptedFiles)
 
   // add encrypted files to DDO
   const service: Service = {
@@ -83,6 +89,7 @@ export async function publishAsset(assetConfig: AssetConfig) {
   const ddo: DDO = { ...prePublishDDO, services: [service] }
 
   // encrypt DDO
+  LoggerInstance.debug('[publish] Encrypting DDO...')
   const encryptedDDO = await ProviderInstance.encrypt(
     ddo,
     ddo.chainId,
@@ -96,23 +103,30 @@ export async function publishAsset(assetConfig: AssetConfig) {
   // --------------------------------------------------
 
   // TODO we should put the metadata update in its own function which can be reused later
+  LoggerInstance.debug(
+    `[publish] Validating DDO via ${chainConfig.metadataCacheUri}`
+  )
+  const aquarius = new Aquarius(chainConfig.metadataCacheUri)
+  const validateResult = await aquarius.validate(ddo)
 
-  const metadataHash = getHash(JSON.stringify(ddo))
+  if (!validateResult.valid) throw new Error('Validating Metadata failed')
+
   const LIFECYCLE_STATE_ACTIVE = 0
-  const FLAGS = '0x2' // market sets '0x02' instead of '0x2', theoretically used by aquarius or provider, not implemented yet, will remain hardcoded
-  const setNftMetadataResult = await nft.setMetadata(
+  const FLAGS = '0x2' // market sets '0x02' insteadconst validateResult = await aquariusInstance.validate(ddo) of '0x2', theoretically used by aquarius or provider, not implemented yet, will remain hardcoded
+
+  LoggerInstance.debug('[publish] Set Metadata...')
+  await nft.setMetadata(
     erc721Address,
     publisherAccount,
     LIFECYCLE_STATE_ACTIVE,
     chainConfig.providerUri,
-    chainConfig.providerAddress,
+    '',
     FLAGS,
     encryptedDDO,
-    '0x' + metadataHash
+    validateResult.hash
   )
 
-  LoggerInstance.debug(`DID: ${ddo.id}`)
-  LoggerInstance.debug('Endresult:', setNftMetadataResult)
+  LoggerInstance.debug(`[publish] published asset with DID "${ddo.id}"`)
 
   return { erc721Address, datatokenAddress, txHash, DID: ddo.id } // TODO return all kinds of addresses and ids, create interface
 }

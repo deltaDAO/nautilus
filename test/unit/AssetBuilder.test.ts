@@ -12,7 +12,7 @@ import {
   FileTypes,
   NautilusService,
   ServiceTypes
-} from '../../src/nautilus/asset/service'
+} from '../../src/Nautilus/Asset/Service'
 
 describe('AssetBuilder', () => {
   it('builds asset.metadata correctly', async () => {
