@@ -4,6 +4,9 @@ import {
   ConsumerParameterType
 } from '../../../@types/Publish'
 
+/**
+ * @internal
+ */
 export class NautilusConsumerParameter implements ConsumerParameter {
   name: string
   type: ConsumerParameterType
