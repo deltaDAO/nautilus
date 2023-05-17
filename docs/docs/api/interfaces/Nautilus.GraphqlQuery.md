@@ -1,11 +1,11 @@
 ---
-id: "index.GraphqlQuery"
+id: "Nautilus.GraphqlQuery"
 title: "Interface: GraphqlQuery"
 sidebar_label: "GraphqlQuery"
 custom_edit_url: null
 ---
 
-[index](../modules/).GraphqlQuery
+[Nautilus](../modules/Nautilus.md).GraphqlQuery
 
 ## Properties
 

@@ -1,11 +1,11 @@
 ---
-id: "index.Ipfs"
+id: "Nautilus.Ipfs"
 title: "Interface: Ipfs"
 sidebar_label: "Ipfs"
 custom_edit_url: null
 ---
 
-[index](../modules/).Ipfs
+[Nautilus](../modules/Nautilus.md).Ipfs
 
 ## Properties
 

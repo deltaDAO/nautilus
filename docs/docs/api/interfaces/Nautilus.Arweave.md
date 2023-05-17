@@ -1,11 +1,11 @@
 ---
-id: "index.Arweave"
+id: "Nautilus.Arweave"
 title: "Interface: Arweave"
 sidebar_label: "Arweave"
 custom_edit_url: null
 ---
 
-[index](../modules/).Arweave
+[Nautilus](../modules/Nautilus.md).Arweave
 
 ## Properties
 

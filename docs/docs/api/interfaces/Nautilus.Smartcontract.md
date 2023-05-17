@@ -1,11 +1,11 @@
 ---
-id: "index.Smartcontract"
+id: "Nautilus.Smartcontract"
 title: "Interface: Smartcontract"
 sidebar_label: "Smartcontract"
 custom_edit_url: null
 ---
 
-[index](../modules/).Smartcontract
+[Nautilus](../modules/Nautilus.md).Smartcontract
 
 ## Properties
 

@@ -1,11 +1,11 @@
 ---
-id: "index.LogLevel"
+id: "Nautilus.LogLevel"
 title: "Enumeration: LogLevel"
 sidebar_label: "LogLevel"
 custom_edit_url: null
 ---
 
-[index](../modules/).LogLevel
+[Nautilus](../modules/Nautilus.md).LogLevel
 
 ## Enumeration Members
 

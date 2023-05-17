@@ -15,7 +15,7 @@ custom_edit_url: null
 
 ## Implemented by
 
-- [`AssetBuilder`](../classes/.AssetBuilder)
+- [`AssetBuilder`](../classes/Nautilus.AssetBuilder.md)
 
 ## Properties
 
@@ -39,13 +39,13 @@ custom_edit_url: null
 
 #### Defined in
 
-[src/@types/Nautilus.ts:44](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Nautilus.ts#L44)
+[src/@types/Nautilus.ts:44](https://github.com/deltaDAO/nautilus/blob/9e325d7/src/@types/Nautilus.ts#L44)
 
 ___
 
 ### addService
 
-• **addService**: (`service`: `NautilusService`<[`ServiceTypes`](../enums/.ServiceTypes), [`FileTypes`](../enums/.FileTypes)\>) => [`IAssetBuilder`](types.IAssetBuilder.md)
+• **addService**: (`service`: `NautilusService`<[`ServiceTypes`](../enums/Nautilus.ServiceTypes.md), [`FileTypes`](../enums/Nautilus.FileTypes.md)\>) => [`IAssetBuilder`](types.IAssetBuilder.md)
 
 #### Type declaration
 
@@ -55,7 +55,7 @@ ___
 
 | Name | Type |
 | :------ | :------ |
-| `service` | `NautilusService`<[`ServiceTypes`](../enums/.ServiceTypes), [`FileTypes`](../enums/.FileTypes)\> |
+| `service` | `NautilusService`<[`ServiceTypes`](../enums/Nautilus.ServiceTypes.md), [`FileTypes`](../enums/Nautilus.FileTypes.md)\> |
 
 ##### Returns
 
@@ -63,7 +63,7 @@ ___
 
 #### Defined in
 
-[src/@types/Nautilus.ts:34](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Nautilus.ts#L34)
+[src/@types/Nautilus.ts:34](https://github.com/deltaDAO/nautilus/blob/9e325d7/src/@types/Nautilus.ts#L34)
 
 ___
 
@@ -85,7 +85,7 @@ ___
 
 #### Defined in
 
-[src/@types/Nautilus.ts:23](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Nautilus.ts#L23)
+[src/@types/Nautilus.ts:23](https://github.com/deltaDAO/nautilus/blob/9e325d7/src/@types/Nautilus.ts#L23)
 
 ___
 
@@ -107,7 +107,7 @@ ___
 
 #### Defined in
 
-[src/@types/Nautilus.ts:24](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Nautilus.ts#L24)
+[src/@types/Nautilus.ts:24](https://github.com/deltaDAO/nautilus/blob/9e325d7/src/@types/Nautilus.ts#L24)
 
 ___
 
@@ -131,7 +131,7 @@ ___
 
 #### Defined in
 
-[src/@types/Nautilus.ts:41](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Nautilus.ts#L41)
+[src/@types/Nautilus.ts:41](https://github.com/deltaDAO/nautilus/blob/9e325d7/src/@types/Nautilus.ts#L41)
 
 ___
 
@@ -155,7 +155,7 @@ ___
 
 #### Defined in
 
-[src/@types/Nautilus.ts:32](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Nautilus.ts#L32)
+[src/@types/Nautilus.ts:32](https://github.com/deltaDAO/nautilus/blob/9e325d7/src/@types/Nautilus.ts#L32)
 
 ___
 
@@ -179,7 +179,7 @@ ___
 
 #### Defined in
 
-[src/@types/Nautilus.ts:38](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Nautilus.ts#L38)
+[src/@types/Nautilus.ts:38](https://github.com/deltaDAO/nautilus/blob/9e325d7/src/@types/Nautilus.ts#L38)
 
 ___
 
@@ -204,7 +204,7 @@ ___
 
 #### Defined in
 
-[src/@types/Nautilus.ts:43](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Nautilus.ts#L43)
+[src/@types/Nautilus.ts:43](https://github.com/deltaDAO/nautilus/blob/9e325d7/src/@types/Nautilus.ts#L43)
 
 ___
 
@@ -228,7 +228,7 @@ ___
 
 #### Defined in
 
-[src/@types/Nautilus.ts:30](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Nautilus.ts#L30)
+[src/@types/Nautilus.ts:30](https://github.com/deltaDAO/nautilus/blob/9e325d7/src/@types/Nautilus.ts#L30)
 
 ___
 
@@ -252,7 +252,7 @@ ___
 
 #### Defined in
 
-[src/@types/Nautilus.ts:31](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Nautilus.ts#L31)
+[src/@types/Nautilus.ts:31](https://github.com/deltaDAO/nautilus/blob/9e325d7/src/@types/Nautilus.ts#L31)
 
 ___
 
@@ -276,7 +276,7 @@ ___
 
 #### Defined in
 
-[src/@types/Nautilus.ts:29](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Nautilus.ts#L29)
+[src/@types/Nautilus.ts:29](https://github.com/deltaDAO/nautilus/blob/9e325d7/src/@types/Nautilus.ts#L29)
 
 ___
 
@@ -300,7 +300,7 @@ ___
 
 #### Defined in
 
-[src/@types/Nautilus.ts:37](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Nautilus.ts#L37)
+[src/@types/Nautilus.ts:37](https://github.com/deltaDAO/nautilus/blob/9e325d7/src/@types/Nautilus.ts#L37)
 
 ___
 
@@ -324,7 +324,7 @@ ___
 
 #### Defined in
 
-[src/@types/Nautilus.ts:42](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Nautilus.ts#L42)
+[src/@types/Nautilus.ts:42](https://github.com/deltaDAO/nautilus/blob/9e325d7/src/@types/Nautilus.ts#L42)
 
 ___
 
@@ -348,7 +348,7 @@ ___
 
 #### Defined in
 
-[src/@types/Nautilus.ts:33](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Nautilus.ts#L33)
+[src/@types/Nautilus.ts:33](https://github.com/deltaDAO/nautilus/blob/9e325d7/src/@types/Nautilus.ts#L33)
 
 ___
 
@@ -372,4 +372,4 @@ ___
 
 #### Defined in
 
-[src/@types/Nautilus.ts:28](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Nautilus.ts#L28)
+[src/@types/Nautilus.ts:28](https://github.com/deltaDAO/nautilus/blob/9e325d7/src/@types/Nautilus.ts#L28)

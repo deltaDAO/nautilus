@@ -23,7 +23,7 @@ custom_edit_url: null
 
 ## Implemented by
 
-- [`ConsumerParameterBuilder`](../classes/.ConsumerParameterBuilder)
+- [`ConsumerParameterBuilder`](../classes/Nautilus.ConsumerParameterBuilder.md)
 
 ## Properties
 
@@ -41,7 +41,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[src/@types/Nautilus.ts:23](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Nautilus.ts#L23)
+[src/@types/Nautilus.ts:23](https://github.com/deltaDAO/nautilus/blob/9e325d7/src/@types/Nautilus.ts#L23)
 
 ___
 
@@ -59,4 +59,4 @@ ___
 
 #### Defined in
 
-[src/@types/Nautilus.ts:24](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Nautilus.ts#L24)
+[src/@types/Nautilus.ts:24](https://github.com/deltaDAO/nautilus/blob/9e325d7/src/@types/Nautilus.ts#L24)

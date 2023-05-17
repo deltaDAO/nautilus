@@ -1,11 +1,11 @@
 ---
-id: "index.UrlFile"
+id: "Nautilus.UrlFile"
 title: "Interface: UrlFile"
 sidebar_label: "UrlFile"
 custom_edit_url: null
 ---
 
-[index](../modules/).UrlFile
+[Nautilus](../modules/Nautilus.md).UrlFile
 
 ## Properties
 
