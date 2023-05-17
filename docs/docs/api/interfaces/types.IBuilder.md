@@ -21,6 +21,10 @@ custom_edit_url: null
 
   ↳ [`IServiceBuilder`](types.IServiceBuilder.md)
 
+## Implemented by
+
+- [`ConsumerParameterBuilder`](../classes/.ConsumerParameterBuilder)
+
 ## Properties
 
 ### build
@@ -37,7 +41,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[src/@types/Nautilus.ts:23](https://github.com/deltaDAO/nautilus/blob/e68220d/src/@types/Nautilus.ts#L23)
+[src/@types/Nautilus.ts:23](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Nautilus.ts#L23)
 
 ___
 
@@ -55,4 +59,4 @@ ___
 
 #### Defined in
 
-[src/@types/Nautilus.ts:24](https://github.com/deltaDAO/nautilus/blob/e68220d/src/@types/Nautilus.ts#L24)
+[src/@types/Nautilus.ts:24](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Nautilus.ts#L24)

@@ -39,7 +39,7 @@ ___
 
 #### Defined in
 
-[src/@types/Compute.ts:62](https://github.com/deltaDAO/nautilus/blob/e68220d/src/@types/Compute.ts#L62)
+[src/@types/Compute.ts:65](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Compute.ts#L65)
 
 ___
 

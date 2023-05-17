@@ -1,11 +1,11 @@
 ---
-id: "nautilus.AssetBuilder"
+id: "index.AssetBuilder"
 title: "Class: AssetBuilder"
 sidebar_label: "AssetBuilder"
 custom_edit_url: null
 ---
 
-[nautilus](../modules/nautilus.md).AssetBuilder
+[index](../modules/).AssetBuilder
 
 ## Implements
 
@@ -21,17 +21,17 @@ custom_edit_url: null
 
 ### asset
 
-• `Private` **asset**: [`NautilusAsset`](nautilus.NautilusAsset.md)
+• `Private` **asset**: `NautilusAsset`
 
 #### Defined in
 
-[src/nautilus/asset/AssetBuilder.ts:17](https://github.com/deltaDAO/nautilus/blob/e68220d/src/nautilus/asset/AssetBuilder.ts#L17)
+[src/Nautilus/Asset/AssetBuilder.ts:15](https://github.com/deltaDAO/nautilus/blob/a089200/src/Nautilus/Asset/AssetBuilder.ts#L15)
 
 ## Methods
 
 ### addAdditionalInformation
 
-▸ **addAdditionalInformation**(`addtionalInformation`): [`AssetBuilder`](nautilus.AssetBuilder.md)
+▸ **addAdditionalInformation**(`addtionalInformation`): [`AssetBuilder`](.AssetBuilder)
 
 #### Parameters
 
@@ -41,7 +41,7 @@ custom_edit_url: null
 
 #### Returns
 
-[`AssetBuilder`](nautilus.AssetBuilder.md)
+[`AssetBuilder`](.AssetBuilder)
 
 #### Implementation of
 
@@ -49,23 +49,23 @@ custom_edit_url: null
 
 #### Defined in
 
-[src/nautilus/asset/AssetBuilder.ts:99](https://github.com/deltaDAO/nautilus/blob/e68220d/src/nautilus/asset/AssetBuilder.ts#L99)
+[src/Nautilus/Asset/AssetBuilder.ts:97](https://github.com/deltaDAO/nautilus/blob/a089200/src/Nautilus/Asset/AssetBuilder.ts#L97)
 
 ___
 
 ### addService
 
-▸ **addService**(`service`): [`AssetBuilder`](nautilus.AssetBuilder.md)
+▸ **addService**(`service`): [`AssetBuilder`](.AssetBuilder)
 
 #### Parameters
 
 | Name | Type |
 | :------ | :------ |
-| `service` | `NautilusService`<`ServiceTypes`, `FileTypes`\> |
+| `service` | `NautilusService`<[`ServiceTypes`](../enums/.ServiceTypes), [`FileTypes`](../enums/.FileTypes)\> |
 
 #### Returns
 
-[`AssetBuilder`](nautilus.AssetBuilder.md)
+[`AssetBuilder`](.AssetBuilder)
 
 #### Implementation of
 
@@ -73,17 +73,17 @@ ___
 
 #### Defined in
 
-[src/nautilus/asset/AssetBuilder.ts:65](https://github.com/deltaDAO/nautilus/blob/e68220d/src/nautilus/asset/AssetBuilder.ts#L65)
+[src/Nautilus/Asset/AssetBuilder.ts:63](https://github.com/deltaDAO/nautilus/blob/a089200/src/Nautilus/Asset/AssetBuilder.ts#L63)
 
 ___
 
 ### build
 
-▸ **build**(): [`NautilusAsset`](nautilus.NautilusAsset.md)
+▸ **build**(): `NautilusAsset`
 
 #### Returns
 
-[`NautilusAsset`](nautilus.NautilusAsset.md)
+`NautilusAsset`
 
 #### Implementation of
 
@@ -91,7 +91,7 @@ ___
 
 #### Defined in
 
-[src/nautilus/asset/AssetBuilder.ts:108](https://github.com/deltaDAO/nautilus/blob/e68220d/src/nautilus/asset/AssetBuilder.ts#L108)
+[src/Nautilus/Asset/AssetBuilder.ts:106](https://github.com/deltaDAO/nautilus/blob/a089200/src/Nautilus/Asset/AssetBuilder.ts#L106)
 
 ___
 
@@ -109,13 +109,13 @@ ___
 
 #### Defined in
 
-[src/nautilus/asset/AssetBuilder.ts:19](https://github.com/deltaDAO/nautilus/blob/e68220d/src/nautilus/asset/AssetBuilder.ts#L19)
+[src/Nautilus/Asset/AssetBuilder.ts:17](https://github.com/deltaDAO/nautilus/blob/a089200/src/Nautilus/Asset/AssetBuilder.ts#L17)
 
 ___
 
 ### setAlgorithm
 
-▸ **setAlgorithm**(`algorithm`): [`AssetBuilder`](nautilus.AssetBuilder.md)
+▸ **setAlgorithm**(`algorithm`): [`AssetBuilder`](.AssetBuilder)
 
 #### Parameters
 
@@ -125,7 +125,7 @@ ___
 
 #### Returns
 
-[`AssetBuilder`](nautilus.AssetBuilder.md)
+[`AssetBuilder`](.AssetBuilder)
 
 #### Implementation of
 
@@ -133,13 +133,13 @@ ___
 
 #### Defined in
 
-[src/nautilus/asset/AssetBuilder.ts:53](https://github.com/deltaDAO/nautilus/blob/e68220d/src/nautilus/asset/AssetBuilder.ts#L53)
+[src/Nautilus/Asset/AssetBuilder.ts:51](https://github.com/deltaDAO/nautilus/blob/a089200/src/Nautilus/Asset/AssetBuilder.ts#L51)
 
 ___
 
 ### setAuthor
 
-▸ **setAuthor**(`author`): [`AssetBuilder`](nautilus.AssetBuilder.md)
+▸ **setAuthor**(`author`): [`AssetBuilder`](.AssetBuilder)
 
 #### Parameters
 
@@ -149,7 +149,7 @@ ___
 
 #### Returns
 
-[`AssetBuilder`](nautilus.AssetBuilder.md)
+[`AssetBuilder`](.AssetBuilder)
 
 #### Implementation of
 
@@ -157,13 +157,13 @@ ___
 
 #### Defined in
 
-[src/nautilus/asset/AssetBuilder.ts:47](https://github.com/deltaDAO/nautilus/blob/e68220d/src/nautilus/asset/AssetBuilder.ts#L47)
+[src/Nautilus/Asset/AssetBuilder.ts:45](https://github.com/deltaDAO/nautilus/blob/a089200/src/Nautilus/Asset/AssetBuilder.ts#L45)
 
 ___
 
 ### setDatatokenData
 
-▸ **setDatatokenData**(`tokenData`): [`AssetBuilder`](nautilus.AssetBuilder.md)
+▸ **setDatatokenData**(`tokenData`): [`AssetBuilder`](.AssetBuilder)
 
 #### Parameters
 
@@ -173,7 +173,7 @@ ___
 
 #### Returns
 
-[`AssetBuilder`](nautilus.AssetBuilder.md)
+[`AssetBuilder`](.AssetBuilder)
 
 #### Implementation of
 
@@ -181,13 +181,13 @@ ___
 
 #### Defined in
 
-[src/nautilus/asset/AssetBuilder.ts:77](https://github.com/deltaDAO/nautilus/blob/e68220d/src/nautilus/asset/AssetBuilder.ts#L77)
+[src/Nautilus/Asset/AssetBuilder.ts:75](https://github.com/deltaDAO/nautilus/blob/a089200/src/Nautilus/Asset/AssetBuilder.ts#L75)
 
 ___
 
 ### setDatatokenNameAndSymbol
 
-▸ **setDatatokenNameAndSymbol**(`dtName`, `dtSymbol`): [`AssetBuilder`](nautilus.AssetBuilder.md)
+▸ **setDatatokenNameAndSymbol**(`dtName`, `dtSymbol`): [`AssetBuilder`](.AssetBuilder)
 
 #### Parameters
 
@@ -198,7 +198,7 @@ ___
 
 #### Returns
 
-[`AssetBuilder`](nautilus.AssetBuilder.md)
+[`AssetBuilder`](.AssetBuilder)
 
 #### Implementation of
 
@@ -206,13 +206,13 @@ ___
 
 #### Defined in
 
-[src/nautilus/asset/AssetBuilder.ts:83](https://github.com/deltaDAO/nautilus/blob/e68220d/src/nautilus/asset/AssetBuilder.ts#L83)
+[src/Nautilus/Asset/AssetBuilder.ts:81](https://github.com/deltaDAO/nautilus/blob/a089200/src/Nautilus/Asset/AssetBuilder.ts#L81)
 
 ___
 
 ### setDescription
 
-▸ **setDescription**(`description`): [`AssetBuilder`](nautilus.AssetBuilder.md)
+▸ **setDescription**(`description`): [`AssetBuilder`](.AssetBuilder)
 
 #### Parameters
 
@@ -222,7 +222,7 @@ ___
 
 #### Returns
 
-[`AssetBuilder`](nautilus.AssetBuilder.md)
+[`AssetBuilder`](.AssetBuilder)
 
 #### Implementation of
 
@@ -230,13 +230,13 @@ ___
 
 #### Defined in
 
-[src/nautilus/asset/AssetBuilder.ts:35](https://github.com/deltaDAO/nautilus/blob/e68220d/src/nautilus/asset/AssetBuilder.ts#L35)
+[src/Nautilus/Asset/AssetBuilder.ts:33](https://github.com/deltaDAO/nautilus/blob/a089200/src/Nautilus/Asset/AssetBuilder.ts#L33)
 
 ___
 
 ### setLicense
 
-▸ **setLicense**(`license`): [`AssetBuilder`](nautilus.AssetBuilder.md)
+▸ **setLicense**(`license`): [`AssetBuilder`](.AssetBuilder)
 
 #### Parameters
 
@@ -246,7 +246,7 @@ ___
 
 #### Returns
 
-[`AssetBuilder`](nautilus.AssetBuilder.md)
+[`AssetBuilder`](.AssetBuilder)
 
 #### Implementation of
 
@@ -254,13 +254,13 @@ ___
 
 #### Defined in
 
-[src/nautilus/asset/AssetBuilder.ts:41](https://github.com/deltaDAO/nautilus/blob/e68220d/src/nautilus/asset/AssetBuilder.ts#L41)
+[src/Nautilus/Asset/AssetBuilder.ts:39](https://github.com/deltaDAO/nautilus/blob/a089200/src/Nautilus/Asset/AssetBuilder.ts#L39)
 
 ___
 
 ### setName
 
-▸ **setName**(`name`): [`AssetBuilder`](nautilus.AssetBuilder.md)
+▸ **setName**(`name`): [`AssetBuilder`](.AssetBuilder)
 
 #### Parameters
 
@@ -270,7 +270,7 @@ ___
 
 #### Returns
 
-[`AssetBuilder`](nautilus.AssetBuilder.md)
+[`AssetBuilder`](.AssetBuilder)
 
 #### Implementation of
 
@@ -278,13 +278,13 @@ ___
 
 #### Defined in
 
-[src/nautilus/asset/AssetBuilder.ts:29](https://github.com/deltaDAO/nautilus/blob/e68220d/src/nautilus/asset/AssetBuilder.ts#L29)
+[src/Nautilus/Asset/AssetBuilder.ts:27](https://github.com/deltaDAO/nautilus/blob/a089200/src/Nautilus/Asset/AssetBuilder.ts#L27)
 
 ___
 
 ### setNftData
 
-▸ **setNftData**(`tokenData`): [`AssetBuilder`](nautilus.AssetBuilder.md)
+▸ **setNftData**(`tokenData`): [`AssetBuilder`](.AssetBuilder)
 
 #### Parameters
 
@@ -294,7 +294,7 @@ ___
 
 #### Returns
 
-[`AssetBuilder`](nautilus.AssetBuilder.md)
+[`AssetBuilder`](.AssetBuilder)
 
 #### Implementation of
 
@@ -302,13 +302,13 @@ ___
 
 #### Defined in
 
-[src/nautilus/asset/AssetBuilder.ts:71](https://github.com/deltaDAO/nautilus/blob/e68220d/src/nautilus/asset/AssetBuilder.ts#L71)
+[src/Nautilus/Asset/AssetBuilder.ts:69](https://github.com/deltaDAO/nautilus/blob/a089200/src/Nautilus/Asset/AssetBuilder.ts#L69)
 
 ___
 
 ### setOwner
 
-▸ **setOwner**(`owner`): [`AssetBuilder`](nautilus.AssetBuilder.md)
+▸ **setOwner**(`owner`): [`AssetBuilder`](.AssetBuilder)
 
 #### Parameters
 
@@ -318,7 +318,7 @@ ___
 
 #### Returns
 
-[`AssetBuilder`](nautilus.AssetBuilder.md)
+[`AssetBuilder`](.AssetBuilder)
 
 #### Implementation of
 
@@ -326,23 +326,23 @@ ___
 
 #### Defined in
 
-[src/nautilus/asset/AssetBuilder.ts:93](https://github.com/deltaDAO/nautilus/blob/e68220d/src/nautilus/asset/AssetBuilder.ts#L93)
+[src/Nautilus/Asset/AssetBuilder.ts:91](https://github.com/deltaDAO/nautilus/blob/a089200/src/Nautilus/Asset/AssetBuilder.ts#L91)
 
 ___
 
 ### setPricing
 
-▸ **setPricing**(`pricing`): [`AssetBuilder`](nautilus.AssetBuilder.md)
+▸ **setPricing**(`pricing`): [`AssetBuilder`](.AssetBuilder)
 
 #### Parameters
 
 | Name | Type |
 | :------ | :------ |
-| `pricing` | [`PricingConfigWithoutOwner`](../modules/nautilus.md#pricingconfigwithoutowner) |
+| `pricing` | [`PricingConfigWithoutOwner`](../modules/#pricingconfigwithoutowner) |
 
 #### Returns
 
-[`AssetBuilder`](nautilus.AssetBuilder.md)
+[`AssetBuilder`](.AssetBuilder)
 
 #### Implementation of
 
@@ -350,13 +350,13 @@ ___
 
 #### Defined in
 
-[src/nautilus/asset/AssetBuilder.ts:59](https://github.com/deltaDAO/nautilus/blob/e68220d/src/nautilus/asset/AssetBuilder.ts#L59)
+[src/Nautilus/Asset/AssetBuilder.ts:57](https://github.com/deltaDAO/nautilus/blob/a089200/src/Nautilus/Asset/AssetBuilder.ts#L57)
 
 ___
 
 ### setType
 
-▸ **setType**(`type`): [`AssetBuilder`](nautilus.AssetBuilder.md)
+▸ **setType**(`type`): [`AssetBuilder`](.AssetBuilder)
 
 #### Parameters
 
@@ -366,7 +366,7 @@ ___
 
 #### Returns
 
-[`AssetBuilder`](nautilus.AssetBuilder.md)
+[`AssetBuilder`](.AssetBuilder)
 
 #### Implementation of
 
@@ -374,4 +374,4 @@ ___
 
 #### Defined in
 
-[src/nautilus/asset/AssetBuilder.ts:23](https://github.com/deltaDAO/nautilus/blob/e68220d/src/nautilus/asset/AssetBuilder.ts#L23)
+[src/Nautilus/Asset/AssetBuilder.ts:21](https://github.com/deltaDAO/nautilus/blob/a089200/src/Nautilus/Asset/AssetBuilder.ts#L21)
