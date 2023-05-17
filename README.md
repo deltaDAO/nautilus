@@ -412,7 +412,7 @@ If a compute job has finished running and there are results available, you can a
 Once again you will need the `jobId` as well as the `providerUri` as specified in the previous section on compute status.
 
 ```ts
-const computeJob = await nautilus.getComputeResult({
+const computeResultUrl = await nautilus.getComputeResult({
   jobId, // use your previously saved jobId
   providerUri: 'https://v4.provider.oceanprotocol.com/' // default ocean provider(serviceEndpoint)
 })
@@ -430,7 +430,7 @@ if (jobStatus.status === 70) {
   const resultIndexAlgorithmLog = status.results?.findIndex(
     (result) => result.type === 'algorithmLog'
   )
-  const computeJob = await nautilus.getComputeResult({
+  const computeResultUrl = await nautilus.getComputeResult({
     jobId,
     providerUri,
     resultIndex:
