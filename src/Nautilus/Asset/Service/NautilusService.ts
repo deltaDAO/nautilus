@@ -47,6 +47,9 @@ export type ConsumerParameterSelectOption = {
   [value: string]: string
 }
 
+/**
+ * @internal
+ */
 export class NautilusService<
   ServiceType extends ServiceTypes,
   FileType extends FileTypes

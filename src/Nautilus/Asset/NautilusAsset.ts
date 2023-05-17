@@ -16,7 +16,9 @@ export type PricingConfigWithoutOwner = {
   freCreationParams?: Omit<PricingConfig['freCreationParams'], 'owner'>
 }
 
-/* @internal */
+/**
+ * @internal
+ */
 export class NautilusAsset {
   metadata: MetadataConfig
   services: NautilusService<ServiceTypes, FileTypes>[] = []

@@ -7,7 +7,7 @@ custom_edit_url: null
 
 [@types](../modules/types.md).AccessConfig
 
-The config type for index.access requests
+The config type for [access](../modules/#access) requests
 
 ## Properties
 
@@ -17,7 +17,7 @@ The config type for index.access requests
 
 #### Defined in
 
-[src/@types/Access.ts:8](https://github.com/deltaDAO/nautilus/blob/e68220d/src/@types/Access.ts#L8)
+[src/@types/Access.ts:8](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Access.ts#L8)
 
 ___
 
@@ -27,7 +27,7 @@ ___
 
 #### Defined in
 
-[src/@types/Access.ts:10](https://github.com/deltaDAO/nautilus/blob/e68220d/src/@types/Access.ts#L10)
+[src/@types/Access.ts:10](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Access.ts#L10)
 
 ___
 
@@ -37,7 +37,17 @@ ___
 
 #### Defined in
 
-[src/@types/Access.ts:11](https://github.com/deltaDAO/nautilus/blob/e68220d/src/@types/Access.ts#L11)
+[src/@types/Access.ts:12](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Access.ts#L12)
+
+___
+
+### serviceId
+
+• `Optional` **serviceId**: `string`
+
+#### Defined in
+
+[src/@types/Access.ts:11](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Access.ts#L11)
 
 ___
 
@@ -47,7 +57,7 @@ ___
 
 #### Defined in
 
-[src/@types/Access.ts:12](https://github.com/deltaDAO/nautilus/blob/e68220d/src/@types/Access.ts#L12)
+[src/@types/Access.ts:13](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Access.ts#L13)
 
 ___
 
@@ -57,4 +67,4 @@ ___
 
 #### Defined in
 
-[src/@types/Access.ts:9](https://github.com/deltaDAO/nautilus/blob/e68220d/src/@types/Access.ts#L9)
+[src/@types/Access.ts:9](https://github.com/deltaDAO/nautilus/blob/a089200/src/@types/Access.ts#L9)
