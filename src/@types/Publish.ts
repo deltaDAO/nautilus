@@ -58,10 +58,7 @@ export interface TokenParameters {
   datatokenParams: DatatokenCreateParams
 }
 
-export type ServiceConfig = Omit<
-  Service,
-  'id' | 'datatokenAddress' | 'files'
-> & {
+export type ServiceConfig = Omit<Service, 'files'> & {
   files: Files['files']
   consumerParameters?: ConsumerParameter[]
 }
@@ -72,8 +69,7 @@ export type PrePublishDDO = Omit<DDO, 'services'> & {
 
 export interface AssetConfig {
   chainConfig: Config
-  metadata: MetadataConfig
-  services: ServiceConfig[]
+  ddo: DDO
   web3: Web3
   pricing: PricingConfig
   tokenParamaters: TokenParameters

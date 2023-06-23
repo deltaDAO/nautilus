@@ -1,21 +1,16 @@
-import { AssetConfig, PrePublishDDO } from '../@types/Publish'
 import {
-  DDO,
-  NftFactory,
-  LoggerInstance,
-  generateDid,
-  Nft,
-  ProviderInstance,
-  getHash,
+  Aquarius,
   DispenserCreationParams,
-  Service,
-  Aquarius
+  LoggerInstance,
+  Nft,
+  NftFactory,
+  ProviderInstance
 } from '@oceanprotocol/lib'
-import { SHA256 } from 'crypto-js'
+import { AssetConfig } from '../@types/Publish'
 
 export async function publishAsset(assetConfig: AssetConfig) {
   // TODO don't forget to set return type
-  const { web3, metadata, services, chainConfig } = assetConfig
+  const { web3, ddo, chainConfig } = assetConfig
   const publisherAccount = web3?.defaultAccount
   const chainId = await web3.eth.getChainId()
   const nftFactory = new NftFactory(chainConfig.nftFactoryAddress, web3)
@@ -35,58 +30,6 @@ export async function publishAsset(assetConfig: AssetConfig) {
   LoggerInstance.debug('[publish] createTokensAndPricing tx', txHash)
   LoggerInstance.debug('[publish] erc721Address', erc721Address)
   LoggerInstance.debug('[publish] datatokenAddress', datatokenAddress)
-
-  // --------------------------------------------------
-  // 2. Construct and encrypt DDO
-  // --------------------------------------------------
-
-  // add timestamps to metadata
-  const currentTime = dateToStringNoMS(new Date())
-  const ddoMetadata = {
-    created: currentTime,
-    updated: currentTime,
-    ...metadata
-  }
-
-  const prePublishDDO: PrePublishDDO = {
-    '@context': ['https://w3id.org/did/v1'],
-    id: generateDid(erc721Address, chainId),
-    version: '4.1.0',
-    chainId,
-    nftAddress: erc721Address,
-    metadata: ddoMetadata,
-    services
-  }
-
-  LoggerInstance.debug({ prePublishDDO })
-
-  LoggerInstance.debug(
-    '[publish] Encrypting files via',
-    chainConfig.providerUri
-  )
-  // encrypt files
-  const assetURL = {
-    datatokenAddress,
-    nftAddress: erc721Address,
-    files: services[0].files // TODO: support multiple services.files (?)
-  }
-
-  const encryptedFiles = await ProviderInstance.encrypt(
-    assetURL,
-    prePublishDDO.chainId,
-    chainConfig.providerUri
-  )
-  LoggerInstance.debug('[publish] Encrypted files:', encryptedFiles)
-
-  // add encrypted files to DDO
-  const service: Service = {
-    ...prePublishDDO.services[0], // TODO: support multiple services.files (?)
-    id: SHA256(encryptedFiles).toString(),
-    files: encryptedFiles,
-    datatokenAddress
-  }
-
-  const ddo: DDO = { ...prePublishDDO, services: [service] }
 
   // encrypt DDO
   LoggerInstance.debug('[publish] Encrypting DDO...')
@@ -131,13 +74,12 @@ export async function publishAsset(assetConfig: AssetConfig) {
   return { erc721Address, datatokenAddress, txHash, DID: ddo.id } // TODO return all kinds of addresses and ids, create interface
 }
 
-function dateToStringNoMS(date: Date): string {
-  return date.toISOString().replace(/\.[0-9]{3}Z/, 'Z')
-}
-
 // TODO extract to other file
 async function createTokensAndPricing(
-  assetConfig: AssetConfig,
+  assetConfig: Pick<
+    AssetConfig,
+    'web3' | 'tokenParamaters' | 'pricing' | 'chainConfig'
+  >,
   publisherAccount: string,
   nftFactory: NftFactory
 ) {

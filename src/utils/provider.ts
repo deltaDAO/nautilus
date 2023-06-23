@@ -16,9 +16,8 @@ import {
   UserCustomParameters
 } from '@oceanprotocol/lib'
 import Web3 from 'web3'
-import { getOceanConfig, getServiceById, getServiceByName } from '.'
+import { getOceanConfig } from '.'
 import { AssetWithAccessDetails } from '../@types/Compute'
-import { ConsumerParameter } from '../@types'
 
 export async function getEncryptedFiles(
   files: any,

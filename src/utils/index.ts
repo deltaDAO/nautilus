@@ -36,3 +36,7 @@ export async function getDatatokenBalance(web3: Web3, datatokenAddress) {
     await new Datatoken(web3).balance(datatokenAddress, web3.defaultAccount)
   )
 }
+
+export function dateToStringNoMS(date: Date): string {
+  return date.toISOString().replace(/\.[0-9]{3}Z/, 'Z')
+}

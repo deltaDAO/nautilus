@@ -19,37 +19,37 @@ export class AssetBuilder implements IAssetBuilder {
   }
 
   setType(type: MetadataConfig['type']) {
-    this.asset.metadata.type = type
+    this.asset.ddo.metadata.type = type
 
     return this
   }
 
   setName(name: string) {
-    this.asset.metadata.name = name
+    this.asset.ddo.metadata.name = name
 
     return this
   }
 
   setDescription(description: string) {
-    this.asset.metadata.description = description
+    this.asset.ddo.metadata.description = description
 
     return this
   }
 
   setLicense(license: string) {
-    this.asset.metadata.license = license
+    this.asset.ddo.metadata.license = license
 
     return this
   }
 
   setAuthor(author: string) {
-    this.asset.metadata.author = author
+    this.asset.ddo.metadata.author = author
 
     return this
   }
 
   setAlgorithm(algorithm: MetadataConfig['algorithm']) {
-    this.asset.metadata.algorithm = algorithm
+    this.asset.ddo.metadata.algorithm = algorithm
 
     return this
   }
@@ -61,7 +61,7 @@ export class AssetBuilder implements IAssetBuilder {
   }
 
   addService(service: NautilusService<ServiceTypes, FileTypes>) {
-    this.asset.services.push(service)
+    this.asset.ddo.services.push(service)
 
     return this
   }
@@ -95,8 +95,8 @@ export class AssetBuilder implements IAssetBuilder {
   }
 
   addAdditionalInformation(addtionalInformation: { [key: string]: any }) {
-    this.asset.metadata.additionalInformation = {
-      ...this.asset.metadata.additionalInformation,
+    this.asset.ddo.metadata.additionalInformation = {
+      ...this.asset.ddo.metadata.additionalInformation,
       addtionalInformation
     }
 

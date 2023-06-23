@@ -3,13 +3,12 @@ import Web3 from 'web3'
 import {
   AssetConfig,
   DatatokenCreateParamsWithoutOwner,
-  MetadataConfig,
   NftCreateDataWithoutOwner,
   PricingConfig
 } from '../../@types/Publish'
+import { NautilusDDO } from './NautilusDDO'
 import { params } from './constants/datatoken.constants'
 import { createData } from './constants/nft.constants'
-import { FileTypes, NautilusService, ServiceTypes } from './Service'
 
 export type PricingConfigWithoutOwner = {
   type: PricingConfig['type']
@@ -20,28 +19,16 @@ export type PricingConfigWithoutOwner = {
  * @internal
  */
 export class NautilusAsset {
-  metadata: MetadataConfig
-  services: NautilusService<ServiceTypes, FileTypes>[] = []
+  ddo: NautilusDDO
   pricing: PricingConfigWithoutOwner
   nftCreateData: NftCreateDataWithoutOwner
   datatokenCreateParams: DatatokenCreateParamsWithoutOwner
   owner: string
 
   constructor() {
-    this.initMetadata()
     this.initPricing()
     this.initNftData()
     this.initDatatokenData()
-  }
-
-  private initMetadata() {
-    this.metadata = {
-      type: 'dataset',
-      name: '',
-      description: '',
-      author: '',
-      license: 'MIT'
-    }
   }
 
   private initPricing() {
@@ -59,9 +46,6 @@ export class NautilusAsset {
   }
 
   async getConfig(): Promise<Omit<AssetConfig, 'web3' | 'chainConfig'>> {
-    if (this.services?.length < 1)
-      throw new Error('At least one service needs to be defined.')
-
     if (!this.hasValidPricing()) throw new Error('Pricing Schema is invalid.')
 
     if (
@@ -71,24 +55,8 @@ export class NautilusAsset {
     )
       throw new Error('Owner needs to be a valid address')
 
-    const services = await Promise.all(
-      this.services.map((service) => service.getConfig())
-    )
-
     return {
-      metadata: {
-        ...this.metadata,
-        algorithm: this.metadata.algorithm
-          ? {
-              ...this.metadata.algorithm,
-              consumerParameters:
-                this.metadata.algorithm?.consumerParameters?.map((param) =>
-                  param.getConfig()
-                )
-            }
-          : undefined
-      },
-      services,
+      ddo: await this.ddo.getDDO(),
       pricing: {
         ...this.pricing,
         freCreationParams: {

@@ -68,7 +68,7 @@ export class NautilusService<
   additionalInformation?: { [key: string]: any } = {}
 
   // TODO: config transformation
-  async getConfig(): Promise<ServiceConfig> {
+  async getConfig(): Promise<Omit<ServiceConfig | 'id', 'datatokenAddress'>> {
     // validate provider
     if (!(await ProviderInstance.isValidProvider(this.serviceEndpoint)))
       throw new Error('Provided serviceEndpoint is not a valid Ocean Provider')
