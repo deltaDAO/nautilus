@@ -1,9 +1,5 @@
 import { IAssetBuilder } from '../../@types/Nautilus'
-import {
-  DatatokenCreateParamsWithoutOwner,
-  MetadataConfig,
-  NftCreateDataWithoutOwner
-} from '../../@types/Publish'
+import { MetadataConfig, NftCreateDataWithoutOwner } from '../../@types/Publish'
 import { NautilusAsset, PricingConfigWithoutOwner } from './NautilusAsset'
 import {
   FileTypes,
@@ -54,12 +50,6 @@ export class AssetBuilder implements IAssetBuilder {
     return this
   }
 
-  setPricing(pricing: PricingConfigWithoutOwner) {
-    this.asset.pricing = pricing
-
-    return this
-  }
-
   addService(service: NautilusService<ServiceTypes, FileTypes>) {
     this.asset.ddo.services.push(service)
 
@@ -68,22 +58,6 @@ export class AssetBuilder implements IAssetBuilder {
 
   setNftData(tokenData: NftCreateDataWithoutOwner) {
     this.asset.nftCreateData = tokenData
-
-    return this
-  }
-
-  setDatatokenData(tokenData: DatatokenCreateParamsWithoutOwner) {
-    this.asset.datatokenCreateParams = tokenData
-
-    return this
-  }
-
-  setDatatokenNameAndSymbol(dtName: string, dtSymbol: string) {
-    this.asset.datatokenCreateParams = {
-      ...this.asset.datatokenCreateParams,
-      name: dtName,
-      symbol: dtSymbol
-    }
 
     return this
   }

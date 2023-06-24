@@ -1,23 +1,21 @@
-import {
-  DDO,
-  LoggerInstance,
-  ProviderInstance,
-  Service,
-  generateDid,
-  getHash
-} from '@oceanprotocol/lib'
-import { MetadataConfig, PrePublishDDO, ServiceConfig } from '../../@types'
-import { SHA256 } from 'crypto-js'
+import { DDO, Service, generateDid } from '@oceanprotocol/lib'
+import { MetadataConfig } from '../../@types'
+import { dateToStringNoMS, getAllPromisesOnArray } from '../../utils'
 import {
   FileTypes,
   NautilusService,
   ServiceTypes
 } from './Service/NautilusService'
-import { dateToStringNoMS } from '../../utils'
-import { getEncryptedFiles } from '../../utils/provider'
 
 export class NautilusDDO {
-  metadata: MetadataConfig
+  metadata: MetadataConfig = {
+    type: undefined,
+    author: '',
+    name: '',
+    description: '',
+    license: ''
+  }
+
   services: NautilusService<ServiceTypes, FileTypes>[] = []
 
   private ddo: DDO = {
@@ -37,54 +35,19 @@ export class NautilusDDO {
     return nautilusDDO
   }
 
-  private async encryptServiceFiles(
-    service: ServiceConfig,
-    datatokenAddress: string,
-    nftAddress: string,
-    chainId: number,
-    providerUri: string
-  ): Promise<Service> {
-    const assetURL = {
-      datatokenAddress,
-      nftAddress,
-      files: service.files
-    }
-
-    const encryptedFiles = await getEncryptedFiles(
-      assetURL,
-      chainId,
-      providerUri
-    )
-
-    const serviceWithEncryptedFiles: Service = {
-      ...service,
-      id: getHash(encryptedFiles),
-      files: encryptedFiles,
-      datatokenAddress
-    }
-
-    return serviceWithEncryptedFiles
-  }
-
   private async buildDDOServices(): Promise<Service[]> {
     if (this.services?.length < 1)
       throw new Error('At least one service needs to be defined.')
 
-    const serviceConfigs: ServiceConfig[] = await Promise.all(
-      this.services.map((service) => service.getConfig())
-    )
-
     // encrypt files of services
-    const servicesWithEncryptedFiles = await Promise.all(
-      serviceConfigs.map(async (service) => {
-        return this.encryptServiceFiles(
-          service,
-          service.datatokenAddress,
-          this.ddo.nftAddress,
+    const servicesWithEncryptedFiles = await getAllPromisesOnArray(
+      this.services,
+      async (service) => {
+        return await service.getOceanService(
           this.ddo.chainId,
-          service.serviceEndpoint
+          this.ddo.nftAddress
         )
-      })
+      }
     )
 
     return servicesWithEncryptedFiles

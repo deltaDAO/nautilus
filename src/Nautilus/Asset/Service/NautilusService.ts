@@ -2,14 +2,23 @@ import {
   Arweave,
   GraphqlQuery,
   Ipfs,
+  LoggerInstance,
   ProviderInstance,
+  Service,
   ServiceComputeOptions,
   Smartcontract,
-  UrlFile
+  UrlFile,
+  getHash
 } from '@oceanprotocol/lib'
-import { ServiceConfig } from '../../../@types/Publish'
-import { getFileInfo } from '../../../utils/provider'
+import {
+  DatatokenCreateParamsWithoutOwner,
+  ServiceConfig
+} from '../../../@types/Publish'
+import { getEncryptedFiles, getFileInfo } from '../../../utils/provider'
 import { NautilusConsumerParameter } from '../ConsumerParameters'
+import { PricingConfigWithoutOwner } from '../NautilusAsset'
+import { params as DatatokenConstantParams } from '../constants/datatoken.constants'
+import Web3 from 'web3'
 
 export {
   Arweave,
@@ -59,6 +68,9 @@ export class NautilusService<
   timeout: number
   files: ServiceFileType<FileType>[] = []
 
+  pricing: PricingConfigWithoutOwner
+  datatokenCreateParams: DatatokenCreateParamsWithoutOwner
+
   name?: string
   description?: string
 
@@ -67,8 +79,57 @@ export class NautilusService<
   consumerParameters?: NautilusConsumerParameter[] = []
   additionalInformation?: { [key: string]: any } = {}
 
+  id?: string
+  datatokenAddress?: string
+
+  constructor() {
+    this.initDatatokenData()
+    this.initPricing()
+  }
+
+  private initPricing() {
+    this.pricing = {
+      type: 'free'
+    }
+  }
+
+  private initDatatokenData() {
+    this.datatokenCreateParams = DatatokenConstantParams
+  }
+
+  async getOceanService(
+    chainId: number,
+    nftAddress: string,
+    dtAddress?: string
+  ): Promise<Service> {
+    const datatokenAddress = dtAddress || this.datatokenAddress
+
+    if (!datatokenAddress) throw new Error('Datatoken address is required!')
+
+    const assetURL = {
+      datatokenAddress,
+      nftAddress,
+      files: this.files
+    }
+
+    const encryptedFiles = await getEncryptedFiles(
+      assetURL,
+      chainId,
+      this.serviceEndpoint
+    )
+
+    const oceanService: Service = {
+      id: getHash(encryptedFiles), // do this first to not overwrite an id on edit
+      datatokenAddress,
+      ...this, // would overwrite id if one already exists
+      files: encryptedFiles
+    }
+
+    return oceanService
+  }
+
   // TODO: config transformation
-  async getConfig(): Promise<Omit<ServiceConfig | 'id', 'datatokenAddress'>> {
+  async getConfig(): Promise<ServiceConfig> {
     // validate provider
     if (!(await ProviderInstance.isValidProvider(this.serviceEndpoint)))
       throw new Error('Provided serviceEndpoint is not a valid Ocean Provider')
@@ -80,6 +141,12 @@ export class NautilusService<
         throw new Error('Provided files could not be validated')
     }
 
+    // validate pricing
+    if (!this.hasValidPricing()) {
+      LoggerInstance.error('Invalid pricing scheme:', this.pricing)
+      throw new Error('Pricing Scheme could not be validated.')
+    }
+
     return {
       ...this,
       files: this.files as ServiceConfig['files'],
@@ -87,5 +154,26 @@ export class NautilusService<
         param.getConfig()
       )
     }
+  }
+
+  private hasValidPricing() {
+    return (
+      ['free', 'fixed'].includes(this.pricing?.type) &&
+      (this.pricing?.type === 'fixed'
+        ? Web3.utils.isAddress(
+            this.pricing.freCreationParams?.baseTokenAddress
+          ) &&
+          this.pricing.freCreationParams?.baseTokenDecimals > 0 &&
+          this.pricing.freCreationParams?.datatokenDecimals > 0 &&
+          Number(this.pricing.freCreationParams?.fixedRate) > 0 &&
+          Web3.utils.isAddress(
+            this.pricing.freCreationParams?.fixedRateAddress
+          ) &&
+          this.pricing.freCreationParams?.marketFee?.length > 0 &&
+          Web3.utils.isAddress(
+            this.pricing.freCreationParams?.marketFeeCollector
+          )
+        : true)
+    )
   }
 }

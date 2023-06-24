@@ -11,11 +11,12 @@ import {
   ComputeResultConfig,
   ComputeStatusConfig
 } from '../@types/Compute'
-import { AssetConfig } from '../@types/Publish'
 import { access } from '../access'
 import { compute, getStatus, retrieveResult } from '../compute'
-import { publishAsset } from '../publish'
+import { createAsset, createDatatokenAndPricing, publishDDO } from '../publish'
 import { NautilusAsset } from './Asset/NautilusAsset'
+import { CreateAssetComfig } from '../@types'
+import { getAllPromisesOnArray } from '../utils'
 
 export { LogLevel } from '@oceanprotocol/lib'
 
@@ -91,7 +92,7 @@ export class Nautilus {
     )
   }
 
-  private getChainConfig(): Pick<AssetConfig, 'web3' | 'chainConfig'> {
+  private getChainConfig(): Pick<CreateAssetComfig, 'web3' | 'chainConfig'> {
     if (!this.web3 || !this.config)
       throw Error('Web3 and chainConfig are required.')
 
@@ -108,10 +109,65 @@ export class Nautilus {
   }
 
   async publish(asset: NautilusAsset) {
-    return await publishAsset({
-      ...(await asset.getConfig()),
-      ...this.getChainConfig()
+    const { web3, chainConfig } = this.getChainConfig()
+
+    // --------------------------------------------------
+    // 1. Create NFT
+    // --------------------------------------------------
+    const { nftAddress } = await createAsset({
+      web3,
+      chainConfig,
+      nftParams: asset.getNftParams()
     })
+
+    // --------------------------------------------------
+    // 2. Create Datatokens and Pricing for all Services
+    // --------------------------------------------------
+    const services = await getAllPromisesOnArray(
+      asset.ddo.services,
+      async (service) => {
+        const { datatokenAddress, pricingTransactionReceipt } =
+          await createDatatokenAndPricing({
+            web3,
+            chainConfig,
+            nftAddress,
+            pricing: {
+              ...service.pricing,
+              freCreationParams: {
+                ...service.pricing.freCreationParams,
+                owner: asset.owner
+              }
+            },
+            datatokenParams: {
+              ...service.datatokenCreateParams,
+              minter: asset.owner,
+              paymentCollector: asset.owner
+            }
+          })
+
+        service.datatokenAddress = datatokenAddress
+
+        return { service, datatokenAddress, pricingTransactionReceipt }
+      }
+    )
+
+    // --------------------------------------------------
+    // 3. Create the DDO and publish it on NFT
+    // --------------------------------------------------
+    const ddo = await asset.ddo.getDDO(true, chainConfig.chainId, nftAddress)
+
+    const setMetadataTxReceipt = await publishDDO({
+      web3,
+      chainConfig,
+      ddo
+    })
+
+    return {
+      nftAddress,
+      services,
+      ddo,
+      setMetadataTxReceipt
+    }
   }
 
   /**

@@ -40,3 +40,10 @@ export async function getDatatokenBalance(web3: Web3, datatokenAddress) {
 export function dateToStringNoMS(date: Date): string {
   return date.toISOString().replace(/\.[0-9]{3}Z/, 'Z')
 }
+
+export function getAllPromisesOnArray<E, P>(
+  array: Array<E>,
+  promise: (element: E) => Promise<P>
+) {
+  return Promise.all(array.map((e) => promise(e)))
+}

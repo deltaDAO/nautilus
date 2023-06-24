@@ -61,6 +61,7 @@ describe('Nautilus compute flow integration test', async () => {
       .setServiceEndpoint(providerUri)
       .setTimeout(algorithmService.timeout)
       .addFile(algorithmService.files[0])
+      .setPricing(await getPricing(web3AlgoPublisher, 'free'))
       .build()
 
     // configure the asset
@@ -72,7 +73,6 @@ describe('Nautilus compute flow integration test', async () => {
       .setName('Test Publish Compute Algorithm')
       .setOwner(web3AlgoPublisher.defaultAccount)
       .setType('algorithm')
-      .setPricing(await getPricing(web3AlgoPublisher, 'free'))
       .setNftData(nftParams)
       .addService(service)
       .setAlgorithm(algorithmMetadata.algorithm)
@@ -83,7 +83,7 @@ describe('Nautilus compute flow integration test', async () => {
 
     assert(result)
 
-    computeAlgorithmDid = result.DID
+    computeAlgorithmDid = result.ddo.id
   }).timeout(30000)
 
   it('publishes a compute dataset asset', async () => {
@@ -99,6 +99,7 @@ describe('Nautilus compute flow integration test', async () => {
       .setServiceEndpoint(providerUri)
       .setTimeout(datasetService.timeout)
       .addFile(datasetService.files[0])
+      .setPricing(await getPricing(web3DatasetPublisher, 'free'))
       .build()
 
     // configure the asset
@@ -110,7 +111,6 @@ describe('Nautilus compute flow integration test', async () => {
       .setName('Test Publish Compute Dataset')
       .setOwner(web3DatasetPublisher.defaultAccount)
       .setType('dataset')
-      .setPricing(await getPricing(web3DatasetPublisher, 'free'))
       .setNftData(nftParams)
       .addService(service)
       .build()
@@ -120,7 +120,7 @@ describe('Nautilus compute flow integration test', async () => {
 
     assert(result)
 
-    computeDatasetDid = result.DID
+    computeDatasetDid = result.ddo.id
   }).timeout(30000)
 
   it('starts a compute job', async () => {

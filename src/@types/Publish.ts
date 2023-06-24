@@ -12,6 +12,13 @@ import {
 } from '@oceanprotocol/lib'
 import Web3 from 'web3'
 import { NautilusConsumerParameter } from '../Nautilus/Asset/ConsumerParameters'
+import { NautilusDDO } from '../Nautilus/Asset/NautilusDDO'
+import {
+  FileTypes,
+  NautilusService,
+  PricingConfigWithoutOwner,
+  ServiceTypes
+} from '../Nautilus'
 
 export interface CredentialConfig extends Credentials {}
 
@@ -58,7 +65,12 @@ export interface TokenParameters {
   datatokenParams: DatatokenCreateParams
 }
 
-export type ServiceConfig = Omit<Service, 'files'> & {
+export type ServiceConfig = Omit<
+  Service,
+  'files' | 'id' | 'datatokenAddress'
+> & {
+  pricing: PricingConfigWithoutOwner
+  datatokenCreateParams: DatatokenCreateParamsWithoutOwner
   files: Files['files']
   consumerParameters?: ConsumerParameter[]
 }
@@ -67,10 +79,22 @@ export type PrePublishDDO = Omit<DDO, 'services'> & {
   services: ServiceConfig[]
 }
 
-export interface AssetConfig {
+export interface CreateAssetComfig {
   chainConfig: Config
-  ddo: DDO
+  web3: Web3
+  nftParams: NftCreateData
+}
+
+export interface CreateDatatokenConfig {
+  chainConfig: Config
+  nftAddress: string
   web3: Web3
   pricing: PricingConfig
-  tokenParamaters: TokenParameters
+  datatokenParams: DatatokenCreateParams
+}
+
+export interface PublishDDOConfig {
+  chainConfig: Config
+  web3: Web3
+  ddo: DDO
 }

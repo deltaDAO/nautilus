@@ -7,6 +7,7 @@ import {
 } from '../../src/@types/Publish'
 import { getTestConfig } from './Config'
 import { freParams } from './FixedRateExchangeParams'
+import { datatokenParams } from './DatatokenParams'
 
 export const datasetMetadata: MetadataConfig = {
   type: 'dataset',
@@ -35,7 +36,10 @@ export const algorithmMetadata: MetadataConfig = {
   }
 }
 
-export const datasetService: Omit<ServiceConfig, 'serviceEndpoint'> = {
+export const datasetService: Omit<
+  ServiceConfig,
+  'serviceEndpoint' | 'pricing'
+> = {
   type: 'access',
   files: [
     {
@@ -44,10 +48,14 @@ export const datasetService: Omit<ServiceConfig, 'serviceEndpoint'> = {
       method: 'GET'
     }
   ],
-  timeout: 0
+  timeout: 0,
+  datatokenCreateParams: datatokenParams
 }
 
-export const algorithmService: Omit<ServiceConfig, 'serviceEndpoint'> = {
+export const algorithmService: Omit<
+  ServiceConfig,
+  'serviceEndpoint' | 'pricing'
+> = {
   type: 'compute',
   files: [
     {
@@ -56,7 +64,8 @@ export const algorithmService: Omit<ServiceConfig, 'serviceEndpoint'> = {
       method: 'GET'
     }
   ],
-  timeout: 600
+  timeout: 600,
+  datatokenCreateParams: datatokenParams
 }
 
 export const freePricing: PricingConfig = { type: 'free' }
