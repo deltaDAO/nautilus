@@ -50,6 +50,7 @@ export class NautilusDDO {
       }
     )
 
+    // TODO: consider both existing (this.ddo.services) and new services
     return servicesWithEncryptedFiles
   }
 
@@ -59,7 +60,7 @@ export class NautilusDDO {
 
     const newMetadata = {
       ...this.ddo.metadata,
-      ...this.metadata,
+      ...this.metadata, // TODO: nested data is potentially lost because of overwrite
       created: create ? currentTime : this.ddo.metadata.created,
       updated: currentTime
     }
