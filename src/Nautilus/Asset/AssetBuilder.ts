@@ -94,10 +94,10 @@ export class AssetBuilder implements IAssetBuilder {
     return this
   }
 
-  addAdditionalInformation(addtionalInformation: { [key: string]: any }) {
+  addAdditionalInformation(additionalInformation: { [key: string]: any }) {
     this.asset.metadata.additionalInformation = {
       ...this.asset.metadata.additionalInformation,
-      addtionalInformation
+      ...additionalInformation
     }
 
     return this
