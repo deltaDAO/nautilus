@@ -35,7 +35,7 @@ export class NautilusDDO {
     return nautilusDDO
   }
 
-  private async buildDDOServices(): Promise<Service[]> {
+  private async buildDDOServices(encrypt = true): Promise<Service[]> {
     if (this.services?.length < 1)
       throw new Error('At least one service needs to be defined.')
 
@@ -68,6 +68,25 @@ export class NautilusDDO {
     return newMetadata
   }
 
+  private async getDDOServices() {
+    // build services with encrypted files
+    let builtServices: Service[] = []
+    if (this.services.length > 0) builtServices = await this.buildDDOServices()
+
+    // replace all "old" services with new ones
+    const newServices =
+      this.ddo.services.map((service) => {
+        const replaceWithNew = newServices.find(
+          (newService) => newService.id === service.id
+        )
+        return replaceWithNew || service
+      }) ||
+      // or use only the builtServices if no services existed yet
+      builtServices
+
+    return newServices
+  }
+
   private async buildDDO(
     create: boolean,
     erc721Address?: string,
@@ -88,8 +107,8 @@ export class NautilusDDO {
     // build new metadata for ddo
     const newMetadata = this.buildDDOMetadata(create)
 
-    // build services with encrypted files
-    const newServices = await this.buildDDOServices()
+    // get all services for ddo
+    const newServices = await this.getDDOServices()
 
     // update ddo with metadata and services
     this.ddo = {
