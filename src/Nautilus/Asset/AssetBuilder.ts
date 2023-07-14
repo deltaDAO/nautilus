@@ -103,6 +103,13 @@ export class AssetBuilder implements IAssetBuilder {
     return this
   }
 
+  // TODO: implement
+  setCopyrightHolder: (copyrightHolder: string) => IAssetBuilder
+  addTags: (tags: string[]) => IAssetBuilder
+  addLinks: (links: string[]) => IAssetBuilder
+  setContentLanguage: (language: string) => IAssetBuilder
+  addCategories: (categories: string[]) => IAssetBuilder
+
   build() {
     // TODO: look for errors / missing input
     return this.asset
