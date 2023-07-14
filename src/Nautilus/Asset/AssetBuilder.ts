@@ -4,7 +4,7 @@ import {
   MetadataConfig,
   NftCreateDataWithoutOwner
 } from '../../@types/Publish'
-import { combineArrays, removeDuplicatesFromArray } from '../../utils'
+import { combineArrays } from '../../utils'
 import { NautilusAsset, PricingConfigWithoutOwner } from './NautilusAsset'
 import {
   FileTypes,
