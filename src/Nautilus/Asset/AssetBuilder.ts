@@ -4,6 +4,7 @@ import {
   MetadataConfig,
   NftCreateDataWithoutOwner
 } from '../../@types/Publish'
+import { combineArrays, removeDuplicatesFromArray } from '../../utils'
 import { NautilusAsset, PricingConfigWithoutOwner } from './NautilusAsset'
 import {
   FileTypes,
@@ -103,12 +104,40 @@ export class AssetBuilder implements IAssetBuilder {
     return this
   }
 
-  // TODO: implement
-  setCopyrightHolder: (copyrightHolder: string) => IAssetBuilder
-  addTags: (tags: string[]) => IAssetBuilder
-  addLinks: (links: string[]) => IAssetBuilder
-  setContentLanguage: (language: string) => IAssetBuilder
-  addCategories: (categories: string[]) => IAssetBuilder
+  setCopyrightHolder(copyrightHolder: string) {
+    this.asset.metadata.copyrightHolder = copyrightHolder
+
+    return this
+  }
+
+  addTags(tags: string[]) {
+    this.asset.metadata.tags = combineArrays(this.asset.metadata.tags, tags)
+
+    return this
+  }
+
+  addLinks(links: string[]) {
+    this.asset.metadata.links = combineArrays(this.asset.metadata.links, links)
+
+    return this
+  }
+
+  // TODO: add check for correct language tag
+  // https://www.rfc-editor.org/info/bcp47
+  setContentLanguage(language: string) {
+    this.asset.metadata.contentLanguage = language
+
+    return this
+  }
+
+  addCategories(categories: string[]) {
+    this.asset.metadata.categories = combineArrays(
+      this.asset.metadata.categories,
+      categories
+    )
+
+    return this
+  }
 
   build() {
     // TODO: look for errors / missing input
