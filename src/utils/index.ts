@@ -36,3 +36,7 @@ export async function getDatatokenBalance(web3: Web3, datatokenAddress) {
     await new Datatoken(web3).balance(datatokenAddress, web3.defaultAccount)
   )
 }
+
+export function removeDuplicatesFromArray<T>(array: T[]): T[] {
+  return array.filter((value, index, array) => array.indexOf(value) === index)
+}
