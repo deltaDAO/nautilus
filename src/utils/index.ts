@@ -37,6 +37,23 @@ export async function getDatatokenBalance(web3: Web3, datatokenAddress) {
   )
 }
 
+/**
+ * Filters an array to remove any duplicate values
+ * @param array the array to filter
+ * @returns an array containing only unique entries
+ */
 export function removeDuplicatesFromArray<T>(array: T[]): T[] {
   return array.filter((value, index, array) => array.indexOf(value) === index)
+}
+
+/**
+ * Combines two arrays and returns an array containing only unique values
+ * @param arrayOne first array
+ * @param arrayTwo second array
+ * @returns array with combination of only unique entries
+ */
+export function combineArrays<T>(arrayOne: T[], arrayTwo: T[]): T[] {
+  const newArray = [...arrayOne, ...arrayTwo]
+
+  return removeDuplicatesFromArray(newArray)
 }
