@@ -53,7 +53,7 @@ export function removeDuplicatesFromArray<T>(array: T[]): T[] {
  * @returns array with combination of only unique entries
  */
 export function combineArrays<T>(arrayOne: T[], arrayTwo: T[]): T[] {
-  const newArray = [...arrayOne, ...arrayTwo]
+  const newArray = arrayOne.concat(arrayTwo)
 
   return removeDuplicatesFromArray(newArray)
 }
