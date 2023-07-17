@@ -13,6 +13,10 @@ import {
   NautilusService,
   ServiceTypes
 } from '../../src/Nautilus/Asset/Service'
+import {
+  addressCredentials,
+  credentialAddresses
+} from '../fixtures/Credentials'
 
 describe('AssetBuilder', () => {
   it('builds asset.metadata correctly', async () => {
@@ -104,6 +108,41 @@ describe('AssetBuilder', () => {
       asset.owner,
       owner,
       'asset.owner does not match the given input owner'
+    )
+  })
+
+  it('builds credentials correctly', async () => {
+    const builder = new AssetBuilder()
+
+    const asset = builder
+      .addCredentialAddressses('allow', addressCredentials.allow[0].values)
+      .addCredentialAddressses('deny', addressCredentials.deny[0].values)
+      .build()
+
+    console.log(asset.credentials)
+
+    assert.equal(
+      asset.credentials.allow[0].type,
+      'address',
+      `asset.credentials.allow credential type is not 'address'`
+    )
+
+    assert.equal(
+      asset.credentials.deny[0].type,
+      'address',
+      `asset.credentials.deny credential type is not 'address'`
+    )
+
+    assert.deepEqual(
+      asset.credentials.allow[0].values,
+      addressCredentials.allow[0].values,
+      'asset.credentials.allow address list does not match the given input addresses'
+    )
+
+    assert.deepEqual(
+      asset.credentials.deny[0].values,
+      addressCredentials.deny[0].values,
+      'asset.credentials.deny address list does not match the given input addresses'
     )
   })
 
