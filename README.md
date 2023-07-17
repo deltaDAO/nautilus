@@ -11,7 +11,9 @@ A typescript library helping to navigate the OCEAN. It enables configurable auto
     - [Services](#services)
     - [Consumer Parameters](#consumer-parameters)
     - [Pricing](#pricing)
-    - [Owner and optional configs](#owner-and-optional-configs)
+    - [Asset Owner](#asset-owner)
+    - [Optional Configurations](#optional-configurations)
+    - [Building the Asset](#building-the-asset)
   - [Automated Compute Jobs](#automated-compute-jobs)
     - [Basic Config](#basic-config)
     - [Optional Settings](#optional-settings)
@@ -247,7 +249,7 @@ const owner = web3.defaultAccount
 assetBuilder.setOwner(owner)
 ```
 
-### Optional configurations
+### Optional Configurations
 
 There are also quite some optional configurations we can make utilizing the AssetBuilder. For a detailed look on what is supported, please refer to our API documentation: https://deltadao.github.io/nautilus/docs/api/classes/Nautilus.AssetBuilder
 
@@ -277,6 +279,8 @@ const symbol = 'SYMBOL'
 
 assetBuilder.setDatatokenNameAndSymbol(name, symbol)
 ```
+
+### Building the Asset
 
 Finally, if all is configured, we are able to build and publish the asset:
 
