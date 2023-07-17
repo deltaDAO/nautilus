@@ -1,4 +1,8 @@
-import { Metadata, PublisherTrustedAlgorithm } from '@oceanprotocol/lib'
+import {
+  Credentials,
+  Metadata,
+  PublisherTrustedAlgorithm
+} from '@oceanprotocol/lib'
 import { NautilusAsset } from '../Nautilus/Asset/NautilusAsset'
 import {
   ConsumerParameterType,
@@ -44,6 +48,15 @@ export interface IAssetBuilder extends IBuilder<NautilusAsset> {
   addAdditionalInformation: (addtionalInformation: {
     [key: string]: any
   }) => IAssetBuilder
+  setCopyrightHolder: (copyrightHolder: string) => IAssetBuilder
+  addTags: (tags: string[]) => IAssetBuilder
+  addLinks: (links: string[]) => IAssetBuilder
+  setContentLanguage: (language: string) => IAssetBuilder
+  addCategories: (categories: string[]) => IAssetBuilder
+  addCredentialAddressses: (
+    list: keyof Credentials,
+    addresses: string[]
+  ) => IAssetBuilder
 }
 
 export interface IServiceBuilder<S extends ServiceTypes, F extends FileTypes>

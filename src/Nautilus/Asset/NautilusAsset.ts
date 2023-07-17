@@ -1,4 +1,4 @@
-import { ZERO_ADDRESS } from '@oceanprotocol/lib'
+import { Credentials, ZERO_ADDRESS } from '@oceanprotocol/lib'
 import Web3 from 'web3'
 import {
   AssetConfig,
@@ -7,9 +7,9 @@ import {
   NftCreateDataWithoutOwner,
   PricingConfig
 } from '../../@types/Publish'
+import { FileTypes, NautilusService, ServiceTypes } from './Service'
 import { params } from './constants/datatoken.constants'
 import { createData } from './constants/nft.constants'
-import { FileTypes, NautilusService, ServiceTypes } from './Service'
 
 export type PricingConfigWithoutOwner = {
   type: PricingConfig['type']
@@ -26,6 +26,10 @@ export class NautilusAsset {
   nftCreateData: NftCreateDataWithoutOwner
   datatokenCreateParams: DatatokenCreateParamsWithoutOwner
   owner: string
+  credentials: Credentials = {
+    allow: [],
+    deny: []
+  }
 
   constructor() {
     this.initMetadata()
