@@ -1,5 +1,4 @@
-import { Credential, Credentials } from '@oceanprotocol/lib'
-import { IAssetBuilder } from '../../@types/Nautilus'
+import { CredentialListTypes, IAssetBuilder } from '../../@types/Nautilus'
 import {
   DatatokenCreateParamsWithoutOwner,
   MetadataConfig,
@@ -140,7 +139,7 @@ export class AssetBuilder implements IAssetBuilder {
     return this
   }
 
-  addCredentialAddressses(list: keyof Credentials, addresses: string[]) {
+  addCredentialAddressses(list: CredentialListTypes, addresses: string[]) {
     // first get the index of the address credential list
     const addressCredentialIndex = this.asset.credentials[list].findIndex(
       (credential) => credential.type === 'address'

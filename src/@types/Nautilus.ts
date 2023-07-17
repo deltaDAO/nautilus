@@ -1,23 +1,17 @@
-import {
-  Credentials,
-  Metadata,
-  PublisherTrustedAlgorithm
-} from '@oceanprotocol/lib'
+import { Metadata, PublisherTrustedAlgorithm } from '@oceanprotocol/lib'
+import { NautilusConsumerParameter } from '../Nautilus/Asset/ConsumerParameters'
 import { NautilusAsset } from '../Nautilus/Asset/NautilusAsset'
-import {
-  ConsumerParameterType,
-  DatatokenCreateParamsWithoutOwner,
-  NftCreateDataWithoutOwner,
-  PricingConfig,
-  ServiceConfig
-} from './Publish'
 import {
   FileTypes,
   NautilusService,
   ServiceFileType,
   ServiceTypes
 } from '../Nautilus/Asset/Service/NautilusService'
-import { NautilusConsumerParameter } from '../Nautilus/Asset/ConsumerParameters'
+import {
+  DatatokenCreateParamsWithoutOwner,
+  NftCreateDataWithoutOwner,
+  PricingConfig
+} from './Publish'
 
 export interface NautilusOptions {
   skipDefaultConfig: boolean
@@ -26,6 +20,11 @@ export interface NautilusOptions {
 export interface IBuilder<T> {
   build: () => T
   reset: () => void
+}
+
+export enum CredentialListTypes {
+  ALLOW = 'allow',
+  DENY = 'deny'
 }
 
 export interface IAssetBuilder extends IBuilder<NautilusAsset> {
@@ -54,7 +53,7 @@ export interface IAssetBuilder extends IBuilder<NautilusAsset> {
   setContentLanguage: (language: string) => IAssetBuilder
   addCategories: (categories: string[]) => IAssetBuilder
   addCredentialAddressses: (
-    list: keyof Credentials,
+    list: CredentialListTypes,
     addresses: string[]
   ) => IAssetBuilder
 }

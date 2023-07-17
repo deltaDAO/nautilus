@@ -1,22 +1,20 @@
 import { ZERO_ADDRESS } from '@oceanprotocol/lib'
 import assert from 'assert'
 import { AssetBuilder } from '../../src'
-import {
-  algorithmMetadata,
-  datasetService,
-  fixedPricing
-} from '../fixtures/AssetConfig'
-import { datatokenParams } from '../fixtures/DatatokenParams'
-import { nftParams } from '../fixtures/NftCreateData'
+import { CredentialListTypes } from '../../src/@types'
 import {
   FileTypes,
   NautilusService,
   ServiceTypes
 } from '../../src/Nautilus/Asset/Service'
 import {
-  addressCredentials,
-  credentialAddresses
-} from '../fixtures/Credentials'
+  algorithmMetadata,
+  datasetService,
+  fixedPricing
+} from '../fixtures/AssetConfig'
+import { addressCredentials } from '../fixtures/Credentials'
+import { datatokenParams } from '../fixtures/DatatokenParams'
+import { nftParams } from '../fixtures/NftCreateData'
 
 describe('AssetBuilder', () => {
   it('builds asset.metadata correctly', async () => {
@@ -115,8 +113,14 @@ describe('AssetBuilder', () => {
     const builder = new AssetBuilder()
 
     const asset = builder
-      .addCredentialAddressses('allow', addressCredentials.allow[0].values)
-      .addCredentialAddressses('deny', addressCredentials.deny[0].values)
+      .addCredentialAddressses(
+        CredentialListTypes.ALLOW,
+        addressCredentials.allow[0].values
+      )
+      .addCredentialAddressses(
+        CredentialListTypes.DENY,
+        addressCredentials.deny[0].values
+      )
       .build()
 
     console.log(asset.credentials)
