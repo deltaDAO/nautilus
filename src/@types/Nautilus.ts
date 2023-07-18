@@ -52,7 +52,7 @@ export interface IAssetBuilder extends IBuilder<NautilusAsset> {
   addLinks: (links: string[]) => IAssetBuilder
   setContentLanguage: (language: string) => IAssetBuilder
   addCategories: (categories: string[]) => IAssetBuilder
-  addCredentialAddressses: (
+  addCredentialAddresses: (
     list: CredentialListTypes,
     addresses: string[]
   ) => IAssetBuilder

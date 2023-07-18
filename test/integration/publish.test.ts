@@ -110,7 +110,7 @@ describe('Publish Integration tests', () => {
       .setType('dataset')
       .setPricing(await getPricing(web3, 'free'))
       .addService(service)
-      .addCredentialAddressses(CredentialListTypes.ALLOW, [web3.defaultAccount])
+      .addCredentialAddresses(CredentialListTypes.ALLOW, [web3.defaultAccount])
       .build()
 
     const result = await nautilus.publish(asset)

@@ -113,11 +113,11 @@ describe('AssetBuilder', () => {
     const builder = new AssetBuilder()
 
     const asset = builder
-      .addCredentialAddressses(
+      .addCredentialAddresses(
         CredentialListTypes.ALLOW,
         addressCredentials.allow[0].values
       )
-      .addCredentialAddressses(
+      .addCredentialAddresses(
         CredentialListTypes.DENY,
         addressCredentials.deny[0].values
       )

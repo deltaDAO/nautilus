@@ -139,7 +139,7 @@ export class AssetBuilder implements IAssetBuilder {
     return this
   }
 
-  addCredentialAddressses(list: CredentialListTypes, addresses: string[]) {
+  addCredentialAddresses(list: CredentialListTypes, addresses: string[]) {
     // first get the index of the address credential list
     const addressCredentialIndex = this.asset.credentials[list].findIndex(
       (credential) => credential.type === 'address'
