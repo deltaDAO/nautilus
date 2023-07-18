@@ -13,8 +13,6 @@ import {
 import Web3 from 'web3'
 import { NautilusConsumerParameter } from '../Nautilus/Asset/ConsumerParameters'
 
-export interface CredentialConfig extends Credentials {}
-
 export type ConsumerParameterType = 'text' | 'number' | 'boolean' | 'select'
 
 export type ConsumerParameterSelectOption = {
@@ -72,6 +70,7 @@ export type PrePublishDDO = Omit<DDO, 'services'> & {
 
 export interface AssetConfig {
   chainConfig: Config
+  credentials: Credentials
   metadata: MetadataConfig
   services: ServiceConfig[]
   web3: Web3

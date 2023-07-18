@@ -80,6 +80,7 @@ export class NautilusAsset {
     )
 
     return {
+      credentials: this.credentials,
       metadata: {
         ...this.metadata,
         algorithm: this.metadata.algorithm
