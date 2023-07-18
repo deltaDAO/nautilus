@@ -15,7 +15,7 @@ import { SHA256 } from 'crypto-js'
 
 export async function publishAsset(assetConfig: AssetConfig) {
   // TODO don't forget to set return type
-  const { web3, metadata, services, chainConfig } = assetConfig
+  const { web3, metadata, services, credentials, chainConfig } = assetConfig
   const publisherAccount = web3?.defaultAccount
   const chainId = await web3.eth.getChainId()
   const nftFactory = new NftFactory(chainConfig.nftFactoryAddress, web3)
@@ -55,7 +55,8 @@ export async function publishAsset(assetConfig: AssetConfig) {
     chainId,
     nftAddress: erc721Address,
     metadata: ddoMetadata,
-    services
+    services,
+    credentials
   }
 
   LoggerInstance.debug({ prePublishDDO })

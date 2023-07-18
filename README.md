@@ -11,7 +11,9 @@ A typescript library helping to navigate the OCEAN. It enables configurable auto
     - [Services](#services)
     - [Consumer Parameters](#consumer-parameters)
     - [Pricing](#pricing)
-    - [Owner and optional configs](#owner-and-optional-configs)
+    - [Asset Owner](#asset-owner)
+    - [Optional Configurations](#optional-configurations)
+    - [Building the Asset](#building-the-asset)
   - [Automated Compute Jobs](#automated-compute-jobs)
     - [Basic Config](#basic-config)
     - [Optional Settings](#optional-settings)
@@ -236,7 +238,7 @@ assetBuilder.setPricing({
 })
 ```
 
-### Owner and optional configs
+### Asset Owner
 
 We also have to make sure we specify the owner of the asset, that will be used for the publishing process:
 
@@ -247,6 +249,28 @@ const owner = web3.defaultAccount
 assetBuilder.setOwner(owner)
 ```
 
+### Optional Configurations
+
+There are also quite some optional configurations we can make utilizing the AssetBuilder. For a detailed look on what is supported, please refer to our API documentation: https://deltadao.github.io/nautilus/docs/api/classes/Nautilus.AssetBuilder
+
+#### Credentials
+
+If needed, we can set credentials to restrict access of our assets easily via the AssetBuilder. Currently only `address` type credentials are supported.
+
+```ts
+const whitelistedAddresses = [
+  '0x12341234testaddress',
+  '0xanother1234testaddress'
+]
+
+// whitelisting addresses to be allowed to access our service
+assetBuilder.addCredentialAddressses(CredentialListTypes.ALLOW, whitelistedAddresses)
+```
+
+We can either provide a whitelist of addresses that should be allowed to consume our service (`CredentialListTypes.ALLOW`) or we can specifically blacklist certain addresses restricting the access on our service (simply change the list type to `CredentialListTypes.DENY`).
+
+#### Datatoken
+
 Optionally, we can specify some information for the access token, like the name and symbol, to be used. This will be displayed in Ocean Markets and also can be used to identify your service in the network (e.g., when visiting block explorers).
 
 ```ts
@@ -255,6 +279,8 @@ const symbol = 'SYMBOL'
 
 assetBuilder.setDatatokenNameAndSymbol(name, symbol)
 ```
+
+### Building the Asset
 
 Finally, if all is configured, we are able to build and publish the asset:
 

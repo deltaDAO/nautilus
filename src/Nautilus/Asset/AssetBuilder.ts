@@ -1,4 +1,4 @@
-import { IAssetBuilder } from '../../@types/Nautilus'
+import { CredentialListTypes, IAssetBuilder } from '../../@types/Nautilus'
 import {
   DatatokenCreateParamsWithoutOwner,
   MetadataConfig,
@@ -135,6 +135,31 @@ export class AssetBuilder implements IAssetBuilder {
       this.asset.metadata.categories,
       categories
     )
+
+    return this
+  }
+
+  addCredentialAddresses(list: CredentialListTypes, addresses: string[]) {
+    // first get the index of the address credential list
+    const addressCredentialIndex = this.asset.credentials[list].findIndex(
+      (credential) => credential.type === 'address'
+    )
+
+    // get addresses already added to the credential values
+    const oldAddresses =
+      this.asset.credentials[list][addressCredentialIndex]?.values || []
+
+    // add new values and remove duplicates
+    const newAddresses = combineArrays(oldAddresses, addresses)
+
+    // update the existing credential or add a new one for type address
+    if (addressCredentialIndex > -1)
+      this.asset.credentials[list][addressCredentialIndex].values = newAddresses
+    else
+      this.asset.credentials[list].push({
+        type: 'address',
+        values: newAddresses
+      })
 
     return this
   }
