@@ -2,7 +2,7 @@ import Web3 from 'web3'
 import dotenv from 'dotenv'
 dotenv.config()
 
-export const MUMBAI_NODE_URI = 'https://matic-mumbai.chainstacklabs.com'
+export const MUMBAI_NODE_URI = 'https://rpc-mumbai.maticvigil.com'
 
 export function getWeb3(key: 1 | 2 = 1, nodeUri?: string) {
   const web3 = new Web3(nodeUri || 'http://127.0.0.1:8545')

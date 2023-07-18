@@ -17,6 +17,7 @@ import {
 } from '../fixtures/AssetConfig'
 import { getTestConfig } from '../fixtures/Config'
 import { MUMBAI_NODE_URI, getWeb3 } from '../fixtures/Web3'
+import { CredentialListTypes } from '../../src/@types'
 
 const nodeUri = MUMBAI_NODE_URI
 
@@ -81,6 +82,35 @@ describe('Publish Integration tests', () => {
       .setType('dataset')
       .setPricing(await getPricing(web3, 'fixed'))
       .addService(service)
+      .build()
+
+    const result = await nautilus.publish(asset)
+
+    assert(result)
+  })
+
+  it('publishes an asset with credentials', async () => {
+    const serviceBuilder = new ServiceBuilder(
+      ServiceTypes.ACCESS,
+      FileTypes.URL
+    )
+    const service = serviceBuilder
+      .setServiceEndpoint(providerUri)
+      .setTimeout(datasetService.timeout)
+      .addFile(datasetService.files[0])
+      .build()
+
+    const assetBuilder = new AssetBuilder()
+    const asset = assetBuilder
+      .setAuthor('testAuthor')
+      .setDescription('A dataset publishing test')
+      .setLicense('MIT')
+      .setName('Test Publish Dataset Service Credentials Free')
+      .setOwner(web3.defaultAccount)
+      .setType('dataset')
+      .setPricing(await getPricing(web3, 'free'))
+      .addService(service)
+      .addCredentialAddressses(CredentialListTypes.ALLOW, [web3.defaultAccount])
       .build()
 
     const result = await nautilus.publish(asset)
