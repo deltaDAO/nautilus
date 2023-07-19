@@ -264,7 +264,7 @@ const whitelistedAddresses = [
 ]
 
 // whitelisting addresses to be allowed to access our service
-assetBuilder.addCredentialAddressses(CredentialListTypes.ALLOW, whitelistedAddresses)
+assetBuilder.addCredentialAddresses(CredentialListTypes.ALLOW, whitelistedAddresses)
 ```
 
 We can either provide a whitelist of addresses that should be allowed to consume our service (`CredentialListTypes.ALLOW`) or we can specifically blacklist certain addresses restricting the access on our service (simply change the list type to `CredentialListTypes.DENY`).
