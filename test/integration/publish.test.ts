@@ -3,6 +3,7 @@ import Web3 from 'web3'
 import {
   AssetBuilder,
   ConsumerParameterBuilder,
+  CredentialListTypes,
   FileTypes,
   LogLevel,
   Nautilus,
@@ -17,7 +18,6 @@ import {
 } from '../fixtures/AssetConfig'
 import { getTestConfig } from '../fixtures/Config'
 import { MUMBAI_NODE_URI, getWeb3 } from '../fixtures/Web3'
-import { CredentialListTypes } from '../../src/@types'
 
 const nodeUri = MUMBAI_NODE_URI
 
