@@ -14,6 +14,7 @@ import {
 import { addressCredentials } from '../fixtures/Credentials'
 import { datatokenParams } from '../fixtures/DatatokenParams'
 import { nftParams } from '../fixtures/NftCreateData'
+import { link } from 'fs'
 
 describe('AssetBuilder', () => {
   it('builds asset.metadata correctly', async () => {
@@ -146,6 +147,65 @@ describe('AssetBuilder', () => {
       asset.credentials.deny[0].values,
       addressCredentials.deny[0].values,
       'asset.credentials.deny address list does not match the given input addresses'
+    )
+  })
+
+  it('builds tags correctly', async () => {
+    const builder = new AssetBuilder()
+
+    const tags = ['my-tag', 'my-othe-tag']
+
+    const asset = builder.addTags(tags).build()
+
+    assert.deepEqual(
+      asset.metadata.tags,
+      tags,
+      'asset.metadata.tags does not match the given input tags'
+    )
+  })
+
+  it('builds categories correctly', async () => {
+    const builder = new AssetBuilder()
+
+    const categories = ['category', 'anotherCategory']
+
+    const asset = builder.addCategories(categories).build()
+
+    assert.deepEqual(
+      asset.metadata.categories,
+      categories,
+      'asset.metadata.categories does not match the given input categories'
+    )
+  })
+
+  it('builds links correctly', async () => {
+    const builder = new AssetBuilder()
+
+    const links = [
+      'https://my-link.to/some/resource',
+      'https://my.link.to/another-resource'
+    ]
+
+    const asset = builder.addLinks(links).build()
+
+    assert.deepEqual(
+      asset.metadata.links,
+      links,
+      'asset.metadata.links does not match the given input links'
+    )
+  })
+
+  it('sets contentLanguage correctly', async () => {
+    const builder = new AssetBuilder()
+
+    const lang = 'de-DE'
+
+    const asset = builder.setContentLanguage(lang).build()
+
+    assert.equal(
+      asset.metadata.contentLanguage,
+      lang,
+      'asset.metadata.contentLanguage does not match the given input'
     )
   })
 
