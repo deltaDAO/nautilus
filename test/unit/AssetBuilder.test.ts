@@ -1,7 +1,6 @@
 import { ZERO_ADDRESS } from '@oceanprotocol/lib'
 import assert from 'assert'
-import { AssetBuilder } from '../../src'
-import { CredentialListTypes } from '../../src/@types'
+import { AssetBuilder, CredentialListTypes } from '../../src'
 import {
   FileTypes,
   NautilusService,
