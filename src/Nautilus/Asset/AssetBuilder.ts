@@ -111,13 +111,19 @@ export class AssetBuilder implements IAssetBuilder {
   }
 
   addTags(tags: string[]) {
-    this.asset.metadata.tags = combineArrays(this.asset.metadata.tags, tags)
+    this.asset.metadata.tags = combineArrays(
+      this.asset.metadata.tags || [],
+      tags
+    )
 
     return this
   }
 
   addLinks(links: string[]) {
-    this.asset.metadata.links = combineArrays(this.asset.metadata.links, links)
+    this.asset.metadata.links = combineArrays(
+      this.asset.metadata.links || [],
+      links
+    )
 
     return this
   }
@@ -132,7 +138,7 @@ export class AssetBuilder implements IAssetBuilder {
 
   addCategories(categories: string[]) {
     this.asset.metadata.categories = combineArrays(
-      this.asset.metadata.categories,
+      this.asset.metadata.categories || [],
       categories
     )
 
