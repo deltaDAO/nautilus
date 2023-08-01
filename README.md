@@ -38,7 +38,7 @@ npm install @deltadao/nautilus
 
 Make sure you have [web3](https://www.npmjs.com/package/web3) installed:
 
-> Currently it's highly recommended to use `web3` in version `1.9.0`. Other versions may cause problems. Future versions of Nautilus will be migrated to `ethers` since the underlying [oceanjs](https://github.com/oceanprotocol/ocean.js/tree/main) in versions `>3.0.0` require `ethers`.
+> Currently it's highly recommended to use `web3` in version `1.9.0`. Other versions may cause problems. Future versions of Nautilus will be migrated to `ethers` since the underlying [oceanjs](https://github.com/oceanprotocol/ocean.js/tree/main) in versions `>3.0.0` require [ethers](https://www.npmjs.com/package/ethers).
 
 ```shell
 npm install web3@1.9.0
