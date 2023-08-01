@@ -13,6 +13,8 @@ A typescript library helping to navigate the OCEAN. It enables configurable auto
     - [Pricing](#pricing)
     - [Asset Owner](#asset-owner)
     - [Optional Configurations](#optional-configurations)
+      - [Credentials](#credentials)
+      - [Datatoken](#datatoken)
     - [Building the Asset](#building-the-asset)
   - [Automated Compute Jobs](#automated-compute-jobs)
     - [Basic Config](#basic-config)
@@ -36,8 +38,10 @@ npm install @deltadao/nautilus
 
 Make sure you have [web3](https://www.npmjs.com/package/web3) installed:
 
+> Currently it's highly recommended to use `web3` in version `1.9.0`. Other versions may cause problems. Future versions of Nautilus will be migrated to `ethers` since the underlying [oceanjs](https://github.com/oceanprotocol/ocean.js/tree/main) in versions `>3.0.0` require `ethers`.
+
 ```shell
-npm install web3
+npm install web3@1.9.0
 ```
 
 Setup the `Web3` instance to use:
