@@ -32,7 +32,7 @@ describe('Publish Integration tests', () => {
     providerUri = (await getTestConfig(web3)).providerUri
   })
 
-  it.only('publishes a free access asset', async () => {
+  it('publishes a free access asset', async () => {
     const serviceBuilder = new ServiceBuilder(
       ServiceTypes.ACCESS,
       FileTypes.URL

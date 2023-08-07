@@ -1,0 +1,46 @@
+{
+  "@context": ["https://w3id.org/did/v1"],
+  "id": "did:op:c5774dd25c2980b46ab4585c3290018082d2149af60146b2af6ed9baa15fa7e2",
+  "nftAddress": "0x65709Ea073975fF67e7Cc1b9d7b5d897706684f5",
+  "version": "4.1.0",
+  "chainId": 100,
+  "metadata": {
+    "created": "2023-08-03T09:49:43Z",
+    "updated": "2023-08-03T09:49:43Z",
+    "type": "dataset",
+    "name": "Test Dataset",
+    "description": "A test dataset",
+    "tags": [],
+    "author": "",
+    "license": "https://market.oceanprotocol.com/terms",
+    "additionalInformation": {
+      "termsAndConditions": true,
+      "gaiaXInformation": {
+        "termsAndConditions": [
+          {
+            "url": "https://raw.githubusercontent.com/deltaDAO/mvg-portal/v4/content/pages/terms.md"
+          }
+        ],
+        "containsPII": false,
+        "serviceSD": {
+          "url": "https://gist.githubusercontent.com/edgarGracia/8ea4e6afbe8b3affa6bb6e0710197a94/raw/17f808c6181c0a07d412d0d7efdbfb06524694ff/helloworld.json"
+        }
+      },
+      "compliance": []
+    }
+  },
+  "services": [
+    {
+      "id": "0434b70bf8caeec621071a7b7050de0245afbd81ef688871b239c0d90e28884e",
+      "type": "access",
+      "files": "0x046f90a029de91d4581e3c5380da5710c16737ec5da3cb1f736b3dacea24444b75977373ee991fcd9787e3919c9849d8a8a5d9781367d8d3f47a7f251a1cd2b3386e6edc3000766a7ad5423887600500753c1702d866c2b68267e5c4ec9c9bd163d0bba42cd44fb9cae054e8e978b52019e039bc822e60c9831f8dd579f7d84aca4a27a1d782553057857c5411c3873e387bbb9754e41d4202e9b6e843cae6beea2ecbddcab589bc3c27c498e6220e2a806ca8169baf5567d2c137908e5d0e1c2cc7a5e74c015fdf5db6b35482249648e5b15787a41d0ce3f325567b9e9c733056ff4cd1324aec338898c5a384656bba7e1ec1a5b8216e3d3f9d0b918f6030f44897393bbb6068806503fe6ee98f2ff4691e3f103db9fe34878bf7c9b650c27439e1ad35c1227188d7c2bebe3d89181e4bc0d17074340b5de824f7cc9e83ce06977d7e33558931fca5e3dab6961f9bb15975f0ecec380b9deba5e763fe12571af5e8e9dec1495213a506409d310a845fd747fdfa82a9f61e60f9c4640d3fddb15425910fb7707d4557340ddfc90ac0828571c95e1fdc468a74bff6a6b3ac6037119b3f",
+      "datatokenAddress": "0xfEbF5561a3ccb9EaD1da2254Fe1C5f3393993F9d",
+      "serviceEndpoint": "https://provider.v4.genx.delta-dao.com",
+      "timeout": 0
+    }
+  ],
+  "credentials": {
+    "allow": [],
+    "deny": []
+  }
+}
