@@ -8,25 +8,21 @@ import {
 } from './Service/NautilusService'
 
 export class NautilusDDO {
-  metadata: MetadataConfig = {
-    type: undefined,
-    author: '',
-    name: '',
-    description: '',
-    license: ''
-  }
+  metadata: MetadataConfig
 
   services: NautilusService<ServiceTypes, FileTypes>[] = []
 
-  private ddo: DDO = {
-    '@context': ['https://w3id.org/did/v1'],
-    id: '',
-    nftAddress: '',
-    chainId: undefined,
-    metadata: undefined,
-    services: [],
-    version: '4.1.0'
-  }
+  private ddo: DDO
+  // TODO: remove comment
+  //= {
+  //   '@context': ['https://w3id.org/did/v1'],
+  //   id: '',
+  //   nftAddress: '',
+  //   chainId: undefined,
+  //   metadata: undefined,
+  //   services: [],
+  //   version: '4.1.0'
+  // }
 
   static createFromDDO(ddo: DDO): NautilusDDO {
     const nautilusDDO = new NautilusDDO()
