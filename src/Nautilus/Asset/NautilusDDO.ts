@@ -73,13 +73,13 @@ export class NautilusDDO {
     let builtServices: Service[] = []
     if (this.services.length > 0) builtServices = await this.buildDDOServices()
 
-    // replace all "old" services with new ones
+    // replace all "old" services with new ones, based on the service id
     const newServices =
       this.ddo.services.map((service) => {
-        const replaceWithNew = newServices.find(
-          (newService) => newService.id === service.id
+        const newService = builtServices.find(
+          (builtService) => builtService.id === service.id
         )
-        return replaceWithNew || service
+        return newService || service
       }) ||
       // or use only the builtServices if no services existed yet
       builtServices
