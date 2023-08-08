@@ -132,11 +132,6 @@ describe('NautilusDDO', () => {
       /0x.+/,
       'The created files value does not match the given pattern'
     )
-    assert.match(
-      newService.files,
-      /0x.+/,
-      'The created files value does not match the given pattern'
-    )
     assert(newService.id, 'The new service does not have an id')
   })
 
