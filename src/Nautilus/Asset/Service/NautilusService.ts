@@ -121,6 +121,7 @@ export class NautilusService<
     const oceanService: Service = {
       id: getHash(encryptedFiles), // do this first to not overwrite an id on edit
       datatokenAddress,
+      // TODO: skip values not needed for Service type (e.g., pricing or datatokenCreateParams)
       ...this, // would overwrite id if one already exists
       files: encryptedFiles
     }
