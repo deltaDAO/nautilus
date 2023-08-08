@@ -13,7 +13,7 @@ export class NautilusDDO {
   nftAddress: string
   chainId: number
   version: string = '4.1.0'
-  metadata: MetadataConfig
+  metadata: Partial<MetadataConfig> = {}
   services: NautilusService<ServiceTypes, FileTypes>[] = []
 
   private ddo: DDO
@@ -62,20 +62,35 @@ export class NautilusDDO {
   }
 
   private async getDDOServices() {
-    // build services with encrypted files
-    let builtServices: Service[] = []
-    if (this.services.length > 0) builtServices = await this.buildDDOServices()
+    // take ddo.services
+    const newServices: Service[] = this.ddo?.services || []
 
-    // replace all "old" services with new ones, based on the service id
-    const newServices =
-      this.ddo?.services.map((service) => {
-        const newService = builtServices.find(
+    if (this.services.length > 0) {
+      // build new services if needed
+      let builtServices = await this.buildDDOServices()
+
+      // for all existing services, check if a replacement is needed
+      newServices.map((service) => {
+        const newServiceIndex = builtServices.findIndex(
           (builtService) => builtService.id === service.id
         )
-        return newService || service
-      }) ||
-      // or use only the builtServices if no services existed yet
-      builtServices
+
+        if (newServiceIndex > -1) {
+          // remove this service from built service array
+          // so we only add new services later on
+          builtServices = builtServices.splice(newServiceIndex, 1)
+
+          // replace existing service with the new one
+          return builtServices[newServiceIndex]
+        }
+
+        // return old service if nothing found to replace with
+        return service
+      })
+
+      // add all new services from builtServices array
+      return newServices.concat(builtServices)
+    }
 
     return newServices
   }
