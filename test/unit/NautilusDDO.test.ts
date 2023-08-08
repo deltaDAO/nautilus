@@ -10,6 +10,37 @@ describe('NautilusDDO', () => {
     oceanDDO = (await import('../fixtures/OceanDDO.json')) as DDO
   })
 
+  it('sets a new created date if needed', async () => {
+    const nautilusDDO = NautilusDDO.createFromDDO(oceanDDO as DDO)
+    const ddo = await nautilusDDO.getDDO(true)
+
+    const oldCreated = new Date(oceanDDO.metadata.created).getTime()
+    const newCreated = new Date(ddo.metadata.created).getTime()
+
+    assert(
+      newCreated > oldCreated,
+      'The new created value is not greater than the previous one'
+    )
+  })
+
+  it('creates an id for the ddo', async () => {
+    const nautilusDDO = new NautilusDDO()
+    const ddo = await nautilusDDO.getDDO(
+      true,
+      oceanDDO.chainId,
+      oceanDDO.nftAddress
+    )
+
+    assert(ddo.id, 'The ddo does not contain an id')
+  })
+
+  it('sets a new created date if needed', async () => {
+    const nautilusDDO = NautilusDDO.createFromDDO(oceanDDO as DDO)
+    const ddo = await nautilusDDO.getDDO(true)
+
+    assert(ddo.metadata.created, 'The created value does not exist')
+  })
+
   it('updates the DDO metadata.updated property', async () => {
     const nautilusDDO = NautilusDDO.createFromDDO(oceanDDO as DDO)
     const ddo = await nautilusDDO.getDDO()
