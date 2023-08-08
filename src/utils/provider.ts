@@ -26,6 +26,8 @@ export async function getEncryptedFiles(
 ): Promise<string> {
   try {
     // https://github.com/oceanprotocol/provider/blob/v4main/API.md#encrypt-endpoint
+    LoggerInstance.debug('Encrytping files:')
+    LoggerInstance.debug({ files, chainId, providerUrl })
     const response = await ProviderInstance.encrypt(files, chainId, providerUrl)
     return response
   } catch (error) {
