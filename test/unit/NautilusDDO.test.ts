@@ -1,6 +1,8 @@
 import { DDO } from '@oceanprotocol/lib'
 import assert from 'assert'
+import { FileTypes, NautilusService, ServiceTypes } from '../../src'
 import { NautilusDDO } from '../../src/Nautilus/Asset/NautilusDDO'
+import { datasetService } from '../fixtures/AssetConfig'
 
 describe('NautilusDDO', () => {
   let oceanDDO: DDO
@@ -32,10 +34,79 @@ describe('NautilusDDO', () => {
     assert.deepEqual(ddo, oceanDDO, 'The created DDO differs from the input')
   })
 
-  it('creates a DDO correctly from new services and metadata', async () => {
+  it('creates a DDO correctly from new metadata', async () => {
     const nautilusDDO = new NautilusDDO()
+    const { metadata } = oceanDDO
 
-    assert(false, 'Test not implemented')
+    // remove dates from metadata
+    delete metadata.created
+    delete metadata.updated
+
+    nautilusDDO.metadata = metadata
+    const ddo = await nautilusDDO.getDDO()
+
+    delete ddo.metadata.created
+    delete ddo.metadata.updated
+
+    assert.deepEqual(
+      ddo.metadata,
+      metadata,
+      'The created metadata does not match the input'
+    )
+  })
+
+  it('creates a DDO correctly from new service', async () => {
+    const nautilusDDO = new NautilusDDO()
+    const service = new NautilusService<ServiceTypes.ACCESS, FileTypes.URL>()
+
+    service.type = datasetService.type as ServiceTypes.ACCESS
+    service.files = datasetService.files as any
+    service.timeout = datasetService.timeout
+    service.datatokenCreateParams = datasetService.datatokenCreateParams
+    service.datatokenAddress = '0x1234datatoken1234Address'
+    service.serviceEndpoint = oceanDDO.services[0].serviceEndpoint
+
+    nautilusDDO.services = [service]
+
+    const ddo = await nautilusDDO.getDDO(
+      true,
+      oceanDDO.chainId,
+      oceanDDO.nftAddress
+    )
+
+    const newService = ddo.services[0]
+
+    assert.equal(
+      newService.datatokenAddress,
+      service.datatokenAddress,
+      'The datatokenAddress does not match the input'
+    )
+    assert.equal(
+      newService.type,
+      service.type,
+      'The service type does not match the input'
+    )
+    assert.equal(
+      newService.serviceEndpoint,
+      service.serviceEndpoint,
+      'The serviceEndpoint does not match the input'
+    )
+    assert.equal(
+      newService.timeout,
+      service.timeout,
+      'The timeout value does not match the input'
+    )
+    assert.match(
+      newService.files,
+      /0x.+/,
+      'The created files value does not match the given pattern'
+    )
+    assert.match(
+      newService.files,
+      /0x.+/,
+      'The created files value does not match the given pattern'
+    )
+    assert(newService.id, 'The new service does not have an id')
   })
 
   it('overwrites previous DDO services correctly', () => {
