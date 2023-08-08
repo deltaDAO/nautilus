@@ -8,25 +8,25 @@ import {
 } from './Service/NautilusService'
 
 export class NautilusDDO {
+  id: string
+  context: string[] = ['https://w3id.org/did/v1']
+  nftAddress: string
+  chainId: number
+  version: string = '4.1.0'
   metadata: MetadataConfig
-
   services: NautilusService<ServiceTypes, FileTypes>[] = []
 
   private ddo: DDO
-  // TODO: remove comment
-  //= {
-  //   '@context': ['https://w3id.org/did/v1'],
-  //   id: '',
-  //   nftAddress: '',
-  //   chainId: undefined,
-  //   metadata: undefined,
-  //   services: [],
-  //   version: '4.1.0'
-  // }
 
   static createFromDDO(ddo: DDO): NautilusDDO {
     const nautilusDDO = new NautilusDDO()
     nautilusDDO.ddo = ddo
+
+    nautilusDDO.id = ddo.id
+    nautilusDDO.context = ddo['@context']
+    nautilusDDO.nftAddress = ddo.nftAddress
+    nautilusDDO.chainId = ddo.chainId
+    nautilusDDO.version = ddo.version
 
     return nautilusDDO
   }
@@ -39,10 +39,7 @@ export class NautilusDDO {
     const servicesWithEncryptedFiles = await getAllPromisesOnArray(
       this.services,
       async (service) => {
-        return await service.getOceanService(
-          this.ddo.chainId,
-          this.ddo.nftAddress
-        )
+        return await service.getOceanService(this.chainId, this.nftAddress)
       }
     )
 
@@ -55,9 +52,9 @@ export class NautilusDDO {
     const currentTime = dateToStringNoMS(new Date())
 
     const newMetadata = {
-      ...this.ddo.metadata,
+      ...this.ddo?.metadata,
       ...this.metadata, // TODO: nested data is potentially lost because of overwrite
-      created: create ? currentTime : this.ddo.metadata.created,
+      created: create ? currentTime : this.ddo?.metadata.created,
       updated: currentTime
     }
 
@@ -71,7 +68,7 @@ export class NautilusDDO {
 
     // replace all "old" services with new ones, based on the service id
     const newServices =
-      this.ddo.services.map((service) => {
+      this.ddo?.services.map((service) => {
         const newService = builtServices.find(
           (builtService) => builtService.id === service.id
         )
@@ -83,21 +80,15 @@ export class NautilusDDO {
     return newServices
   }
 
-  private async buildDDO(
-    create: boolean,
-    erc721Address?: string,
-    chainId?: number
-  ): Promise<DDO> {
+  private async buildDDO(create: boolean): Promise<DDO> {
     // for initial creation we need to set additional info
     if (create) {
-      if (!erc721Address || !chainId)
+      if (!this.nftAddress || !this.chainId)
         throw new Error(
           'When creating a new DDO, erc721Address and chainId are required.'
         )
 
-      this.ddo.id = generateDid(erc721Address, chainId)
-      this.ddo.chainId = chainId
-      this.ddo.nftAddress = erc721Address
+      this.id = generateDid(this.nftAddress, this.chainId)
     }
 
     // build new metadata for ddo
@@ -109,6 +100,11 @@ export class NautilusDDO {
     // update ddo with metadata and services
     this.ddo = {
       ...this.ddo,
+      id: this.id,
+      '@context': this.context,
+      nftAddress: this.nftAddress,
+      chainId: this.chainId,
+      version: this.version,
       metadata: newMetadata,
       services: newServices
     }
@@ -121,6 +117,9 @@ export class NautilusDDO {
     chainId?: number,
     erc721Address?: string
   ): Promise<DDO> {
-    return this.buildDDO(create, erc721Address, chainId)
+    if (chainId) this.chainId = chainId
+    if (erc721Address) this.nftAddress = erc721Address
+
+    return this.buildDDO(create)
   }
 }
