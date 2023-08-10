@@ -1,9 +1,11 @@
 import { DDO } from '@oceanprotocol/lib'
 import { expect } from 'chai'
 import sinon from 'sinon'
-import { NautilusService } from '../../src'
+import { NautilusService, ServiceTypes } from '../../src'
 import { NautilusDDO } from '../../src/Nautilus/Asset/NautilusDDO'
 import { metadataFixture } from '../fixtures/DDOData'
+import { MetadataConfig } from '../../src/@types'
+import { algorithmMetadata, datasetMetadata } from '../fixtures/AssetConfig'
 
 describe('NautilusDDO', () => {
   let oceanDDO: DDO
@@ -113,26 +115,10 @@ describe('NautilusDDO', () => {
       expect(ddo).to.have.property('id')
     })
 
-    it('creates a DDO correctly from new metadata', async () => {
-      const nautilusDDO = new NautilusDDO()
-      const { metadata } = oceanDDO
-
-      // remove dates from metadata
-      delete metadata.created
-      delete metadata.updated
-
-      nautilusDDO.metadata = metadata
-      const ddo = await nautilusDDO.getDDO()
-
-      delete ddo.metadata.created
-      delete ddo.metadata.updated
-
-      expect(ddo.metadata).to.deep.eq(metadata)
-    })
-
-    it('creates a DDO correctly from new service', async () => {
+    it('creates a valid ocean DDO', async () => {
       const nautilusDDO = new NautilusDDO()
 
+      nautilusDDO.metadata = datasetMetadata
       nautilusDDO.services = [new NautilusService()]
 
       const ddo = await nautilusDDO.getDDO(
@@ -141,14 +127,104 @@ describe('NautilusDDO', () => {
         oceanDDO.nftAddress
       )
 
-      expect(getOceanServiceStub.callCount).to.eq(1)
+      // minimal viable ddo
+      expect(ddo).to.have.all.keys(
+        '@context',
+        'id',
+        'version',
+        'nftAddress',
+        'chainId',
+        'metadata',
+        'services'
+      )
+    })
+
+    it('creates valid ocean DDO metadata with minimal input for a dataset', async () => {
+      const nautilusDDO = new NautilusDDO()
+
+      nautilusDDO.metadata = datasetMetadata
+      nautilusDDO.services = [new NautilusService()]
+
+      const ddo = await nautilusDDO.getDDO(
+        true,
+        oceanDDO.chainId,
+        oceanDDO.nftAddress
+      )
+
+      // minimal viable metadata
+      expect(ddo.metadata).to.have.all.keys(
+        'created',
+        'updated',
+        'name',
+        'description',
+        'type',
+        'author',
+        'license'
+      )
+
+      delete ddo.metadata.created
+      delete ddo.metadata.updated
+
+      expect(ddo.metadata).to.deep.eq(datasetMetadata)
+    })
+
+    it('creates valid ocean DDO metadata with minimal input for an alogrithm', async () => {
+      const nautilusDDO = new NautilusDDO()
+
+      nautilusDDO.metadata = algorithmMetadata
+      nautilusDDO.services = [new NautilusService()]
+
+      const ddo = await nautilusDDO.getDDO(
+        true,
+        oceanDDO.chainId,
+        oceanDDO.nftAddress
+      )
+
+      // minimal viable metadata
+      expect(ddo.metadata).to.have.all.keys(
+        'created',
+        'updated',
+        'name',
+        'description',
+        'type',
+        'author',
+        'license',
+        'algorithm'
+      )
+
+      delete ddo.metadata.created
+      delete ddo.metadata.updated
+
+      expect(ddo.metadata).to.deep.eq(algorithmMetadata)
+    })
+
+    it('creates services using getOceanService once per NautilusService added', async () => {
+      const nautilusDDO = new NautilusDDO()
+      nautilusDDO.services = [new NautilusService(), new NautilusService()]
+
+      const ddo = await nautilusDDO.getDDO(
+        true,
+        oceanDDO.chainId,
+        oceanDDO.nftAddress
+      )
+
+      // verify that service was created correctly
+      expect(getOceanServiceStub.callCount).to.eq(2)
       expect(
         getOceanServiceStub.calledWithExactly(
           oceanDDO.chainId,
           oceanDDO.nftAddress
         )
       ).to.eq(true)
-      expect(ddo.services).to.have.lengthOf(1)
+      expect(ddo.services).to.have.lengthOf(2)
+      // matching the return of the getOceanServiceStub
+      expect(ddo.services).to.contain(oceanDDO.services[0])
+    })
+
+    it('throws an error when missing required inputs', async () => {
+      const nautilusDDO = new NautilusDDO()
+
+      expect(false).to.eq(true, 'test not implemented')
     })
   })
 })
