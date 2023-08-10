@@ -77,8 +77,9 @@ describe('NautilusService', () => {
       datatokenAddress
     )
 
-    // TODO: remove any type, once we moved to new ocean.js version with consumer parameter types
-    expect((service as any).consumerParameters).to.eq(consumerParameters)
+    expect(service)
+      .to.have.property('consumerParameters')
+      .eq(consumerParameters)
   })
 
   it('sets additionalInformation correctly if given', async () => {
@@ -97,7 +98,21 @@ describe('NautilusService', () => {
       datatokenAddress
     )
 
-    expect(service.additionalInformation).to.eq(additionalInformation)
+    expect(service)
+      .to.have.property('additionalInformation')
+      .eq(additionalInformation)
+  })
+
+  it('sets datatokenAddress correctly, when set via getOceanService', async () => {
+    const nautilusService = new NautilusService<ServiceTypes, FileTypes.URL>()
+
+    const service = await nautilusService.getOceanService(
+      chainId,
+      nftAddress,
+      datatokenAddress
+    )
+
+    expect(service).to.have.property('datatokenAddress').eq(datatokenAddress)
   })
 
   describe('when it has a valid files object', async () => {
