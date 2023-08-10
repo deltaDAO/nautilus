@@ -14,7 +14,11 @@ import {
   DatatokenCreateParamsWithoutOwner,
   ServiceConfig
 } from '../../../@types/Publish'
-import { getEncryptedFiles, getFileInfo } from '../../../utils/provider'
+import {
+  getEncryptedFiles,
+  getFileInfo,
+  isValidProvider
+} from '../../../utils/provider'
 import { NautilusConsumerParameter } from '../ConsumerParameters'
 import { PricingConfigWithoutOwner } from '../NautilusAsset'
 import { params as DatatokenConstantParams } from '../constants/datatoken.constants'
@@ -107,9 +111,14 @@ export class NautilusService<
     nftAddress: string,
     dtAddress?: string
   ): Promise<Service> {
-    const datatokenAddress = dtAddress || this.datatokenAddress
+    if (!(await this.hasValidServiceEndpoint()))
+      throw new Error('serviceEndpoint is not a valid Ocean Provider')
 
-    if (!datatokenAddress) throw new Error('Datatoken address is required!')
+    if (!(await this.hasValidFiles()))
+      throw new Error('Some of the provided files could not be validated')
+
+    const datatokenAddress = dtAddress || this.datatokenAddress
+    if (!datatokenAddress) throw new Error('datatokenAddress is required')
 
     const assetURL = {
       datatokenAddress,
@@ -146,52 +155,16 @@ export class NautilusService<
     return oceanService
   }
 
-  // TODO: config transformation
-  async getConfig(): Promise<ServiceConfig> {
-    // validate provider
-    if (!(await ProviderInstance.isValidProvider(this.serviceEndpoint)))
-      throw new Error('Provided serviceEndpoint is not a valid Ocean Provider')
-
-    // validate files
-    for (const file of this.files) {
-      const fileInfo = await getFileInfo(file, this.serviceEndpoint)
-      if (fileInfo.some((info) => !info.valid))
-        throw new Error('Provided files could not be validated')
-    }
-
-    // validate pricing
-    if (!this.hasValidPricing()) {
-      LoggerInstance.error('Invalid pricing scheme:', this.pricing)
-      throw new Error('Pricing Scheme could not be validated.')
-    }
-
-    return {
-      ...this,
-      files: this.files as ServiceConfig['files'],
-      consumerParameters: this.consumerParameters?.map((param) =>
-        param.getConfig()
-      )
-    }
+  async hasValidServiceEndpoint(): Promise<boolean> {
+    return await isValidProvider(this.serviceEndpoint)
   }
 
-  private hasValidPricing() {
-    return (
-      ['free', 'fixed'].includes(this.pricing?.type) &&
-      (this.pricing?.type === 'fixed'
-        ? Web3.utils.isAddress(
-            this.pricing.freCreationParams?.baseTokenAddress
-          ) &&
-          this.pricing.freCreationParams?.baseTokenDecimals > 0 &&
-          this.pricing.freCreationParams?.datatokenDecimals > 0 &&
-          Number(this.pricing.freCreationParams?.fixedRate) > 0 &&
-          Web3.utils.isAddress(
-            this.pricing.freCreationParams?.fixedRateAddress
-          ) &&
-          this.pricing.freCreationParams?.marketFee?.length > 0 &&
-          Web3.utils.isAddress(
-            this.pricing.freCreationParams?.marketFeeCollector
-          )
-        : true)
-    )
+  async hasValidFiles(): Promise<boolean> {
+    for (const file of this.files) {
+      const fileInfo = await getFileInfo(file, this.serviceEndpoint)
+      if (fileInfo.some((info) => !info.valid)) return false
+    }
+
+    return true
   }
 }
