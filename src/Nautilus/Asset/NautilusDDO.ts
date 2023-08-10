@@ -67,21 +67,24 @@ export class NautilusDDO {
 
     if (this.services.length > 0) {
       // build new services if needed
-      let builtServices = await this.buildDDOServices()
+      const builtServices = await this.buildDDOServices()
 
       // for all existing services, check if a replacement is needed
       newServices.map((service) => {
-        const newServiceIndex = builtServices.findIndex(
+        const newlyBuiltServiceIndex = builtServices.findIndex(
           (builtService) => builtService.id === service.id
         )
 
-        if (newServiceIndex > -1) {
+        if (newlyBuiltServiceIndex > -1) {
           // remove this service from built service array
           // so we only add new services later on
-          builtServices = builtServices.splice(newServiceIndex, 1)
+          const newlyBuiltService = builtServices.splice(
+            newlyBuiltServiceIndex,
+            1
+          )[0]
 
           // replace existing service with the new one
-          return builtServices[newServiceIndex]
+          return newlyBuiltService
         }
 
         // return old service if nothing found to replace with
