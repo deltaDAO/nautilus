@@ -54,6 +54,41 @@ describe('NautilusDDO', () => {
 
       expect(ddo).to.deep.eq(oceanDDO)
     })
+
+    it('overwrites previous DDO metadata correctly', async () => {
+      const nautilusDDO = NautilusDDO.createFromDDO(oceanDDO)
+
+      const { name, description, author } = metadataFixture
+
+      nautilusDDO.metadata.name = name
+      nautilusDDO.metadata.description = description
+      nautilusDDO.metadata.author = author
+
+      const ddo = await nautilusDDO.getDDO()
+
+      expect(ddo.id).to.eq(oceanDDO.id)
+      expect(ddo.metadata.name).to.eq(name)
+      expect(ddo.metadata.author).to.eq(author)
+      expect(ddo.metadata.description).to.eq(description)
+    })
+
+    it('adds services to existing DDO correctly', async () => {
+      const nautilusDDO = NautilusDDO.createFromDDO(oceanDDO)
+
+      nautilusDDO.services = [new NautilusService()]
+
+      const ddo = await nautilusDDO.getDDO()
+
+      expect(ddo.services).to.contain(oceanDDO.services[0])
+      expect(ddo.services).to.have.lengthOf(2)
+      expect(getOceanServiceStub.callCount).to.eq(1)
+      expect(
+        getOceanServiceStub.calledWithExactly(
+          oceanDDO.chainId,
+          oceanDDO.nftAddress
+        )
+      ).to.eq(true)
+    })
   })
 
   describe('when it creates a ddo from scratch', () => {
@@ -116,40 +151,5 @@ describe('NautilusDDO', () => {
       ).to.eq(true)
       expect(ddo.services).to.have.lengthOf(1)
     })
-  })
-
-  it('overwrites previous DDO metadata correctly', async () => {
-    const nautilusDDO = NautilusDDO.createFromDDO(oceanDDO)
-
-    const { name, description, author } = metadataFixture
-
-    nautilusDDO.metadata.name = name
-    nautilusDDO.metadata.description = description
-    nautilusDDO.metadata.author = author
-
-    const ddo = await nautilusDDO.getDDO()
-
-    expect(ddo.id).to.eq(oceanDDO.id)
-    expect(ddo.metadata.name).to.eq(name)
-    expect(ddo.metadata.author).to.eq(author)
-    expect(ddo.metadata.description).to.eq(description)
-  })
-
-  it('adds services to existing DDO correctly', async () => {
-    const nautilusDDO = NautilusDDO.createFromDDO(oceanDDO)
-
-    nautilusDDO.services = [new NautilusService()]
-
-    const ddo = await nautilusDDO.getDDO()
-
-    expect(ddo.services).to.contain(oceanDDO.services[0])
-    expect(ddo.services).to.have.lengthOf(2)
-    expect(getOceanServiceStub.callCount).to.eq(1)
-    expect(
-      getOceanServiceStub.calledWithExactly(
-        oceanDDO.chainId,
-        oceanDDO.nftAddress
-      )
-    ).to.eq(true)
   })
 })
