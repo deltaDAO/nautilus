@@ -1,107 +1,121 @@
 import { DDO, Service } from '@oceanprotocol/lib'
-import assert from 'assert'
+import { expect } from 'chai'
 import { FileTypes, NautilusService, ServiceTypes } from '../../src'
 import { NautilusDDO } from '../../src/Nautilus/Asset/NautilusDDO'
 import { datasetService } from '../fixtures/AssetConfig'
 import { metadataFixture } from '../fixtures/DDOData'
+import sinon from 'sinon'
 
 describe('NautilusDDO', () => {
   let oceanDDO: DDO
+  let getOceanServiceStub: sinon.SinonStub
+
   beforeEach(async () => {
     oceanDDO = (await import('../fixtures/OceanDDO.json')) as DDO
-  })
-
-  it('sets a new created date if needed', async () => {
-    const nautilusDDO = NautilusDDO.createFromDDO(oceanDDO as DDO)
-    const ddo = await nautilusDDO.getDDO(true)
-
-    const oldCreated = new Date(oceanDDO.metadata.created).getTime()
-    const newCreated = new Date(ddo.metadata.created).getTime()
-
-    assert(
-      newCreated > oldCreated,
-      'The new created value is not greater than the previous one'
+    getOceanServiceStub = sinon.stub(
+      NautilusService.prototype,
+      'getOceanService'
     )
+    getOceanServiceStub.returns(Promise.resolve(oceanDDO.services[0]))
   })
 
-  it('creates an id for the ddo', async () => {
-    const nautilusDDO = new NautilusDDO()
-    const ddo = await nautilusDDO.getDDO(
-      true,
-      oceanDDO.chainId,
-      oceanDDO.nftAddress
-    )
-
-    assert(ddo.id, 'The ddo does not contain an id')
+  afterEach(() => {
+    getOceanServiceStub.restore()
   })
 
-  it('sets a new created date if needed', async () => {
-    const nautilusDDO = NautilusDDO.createFromDDO(oceanDDO as DDO)
-    const ddo = await nautilusDDO.getDDO(true)
+  describe('when it uses a previous ddo as base', () => {
+    it('sets a new created date if prompted', async () => {
+      const nautilusDDO = NautilusDDO.createFromDDO(oceanDDO as DDO)
+      const ddo = await nautilusDDO.getDDO(true)
 
-    assert(ddo.metadata.created, 'The created value does not exist')
+      const oldCreated = new Date(oceanDDO.metadata.created).getTime()
+      const newCreated = new Date(ddo.metadata.created).getTime()
+
+      expect(newCreated).to.be.greaterThan(oldCreated)
+    })
+
+    it('updates the DDO metadata.updated property', async () => {
+      const nautilusDDO = NautilusDDO.createFromDDO(oceanDDO as DDO)
+      const ddo = await nautilusDDO.getDDO()
+
+      const oldUpdated = new Date(oceanDDO.metadata.updated).getTime()
+      const newUpdated = new Date(ddo.metadata.updated).getTime()
+
+      expect(newUpdated).to.be.greaterThan(oldUpdated)
+    })
+
+    it('creates a DDO correctly from previous valid Ocean DDO', async () => {
+      const nautilusDDO = NautilusDDO.createFromDDO(oceanDDO as DDO)
+      const ddo = await nautilusDDO.getDDO()
+
+      // ignore the updated property, as this expected to be replaced by the NautilusDDO class
+      delete oceanDDO.metadata.updated
+      delete ddo.metadata.updated
+
+      expect(ddo).to.deep.eq(oceanDDO)
+    })
   })
 
-  it('updates the DDO metadata.updated property', async () => {
-    const nautilusDDO = NautilusDDO.createFromDDO(oceanDDO as DDO)
-    const ddo = await nautilusDDO.getDDO()
+  describe('when it creates a ddo from scratch', () => {
+    it('sets a created date', async () => {
+      const nautilusDDO = new NautilusDDO()
+      const ddo = await nautilusDDO.getDDO(
+        true,
+        oceanDDO.chainId,
+        oceanDDO.nftAddress
+      )
 
-    const oldUpdated = new Date(oceanDDO.metadata.updated).getTime()
-    const newUpdated = new Date(ddo.metadata.updated).getTime()
+      expect(ddo.metadata).to.have.property('created')
+    })
 
-    assert(
-      newUpdated > oldUpdated,
-      'The new updated value is not greater than the previous one'
-    )
-  })
+    it('creates an id for the ddo', async () => {
+      const nautilusDDO = new NautilusDDO()
+      const ddo = await nautilusDDO.getDDO(
+        true,
+        oceanDDO.chainId,
+        oceanDDO.nftAddress
+      )
 
-  it('creates a DDO correctly from previous valid Ocean DDO', async () => {
-    const nautilusDDO = NautilusDDO.createFromDDO(oceanDDO as DDO)
-    const ddo = await nautilusDDO.getDDO()
+      expect(ddo).to.have.property('id')
+    })
 
-    // ignore the updated property, as this expected to be replaced by the NautilusDDO class
-    delete oceanDDO.metadata.updated
-    delete ddo.metadata.updated
+    it('creates a DDO correctly from new metadata', async () => {
+      const nautilusDDO = new NautilusDDO()
+      const { metadata } = oceanDDO
 
-    assert.deepEqual(ddo, oceanDDO, 'The created DDO differs from the input')
-  })
+      // remove dates from metadata
+      delete metadata.created
+      delete metadata.updated
 
-  it('creates a DDO correctly from new metadata', async () => {
-    const nautilusDDO = new NautilusDDO()
-    const { metadata } = oceanDDO
+      nautilusDDO.metadata = metadata
+      const ddo = await nautilusDDO.getDDO()
 
-    // remove dates from metadata
-    delete metadata.created
-    delete metadata.updated
+      delete ddo.metadata.created
+      delete ddo.metadata.updated
 
-    nautilusDDO.metadata = metadata
-    const ddo = await nautilusDDO.getDDO()
+      expect(ddo.metadata).to.deep.eq(metadata)
+    })
 
-    delete ddo.metadata.created
-    delete ddo.metadata.updated
+    it('creates a DDO correctly from new service', async () => {
+      const nautilusDDO = new NautilusDDO()
 
-    assert.deepEqual(
-      ddo.metadata,
-      metadata,
-      'The created metadata does not match the input'
-    )
-  })
+      nautilusDDO.services = [new NautilusService()]
 
-  it('creates a DDO correctly from new service', async () => {
-    const nautilusDDO = new NautilusDDO()
+      const ddo = await nautilusDDO.getDDO(
+        true,
+        oceanDDO.chainId,
+        oceanDDO.nftAddress
+      )
 
-    const service = getNautilusService(oceanDDO.services[0].serviceEndpoint)
-    nautilusDDO.services = [service]
-
-    const ddo = await nautilusDDO.getDDO(
-      true,
-      oceanDDO.chainId,
-      oceanDDO.nftAddress
-    )
-
-    const newService = ddo.services[0]
-
-    assertNewDDOService(newService, service)
+      expect(getOceanServiceStub.callCount).to.eq(1)
+      expect(
+        getOceanServiceStub.calledWithExactly(
+          oceanDDO.chainId,
+          oceanDDO.nftAddress
+        )
+      ).to.eq(true)
+      expect(ddo.services).to.have.lengthOf(1)
+    })
   })
 
   it('overwrites previous DDO metadata correctly', async () => {
@@ -115,100 +129,27 @@ describe('NautilusDDO', () => {
 
     const ddo = await nautilusDDO.getDDO()
 
-    assert.equal(
-      ddo.metadata.name,
-      name,
-      'metadata.name does not match the input'
-    )
-    assert.equal(
-      ddo.metadata.author,
-      author,
-      'metadata.author does not match the input'
-    )
-    assert.equal(
-      ddo.metadata.description,
-      description,
-      'metadata.description does not match the input'
-    )
-    assert.equal(ddo.id, oceanDDO.id, 'The id does not match the previous id')
+    expect(ddo.id).to.eq(oceanDDO.id)
+    expect(ddo.metadata.name).to.eq(name)
+    expect(ddo.metadata.author).to.eq(author)
+    expect(ddo.metadata.description).to.eq(description)
   })
 
   it('adds services to existing DDO correctly', async () => {
     const nautilusDDO = NautilusDDO.createFromDDO(oceanDDO)
-    const service = getNautilusService(oceanDDO.services[0].serviceEndpoint)
 
-    nautilusDDO.services = [service]
+    nautilusDDO.services = [new NautilusService()]
 
     const ddo = await nautilusDDO.getDDO()
 
-    console.log(ddo.services)
-
-    assert(
-      ddo.services.length === 2,
-      'The length of the services array does not match the expected number: 2'
-    )
-
-    const oldServiceIndex = ddo.services.findIndex(
-      (s) => s.id === oceanDDO.services[0].id
-    )
-
-    assert.deepEqual(
-      ddo.services[oldServiceIndex],
-      oceanDDO.services[0],
-      'The previous service does not match and was altered'
-    )
-    assert(
-      ddo.services.length === 2,
-      'The length of the services array does not match the expected number: 2'
-    )
-
-    assertNewDDOService(ddo.services[oldServiceIndex === 0 ? 1 : 0], service)
+    expect(ddo.services).to.contain(oceanDDO.services[0])
+    expect(ddo.services).to.have.lengthOf(2)
+    expect(getOceanServiceStub.callCount).to.eq(1)
+    expect(
+      getOceanServiceStub.calledWithExactly(
+        oceanDDO.chainId,
+        oceanDDO.nftAddress
+      )
+    ).to.eq(true)
   })
 })
-
-function assertNewDDOService(
-  actual: Service,
-  expected: NautilusService<ServiceTypes, FileTypes>
-) {
-  assert.equal(
-    actual.datatokenAddress,
-    expected.datatokenAddress,
-    'The datatokenAddress does not match the input'
-  )
-  assert.equal(
-    actual.type,
-    expected.type,
-    'The service type does not match the input'
-  )
-  assert.equal(
-    actual.serviceEndpoint,
-    expected.serviceEndpoint,
-    'The serviceEndpoint does not match the input'
-  )
-  assert.equal(
-    actual.timeout,
-    expected.timeout,
-    'The timeout value does not match the input'
-  )
-  assert.match(
-    actual.files,
-    /0x.+/,
-    'The created files value does not match the given pattern'
-  )
-  assert(actual.id, 'The new service does not have an id')
-}
-
-function getNautilusService(
-  serviceEndpoint: string
-): NautilusService<ServiceTypes, FileTypes> {
-  const service = new NautilusService<ServiceTypes.ACCESS, FileTypes.URL>()
-
-  service.type = datasetService.type as ServiceTypes.ACCESS
-  service.files = datasetService.files as any
-  service.timeout = datasetService.timeout
-  service.datatokenCreateParams = datasetService.datatokenCreateParams
-  service.datatokenAddress = '0x1234datatoken1234Address'
-  service.serviceEndpoint = serviceEndpoint
-
-  return service
-}
