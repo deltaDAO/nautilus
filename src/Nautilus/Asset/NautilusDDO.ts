@@ -100,7 +100,7 @@ export class NautilusDDO {
     if (create) {
       if (!this.nftAddress || !this.chainId)
         throw new Error(
-          'When creating a new DDO, erc721Address and chainId are required.'
+          'When creating a new DDO, nftAddress and chainId are required.'
         )
 
       this.id = generateDid(this.nftAddress, this.chainId)
@@ -130,11 +130,51 @@ export class NautilusDDO {
   async getDDO(
     create = false,
     chainId?: number,
-    erc721Address?: string
+    nftAddress?: string
   ): Promise<DDO> {
     if (chainId) this.chainId = chainId
-    if (erc721Address) this.nftAddress = erc721Address
+    if (nftAddress) this.nftAddress = nftAddress
+
+    // first check that all necessary properties can be built when creating
+    if (create && !this.hasAllRequiredOceanDDOAttributes())
+      throw new Error(
+        'Required attributes are missing to create a valid Ocean DDO'
+      )
 
     return this.buildDDO(create)
+  }
+
+  hasAllRequiredOceanDDOAttributes() {
+    // if we have a valid ddo baseline, all properties can be derived from there
+    if (this.ddo) return true
+
+    // check required first level DDO properties
+    if (!this.chainId || !this.nftAddress || !this.context || !this.version)
+      return false
+
+    // check required metadata properties
+    if (
+      !this.metadata.name ||
+      !this.metadata.description ||
+      !this.metadata.type ||
+      !this.metadata.author ||
+      !this.metadata.name ||
+      !this.metadata.license
+    )
+      return false
+
+    // for algorithms check if algoMetadata is given and complete
+    if (this.metadata.type === 'algorithm')
+      if (
+        !this.metadata.algorithm ||
+        !this.metadata.algorithm.container ||
+        !this.metadata.algorithm.container.entrypoint ||
+        !this.metadata.algorithm.container.image ||
+        !this.metadata.algorithm.container.tag ||
+        !this.metadata.algorithm.container.checksum
+      )
+        return false
+
+    return true
   }
 }
