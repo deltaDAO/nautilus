@@ -161,6 +161,7 @@ describe('NautilusDDO', () => {
         'author',
         'license'
       )
+      expect(ddo.metadata.type).to.eq('dataset')
 
       delete ddo.metadata.created
       delete ddo.metadata.updated
@@ -191,6 +192,7 @@ describe('NautilusDDO', () => {
         'license',
         'algorithm'
       )
+      expect(ddo.metadata.type).to.eq('algorithm')
 
       delete ddo.metadata.created
       delete ddo.metadata.updated
