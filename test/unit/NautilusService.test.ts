@@ -1,13 +1,18 @@
-import assert from 'assert'
 import { expect } from 'chai'
 import sinon from 'sinon'
 import { FileTypes, NautilusService, ServiceTypes, UrlFile } from '../../src'
 import * as provider from '../../src/utils/provider'
 import { datasetService } from '../fixtures/AssetConfig'
+import { getConsumerParameters } from '../fixtures/ConsumerParameters'
 
 describe('NautilusService', () => {
   let providerMock: sinon.SinonMock
   let encryptedFilesExpectation: sinon.SinonExpectation
+
+  const serviceEndpoint = 'https://my.ocean-provider.com'
+  const chainId = 100
+  const nftAddress = '0x1234NFT'
+  const datatokenAddress = '0x1234DATATOKEN'
 
   beforeEach(() => {
     providerMock = sinon.mock(provider)
@@ -18,19 +23,81 @@ describe('NautilusService', () => {
   })
 
   it('sets the id correctly if given', async () => {
-    assert(false, 'test not implemented')
+    const nautilusService = new NautilusService<ServiceTypes, FileTypes.URL>()
+    const preDefinedId = 'my-pre-defined-id'
+    nautilusService.id = preDefinedId
+
+    const service = await nautilusService.getOceanService(
+      chainId,
+      nftAddress,
+      datatokenAddress
+    )
+
+    expect(service.id).to.eq(preDefinedId)
   })
 
   it('sets name and description correctly if given', async () => {
-    assert(false, 'test not implemented')
+    const nautilusService = new NautilusService<ServiceTypes, FileTypes.URL>()
+    const name = 'My Service Name'
+    const description = 'My Service Description'
+    nautilusService.name = name
+    nautilusService.description = description
+
+    const service = await nautilusService.getOceanService(
+      chainId,
+      nftAddress,
+      datatokenAddress
+    )
+
+    expect(service.name).to.eq(name)
+    expect(service.description).to.eq(description)
   })
 
   it('sets consumerParameters correctly if given', async () => {
-    assert(false, 'test not implemented')
+    const {
+      textParameter,
+      numberParameter,
+      booleanParameter,
+      selectParameter
+    } = getConsumerParameters()
+
+    const consumerParameters = [
+      textParameter,
+      numberParameter,
+      booleanParameter,
+      selectParameter
+    ]
+
+    const nautilusService = new NautilusService<ServiceTypes, FileTypes.URL>()
+    nautilusService.consumerParameters = consumerParameters
+
+    const service = await nautilusService.getOceanService(
+      chainId,
+      nftAddress,
+      datatokenAddress
+    )
+
+    // TODO: remove any type, once we moved to new ocean.js version with consumer parameter types
+    expect((service as any).consumerParameters).to.eq(consumerParameters)
   })
 
   it('sets additionalInformation correctly if given', async () => {
-    assert(false, 'test not implemented')
+    const additionalInformation = {
+      customInfo: {
+        some: 'custom info'
+      }
+    }
+
+    const nautilusService = new NautilusService<ServiceTypes, FileTypes.URL>()
+    nautilusService.additionalInformation = additionalInformation
+
+    const service = await nautilusService.getOceanService(
+      chainId,
+      nftAddress,
+      datatokenAddress
+    )
+
+    expect(service.additionalInformation).to.eq(additionalInformation)
   })
 
   describe('when it has a valid files object', async () => {
@@ -39,21 +106,17 @@ describe('NautilusService', () => {
       encryptedFilesExpectation.returns(Promise.resolve(encryptedFiles))
     })
 
-    it('correctly creates an access ocean service from given input', async () => {
+    it('correctly calls provider.encrypt', async () => {
       const nautilusService = new NautilusService<ServiceTypes, FileTypes.URL>()
 
-      const serviceEndpoint = 'https://my.ocean-provider.com'
-      const chainId = 100
-      const nftAddress = '0x1234NFT'
-      const datatokenAddress = '0x1234DATATOKEN'
-
-      nautilusService.type = ServiceTypes.ACCESS
       nautilusService.files = datasetService.files as UrlFile[]
-      nautilusService.timeout = datasetService.timeout
-      nautilusService.datatokenCreateParams =
-        datasetService.datatokenCreateParams
       nautilusService.datatokenAddress = datatokenAddress
       nautilusService.serviceEndpoint = serviceEndpoint
+
+      const oceanService = await nautilusService.getOceanService(
+        chainId,
+        nftAddress
+      )
 
       encryptedFilesExpectation
         .once()
@@ -62,6 +125,24 @@ describe('NautilusService', () => {
           chainId,
           serviceEndpoint
         )
+
+      expect(oceanService).to.have.property('files').eq(encryptedFiles)
+      providerMock.verify()
+    })
+
+    it('creates a valid access ocean service', async () => {
+      const nautilusService = new NautilusService<
+        ServiceTypes.ACCESS,
+        FileTypes.URL
+      >()
+
+      nautilusService.type = ServiceTypes.ACCESS
+      nautilusService.files = datasetService.files as UrlFile[]
+      nautilusService.timeout = datasetService.timeout
+      nautilusService.datatokenCreateParams =
+        datasetService.datatokenCreateParams
+      nautilusService.datatokenAddress = datatokenAddress
+      nautilusService.serviceEndpoint = serviceEndpoint
 
       const oceanService = await nautilusService.getOceanService(
         chainId,
@@ -76,20 +157,36 @@ describe('NautilusService', () => {
         'serviceEndpoint',
         'timeout'
       )
-      expect(oceanService).to.have.property('files').eq(encryptedFiles)
-
-      providerMock.verify()
     })
 
-    it('correctly creates a compute ocean service from given input', async () => {
-      const nautilusService = new NautilusService<ServiceTypes, FileTypes.URL>()
-      assert(false, 'test not implemented')
-    })
-  })
+    it('creates a valid compute ocean service', async () => {
+      const nautilusService = new NautilusService<
+        ServiceTypes.COMPUTE,
+        FileTypes.URL
+      >()
 
-  describe('when it does not have a valid files object', () => {
-    it('throws an error when trying to create the ocean service', () => {
-      assert(false, 'Test not implemented')
+      nautilusService.type = ServiceTypes.COMPUTE
+      nautilusService.files = datasetService.files as UrlFile[]
+      nautilusService.timeout = datasetService.timeout
+      nautilusService.datatokenCreateParams =
+        datasetService.datatokenCreateParams
+      nautilusService.datatokenAddress = datatokenAddress
+      nautilusService.serviceEndpoint = serviceEndpoint
+
+      const oceanService = await nautilusService.getOceanService(
+        chainId,
+        nftAddress
+      )
+
+      expect(oceanService).to.have.all.keys(
+        'id',
+        'type',
+        'files',
+        'datatokenAddress',
+        'serviceEndpoint',
+        'timeout',
+        'compute'
+      )
     })
   })
 })
