@@ -74,10 +74,15 @@ export class NautilusService<
   name?: string
   description?: string
 
-  compute?: ServiceComputeOptions
+  compute: ServiceComputeOptions = {
+    allowNetworkAccess: false,
+    allowRawAlgorithm: false,
+    publisherTrustedAlgorithmPublishers: [],
+    publisherTrustedAlgorithms: []
+  }
 
-  consumerParameters?: NautilusConsumerParameter[] = []
-  additionalInformation?: { [key: string]: any } = {}
+  consumerParameters?: NautilusConsumerParameter[]
+  additionalInformation?: { [key: string]: any }
 
   id?: string
   datatokenAddress?: string
@@ -119,8 +124,14 @@ export class NautilusService<
     )
 
     // remove nautilus utility properties from this instance
-    const { datatokenCreateParams, pricing, files, ...oceanServiceProperties } =
-      this
+    const {
+      datatokenCreateParams,
+      pricing,
+      files,
+      // we also remove compute, only adding it back for ServiceTypes.COMPUTE type services
+      compute,
+      ...oceanServiceProperties
+    } = this
 
     const oceanService: Service = {
       id: getHash(encryptedFiles), // do this first to not overwrite an id on edit
@@ -129,6 +140,8 @@ export class NautilusService<
       ...oceanServiceProperties,
       files: encryptedFiles
     }
+
+    if (this.type === ServiceTypes.COMPUTE) oceanService.compute = this.compute
 
     return oceanService
   }
