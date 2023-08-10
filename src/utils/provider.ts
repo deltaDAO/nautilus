@@ -19,6 +19,17 @@ import Web3 from 'web3'
 import { getOceanConfig } from '.'
 import { AssetWithAccessDetails } from '../@types/Compute'
 
+export async function isValidProvider(providerUrl: string): Promise<boolean> {
+  try {
+    // https://github.com/oceanprotocol/provider/blob/v4main/API.md#encrypt-endpoint
+    const response = await ProviderInstance.isValidProvider(providerUrl)
+    return response
+  } catch (error) {
+    LoggerInstance.error('Error verifying provider instance: ' + error.message)
+    return false
+  }
+}
+
 export async function getEncryptedFiles(
   files: any,
   chainId: number,
