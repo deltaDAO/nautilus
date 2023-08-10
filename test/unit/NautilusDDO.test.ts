@@ -1,10 +1,9 @@
-import { DDO, Service } from '@oceanprotocol/lib'
+import { DDO } from '@oceanprotocol/lib'
 import { expect } from 'chai'
-import { FileTypes, NautilusService, ServiceTypes } from '../../src'
-import { NautilusDDO } from '../../src/Nautilus/Asset/NautilusDDO'
-import { datasetService } from '../fixtures/AssetConfig'
-import { metadataFixture } from '../fixtures/DDOData'
 import sinon from 'sinon'
+import { NautilusService } from '../../src'
+import { NautilusDDO } from '../../src/Nautilus/Asset/NautilusDDO'
+import { metadataFixture } from '../fixtures/DDOData'
 
 describe('NautilusDDO', () => {
   let oceanDDO: DDO
