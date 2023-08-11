@@ -66,7 +66,7 @@ describe('NautilusDDO', () => {
       nautilusDDO.metadata.name = name
       nautilusDDO.metadata.description = description
       nautilusDDO.metadata.author = author
-      nautilusDDO.metadata.name = license
+      nautilusDDO.metadata.license = license
       nautilusDDO.metadata.type = type
 
       const ddo = await nautilusDDO.getDDO()
