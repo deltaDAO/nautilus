@@ -61,11 +61,13 @@ describe('NautilusDDO', () => {
     it('overwrites previous DDO metadata correctly', async () => {
       const nautilusDDO = NautilusDDO.createFromDDO(oceanDDO)
 
-      const { name, description, author } = metadataFixture
+      const { name, description, author, license, type } = metadataFixture
 
       nautilusDDO.metadata.name = name
       nautilusDDO.metadata.description = description
       nautilusDDO.metadata.author = author
+      nautilusDDO.metadata.name = license
+      nautilusDDO.metadata.type = type
 
       const ddo = await nautilusDDO.getDDO()
 
@@ -73,6 +75,8 @@ describe('NautilusDDO', () => {
       expect(ddo.metadata.name).to.eq(name)
       expect(ddo.metadata.author).to.eq(author)
       expect(ddo.metadata.description).to.eq(description)
+      expect(ddo.metadata.license).to.eq(license)
+      expect(ddo.metadata.type).to.eq(type)
     })
 
     it('adds services to existing DDO correctly', async () => {
