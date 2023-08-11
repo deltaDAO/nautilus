@@ -60,116 +60,116 @@ describe('Publish Integration tests', () => {
     assert(result)
   }).timeout(90000)
 
-  //   it('publishes a fixed price access asset', async () => {
-  //     const serviceBuilder = new ServiceBuilder(
-  //       ServiceTypes.ACCESS,
-  //       FileTypes.URL
-  //     )
-  //     const service = serviceBuilder
-  //       .setServiceEndpoint(providerUri)
-  //       .setTimeout(datasetService.timeout)
-  //       .addFile(datasetService.files[0])
-  //       .build()
+  it('publishes a fixed price access asset', async () => {
+    const serviceBuilder = new ServiceBuilder(
+      ServiceTypes.ACCESS,
+      FileTypes.URL
+    )
+    const service = serviceBuilder
+      .setServiceEndpoint(providerUri)
+      .setTimeout(datasetService.timeout)
+      .addFile(datasetService.files[0])
+      .setPricing(await getPricing(web3, 'fixed'))
+      .build()
 
-  //     const assetBuilder = new AssetBuilder()
-  //     const asset = assetBuilder
-  //       .setAuthor('testAuthor')
-  //       .setDescription('A dataset publishing test')
-  //       .setLicense('MIT')
-  //       .setName('Test Publish Dataset Fixed')
-  //       .setOwner(web3.defaultAccount)
-  //       .setType('dataset')
-  //       .setPricing(await getPricing(web3, 'fixed'))
-  //       .addService(service)
-  //       .build()
+    const assetBuilder = new AssetBuilder()
+    const asset = assetBuilder
+      .setAuthor('testAuthor')
+      .setDescription('A dataset publishing test')
+      .setLicense('MIT')
+      .setName('Test Publish Dataset Fixed')
+      .setOwner(web3.defaultAccount)
+      .setType('dataset')
+      .addService(service)
+      .build()
 
-  //     const result = await nautilus.publish(asset)
+    const result = await nautilus.publish(asset)
 
-  //     assert(result)
-  //   })
+    assert(result)
+  })
 
-  //   it('publishes an asset with service consumerParamters', async () => {
-  //     const serviceBuilder = new ServiceBuilder(
-  //       ServiceTypes.ACCESS,
-  //       FileTypes.URL
-  //     )
-  //     const {
-  //       textParameter,
-  //       numberParameter,
-  //       booleanParameter,
-  //       selectParameter
-  //     } = getConsumerParameters()
+  it('publishes an asset with service consumerParamters', async () => {
+    const serviceBuilder = new ServiceBuilder(
+      ServiceTypes.ACCESS,
+      FileTypes.URL
+    )
+    const {
+      textParameter,
+      numberParameter,
+      booleanParameter,
+      selectParameter
+    } = getConsumerParameters()
 
-  //     const service = serviceBuilder
-  //       .setServiceEndpoint(providerUri)
-  //       .setTimeout(datasetService.timeout)
-  //       .addFile(datasetService.files[0])
-  //       .addConsumerParameter(textParameter)
-  //       .addConsumerParameter(numberParameter)
-  //       .addConsumerParameter(booleanParameter)
-  //       .addConsumerParameter(selectParameter)
-  //       .setPricing(await getPricing(web3, 'free'))
-  //       .build()
+    const service = serviceBuilder
+      .setServiceEndpoint(providerUri)
+      .setTimeout(datasetService.timeout)
+      .addFile(datasetService.files[0])
+      .addConsumerParameter(textParameter)
+      .addConsumerParameter(numberParameter)
+      .addConsumerParameter(booleanParameter)
+      .addConsumerParameter(selectParameter)
+      .setPricing(await getPricing(web3, 'free'))
+      .build()
 
-  //     const assetBuilder = new AssetBuilder()
-  //     const asset = assetBuilder
-  //       .setAuthor('testAuthor')
-  //       .setDescription('A dataset publishing test')
-  //       .setLicense('MIT')
-  //       .setName('Test Publish Dataset Service Params Free')
-  //       .setOwner(web3.defaultAccount)
-  //       .setType('dataset')
-  //       .addService(service)
-  //       .build()
+    const assetBuilder = new AssetBuilder()
+    const asset = assetBuilder
+      .setAuthor('testAuthor')
+      .setDescription('A dataset publishing test')
+      .setLicense('MIT')
+      .setName('Test Publish Dataset Service Params Free')
+      .setOwner(web3.defaultAccount)
+      .setType('dataset')
+      .addService(service)
+      .build()
 
-  //     const result = await nautilus.publish(asset)
+    const result = await nautilus.publish(asset)
 
-  //     assert(result)
-  //   })
+    assert(result)
+  })
 
-  //   it('publishes an asset with algorithm metadata consumerParamters', async () => {
-  //     const serviceBuilder = new ServiceBuilder(
-  //       ServiceTypes.COMPUTE,
-  //       FileTypes.URL
-  //     )
-  //     const {
-  //       textParameter,
-  //       numberParameter,
-  //       booleanParameter,
-  //       selectParameter
-  //     } = getConsumerParameters()
+  it('publishes an asset with algorithm metadata consumerParamters', async () => {
+    const serviceBuilder = new ServiceBuilder(
+      ServiceTypes.COMPUTE,
+      FileTypes.URL
+    )
+    const {
+      textParameter,
+      numberParameter,
+      booleanParameter,
+      selectParameter
+    } = getConsumerParameters()
 
-  //     const service = serviceBuilder
-  //       .setServiceEndpoint(providerUri)
-  //       .setTimeout(algorithmService.timeout)
-  //       .addFile(algorithmService.files[0])
-  //       .build()
+    const service = serviceBuilder
+      .setServiceEndpoint(providerUri)
+      .setTimeout(algorithmService.timeout)
+      .setPricing(await getPricing(web3, 'fixed'))
+      .addFile(algorithmService.files[0])
+      .build()
 
-  //     const assetBuilder = new AssetBuilder()
-  //     const asset = assetBuilder
-  //       .setAuthor('testAuthor')
-  //       .setDescription('A dataset publishing test')
-  //       .setLicense('MIT')
-  //       .setName('Test Publish Algorithm Params Fixed')
-  //       .setOwner(web3.defaultAccount)
-  //       .setType('algorithm')
-  //       .setPricing(await getPricing(web3, 'fixed'))
-  //       .addService(service)
-  //       .setAlgorithm({
-  //         ...algorithmMetadata.algorithm,
-  //         consumerParameters: [
-  //           textParameter,
-  //           numberParameter,
-  //           booleanParameter,
-  //           selectParameter
-  //         ]
-  //       })
-  //       .build()
+    const assetBuilder = new AssetBuilder()
+    const asset = assetBuilder
+      .setAuthor('testAuthor')
+      .setDescription('A dataset publishing test')
+      .setLicense('MIT')
+      .setName('Test Publish Algorithm Params Fixed')
+      .setOwner(web3.defaultAccount)
+      .setType('algorithm')
+      .addService(service)
+      .setAlgorithm({
+        ...algorithmMetadata.algorithm,
+        consumerParameters: [
+          textParameter,
+          numberParameter,
+          booleanParameter,
+          selectParameter
+        ]
+      })
+      .build()
 
-  //     const result = await nautilus.publish(asset)
+    const result = await nautilus.publish(asset)
 
-  //     assert(result)
-  //   })
+    assert(result)
+  })
 })
 
 function getConsumerParameters() {
