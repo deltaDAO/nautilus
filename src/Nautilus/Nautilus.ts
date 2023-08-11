@@ -112,16 +112,21 @@ export class Nautilus {
     const { web3, chainConfig } = this.getChainConfig()
 
     // --------------------------------------------------
-    // 1. Create NFT
+    // 1. Create NFT if needed
     // --------------------------------------------------
-    const { nftAddress } = await createAsset({
-      web3,
-      chainConfig,
-      nftParams: asset.getNftParams()
-    })
+    let { nftAddress } = asset.ddo
+
+    if (!nftAddress) {
+      const nftCreationResult = await createAsset({
+        web3,
+        chainConfig,
+        nftParams: asset.getNftParams()
+      })
+      nftAddress = nftCreationResult.nftAddress
+    }
 
     // --------------------------------------------------
-    // 2. Create Datatokens and Pricing for all Services
+    // 2. Create Datatokens and Pricing for new Services
     // --------------------------------------------------
     const services = await getAllPromisesOnArray(
       asset.ddo.services,
