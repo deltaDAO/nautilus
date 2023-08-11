@@ -20,7 +20,10 @@ import { MUMBAI_NODE_URI, getWeb3 } from '../fixtures/Web3'
 
 const nodeUri = MUMBAI_NODE_URI
 
-describe('Publish Integration tests', () => {
+describe('Publish Integration tests', function () {
+  // set timeout for this describe block considering tsx will happen
+  this.timeout(50000)
+
   let web3: Web3
   let nautilus: Nautilus
   let providerUri: string
@@ -58,7 +61,7 @@ describe('Publish Integration tests', () => {
     const result = await nautilus.publish(asset)
 
     assert(result)
-  }).timeout(90000)
+  })
 
   it('publishes a fixed price access asset', async () => {
     const serviceBuilder = new ServiceBuilder(
