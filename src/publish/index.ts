@@ -12,6 +12,7 @@ import {
   CreateDatatokenConfig,
   PublishDDOConfig
 } from '../@types/Publish'
+import { TransactionReceipt } from 'web3-core'
 
 export async function createAsset(assetConfig: CreateAssetComfig) {
   LoggerInstance.debug('[publish] Publishing new asset NFT...')
@@ -67,22 +68,27 @@ export async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
     allowedSwapper: '0x0000000000000000000000000000000000000000' // TODO needed?
   }
 
-  let pricingTransactionReceipt
+  let pricingTransactionReceipt: TransactionReceipt
   switch (pricing.type) {
     case 'fixed':
       LoggerInstance.debug(
         '[publish] Creating fixed rate exchange for datatoken...',
-        { datatokenAddress }
+        { datatokenAddress, pricing }
       )
       pricingTransactionReceipt = await datatoken.createFixedRate(
         datatokenAddress,
         publisherAccount,
-        pricing.freCreationParams
+        {
+          ...pricing.freCreationParams,
+          fixedRate: web3.utils.toWei(pricing.freCreationParams.fixedRate),
+          marketFee: web3.utils.toWei(pricing.freCreationParams.marketFee)
+        }
       )
       break
     case 'free':
       LoggerInstance.debug('[publish] Creating dispenser for datatoken...', {
         datatokenAddress,
+        pricing,
         dispenserParams
       })
       pricingTransactionReceipt = await datatoken.createDispenser(
@@ -97,6 +103,7 @@ export async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
     '[publish] Pricing scheme created.',
     pricingTransactionReceipt
   )
+
   return { datatokenAddress, pricingTransactionReceipt }
 }
 
