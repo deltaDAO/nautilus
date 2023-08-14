@@ -100,6 +100,7 @@ describe('Publish Integration tests', function () {
     const service = serviceBuilder
       .setServiceEndpoint(providerUri)
       .setTimeout(datasetService.timeout)
+      .setPricing(await getPricing(web3, 'free'))
       .addFile(datasetService.files[0])
       .build()
 
@@ -111,7 +112,6 @@ describe('Publish Integration tests', function () {
       .setName('Test Publish Dataset Service Credentials Free')
       .setOwner(web3.defaultAccount)
       .setType('dataset')
-      .setPricing(await getPricing(web3, 'free'))
       .addService(service)
       .addCredentialAddresses(CredentialListTypes.ALLOW, [web3.defaultAccount])
       .build()
