@@ -72,7 +72,7 @@ export class AssetBuilder implements IAssetBuilder {
   addAdditionalInformation(addtionalInformation: { [key: string]: any }) {
     this.asset.ddo.metadata.additionalInformation = {
       ...this.asset.ddo.metadata.additionalInformation,
-      addtionalInformation
+      ...addtionalInformation
     }
 
     return this
