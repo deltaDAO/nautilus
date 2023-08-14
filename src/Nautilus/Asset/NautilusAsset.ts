@@ -1,10 +1,5 @@
-import { NftCreateData, ZERO_ADDRESS } from '@oceanprotocol/lib'
-import Web3 from 'web3'
-import {
-  DatatokenCreateParamsWithoutOwner,
-  NftCreateDataWithoutOwner,
-  PricingConfig
-} from '../../@types/Publish'
+import { Credentials, NftCreateData } from '@oceanprotocol/lib'
+import { NftCreateDataWithoutOwner, PricingConfig } from '../../@types/Publish'
 import { NautilusDDO } from './NautilusDDO'
 import { createData } from './constants/nft.constants'
 
@@ -20,6 +15,10 @@ export class NautilusAsset {
   ddo: NautilusDDO = new NautilusDDO()
   nftCreateData: NftCreateDataWithoutOwner
   owner: string
+  credentials: Credentials = {
+    allow: [],
+    deny: []
+  }
 
   constructor() {
     this.initNftData()

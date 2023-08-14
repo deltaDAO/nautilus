@@ -56,10 +56,6 @@ export type ServiceFileType<FileType extends FileTypes> =
     ? Ipfs
     : UrlFile
 
-export type ConsumerParameterSelectOption = {
-  [value: string]: string
-}
-
 /**
  * @internal
  */

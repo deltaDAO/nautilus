@@ -1,6 +1,7 @@
-import { IAssetBuilder } from '../../@types/Nautilus'
+import { CredentialListTypes, IAssetBuilder } from '../../@types/Nautilus'
 import { MetadataConfig, NftCreateDataWithoutOwner } from '../../@types/Publish'
-import { NautilusAsset, PricingConfigWithoutOwner } from './NautilusAsset'
+import { combineArrays } from '../../utils'
+import { NautilusAsset } from './NautilusAsset'
 import {
   FileTypes,
   NautilusService,
@@ -73,6 +74,72 @@ export class AssetBuilder implements IAssetBuilder {
       ...this.asset.ddo.metadata.additionalInformation,
       addtionalInformation
     }
+
+    return this
+  }
+
+  setCopyrightHolder(copyrightHolder: string) {
+    this.asset.ddo.metadata.copyrightHolder = copyrightHolder
+
+    return this
+  }
+
+  addTags(tags: string[]) {
+    this.asset.ddo.metadata.tags = combineArrays(
+      this.asset.ddo.metadata.tags || [],
+      tags
+    )
+
+    return this
+  }
+
+  addLinks(links: string[]) {
+    this.asset.ddo.metadata.links = combineArrays(
+      this.asset.ddo.metadata.links || [],
+      links
+    )
+
+    return this
+  }
+
+  // TODO: add check for correct language tag
+  // https://www.rfc-editor.org/info/bcp47
+  setContentLanguage(language: string) {
+    this.asset.ddo.metadata.contentLanguage = language
+
+    return this
+  }
+
+  addCategories(categories: string[]) {
+    this.asset.ddo.metadata.categories = combineArrays(
+      this.asset.ddo.metadata.categories || [],
+      categories
+    )
+
+    return this
+  }
+
+  addCredentialAddresses(list: CredentialListTypes, addresses: string[]) {
+    // first get the index of the address credential list
+    const addressCredentialIndex = this.asset.credentials[list].findIndex(
+      (credential) => credential.type === 'address'
+    )
+
+    // get addresses already added to the credential values
+    const oldAddresses =
+      this.asset.credentials[list][addressCredentialIndex]?.values || []
+
+    // add new values and remove duplicates
+    const newAddresses = combineArrays(oldAddresses, addresses)
+
+    // update the existing credential or add a new one for type address
+    if (addressCredentialIndex > -1)
+      this.asset.credentials[list][addressCredentialIndex].values = newAddresses
+    else
+      this.asset.credentials[list].push({
+        type: 'address',
+        values: newAddresses
+      })
 
     return this
   }

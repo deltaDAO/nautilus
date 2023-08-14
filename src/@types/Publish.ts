@@ -1,6 +1,5 @@
 import {
   Config,
-  Credentials,
   DatatokenCreateParams,
   DDO,
   Files,
@@ -11,16 +10,8 @@ import {
   Service
 } from '@oceanprotocol/lib'
 import Web3 from 'web3'
+import { PricingConfigWithoutOwner } from '../Nautilus'
 import { NautilusConsumerParameter } from '../Nautilus/Asset/ConsumerParameters'
-import { NautilusDDO } from '../Nautilus/Asset/NautilusDDO'
-import {
-  FileTypes,
-  NautilusService,
-  PricingConfigWithoutOwner,
-  ServiceTypes
-} from '../Nautilus'
-
-export interface CredentialConfig extends Credentials {}
 
 export type ConsumerParameterType = 'text' | 'number' | 'boolean' | 'select'
 

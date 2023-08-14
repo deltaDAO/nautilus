@@ -3,6 +3,7 @@ import Web3 from 'web3'
 import {
   AssetBuilder,
   ConsumerParameterBuilder,
+  CredentialListTypes,
   FileTypes,
   LogLevel,
   Nautilus,
@@ -84,6 +85,35 @@ describe('Publish Integration tests', function () {
       .setOwner(web3.defaultAccount)
       .setType('dataset')
       .addService(service)
+      .build()
+
+    const result = await nautilus.publish(asset)
+
+    assert(result)
+  })
+
+  it('publishes an asset with credentials', async () => {
+    const serviceBuilder = new ServiceBuilder(
+      ServiceTypes.ACCESS,
+      FileTypes.URL
+    )
+    const service = serviceBuilder
+      .setServiceEndpoint(providerUri)
+      .setTimeout(datasetService.timeout)
+      .addFile(datasetService.files[0])
+      .build()
+
+    const assetBuilder = new AssetBuilder()
+    const asset = assetBuilder
+      .setAuthor('testAuthor')
+      .setDescription('A dataset publishing test')
+      .setLicense('MIT')
+      .setName('Test Publish Dataset Service Credentials Free')
+      .setOwner(web3.defaultAccount)
+      .setType('dataset')
+      .setPricing(await getPricing(web3, 'free'))
+      .addService(service)
+      .addCredentialAddresses(CredentialListTypes.ALLOW, [web3.defaultAccount])
       .build()
 
     const result = await nautilus.publish(asset)
