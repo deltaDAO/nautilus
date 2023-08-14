@@ -21,7 +21,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:31](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/Nautilus/Nautilus.ts#L31)
+[src/Nautilus/Nautilus.ts:31](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L31)
 
 ## Properties
 
@@ -31,7 +31,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:29](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/Nautilus/Nautilus.ts#L29)
+[src/Nautilus/Nautilus.ts:29](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L29)
 
 ___
 
@@ -41,7 +41,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:28](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/Nautilus/Nautilus.ts#L28)
+[src/Nautilus/Nautilus.ts:28](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L28)
 
 ## Methods
 
@@ -53,7 +53,7 @@ ___
 
 | Name | Type | Description |
 | :------ | :------ | :------ |
-| `accessConfig` | `Omit`<[`AccessConfig`](../interfaces/types.AccessConfig.md), ``"web3"`` \| ``"chainConfig"``\> | configuration object |
+| `accessConfig` | `Omit`<[`AccessConfig`](../interfaces/types.AccessConfig.md), ``"chainConfig"`` \| ``"web3"``\> | configuration object |
 
 #### Returns
 
@@ -61,7 +61,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:181](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/Nautilus/Nautilus.ts#L181)
+[src/Nautilus/Nautilus.ts:181](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L181)
 
 ___
 
@@ -73,7 +73,7 @@ ___
 
 | Name | Type |
 | :------ | :------ |
-| `computeConfig` | `Omit`<[`ComputeConfig`](../interfaces/types.ComputeConfig.md), ``"web3"`` \| ``"chainConfig"``\> |
+| `computeConfig` | `Omit`<[`ComputeConfig`](../interfaces/types.ComputeConfig.md), ``"chainConfig"`` \| ``"web3"``\> |
 
 #### Returns
 
@@ -81,21 +81,21 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:188](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/Nautilus/Nautilus.ts#L188)
+[src/Nautilus/Nautilus.ts:188](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L188)
 
 ___
 
 ### getChainConfig
 
-▸ `Private` **getChainConfig**(): `Pick`<[`CreateAssetComfig`](../interfaces/types.CreateAssetComfig.md), ``"web3"`` \| ``"chainConfig"``\>
+▸ `Private` **getChainConfig**(): `Pick`<[`CreateAssetComfig`](../interfaces/types.CreateAssetComfig.md), ``"chainConfig"`` \| ``"web3"``\>
 
 #### Returns
 
-`Pick`<[`CreateAssetComfig`](../interfaces/types.CreateAssetComfig.md), ``"web3"`` \| ``"chainConfig"``\>
+`Pick`<[`CreateAssetComfig`](../interfaces/types.CreateAssetComfig.md), ``"chainConfig"`` \| ``"web3"``\>
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:95](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/Nautilus/Nautilus.ts#L95)
+[src/Nautilus/Nautilus.ts:95](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L95)
 
 ___
 
@@ -115,7 +115,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:204](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/Nautilus/Nautilus.ts#L204)
+[src/Nautilus/Nautilus.ts:204](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L204)
 
 ___
 
@@ -135,7 +135,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:195](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/Nautilus/Nautilus.ts#L195)
+[src/Nautilus/Nautilus.ts:195](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L195)
 
 ___
 
@@ -149,7 +149,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:107](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/Nautilus/Nautilus.ts#L107)
+[src/Nautilus/Nautilus.ts:107](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L107)
 
 ___
 
@@ -163,7 +163,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:82](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/Nautilus/Nautilus.ts#L82)
+[src/Nautilus/Nautilus.ts:82](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L82)
 
 ___
 
@@ -183,7 +183,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:55](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/Nautilus/Nautilus.ts#L55)
+[src/Nautilus/Nautilus.ts:55](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L55)
 
 ___
 
@@ -203,7 +203,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:59](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/Nautilus/Nautilus.ts#L59)
+[src/Nautilus/Nautilus.ts:59](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L59)
 
 ___
 
@@ -223,7 +223,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:111](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/Nautilus/Nautilus.ts#L111)
+[src/Nautilus/Nautilus.ts:111](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L111)
 
 ___
 
@@ -246,7 +246,7 @@ Creates a new Nautilus instance
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:38](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/Nautilus/Nautilus.ts#L38)
+[src/Nautilus/Nautilus.ts:38](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L38)
 
 ___
 
@@ -269,4 +269,4 @@ ocean.js LoggerInstance is used for logging
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:50](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/Nautilus/Nautilus.ts#L50)
+[src/Nautilus/Nautilus.ts:50](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L50)

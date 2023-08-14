@@ -41,7 +41,7 @@ ___
 
 #### Defined in
 
-[src/@types/Compute.ts:65](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/@types/Compute.ts#L65)
+[src/@types/Compute.ts:65](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Compute.ts#L65)
 
 ___
 
@@ -181,7 +181,7 @@ ___
 
 #### Defined in
 
-[src/@types/Compute.ts:69](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/@types/Compute.ts#L69)
+[src/@types/Compute.ts:69](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Compute.ts#L69)
 
 ___
 

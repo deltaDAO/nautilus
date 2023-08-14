@@ -6,6 +6,10 @@ sidebar_position: 0
 custom_edit_url: null
 ---
 
+## Enumerations
+
+- [CredentialListTypes](../enums/types.CredentialListTypes.md)
+
 ## Interfaces
 
 - [AccessConfig](../interfaces/types.AccessConfig.md)
@@ -20,7 +24,6 @@ custom_edit_url: null
 - [ConsumerParameter](../interfaces/types.ConsumerParameter.md)
 - [CreateAssetComfig](../interfaces/types.CreateAssetComfig.md)
 - [CreateDatatokenConfig](../interfaces/types.CreateDatatokenConfig.md)
-- [CredentialConfig](../interfaces/types.CredentialConfig.md)
 - [IAssetBuilder](../interfaces/types.IAssetBuilder.md)
 - [IBuilder](../interfaces/types.IBuilder.md)
 - [IServiceBuilder](../interfaces/types.IServiceBuilder.md)
@@ -43,7 +46,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[src/@types/Publish.ts:27](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/@types/Publish.ts#L27)
+[src/@types/Publish.ts:18](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Publish.ts#L18)
 
 ___
 
@@ -53,7 +56,7 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:25](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/@types/Publish.ts#L25)
+[src/@types/Publish.ts:16](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Publish.ts#L16)
 
 ___
 
@@ -63,7 +66,7 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:56](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/@types/Publish.ts#L56)
+[src/@types/Publish.ts:47](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Publish.ts#L47)
 
 ___
 
@@ -73,7 +76,7 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:40](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/@types/Publish.ts#L40)
+[src/@types/Publish.ts:31](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Publish.ts#L31)
 
 ___
 
@@ -83,7 +86,7 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:61](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/@types/Publish.ts#L61)
+[src/@types/Publish.ts:52](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Publish.ts#L52)
 
 ___
 
@@ -93,7 +96,7 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:78](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/@types/Publish.ts#L78)
+[src/@types/Publish.ts:69](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Publish.ts#L69)
 
 ___
 
@@ -103,4 +106,4 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:68](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/@types/Publish.ts#L68)
+[src/@types/Publish.ts:59](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Publish.ts#L59)

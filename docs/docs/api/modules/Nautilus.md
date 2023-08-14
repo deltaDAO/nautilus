@@ -29,20 +29,6 @@ custom_edit_url: null
 
 ## Type Aliases
 
-### ConsumerParameterSelectOption
-
-Ƭ **ConsumerParameterSelectOption**: `Object`
-
-#### Index signature
-
-▪ [value: `string`]: `string`
-
-#### Defined in
-
-[src/Nautilus/Asset/Service/NautilusService.ts:59](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/Nautilus/Asset/Service/NautilusService.ts#L59)
-
-___
-
 ### PricingConfigWithoutOwner
 
 Ƭ **PricingConfigWithoutOwner**: `Object`
@@ -56,7 +42,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/NautilusAsset.ts:11](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/Nautilus/Asset/NautilusAsset.ts#L11)
+[src/Nautilus/Asset/NautilusAsset.ts:6](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Asset/NautilusAsset.ts#L6)
 
 ___
 
@@ -72,4 +58,4 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/NautilusService.ts:48](https://github.com/deltaDAO/nautilus/blob/a004a0b/src/Nautilus/Asset/Service/NautilusService.ts#L48)
+[src/Nautilus/Asset/Service/NautilusService.ts:48](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Asset/Service/NautilusService.ts#L48)
