@@ -31,7 +31,7 @@ export class NautilusDDO {
     return nautilusDDO
   }
 
-  private async buildDDOServices(encrypt = true): Promise<Service[]> {
+  private async buildDDOServices(): Promise<Service[]> {
     if (this.services?.length < 1)
       throw new Error('At least one service needs to be defined.')
 
