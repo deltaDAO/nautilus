@@ -1,6 +1,10 @@
 import { DDO, Service, generateDid } from '@oceanprotocol/lib'
 import { MetadataConfig } from '../../@types'
-import { dateToStringNoMS, getAllPromisesOnArray } from '../../utils'
+import {
+  dateToStringNoMS,
+  getAllPromisesOnArray,
+  combineArraysAndReplaceItems
+} from '../../utils'
 import {
   FileTypes,
   NautilusService,
@@ -35,7 +39,7 @@ export class NautilusDDO {
     if (this.services.length < 1)
       throw new Error('At least one service needs to be defined.')
 
-    // encrypt files of services
+    // Create valid Ocean services for all this.services
     const servicesWithEncryptedFiles = await getAllPromisesOnArray(
       this.services,
       async (service) => {
@@ -43,7 +47,6 @@ export class NautilusDDO {
       }
     )
 
-    // TODO: consider both existing (this.ddo.services) and new services
     return servicesWithEncryptedFiles
   }
 
@@ -53,7 +56,7 @@ export class NautilusDDO {
 
     const newMetadata = {
       ...this.ddo?.metadata,
-      ...this.metadata, // TODO: nested data is potentially lost because of overwrite
+      ...this.metadata,
       created: create ? currentTime : this.ddo?.metadata.created,
       updated: currentTime
     }
@@ -61,39 +64,24 @@ export class NautilusDDO {
     return newMetadata
   }
 
-  private async getDDOServices() {
+  private async getDDOServices(): Promise<Service[]> {
     // take ddo.services
-    const newServices: Service[] = this.ddo?.services || []
+    const existingServices: Service[] = this.ddo?.services || []
 
-    if (this.services.length < 1) return newServices
+    // we simply return ddo.services, if nothing new was added
+    if (this.services.length < 1) return existingServices
 
     // build new services if needed
-    const builtServices = await this.buildDDOServices()
+    const newServices = await this.buildDDOServices()
 
-    // for all existing services, check if a replacement is needed
-    newServices.map((service) => {
-      const newlyBuiltServiceIndex = builtServices.findIndex(
-        (builtService) => builtService.id === service.id
-      )
+    // replace all existing services with new ones, based on the servie.id
+    const replacedServices = combineArraysAndReplaceItems(
+      existingServices,
+      newServices,
+      NautilusDDO.replaceServiceBasedOnId
+    )
 
-      if (newlyBuiltServiceIndex > -1) {
-        // remove this service from built service array
-        // so we only add new services later on
-        const newlyBuiltService = builtServices.splice(
-          newlyBuiltServiceIndex,
-          1
-        )[0]
-
-        // replace existing service with the new one
-        return newlyBuiltService
-      }
-
-      // return old service if nothing found to replace with
-      return service
-    })
-
-    // add all new services from builtServices array
-    return newServices.concat(builtServices)
+    return replacedServices
   }
 
   private async buildDDO(create: boolean): Promise<DDO> {
@@ -182,5 +170,21 @@ export class NautilusDDO {
         return false
 
     return true
+  }
+
+  static replaceServiceBasedOnId(
+    service: Service,
+    potentialReplacements: Service[]
+  ): Service {
+    // Check if the potentialReplacements contains a service with the same id as base service
+    const replacementService = potentialReplacements.find(
+      (potentialReplacement) => potentialReplacement.id === service.id
+    )
+
+    // If we did not find a potential replacement, we return the base service
+    if (!replacementService) return service
+
+    // Otherwise we return the service on the index
+    return replacementService
   }
 }
