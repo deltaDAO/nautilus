@@ -7,9 +7,10 @@ import { algorithmMetadata, datasetMetadata } from '../fixtures/AssetConfig'
 import { metadataFixture } from '../fixtures/DDOData'
 import oceanDDOFixture from '../fixtures/OceanDDO.json'
 import { expectThrowsAsync } from '../utils.test'
+import { randomUUID } from 'crypto'
 
 const oceanDDO: DDO = oceanDDOFixture as DDO
-const oceanServiceMock = { ...oceanDDO.services[0], id: 'a-new-service-id' }
+const oceanServiceMock = { ...oceanDDO.services[0] }
 
 const createDDOData = {
   create: true,
@@ -25,7 +26,14 @@ describe('NautilusDDO', () => {
       NautilusService.prototype,
       'getOceanService'
     )
-    getOceanServiceStub.returns(Promise.resolve(oceanServiceMock))
+    const serviceId = randomUUID()
+    const anotherServiceId = randomUUID()
+
+    getOceanServiceStub
+      .onFirstCall()
+      .returns(Promise.resolve({ ...oceanServiceMock, id: serviceId }))
+      .onSecondCall()
+      .returns(Promise.resolve({ ...oceanServiceMock, id: anotherServiceId }))
   })
 
   afterEach(() => {
@@ -107,7 +115,9 @@ describe('NautilusDDO', () => {
     it('overwrites an existing service based on its id', async () => {
       const nautilusDDO = NautilusDDO.createFromDDO(oceanDDO)
 
-      getOceanServiceStub.returns(Promise.resolve(oceanDDO.services[0]))
+      getOceanServiceStub
+        .onFirstCall()
+        .returns(Promise.resolve(oceanDDO.services[0]))
 
       nautilusDDO.services = [new NautilusService()]
 
