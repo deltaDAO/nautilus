@@ -2,18 +2,13 @@ import {
   Arweave,
   GraphqlQuery,
   Ipfs,
-  LoggerInstance,
-  ProviderInstance,
   Service,
   ServiceComputeOptions,
   Smartcontract,
   UrlFile,
   getHash
 } from '@oceanprotocol/lib'
-import {
-  DatatokenCreateParamsWithoutOwner,
-  ServiceConfig
-} from '../../../@types/Publish'
+import { DatatokenCreateParamsWithoutOwner } from '../../../@types/Publish'
 import {
   getEncryptedFiles,
   getFileInfo,
@@ -22,7 +17,6 @@ import {
 import { NautilusConsumerParameter } from '../ConsumerParameters'
 import { PricingConfigWithoutOwner } from '../NautilusAsset'
 import { params as DatatokenConstantParams } from '../constants/datatoken.constants'
-import Web3 from 'web3'
 
 export {
   Arweave,
@@ -92,6 +86,7 @@ export class NautilusService<
     this.initPricing()
   }
 
+  // TODO: refactor to not assume free pricing, but rather expect user to set this
   private initPricing() {
     this.pricing = {
       type: 'free'
