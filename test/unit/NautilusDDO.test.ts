@@ -11,6 +11,12 @@ import { expectThrowsAsync } from '../utils.test'
 const oceanDDO: DDO = oceanDDOFixture as DDO
 const oceanServiceMock = { ...oceanDDO.services[0], id: 'a-new-service-id' }
 
+const createDDOData = {
+  create: true,
+  chainId: oceanDDO.chainId,
+  nftAddress: oceanDDO.nftAddress
+}
+
 describe('NautilusDDO', () => {
   let getOceanServiceStub: sinon.SinonStub
 
@@ -29,7 +35,7 @@ describe('NautilusDDO', () => {
   describe('when it uses a previous ddo as base', () => {
     it('sets a new created date if prompted', async () => {
       const nautilusDDO = NautilusDDO.createFromDDO(oceanDDO as DDO)
-      const ddo = await nautilusDDO.getDDO(true)
+      const ddo = await nautilusDDO.getDDO({ create: true })
 
       const oldCreated = new Date(oceanDDO.metadata.created).getTime()
       const newCreated = new Date(ddo.metadata.created).getTime()
@@ -131,31 +137,19 @@ describe('NautilusDDO', () => {
     })
 
     it('sets a created date', async () => {
-      const ddo = await minimalNautilusDDO.getDDO(
-        true,
-        oceanDDO.chainId,
-        oceanDDO.nftAddress
-      )
+      const ddo = await minimalNautilusDDO.getDDO(createDDOData)
 
       expect(ddo.metadata).to.have.property('created')
     })
 
     it('creates an id for the ddo', async () => {
-      const ddo = await minimalNautilusDDO.getDDO(
-        true,
-        oceanDDO.chainId,
-        oceanDDO.nftAddress
-      )
+      const ddo = await minimalNautilusDDO.getDDO(createDDOData)
 
       expect(ddo).to.have.property('id')
     })
 
     it('creates a valid ocean DDO', async () => {
-      const ddo = await minimalNautilusDDO.getDDO(
-        true,
-        oceanDDO.chainId,
-        oceanDDO.nftAddress
-      )
+      const ddo = await minimalNautilusDDO.getDDO(createDDOData)
 
       // minimal viable ddo
       expect(ddo).to.have.all.keys(
@@ -172,11 +166,7 @@ describe('NautilusDDO', () => {
     it('creates valid ocean DDO metadata with minimal input for a dataset', async () => {
       minimalNautilusDDO.metadata = datasetMetadata
 
-      const ddo = await minimalNautilusDDO.getDDO(
-        true,
-        oceanDDO.chainId,
-        oceanDDO.nftAddress
-      )
+      const ddo = await minimalNautilusDDO.getDDO(createDDOData)
 
       // minimal viable metadata
       expect(ddo.metadata).to.have.all.keys(
@@ -199,11 +189,7 @@ describe('NautilusDDO', () => {
     it('creates valid ocean DDO metadata with minimal input for an alogrithm', async () => {
       minimalNautilusDDO.metadata = algorithmMetadata
 
-      const ddo = await minimalNautilusDDO.getDDO(
-        true,
-        oceanDDO.chainId,
-        oceanDDO.nftAddress
-      )
+      const ddo = await minimalNautilusDDO.getDDO(createDDOData)
 
       // minimal viable metadata
       expect(ddo.metadata).to.have.all.keys(
@@ -230,11 +216,7 @@ describe('NautilusDDO', () => {
         new NautilusService()
       ]
 
-      const ddo = await minimalNautilusDDO.getDDO(
-        true,
-        oceanDDO.chainId,
-        oceanDDO.nftAddress
-      )
+      const ddo = await minimalNautilusDDO.getDDO(createDDOData)
 
       // verify that service was created correctly
       expect(getOceanServiceStub.callCount).to.eq(2)
@@ -255,21 +237,25 @@ describe('NautilusDDO', () => {
       minimalNautilusDDO.metadata = incompleteMetadata
 
       await expectThrowsAsync(
-        () => minimalNautilusDDO.getDDO(true),
+        () => minimalNautilusDDO.getDDO({ create: true }),
         /required attributes are missing/i
       )
     })
 
     it('throws an error when no chainId is given for creation', async () => {
+      const { chainId, ...createDDODataWithoutChainId } = createDDOData
+
       await expectThrowsAsync(
-        () => minimalNautilusDDO.getDDO(true, undefined, oceanDDO.nftAddress),
+        () => minimalNautilusDDO.getDDO(createDDODataWithoutChainId),
         /required attributes are missing/i
       )
     })
 
     it('throws an error when no nftAddress is given for creation', async () => {
+      const { nftAddress, ...createDDODataWithoutNftAddress } = createDDOData
+
       await expectThrowsAsync(
-        () => minimalNautilusDDO.getDDO(true, oceanDDO.chainId),
+        () => minimalNautilusDDO.getDDO(createDDODataWithoutNftAddress),
         /required attributes are missing/i
       )
     })

@@ -159,7 +159,11 @@ export class Nautilus {
     // --------------------------------------------------
     // 3. Create the DDO and publish it on NFT
     // --------------------------------------------------
-    const ddo = await asset.ddo.getDDO(true, chainConfig.chainId, nftAddress)
+    const ddo = await asset.ddo.getDDO({
+      create: true,
+      chainId: chainConfig.chainId,
+      nftAddress
+    })
 
     const setMetadataTxReceipt = await publishDDO({
       web3,

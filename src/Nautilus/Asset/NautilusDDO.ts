@@ -131,10 +131,16 @@ export class NautilusDDO {
   }
 
   async getDDO(
-    create = false,
-    chainId?: number,
-    nftAddress?: string
+    createDDOData: {
+      create: boolean
+      chainId?: number
+      nftAddress?: string
+    } = {
+      create: false
+    }
   ): Promise<DDO> {
+    const { create, chainId, nftAddress } = createDDOData
+
     if (chainId) this.chainId = chainId
     if (nftAddress) this.nftAddress = nftAddress
 
