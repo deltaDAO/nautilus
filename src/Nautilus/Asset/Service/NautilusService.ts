@@ -123,24 +123,28 @@ export class NautilusService<
       this.serviceEndpoint
     )
 
-    // remove nautilus utility properties from this instance
-    const {
-      datatokenCreateParams,
-      pricing,
-      files,
-      // we also remove compute, only adding it back for ServiceTypes.COMPUTE type services
-      compute,
-      ...oceanServiceProperties
-    } = this
-
+    // required attributes
     const oceanService: Service = {
-      id: getHash(encryptedFiles), // do this first to not overwrite an id on edit
+      id: this.id || getHash(encryptedFiles),
       datatokenAddress,
-      // this will overwrite the id if given and add all valid ocean service properties defined on this instance
-      ...oceanServiceProperties,
+      type: this.type,
+      serviceEndpoint: this.serviceEndpoint,
+      timeout: this.timeout,
       files: encryptedFiles
     }
 
+    // add optional attributes if they are defined
+    if (this.name) oceanService.name = this.name
+    if (this.description) oceanService.description = this.description
+    if (this.additionalInformation)
+      oceanService.additionalInformation = this.additionalInformation
+
+    if (this.consumerParameters)
+      // TODO: remove ignore once we use updated ocean.js with correct types
+      // @ts-ignore
+      oceanService.consumerParameters = this.consumerParameters
+
+    // we only add the compute attribute for `compute` type services
     if (this.type === ServiceTypes.COMPUTE) oceanService.compute = this.compute
 
     return oceanService
