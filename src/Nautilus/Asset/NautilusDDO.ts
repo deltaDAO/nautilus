@@ -32,7 +32,7 @@ export class NautilusDDO {
   }
 
   private async buildDDOServices(): Promise<Service[]> {
-    if (this.services?.length < 1)
+    if (this.services.length < 1)
       throw new Error('At least one service needs to be defined.')
 
     // encrypt files of services
@@ -65,37 +65,35 @@ export class NautilusDDO {
     // take ddo.services
     const newServices: Service[] = this.ddo?.services || []
 
-    if (this.services.length > 0) {
-      // build new services if needed
-      const builtServices = await this.buildDDOServices()
+    if (this.services.length < 1) return newServices
 
-      // for all existing services, check if a replacement is needed
-      newServices.map((service) => {
-        const newlyBuiltServiceIndex = builtServices.findIndex(
-          (builtService) => builtService.id === service.id
-        )
+    // build new services if needed
+    const builtServices = await this.buildDDOServices()
 
-        if (newlyBuiltServiceIndex > -1) {
-          // remove this service from built service array
-          // so we only add new services later on
-          const newlyBuiltService = builtServices.splice(
-            newlyBuiltServiceIndex,
-            1
-          )[0]
+    // for all existing services, check if a replacement is needed
+    newServices.map((service) => {
+      const newlyBuiltServiceIndex = builtServices.findIndex(
+        (builtService) => builtService.id === service.id
+      )
 
-          // replace existing service with the new one
-          return newlyBuiltService
-        }
+      if (newlyBuiltServiceIndex > -1) {
+        // remove this service from built service array
+        // so we only add new services later on
+        const newlyBuiltService = builtServices.splice(
+          newlyBuiltServiceIndex,
+          1
+        )[0]
 
-        // return old service if nothing found to replace with
-        return service
-      })
+        // replace existing service with the new one
+        return newlyBuiltService
+      }
 
-      // add all new services from builtServices array
-      return newServices.concat(builtServices)
-    }
+      // return old service if nothing found to replace with
+      return service
+    })
 
-    return newServices
+    // add all new services from builtServices array
+    return newServices.concat(builtServices)
   }
 
   private async buildDDO(create: boolean): Promise<DDO> {
