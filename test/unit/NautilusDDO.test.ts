@@ -105,8 +105,8 @@ describe('NautilusDDO', () => {
       expect(getOceanServiceStub.callCount).to.eq(1)
       expect(
         getOceanServiceStub.calledWithExactly(
-          oceanDDO.chainId,
-          oceanDDO.nftAddress
+          createDDOData.chainId,
+          createDDOData.nftAddress
         )
       ).to.eq(true)
       expectAllServicesToBeValid(ddo.services)
@@ -128,8 +128,8 @@ describe('NautilusDDO', () => {
       expect(getOceanServiceStub.callCount).to.eq(1)
       expect(
         getOceanServiceStub.calledWithExactly(
-          oceanDDO.chainId,
-          oceanDDO.nftAddress
+          createDDOData.chainId,
+          createDDOData.nftAddress
         )
       ).to.eq(true)
 
@@ -232,8 +232,8 @@ describe('NautilusDDO', () => {
       expect(getOceanServiceStub.callCount).to.eq(2)
       expect(
         getOceanServiceStub.calledWithExactly(
-          oceanDDO.chainId,
-          oceanDDO.nftAddress
+          createDDOData.chainId,
+          createDDOData.nftAddress
         )
       ).to.eq(true)
       expect(ddo.services).to.have.lengthOf(2)
