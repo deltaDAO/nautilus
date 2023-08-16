@@ -167,7 +167,6 @@ export class NautilusDDO {
       !this.metadata.description ||
       !this.metadata.type ||
       !this.metadata.author ||
-      !this.metadata.name ||
       !this.metadata.license
     )
       return false
