@@ -70,7 +70,7 @@ export type PrePublishDDO = Omit<DDO, 'services'> & {
   services: ServiceConfig[]
 }
 
-export interface CreateAssetComfig {
+export interface CreateAssetConfig {
   chainConfig: Config
   web3: Web3
   nftParams: NftCreateData

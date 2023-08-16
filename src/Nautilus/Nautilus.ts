@@ -15,7 +15,7 @@ import { access } from '../access'
 import { compute, getStatus, retrieveResult } from '../compute'
 import { createAsset, createDatatokenAndPricing, publishDDO } from '../publish'
 import { NautilusAsset } from './Asset/NautilusAsset'
-import { CreateAssetComfig } from '../@types'
+import { CreateAssetConfig } from '../@types'
 import { getAllPromisesOnArray } from '../utils'
 
 export { LogLevel } from '@oceanprotocol/lib'
@@ -92,7 +92,7 @@ export class Nautilus {
     )
   }
 
-  private getChainConfig(): Pick<CreateAssetComfig, 'web3' | 'chainConfig'> {
+  private getChainConfig(): Pick<CreateAssetConfig, 'web3' | 'chainConfig'> {
     if (!this.web3 || !this.config)
       throw Error('Web3 and chainConfig are required.')
 

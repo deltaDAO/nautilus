@@ -8,13 +8,13 @@ import {
   ProviderInstance
 } from '@oceanprotocol/lib'
 import {
-  CreateAssetComfig,
+  CreateAssetConfig,
   CreateDatatokenConfig,
   PublishDDOConfig
 } from '../@types/Publish'
 import { TransactionReceipt } from 'web3-core'
 
-export async function createAsset(assetConfig: CreateAssetComfig) {
+export async function createAsset(assetConfig: CreateAssetConfig) {
   LoggerInstance.debug('[publish] Publishing new asset NFT...')
   // --------------------------------------------------
   // 1. Create NFT with NftFactory
