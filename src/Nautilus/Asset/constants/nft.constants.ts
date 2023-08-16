@@ -6,7 +6,7 @@ const templateIndex = 1
 const tokenURI = ''
 const transferable = false
 
-export const createData: NftCreateDataWithoutOwner = {
+export const nftInitialCreateData: NftCreateDataWithoutOwner = {
   name,
   symbol,
   templateIndex,

@@ -1,7 +1,7 @@
 import { Credentials, NftCreateData } from '@oceanprotocol/lib'
 import { NftCreateDataWithoutOwner, PricingConfig } from '../../@types/Publish'
 import { NautilusDDO } from './NautilusDDO'
-import { createData } from './constants/nft.constants'
+import { nftInitialCreateData } from './constants/nft.constants'
 
 export type PricingConfigWithoutOwner = {
   type: PricingConfig['type']
@@ -25,7 +25,7 @@ export class NautilusAsset {
   }
 
   private initNftData() {
-    this.nftCreateData = createData
+    this.nftCreateData = nftInitialCreateData
   }
 
   getNftParams(): NftCreateData {
