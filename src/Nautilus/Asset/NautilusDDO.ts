@@ -172,6 +172,12 @@ export class NautilusDDO {
     return true
   }
 
+  /**
+   * Replace a service with a service from potential replacements, based on the service.id
+   * @param service the service to potentially replace
+   * @param potentialReplacements the potential replacements for the base service
+   * @returns the service, if no replacement was found, or the service from potentialReplacements that matches the service.id
+   */
   static replaceServiceBasedOnId(
     service: Service,
     potentialReplacements: Service[]
@@ -184,7 +190,7 @@ export class NautilusDDO {
     // If we did not find a potential replacement, we return the base service
     if (!replacementService) return service
 
-    // Otherwise we return the service on the index
+    // Otherwise we return the replacement
     return replacementService
   }
 }
