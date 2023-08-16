@@ -39,7 +39,7 @@ export interface IAssetBuilder extends IBuilder<NautilusAsset> {
   setNftData: (nftCreateData: NftCreateDataWithoutOwner) => IAssetBuilder
   setAlgorithm: (algorithm: Metadata['algorithm']) => IAssetBuilder
   setOwner: (owner: string) => IAssetBuilder
-  addAdditionalInformation: (addtionalInformation: {
+  addAdditionalInformation: (additionalInformation: {
     [key: string]: any
   }) => IAssetBuilder
   setCopyrightHolder: (copyrightHolder: string) => IAssetBuilder
