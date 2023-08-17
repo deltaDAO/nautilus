@@ -87,8 +87,11 @@ export async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
       break
     case 'free':
       LoggerInstance.debug('[publish] Creating dispenser for datatoken...', {
-        datatokenAddress,
         pricing,
+        datatoken,
+        datatokenAddress,
+        publisherAccount,
+        dispenserAddress: chainConfig.dispenserAddress,
         dispenserParams
       })
       pricingTransactionReceipt = await datatoken.createDispenser(
