@@ -30,7 +30,9 @@ export const getTestConfig = async (web3: Web3): Promise<Config> => {
       }
     : {
         ...config,
-        providerUri: process.env.PROVIDER_URI_TEST || config.providerUri
+        providerUri: process.env.PROVIDER_URI_TEST || config.providerUri,
+        metadataCacheUri:
+          process.env.METADATA_CACHE_URI_TEST || config.metadataCacheUri
       }
 }
 

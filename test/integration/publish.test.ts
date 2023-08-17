@@ -32,7 +32,9 @@ describe('Publish Integration tests', function () {
   before(async () => {
     Nautilus.setLogLevel(LogLevel.Verbose)
     web3 = getWeb3(1, nodeUri)
-    nautilus = await Nautilus.create(web3)
+    nautilus = await Nautilus.create(web3, {
+      metadataCacheUri: process.env.METADATA_CACHE_URI_TEST
+    })
     providerUri = (await getTestConfig(web3)).providerUri
   })
 
