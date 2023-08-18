@@ -16,9 +16,19 @@ import {
   UserCustomParameters
 } from '@oceanprotocol/lib'
 import Web3 from 'web3'
-import { getOceanConfig, getServiceById, getServiceByName } from '.'
+import { getOceanConfig } from '.'
 import { AssetWithAccessDetails } from '../@types/Compute'
-import { ConsumerParameter } from '../@types'
+
+export async function isValidProvider(providerUrl: string): Promise<boolean> {
+  try {
+    // https://github.com/oceanprotocol/provider/blob/v4main/API.md#encrypt-endpoint
+    const response = await ProviderInstance.isValidProvider(providerUrl)
+    return response
+  } catch (error) {
+    LoggerInstance.error('Error verifying provider instance: ' + error.message)
+    return false
+  }
+}
 
 export async function getEncryptedFiles(
   files: any,
@@ -27,6 +37,8 @@ export async function getEncryptedFiles(
 ): Promise<string> {
   try {
     // https://github.com/oceanprotocol/provider/blob/v4main/API.md#encrypt-endpoint
+    LoggerInstance.debug('Encrytping files:')
+    LoggerInstance.debug({ files, chainId, providerUrl })
     const response = await ProviderInstance.encrypt(files, chainId, providerUrl)
     return response
   } catch (error) {

@@ -13,10 +13,8 @@ import {
 } from '../fixtures/AssetConfig'
 import { getTestConfig } from '../fixtures/Config'
 import { nftParams } from '../fixtures/NftCreateData'
-import { getWeb3 } from '../fixtures/Web3'
+import { MUMBAI_NODE_URI, getWeb3 } from '../fixtures/Web3'
 import { Aquarius } from '@oceanprotocol/lib'
-
-const nodeUri = 'https://matic-mumbai.chainstacklabs.com'
 
 describe('Nautilus access flow integration test', () => {
   let downloadAssetDid: string
@@ -28,7 +26,7 @@ describe('Nautilus access flow integration test', () => {
   // 1. Publish Download Asset -> store did
   it('publishes a download asset', async () => {
     // Setup Nautilus instance for publisher (PRIVATE_KEY_TESTS_1)
-    const web3 = getWeb3(1, nodeUri)
+    const web3 = getWeb3(1, MUMBAI_NODE_URI)
     const nautilus = await Nautilus.create(web3, await getTestConfig(web3))
 
     const { providerUri } = nautilus.getOceanConfig()
@@ -41,6 +39,7 @@ describe('Nautilus access flow integration test', () => {
       .setServiceEndpoint(providerUri)
       .setTimeout(algorithmService.timeout)
       .addFile(algorithmService.files[0])
+      .setPricing(await getPricing(web3, 'free'))
       .build()
 
     const assetBuilder = new AssetBuilder()
@@ -51,7 +50,6 @@ describe('Nautilus access flow integration test', () => {
       .setName('Test Publish Algorithm')
       .setOwner(web3.defaultAccount)
       .setType('algorithm')
-      .setPricing(await getPricing(web3, 'free'))
       .setNftData(nftParams)
       .addService(service)
       .setAlgorithm(algorithmMetadata.algorithm)
@@ -61,7 +59,7 @@ describe('Nautilus access flow integration test', () => {
 
     assert(result)
 
-    downloadAssetDid = result.DID
+    downloadAssetDid = result.ddo.id
   })
 
   // 2. Access the Download Asset (1.)

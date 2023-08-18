@@ -48,9 +48,13 @@ export default class DocsPlugin extends Plugin {
       `cd docs && npm run docusaurus generate-typedoc && npm run docusaurus docs:version ${version}`
     )
 
-    await this.exec(
-      `git add . && git commit -m "docs: create typedoc api documentation for version ${version}"`
-    )
+    try {
+      await this.exec(
+        `git add . && git commit -m "docs: create typedoc api documentation for version ${version}"`
+      )
+    } catch (error) {
+      this.log.info('No documentation changes found to be committed.')
+    }
   }
 
   deletePreviewDocsIfExist(version) {

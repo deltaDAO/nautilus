@@ -1,11 +1,7 @@
 import { CredentialListTypes, IAssetBuilder } from '../../@types/Nautilus'
-import {
-  DatatokenCreateParamsWithoutOwner,
-  MetadataConfig,
-  NftCreateDataWithoutOwner
-} from '../../@types/Publish'
+import { MetadataConfig, NftCreateDataWithoutOwner } from '../../@types/Publish'
 import { combineArrays } from '../../utils'
-import { NautilusAsset, PricingConfigWithoutOwner } from './NautilusAsset'
+import { NautilusAsset } from './NautilusAsset'
 import {
   FileTypes,
   NautilusService,
@@ -20,71 +16,49 @@ export class AssetBuilder implements IAssetBuilder {
   }
 
   setType(type: MetadataConfig['type']) {
-    this.asset.metadata.type = type
+    this.asset.ddo.metadata.type = type
 
     return this
   }
 
   setName(name: string) {
-    this.asset.metadata.name = name
+    this.asset.ddo.metadata.name = name
 
     return this
   }
 
   setDescription(description: string) {
-    this.asset.metadata.description = description
+    this.asset.ddo.metadata.description = description
 
     return this
   }
 
   setLicense(license: string) {
-    this.asset.metadata.license = license
+    this.asset.ddo.metadata.license = license
 
     return this
   }
 
   setAuthor(author: string) {
-    this.asset.metadata.author = author
+    this.asset.ddo.metadata.author = author
 
     return this
   }
 
   setAlgorithm(algorithm: MetadataConfig['algorithm']) {
-    this.asset.metadata.algorithm = algorithm
-
-    return this
-  }
-
-  setPricing(pricing: PricingConfigWithoutOwner) {
-    this.asset.pricing = pricing
+    this.asset.ddo.metadata.algorithm = algorithm
 
     return this
   }
 
   addService(service: NautilusService<ServiceTypes, FileTypes>) {
-    this.asset.services.push(service)
+    this.asset.ddo.services.push(service)
 
     return this
   }
 
   setNftData(tokenData: NftCreateDataWithoutOwner) {
     this.asset.nftCreateData = tokenData
-
-    return this
-  }
-
-  setDatatokenData(tokenData: DatatokenCreateParamsWithoutOwner) {
-    this.asset.datatokenCreateParams = tokenData
-
-    return this
-  }
-
-  setDatatokenNameAndSymbol(dtName: string, dtSymbol: string) {
-    this.asset.datatokenCreateParams = {
-      ...this.asset.datatokenCreateParams,
-      name: dtName,
-      symbol: dtSymbol
-    }
 
     return this
   }
@@ -96,8 +70,8 @@ export class AssetBuilder implements IAssetBuilder {
   }
 
   addAdditionalInformation(additionalInformation: { [key: string]: any }) {
-    this.asset.metadata.additionalInformation = {
-      ...this.asset.metadata.additionalInformation,
+    this.asset.ddo.metadata.additionalInformation = {
+      ...this.asset.ddo.metadata.additionalInformation,
       ...additionalInformation
     }
 
@@ -105,14 +79,14 @@ export class AssetBuilder implements IAssetBuilder {
   }
 
   setCopyrightHolder(copyrightHolder: string) {
-    this.asset.metadata.copyrightHolder = copyrightHolder
+    this.asset.ddo.metadata.copyrightHolder = copyrightHolder
 
     return this
   }
 
   addTags(tags: string[]) {
-    this.asset.metadata.tags = combineArrays(
-      this.asset.metadata.tags || [],
+    this.asset.ddo.metadata.tags = combineArrays(
+      this.asset.ddo.metadata.tags || [],
       tags
     )
 
@@ -120,8 +94,8 @@ export class AssetBuilder implements IAssetBuilder {
   }
 
   addLinks(links: string[]) {
-    this.asset.metadata.links = combineArrays(
-      this.asset.metadata.links || [],
+    this.asset.ddo.metadata.links = combineArrays(
+      this.asset.ddo.metadata.links || [],
       links
     )
 
@@ -131,14 +105,14 @@ export class AssetBuilder implements IAssetBuilder {
   // TODO: add check for correct language tag
   // https://www.rfc-editor.org/info/bcp47
   setContentLanguage(language: string) {
-    this.asset.metadata.contentLanguage = language
+    this.asset.ddo.metadata.contentLanguage = language
 
     return this
   }
 
   addCategories(categories: string[]) {
-    this.asset.metadata.categories = combineArrays(
-      this.asset.metadata.categories || [],
+    this.asset.ddo.metadata.categories = combineArrays(
+      this.asset.ddo.metadata.categories || [],
       categories
     )
 

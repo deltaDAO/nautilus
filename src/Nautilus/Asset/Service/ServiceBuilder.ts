@@ -7,6 +7,8 @@ import {
   ServiceFileType,
   ServiceTypes
 } from './NautilusService'
+import { DatatokenCreateParamsWithoutOwner } from '../../../@types/Publish'
+import { PricingConfigWithoutOwner } from '../NautilusAsset'
 
 export class ServiceBuilder<
   ServiceType extends ServiceTypes,
@@ -93,6 +95,28 @@ export class ServiceBuilder<
     if (this.service.type !== 'compute') return
 
     this.service.compute.publisherTrustedAlgorithmPublishers.push(publisher)
+
+    return this
+  }
+
+  setDatatokenData(tokenData: DatatokenCreateParamsWithoutOwner) {
+    this.service.datatokenCreateParams = tokenData
+
+    return this
+  }
+
+  setDatatokenNameAndSymbol(dtName: string, dtSymbol: string) {
+    this.service.datatokenCreateParams = {
+      ...this.service.datatokenCreateParams,
+      name: dtName,
+      symbol: dtSymbol
+    }
+
+    return this
+  }
+
+  setPricing(pricing: PricingConfigWithoutOwner) {
+    this.service.pricing = pricing
 
     return this
   }

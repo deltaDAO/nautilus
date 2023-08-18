@@ -2,14 +2,21 @@ import {
   Arweave,
   GraphqlQuery,
   Ipfs,
-  ProviderInstance,
+  Service,
   ServiceComputeOptions,
   Smartcontract,
-  UrlFile
+  UrlFile,
+  getHash
 } from '@oceanprotocol/lib'
-import { ServiceConfig } from '../../../@types/Publish'
-import { getFileInfo } from '../../../utils/provider'
+import { DatatokenCreateParamsWithoutOwner } from '../../../@types/Publish'
+import {
+  getEncryptedFiles,
+  getFileInfo,
+  isValidProvider
+} from '../../../utils/provider'
 import { NautilusConsumerParameter } from '../ConsumerParameters'
+import { PricingConfigWithoutOwner } from '../NautilusAsset'
+import { params as DatatokenConstantParams } from '../constants/datatoken.constants'
 
 export {
   Arweave,
@@ -55,33 +62,104 @@ export class NautilusService<
   timeout: number
   files: ServiceFileType<FileType>[] = []
 
+  pricing: PricingConfigWithoutOwner
+  datatokenCreateParams: DatatokenCreateParamsWithoutOwner
+
   name?: string
   description?: string
 
-  compute?: ServiceComputeOptions
+  compute: ServiceComputeOptions = {
+    allowNetworkAccess: false,
+    allowRawAlgorithm: false,
+    publisherTrustedAlgorithmPublishers: [],
+    publisherTrustedAlgorithms: []
+  }
 
-  consumerParameters?: NautilusConsumerParameter[] = []
-  additionalInformation?: { [key: string]: any } = {}
+  consumerParameters?: NautilusConsumerParameter[]
+  additionalInformation?: { [key: string]: any }
 
-  // TODO: config transformation
-  async getConfig(): Promise<ServiceConfig> {
-    // validate provider
-    if (!(await ProviderInstance.isValidProvider(this.serviceEndpoint)))
-      throw new Error('Provided serviceEndpoint is not a valid Ocean Provider')
+  id?: string
+  datatokenAddress?: string
 
-    // validate files
+  constructor() {
+    this.initDatatokenData()
+    this.initPricing()
+  }
+
+  // TODO: refactor to not assume free pricing, but rather expect user to set this
+  private initPricing() {
+    this.pricing = {
+      type: 'free'
+    }
+  }
+
+  private initDatatokenData() {
+    this.datatokenCreateParams = DatatokenConstantParams
+  }
+
+  async getOceanService(
+    chainId: number,
+    nftAddress: string,
+    dtAddress?: string
+  ): Promise<Service> {
+    if (!(await this.hasValidServiceEndpoint()))
+      throw new Error('serviceEndpoint is not a valid Ocean Provider')
+
+    if (!(await this.hasValidFiles()))
+      throw new Error('Some of the provided files could not be validated')
+
+    const datatokenAddress = dtAddress || this.datatokenAddress
+    if (!datatokenAddress) throw new Error('datatokenAddress is required')
+
+    const assetURL = {
+      datatokenAddress,
+      nftAddress,
+      files: this.files
+    }
+
+    const encryptedFiles = await getEncryptedFiles(
+      assetURL,
+      chainId,
+      this.serviceEndpoint
+    )
+
+    // required attributes
+    const oceanService: Service = {
+      id: this.id || getHash(encryptedFiles),
+      datatokenAddress,
+      type: this.type,
+      serviceEndpoint: this.serviceEndpoint,
+      timeout: this.timeout,
+      files: encryptedFiles
+    }
+
+    // add optional attributes if they are defined
+    if (this.name) oceanService.name = this.name
+    if (this.description) oceanService.description = this.description
+    if (this.additionalInformation)
+      oceanService.additionalInformation = this.additionalInformation
+
+    if (this.consumerParameters)
+      // TODO: remove ignore once we use updated ocean.js with correct types
+      // @ts-ignore
+      oceanService.consumerParameters = this.consumerParameters
+
+    // we only add the compute attribute for `compute` type services
+    if (this.type === ServiceTypes.COMPUTE) oceanService.compute = this.compute
+
+    return oceanService
+  }
+
+  async hasValidServiceEndpoint(): Promise<boolean> {
+    return await isValidProvider(this.serviceEndpoint)
+  }
+
+  async hasValidFiles(): Promise<boolean> {
     for (const file of this.files) {
       const fileInfo = await getFileInfo(file, this.serviceEndpoint)
-      if (fileInfo.some((info) => !info.valid))
-        throw new Error('Provided files could not be validated')
+      if (fileInfo.some((info) => !info.valid)) return false
     }
 
-    return {
-      ...this,
-      files: this.files as ServiceConfig['files'],
-      consumerParameters: this.consumerParameters?.map((param) =>
-        param.getConfig()
-      )
-    }
+    return true
   }
 }

@@ -33,18 +33,13 @@ export interface IAssetBuilder extends IBuilder<NautilusAsset> {
   setDescription: (description: Metadata['description']) => IAssetBuilder
   setLicense: (license: Metadata['license']) => IAssetBuilder
   setAuthor: (author: Metadata['author']) => IAssetBuilder
-  setPricing: (pricing: PricingConfig) => IAssetBuilder
   addService: (
     service: NautilusService<ServiceTypes, FileTypes>
   ) => IAssetBuilder
   setNftData: (nftCreateData: NftCreateDataWithoutOwner) => IAssetBuilder
-  setDatatokenData: (
-    datatokenCreateData: DatatokenCreateParamsWithoutOwner
-  ) => IAssetBuilder
   setAlgorithm: (algorithm: Metadata['algorithm']) => IAssetBuilder
   setOwner: (owner: string) => IAssetBuilder
-  setDatatokenNameAndSymbol: (dtName: string, dtSymbol: string) => IAssetBuilder
-  addAdditionalInformation: (addtionalInformation: {
+  addAdditionalInformation: (additionalInformation: {
     [key: string]: any
   }) => IAssetBuilder
   setCopyrightHolder: (copyrightHolder: string) => IAssetBuilder
@@ -74,4 +69,12 @@ export interface IServiceBuilder<S extends ServiceTypes, F extends FileTypes>
   ) => IServiceBuilder<S, F>
   allowRawAlgorithms: (allow?: boolean) => IServiceBuilder<S, F>
   allowAlgorithmNetworkAccess: (allow?: boolean) => IServiceBuilder<S, F>
+  setPricing: (pricing: PricingConfig) => IServiceBuilder<S, F>
+  setDatatokenData: (
+    datatokenCreateData: DatatokenCreateParamsWithoutOwner
+  ) => IServiceBuilder<S, F>
+  setDatatokenNameAndSymbol: (
+    dtName: string,
+    dtSymbol: string
+  ) => IServiceBuilder<S, F>
 }

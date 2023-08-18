@@ -21,7 +21,10 @@ import { MUMBAI_NODE_URI, getWeb3 } from '../fixtures/Web3'
 
 const nodeUri = MUMBAI_NODE_URI
 
-describe('Publish Integration tests', () => {
+describe('Publish Integration tests', function () {
+  // set timeout for this describe block considering tsx will happen
+  this.timeout(50000)
+
   let web3: Web3
   let nautilus: Nautilus
   let providerUri: string
@@ -29,7 +32,9 @@ describe('Publish Integration tests', () => {
   before(async () => {
     Nautilus.setLogLevel(LogLevel.Verbose)
     web3 = getWeb3(1, nodeUri)
-    nautilus = await Nautilus.create(web3)
+    nautilus = await Nautilus.create(web3, {
+      metadataCacheUri: process.env.METADATA_CACHE_URI_TEST
+    })
     providerUri = (await getTestConfig(web3)).providerUri
   })
 
@@ -42,6 +47,7 @@ describe('Publish Integration tests', () => {
       .setServiceEndpoint(providerUri)
       .setTimeout(datasetService.timeout)
       .addFile(datasetService.files[0])
+      .setPricing(await getPricing(web3, 'free'))
       .build()
 
     const assetBuilder = new AssetBuilder()
@@ -52,7 +58,6 @@ describe('Publish Integration tests', () => {
       .setName('Test Publish Dataset Free')
       .setOwner(web3.defaultAccount)
       .setType('dataset')
-      .setPricing(await getPricing(web3, 'free'))
       .addService(service)
       .build()
 
@@ -70,6 +75,7 @@ describe('Publish Integration tests', () => {
       .setServiceEndpoint(providerUri)
       .setTimeout(datasetService.timeout)
       .addFile(datasetService.files[0])
+      .setPricing(await getPricing(web3, 'fixed'))
       .build()
 
     const assetBuilder = new AssetBuilder()
@@ -80,7 +86,6 @@ describe('Publish Integration tests', () => {
       .setName('Test Publish Dataset Fixed')
       .setOwner(web3.defaultAccount)
       .setType('dataset')
-      .setPricing(await getPricing(web3, 'fixed'))
       .addService(service)
       .build()
 
@@ -97,6 +102,7 @@ describe('Publish Integration tests', () => {
     const service = serviceBuilder
       .setServiceEndpoint(providerUri)
       .setTimeout(datasetService.timeout)
+      .setPricing(await getPricing(web3, 'free'))
       .addFile(datasetService.files[0])
       .build()
 
@@ -108,7 +114,6 @@ describe('Publish Integration tests', () => {
       .setName('Test Publish Dataset Service Credentials Free')
       .setOwner(web3.defaultAccount)
       .setType('dataset')
-      .setPricing(await getPricing(web3, 'free'))
       .addService(service)
       .addCredentialAddresses(CredentialListTypes.ALLOW, [web3.defaultAccount])
       .build()
@@ -138,6 +143,7 @@ describe('Publish Integration tests', () => {
       .addConsumerParameter(numberParameter)
       .addConsumerParameter(booleanParameter)
       .addConsumerParameter(selectParameter)
+      .setPricing(await getPricing(web3, 'free'))
       .build()
 
     const assetBuilder = new AssetBuilder()
@@ -148,7 +154,6 @@ describe('Publish Integration tests', () => {
       .setName('Test Publish Dataset Service Params Free')
       .setOwner(web3.defaultAccount)
       .setType('dataset')
-      .setPricing(await getPricing(web3, 'free'))
       .addService(service)
       .build()
 
@@ -172,6 +177,7 @@ describe('Publish Integration tests', () => {
     const service = serviceBuilder
       .setServiceEndpoint(providerUri)
       .setTimeout(algorithmService.timeout)
+      .setPricing(await getPricing(web3, 'fixed'))
       .addFile(algorithmService.files[0])
       .build()
 
@@ -183,7 +189,6 @@ describe('Publish Integration tests', () => {
       .setName('Test Publish Algorithm Params Fixed')
       .setOwner(web3.defaultAccount)
       .setType('algorithm')
-      .setPricing(await getPricing(web3, 'fixed'))
       .addService(service)
       .setAlgorithm({
         ...algorithmMetadata.algorithm,
