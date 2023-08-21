@@ -75,7 +75,7 @@ export class NautilusService<
     publisherTrustedAlgorithms: []
   }
 
-  consumerParameters?: NautilusConsumerParameter[]
+  consumerParameters?: NautilusConsumerParameter[] = []
   additionalInformation?: { [key: string]: any }
 
   id?: string
@@ -139,10 +139,12 @@ export class NautilusService<
     if (this.additionalInformation)
       oceanService.additionalInformation = this.additionalInformation
 
-    if (this.consumerParameters)
+    if (this.consumerParameters.length > 0)
       // TODO: remove ignore once we use updated ocean.js with correct types
       // @ts-ignore
-      oceanService.consumerParameters = this.consumerParameters
+      oceanService.consumerParameters = this.consumerParameters.map(
+        (parameter) => parameter.getConfig()
+      )
 
     // we only add the compute attribute for `compute` type services
     if (this.type === ServiceTypes.COMPUTE) oceanService.compute = this.compute
