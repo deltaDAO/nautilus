@@ -16,17 +16,15 @@ import {
 } from '../fixtures/AssetConfig'
 import { getTestConfig } from '../fixtures/Config'
 import { nftParams } from '../fixtures/NftCreateData'
-import { getWallet } from '../fixtures/Web3'
-
-const nodeUri = 'https://matic-mumbai.chainstacklabs.com'
+import { getWallet, MUMBAI_NODE_URI } from '../fixtures/Web3'
 
 describe('Nautilus compute flow integration test', async () => {
   // PRIVATE_KEY_TESTS_1 (algorithm publisher)
-  const algoPublisherWallet = getWallet(1, nodeUri)
+  const algoPublisherWallet = getWallet(1, MUMBAI_NODE_URI)
   const algoPublisherAddress = await algoPublisherWallet.getAddress()
 
   // PRIVATE_KEY_TESTS_2 (dataset publisher)
-  const datasetPublisherWallet = getWallet(1, nodeUri)
+  const datasetPublisherWallet = getWallet(1, MUMBAI_NODE_URI)
   const datasetPublisherAddress = await datasetPublisherWallet.getAddress()
 
   let nautilusDatasetPublisher: Nautilus

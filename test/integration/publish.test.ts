@@ -1,4 +1,5 @@
 import assert from 'assert'
+import { Wallet } from 'ethers'
 import {
   AssetBuilder,
   ConsumerParameterBuilder,
@@ -16,10 +17,7 @@ import {
   datasetService,
   getPricing
 } from '../fixtures/AssetConfig'
-import { getTestConfig } from '../fixtures/Config'
 import { MUMBAI_NODE_URI, getWallet } from '../fixtures/Web3'
-import { Wallet } from 'ethers'
-import { ConsumerParameter } from '@oceanprotocol/lib'
 
 const nodeUri = MUMBAI_NODE_URI
 
@@ -30,17 +28,21 @@ describe('Publish Integration tests', function () {
   let wallet: Wallet
   let nautilus: Nautilus
   let providerUri: string
-  let walletAddress: string
 
   before(async () => {
     Nautilus.setLogLevel(LogLevel.Verbose)
     wallet = getWallet(1, nodeUri)
+
+    console.log('Testing with wallet:', wallet.address)
+
     nautilus = await Nautilus.create(wallet, {
       metadataCacheUri: process.env.METADATA_CACHE_URI_TEST
     })
+
     providerUri =
       process.env.PROVIDER_URI_TEST || nautilus.getOceanConfig().providerUri
-    walletAddress = await wallet.getAddress()
+
+    console.log('Testing with wallet:', wallet.address)
   })
 
   it('publishes a free access asset', async () => {
@@ -61,7 +63,7 @@ describe('Publish Integration tests', function () {
       .setDescription('A dataset publishing test')
       .setLicense('MIT')
       .setName('Test Publish Dataset Free')
-      .setOwner(walletAddress)
+      .setOwner(wallet.address)
       .setType('dataset')
       .addService(service)
       .build()
@@ -89,7 +91,7 @@ describe('Publish Integration tests', function () {
       .setDescription('A dataset publishing test')
       .setLicense('MIT')
       .setName('Test Publish Dataset Fixed')
-      .setOwner(walletAddress)
+      .setOwner(wallet.address)
       .setType('dataset')
       .addService(service)
       .build()
@@ -117,10 +119,10 @@ describe('Publish Integration tests', function () {
       .setDescription('A dataset publishing test')
       .setLicense('MIT')
       .setName('Test Publish Dataset Service Credentials Free')
-      .setOwner(walletAddress)
+      .setOwner(wallet.address)
       .setType('dataset')
       .addService(service)
-      .addCredentialAddresses(CredentialListTypes.ALLOW, [walletAddress])
+      .addCredentialAddresses(CredentialListTypes.ALLOW, [wallet.address])
       .build()
 
     const result = await nautilus.publish(asset)
@@ -157,7 +159,7 @@ describe('Publish Integration tests', function () {
       .setDescription('A dataset publishing test')
       .setLicense('MIT')
       .setName('Test Publish Dataset Service Params Free')
-      .setOwner(walletAddress)
+      .setOwner(wallet.address)
       .setType('dataset')
       .addService(service)
       .build()
@@ -192,7 +194,7 @@ describe('Publish Integration tests', function () {
       .setDescription('A dataset publishing test')
       .setLicense('MIT')
       .setName('Test Publish Algorithm Params Fixed')
-      .setOwner(walletAddress)
+      .setOwner(wallet.address)
       .setType('algorithm')
       .addService(service)
       .setAlgorithm({
