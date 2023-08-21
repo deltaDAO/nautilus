@@ -67,8 +67,8 @@ export async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
   const datatoken = new Datatoken(signer, chainConfig.network, chainConfig)
 
   const dispenserParams: DispenserParams = {
-    maxTokens: ethersUtils.formatEther('1'),
-    maxBalance: ethersUtils.formatEther('1'),
+    maxTokens: ethersUtils.parseEther('1').toString(),
+    maxBalance: ethersUtils.parseEther('1').toString(),
     withMint: true,
     allowedSwapper: '0x0000000000000000000000000000000000000000' // TODO needed?
   }
@@ -85,12 +85,12 @@ export async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
         publisherAccount,
         {
           ...pricing.freCreationParams,
-          fixedRate: ethersUtils.formatEther(
-            pricing.freCreationParams.fixedRate
-          ),
-          marketFee: ethersUtils.formatEther(
-            pricing.freCreationParams.marketFee
-          )
+          fixedRate: ethersUtils
+            .parseEther(pricing.freCreationParams.fixedRate)
+            .toString(),
+          marketFee: ethersUtils
+            .parseEther(pricing.freCreationParams.marketFee)
+            .toString()
         }
       )
       break
@@ -153,7 +153,7 @@ export async function publishDDO(config: PublishDDOConfig) {
 
   // TODO: let user set state
   const LIFECYCLE_STATE_ACTIVE = 0
-  const FLAGS = '0x2' // market sets '0x02' insteadconst validateResult = await aquariusInstance.validate(ddo) of '0x2', theoretically used by aquarius or provider, not implemented yet, will remain hardcoded
+  const FLAGS = '0x02' // market sets '0x02' insteadconst validateResult = await aquariusInstance.validate(ddo) of '0x2', theoretically used by aquarius or provider, not implemented yet, will remain hardcoded
 
   LoggerInstance.debug('[publish] Set Metadata...')
   const transactionReceipt = await nft.setMetadata(
