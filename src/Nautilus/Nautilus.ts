@@ -41,6 +41,10 @@ export class Nautilus {
     signer: Signer,
     config?: Partial<Config>
   ): Promise<Nautilus> {
+    LoggerInstance.debug(
+      'Creating new Nautilus instance with signer',
+      await signer.getAddress()
+    )
     const instance = new Nautilus(signer)
 
     await instance.init(config)
