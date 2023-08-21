@@ -1,16 +1,16 @@
 import { Config } from '@oceanprotocol/lib'
-import Web3 from 'web3'
+import { Wallet } from 'ethers'
 import { getTestConfig } from '../fixtures/Config'
-import { getWeb3 } from '../fixtures/Web3'
+import { getWallet } from '../fixtures/Web3'
 
 describe('NautilusAsset', () => {
-  let web3: Web3
+  let wallet: Wallet
   let owner: string
   let config: Config
 
   before(async () => {
-    web3 = getWeb3(1)
-    owner = web3.defaultAccount
-    config = await getTestConfig(web3)
+    wallet = getWallet(1)
+    owner = await wallet.getAddress()
+    config = await getTestConfig(wallet)
   })
 })

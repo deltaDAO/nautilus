@@ -1,12 +1,12 @@
 import { Config, ConfigHelper } from '@oceanprotocol/lib'
-import Web3 from 'web3'
+import { Wallet } from 'ethers'
 import fs from 'fs'
 import { homedir } from 'os'
 
 // Get Config and Addresses for barge test environment
 
-export const getTestConfig = async (web3: Web3): Promise<Config> => {
-  const config = new ConfigHelper().getConfig(await web3.eth.getChainId())
+export const getTestConfig = async (wallet: Wallet): Promise<Config> => {
+  const config = new ConfigHelper().getConfig(await wallet.getChainId())
 
   const addresses = getAddresses()
 

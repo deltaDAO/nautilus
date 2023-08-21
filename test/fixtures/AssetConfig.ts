@@ -1,4 +1,3 @@
-import Web3 from 'web3'
 import { PricingConfigWithoutOwner } from '../../src'
 import {
   MetadataConfig,
@@ -8,6 +7,7 @@ import {
 import { getTestConfig } from './Config'
 import { freParams } from './FixedRateExchangeParams'
 import { datatokenParams } from './DatatokenParams'
+import { Wallet } from 'ethers'
 
 export const datasetMetadata: MetadataConfig = {
   type: 'dataset',
@@ -74,10 +74,10 @@ export const fixedPricing: PricingConfig = {
 }
 
 export async function getPricing(
-  web3: Web3,
+  wallet: Wallet,
   type?: PricingConfig['type']
 ): Promise<PricingConfigWithoutOwner> {
-  const config = await getTestConfig(web3)
+  const config = await getTestConfig(wallet)
 
   switch (type) {
     case 'fixed':

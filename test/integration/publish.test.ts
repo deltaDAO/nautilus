@@ -1,5 +1,4 @@
 import assert from 'assert'
-import Web3 from 'web3'
 import {
   AssetBuilder,
   ConsumerParameterBuilder,
@@ -7,6 +6,7 @@ import {
   FileTypes,
   LogLevel,
   Nautilus,
+  NautilusConsumerParameter,
   ServiceBuilder,
   ServiceTypes
 } from '../../src'
@@ -17,7 +17,9 @@ import {
   getPricing
 } from '../fixtures/AssetConfig'
 import { getTestConfig } from '../fixtures/Config'
-import { MUMBAI_NODE_URI, getWeb3 } from '../fixtures/Web3'
+import { MUMBAI_NODE_URI, getWallet } from '../fixtures/Web3'
+import { Wallet } from 'ethers'
+import { ConsumerParameter } from '@oceanprotocol/lib'
 
 const nodeUri = MUMBAI_NODE_URI
 
@@ -25,17 +27,20 @@ describe('Publish Integration tests', function () {
   // set timeout for this describe block considering tsx will happen
   this.timeout(50000)
 
-  let web3: Web3
+  let wallet: Wallet
   let nautilus: Nautilus
   let providerUri: string
+  let walletAddress: string
 
   before(async () => {
     Nautilus.setLogLevel(LogLevel.Verbose)
-    web3 = getWeb3(1, nodeUri)
-    nautilus = await Nautilus.create(web3, {
+    wallet = getWallet(1, nodeUri)
+    nautilus = await Nautilus.create(wallet, {
       metadataCacheUri: process.env.METADATA_CACHE_URI_TEST
     })
-    providerUri = (await getTestConfig(web3)).providerUri
+    providerUri =
+      process.env.PROVIDER_URI_TEST || nautilus.getOceanConfig().providerUri
+    walletAddress = await wallet.getAddress()
   })
 
   it('publishes a free access asset', async () => {
@@ -47,7 +52,7 @@ describe('Publish Integration tests', function () {
       .setServiceEndpoint(providerUri)
       .setTimeout(datasetService.timeout)
       .addFile(datasetService.files[0])
-      .setPricing(await getPricing(web3, 'free'))
+      .setPricing(await getPricing(wallet, 'free'))
       .build()
 
     const assetBuilder = new AssetBuilder()
@@ -56,7 +61,7 @@ describe('Publish Integration tests', function () {
       .setDescription('A dataset publishing test')
       .setLicense('MIT')
       .setName('Test Publish Dataset Free')
-      .setOwner(web3.defaultAccount)
+      .setOwner(walletAddress)
       .setType('dataset')
       .addService(service)
       .build()
@@ -75,7 +80,7 @@ describe('Publish Integration tests', function () {
       .setServiceEndpoint(providerUri)
       .setTimeout(datasetService.timeout)
       .addFile(datasetService.files[0])
-      .setPricing(await getPricing(web3, 'fixed'))
+      .setPricing(await getPricing(wallet, 'fixed'))
       .build()
 
     const assetBuilder = new AssetBuilder()
@@ -84,7 +89,7 @@ describe('Publish Integration tests', function () {
       .setDescription('A dataset publishing test')
       .setLicense('MIT')
       .setName('Test Publish Dataset Fixed')
-      .setOwner(web3.defaultAccount)
+      .setOwner(walletAddress)
       .setType('dataset')
       .addService(service)
       .build()
@@ -102,7 +107,7 @@ describe('Publish Integration tests', function () {
     const service = serviceBuilder
       .setServiceEndpoint(providerUri)
       .setTimeout(datasetService.timeout)
-      .setPricing(await getPricing(web3, 'free'))
+      .setPricing(await getPricing(wallet, 'free'))
       .addFile(datasetService.files[0])
       .build()
 
@@ -112,10 +117,10 @@ describe('Publish Integration tests', function () {
       .setDescription('A dataset publishing test')
       .setLicense('MIT')
       .setName('Test Publish Dataset Service Credentials Free')
-      .setOwner(web3.defaultAccount)
+      .setOwner(walletAddress)
       .setType('dataset')
       .addService(service)
-      .addCredentialAddresses(CredentialListTypes.ALLOW, [web3.defaultAccount])
+      .addCredentialAddresses(CredentialListTypes.ALLOW, [walletAddress])
       .build()
 
     const result = await nautilus.publish(asset)
@@ -143,7 +148,7 @@ describe('Publish Integration tests', function () {
       .addConsumerParameter(numberParameter)
       .addConsumerParameter(booleanParameter)
       .addConsumerParameter(selectParameter)
-      .setPricing(await getPricing(web3, 'free'))
+      .setPricing(await getPricing(wallet, 'free'))
       .build()
 
     const assetBuilder = new AssetBuilder()
@@ -152,7 +157,7 @@ describe('Publish Integration tests', function () {
       .setDescription('A dataset publishing test')
       .setLicense('MIT')
       .setName('Test Publish Dataset Service Params Free')
-      .setOwner(web3.defaultAccount)
+      .setOwner(walletAddress)
       .setType('dataset')
       .addService(service)
       .build()
@@ -177,7 +182,7 @@ describe('Publish Integration tests', function () {
     const service = serviceBuilder
       .setServiceEndpoint(providerUri)
       .setTimeout(algorithmService.timeout)
-      .setPricing(await getPricing(web3, 'fixed'))
+      .setPricing(await getPricing(wallet, 'fixed'))
       .addFile(algorithmService.files[0])
       .build()
 
@@ -187,16 +192,16 @@ describe('Publish Integration tests', function () {
       .setDescription('A dataset publishing test')
       .setLicense('MIT')
       .setName('Test Publish Algorithm Params Fixed')
-      .setOwner(web3.defaultAccount)
+      .setOwner(walletAddress)
       .setType('algorithm')
       .addService(service)
       .setAlgorithm({
         ...algorithmMetadata.algorithm,
         consumerParameters: [
-          textParameter,
-          numberParameter,
-          booleanParameter,
-          selectParameter
+          textParameter.getConfig(),
+          numberParameter.getConfig(),
+          booleanParameter.getConfig(),
+          selectParameter.getConfig()
         ]
       })
       .build()
@@ -207,7 +212,7 @@ describe('Publish Integration tests', function () {
   })
 })
 
-function getConsumerParameters() {
+function getConsumerParameters(): { [key: string]: NautilusConsumerParameter } {
   const customParamBuilder = new ConsumerParameterBuilder()
   const numberParameter = customParamBuilder
     .setType('number')

@@ -4,7 +4,6 @@ import {
   Service,
   UserCustomParameters
 } from '@oceanprotocol/lib'
-import Web3 from 'web3'
 import { AccessConfig } from '../@types/Access'
 import {
   AccessDetails,
@@ -17,6 +16,7 @@ import { getAssetWithPrice } from '../utils/helpers/assets'
 import { order } from '../utils/order'
 import { initializeProvider } from '../utils/provider'
 import { getServiceById, getServiceByName } from '../utils'
+import { Signer, providers } from 'ethers'
 
 /**
  * @param {AccessConfig} accessConfig Configuration of the access request
@@ -26,11 +26,13 @@ export async function access(accessConfig: AccessConfig) {
   const {
     assetDid,
     chainConfig: config,
-    web3,
+    signer,
     serviceId,
     fileIndex,
     userdata
   } = accessConfig
+
+  const signerAddress = await signer.getAddress()
 
   const asset = await getAsset(config.metadataCacheUri, assetDid)
 
@@ -38,7 +40,7 @@ export async function access(accessConfig: AccessConfig) {
     config.subgraphUri,
     asset.datatokens[0].address,
     asset.services[0].timeout,
-    web3.defaultAccount
+    signerAddress
   )
 
   const assetWithAccessDetails: AssetWithAccessDetails = {
@@ -50,7 +52,7 @@ export async function access(accessConfig: AccessConfig) {
 
   const assetWithPrice = await getAssetWithPrice(
     assetWithAccessDetails,
-    web3,
+    signer,
     config,
     userdata
   )
@@ -70,7 +72,7 @@ export async function access(accessConfig: AccessConfig) {
     )
     return await getAssetDownloadUrl(
       assetWithPrice,
-      web3,
+      signer,
       accessService,
       fileIndex,
       userdata
@@ -79,25 +81,25 @@ export async function access(accessConfig: AccessConfig) {
 
   const initializeData = await initializeProvider(
     assetWithAccessDetails,
-    web3.defaultAccount,
+    signerAddress,
     accessService,
     fileIndex,
     userdata
   )
 
-  const orderTx = await order(
-    web3,
-    assetWithAccessDetails,
-    assetWithPrice.orderPriceAndFees,
-    web3.defaultAccount,
+  const orderTx = await order({
+    signer,
+    asset: assetWithAccessDetails,
+    orderPriceAndFees: assetWithPrice.orderPriceAndFees,
+    accountId: await signer.getAddress(),
     config,
-    initializeData?.providerFee
-  )
+    providerFees: initializeData?.providerFee
+  })
 
-  assetWithAccessDetails.accessDetails.validOrderTx = orderTx.transactionHash
+  assetWithAccessDetails.accessDetails.validOrderTx = orderTx.hash
   return await getAssetDownloadUrl(
     assetWithPrice,
-    web3,
+    signer,
     accessService,
     fileIndex,
     userdata
@@ -111,7 +113,7 @@ function isOwned(accessDetails: AccessDetails) {
 
 async function getAssetDownloadUrl(
   asset: AssetWithAccessDetailsAndPrice,
-  web3: Web3,
+  signer: Signer,
   service: Service,
   fileIndex?: number,
   userCustomParameters?: UserCustomParameters
@@ -121,12 +123,11 @@ async function getAssetDownloadUrl(
 
   const downloadUrl: string = await ProviderInstance.getDownloadUrl(
     asset.id,
-    web3.defaultAccount,
     service.id,
     fileIndex || 0,
     asset.accessDetails.validOrderTx,
     service.serviceEndpoint,
-    web3,
+    signer,
     userCustomParameters
   )
 

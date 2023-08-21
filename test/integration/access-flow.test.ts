@@ -13,7 +13,7 @@ import {
 } from '../fixtures/AssetConfig'
 import { getTestConfig } from '../fixtures/Config'
 import { nftParams } from '../fixtures/NftCreateData'
-import { MUMBAI_NODE_URI, getWeb3 } from '../fixtures/Web3'
+import { MUMBAI_NODE_URI, getWallet } from '../fixtures/Web3'
 import { Aquarius } from '@oceanprotocol/lib'
 
 describe('Nautilus access flow integration test', () => {
@@ -26,8 +26,8 @@ describe('Nautilus access flow integration test', () => {
   // 1. Publish Download Asset -> store did
   it('publishes a download asset', async () => {
     // Setup Nautilus instance for publisher (PRIVATE_KEY_TESTS_1)
-    const web3 = getWeb3(1, MUMBAI_NODE_URI)
-    const nautilus = await Nautilus.create(web3, await getTestConfig(web3))
+    const wallet = getWallet(1, MUMBAI_NODE_URI)
+    const nautilus = await Nautilus.create(wallet, await getTestConfig(wallet))
 
     const { providerUri } = nautilus.getOceanConfig()
 
@@ -39,7 +39,7 @@ describe('Nautilus access flow integration test', () => {
       .setServiceEndpoint(providerUri)
       .setTimeout(algorithmService.timeout)
       .addFile(algorithmService.files[0])
-      .setPricing(await getPricing(web3, 'free'))
+      .setPricing(await getPricing(wallet, 'free'))
       .build()
 
     const assetBuilder = new AssetBuilder()
@@ -48,7 +48,7 @@ describe('Nautilus access flow integration test', () => {
       .setDescription('A publishing test with custom userdata')
       .setLicense('MIT')
       .setName('Test Publish Algorithm')
-      .setOwner(web3.defaultAccount)
+      .setOwner(await wallet.getAddress())
       .setType('algorithm')
       .setNftData(nftParams)
       .addService(service)
@@ -65,17 +65,19 @@ describe('Nautilus access flow integration test', () => {
   // 2. Access the Download Asset (1.)
   it('accesses a download asset', async () => {
     // Setup Nautilus instance for consumer (PRIVATE_KEY_TESTS_2)
-    const web3 = getWeb3(2, nodeUri)
-    const nautilus = await Nautilus.create(web3, await getTestConfig(web3))
+    const wallet = getWallet(2, MUMBAI_NODE_URI)
+    const nautilus = await Nautilus.create(wallet, await getTestConfig(wallet))
 
     // wait until ddo is found in metadata cache
     const aquarius = new Aquarius(nautilus.getOceanConfig().metadataCacheUri)
     await aquarius.waitForAqua(downloadAssetDid)
 
-    const accessUrl = await nautilus.access({
-      assetDid: downloadAssetDid
-    })
+    assert(false, 'Re-activate test')
 
-    assert(accessUrl)
+    // const accessUrl = await nautilus.access({
+    //   assetDid: downloadAssetDid
+    // })
+
+    // assert(accessUrl)
   }).timeout(30000)
 })

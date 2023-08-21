@@ -9,6 +9,7 @@ import {
   NftCreateData,
   Service
 } from '@oceanprotocol/lib'
+import { Signer } from 'ethers'
 import Web3 from 'web3'
 import { PricingConfigWithoutOwner } from '../Nautilus'
 import { NautilusConsumerParameter } from '../Nautilus/Asset/ConsumerParameters'
@@ -72,20 +73,20 @@ export type PrePublishDDO = Omit<DDO, 'services'> & {
 
 export interface CreateAssetConfig {
   chainConfig: Config
-  web3: Web3
+  signer: Signer
   nftParams: NftCreateData
 }
 
 export interface CreateDatatokenConfig {
   chainConfig: Config
   nftAddress: string
-  web3: Web3
+  signer: Signer
   pricing: PricingConfig
   datatokenParams: DatatokenCreateParams
 }
 
 export interface PublishDDOConfig {
   chainConfig: Config
-  web3: Web3
+  signer: Signer
   ddo: DDO
 }

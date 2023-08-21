@@ -17,6 +17,8 @@ import { createAsset, createDatatokenAndPricing, publishDDO } from '../publish'
 import { NautilusAsset } from './Asset/NautilusAsset'
 import { CreateAssetConfig } from '../@types'
 import { getAllPromisesOnArray } from '../utils'
+import { Signer } from 'ethers'
+import { sign } from 'crypto'
 
 export { LogLevel } from '@oceanprotocol/lib'
 
@@ -25,18 +27,21 @@ export { LogLevel } from '@oceanprotocol/lib'
  * Nautilus class
  */
 export class Nautilus {
-  private web3: Web3
+  private signer: Signer
   private config: Config
 
-  private constructor(web3: Web3) {
-    this.web3 = web3
+  private constructor(signer: Signer) {
+    this.signer = signer
   }
 
   /**
    * Creates a new Nautilus instance
    */
-  static async create(web3: Web3, config?: Partial<Config>): Promise<Nautilus> {
-    const instance = new Nautilus(web3)
+  static async create(
+    signer: Signer,
+    config?: Partial<Config>
+  ): Promise<Nautilus> {
+    const instance = new Nautilus(signer)
 
     await instance.init(config)
 
@@ -57,7 +62,7 @@ export class Nautilus {
   }
 
   private async loadOceanConfig(config?: Partial<Config>) {
-    const chainId = await this.web3.eth.getChainId()
+    const chainId = await this.signer.getChainId()
 
     const oceanConfig = new ConfigHelper().getConfig(chainId)
     if (!oceanConfig)
@@ -92,12 +97,12 @@ export class Nautilus {
     )
   }
 
-  private getChainConfig(): Pick<CreateAssetConfig, 'web3' | 'chainConfig'> {
-    if (!this.web3 || !this.config)
+  private getChainConfig(): Pick<CreateAssetConfig, 'signer' | 'chainConfig'> {
+    if (!this.signer || !this.config)
       throw Error('Web3 and chainConfig are required.')
 
     return {
-      web3: this.web3,
+      signer: this.signer,
       chainConfig: this.config
     }
   }
@@ -109,7 +114,7 @@ export class Nautilus {
   }
 
   async publish(asset: NautilusAsset) {
-    const { web3, chainConfig } = this.getChainConfig()
+    const { signer, chainConfig } = this.getChainConfig()
 
     // --------------------------------------------------
     // 1. Create NFT if needed
@@ -118,11 +123,11 @@ export class Nautilus {
 
     if (!nftAddress) {
       const nftCreationResult = await createAsset({
-        web3,
+        signer,
         chainConfig,
         nftParams: asset.getNftParams()
       })
-      nftAddress = nftCreationResult.nftAddress
+      nftAddress = nftCreationResult.nftAddress.toString()
     }
 
     // --------------------------------------------------
@@ -133,7 +138,7 @@ export class Nautilus {
       async (service) => {
         const { datatokenAddress, pricingTransactionReceipt } =
           await createDatatokenAndPricing({
-            web3,
+            signer,
             chainConfig,
             nftAddress,
             pricing: {
@@ -166,7 +171,7 @@ export class Nautilus {
     })
 
     const setMetadataTxReceipt = await publishDDO({
-      web3,
+      signer,
       chainConfig,
       ddo
     })
@@ -179,39 +184,39 @@ export class Nautilus {
     }
   }
 
-  /**
-   * @param accessConfig configuration object
-   */
-  async access(accessConfig: Omit<AccessConfig, 'web3' | 'chainConfig'>) {
-    return await access({
-      ...accessConfig,
-      ...this.getChainConfig()
-    })
-  }
+  // /**
+  //  * @param accessConfig configuration object
+  //  */
+  // async access(accessConfig: Omit<AccessConfig, 'web3' | 'chainConfig'>) {
+  //   return await access({
+  //     ...accessConfig,
+  //     ...this.getChainConfig()
+  //   })
+  // }
 
-  async compute(computeConfig: Omit<ComputeConfig, 'web3' | 'chainConfig'>) {
-    return await compute({
-      ...computeConfig,
-      ...this.getChainConfig()
-    })
-  }
+  // async compute(computeConfig: Omit<ComputeConfig, 'web3' | 'chainConfig'>) {
+  //   return await compute({
+  //     ...computeConfig,
+  //     ...this.getChainConfig()
+  //   })
+  // }
 
-  async getComputeStatus(
-    computeStatusConfig: Omit<ComputeStatusConfig, 'web3'>
-  ) {
-    return await getStatus({
-      ...computeStatusConfig,
-      web3: this.web3
-    })
-  }
+  // async getComputeStatus(
+  //   computeStatusConfig: Omit<ComputeStatusConfig, 'web3'>
+  // ) {
+  //   return await getStatus({
+  //     ...computeStatusConfig,
+  //     web3: this.web3
+  //   })
+  // }
 
-  async getComputeResult(
-    computeResultConfig: Omit<ComputeResultConfig, 'web3'>
-  ) {
-    return await retrieveResult({
-      ...computeResultConfig,
-      web3: this.web3
-    })
-  }
+  // async getComputeResult(
+  //   computeResultConfig: Omit<ComputeResultConfig, 'web3'>
+  // ) {
+  //   return await retrieveResult({
+  //     ...computeResultConfig,
+  //     web3: this.web3
+  //   })
+  // }
   // #endregion
 }

@@ -12,19 +12,24 @@ import {
   CreateDatatokenConfig,
   PublishDDOConfig
 } from '../@types/Publish'
-import { TransactionReceipt } from 'web3-core'
+import { utils as ethersUtils, providers } from 'ethers'
 
 export async function createAsset(assetConfig: CreateAssetConfig) {
   LoggerInstance.debug('[publish] Publishing new asset NFT...')
   // --------------------------------------------------
   // 1. Create NFT with NftFactory
   // --------------------------------------------------
-  const { web3, chainConfig, nftParams } = assetConfig
-  const publisherAccount = web3?.defaultAccount
-  const nftFactory = new NftFactory(chainConfig.nftFactoryAddress, web3)
+  const { signer, chainConfig, nftParams } = assetConfig
+  const publisherAccount = await signer?.getAddress()
+  const nftFactory = new NftFactory(
+    chainConfig.nftFactoryAddress,
+    signer,
+    chainConfig.network,
+    chainConfig
+  )
 
   // TODO  add try catch error handling
-  const nftAddress = await nftFactory.createNFT(publisherAccount, nftParams)
+  const nftAddress = await nftFactory.createNFT(nftParams)
 
   LoggerInstance.debug('[publish] NFT published:', nftAddress)
   return { nftAddress }
@@ -35,10 +40,10 @@ export async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
   // 1. Create Datatoken
   // --------------------------------------------------
   LoggerInstance.debug('[publish] Creating datatoken...')
-  const { chainConfig, web3, nftAddress, datatokenParams, pricing } = config
-  const publisherAccount = web3?.defaultAccount
+  const { chainConfig, signer, nftAddress, datatokenParams, pricing } = config
+  const publisherAccount = await signer?.getAddress()
 
-  const nft = new Nft(web3)
+  const nft = new Nft(signer, chainConfig.network, chainConfig)
 
   const datatokenAddress = await nft.createDatatoken(
     nftAddress,
@@ -59,16 +64,16 @@ export async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
   // --------------------------------------------------
   // 2. Create Pricing
   // --------------------------------------------------
-  const datatoken = new Datatoken(web3)
+  const datatoken = new Datatoken(signer, chainConfig.network, chainConfig)
 
   const dispenserParams: DispenserParams = {
-    maxTokens: web3.utils.toWei('1'),
-    maxBalance: web3.utils.toWei('1'),
+    maxTokens: ethersUtils.formatEther('1'),
+    maxBalance: ethersUtils.formatEther('1'),
     withMint: true,
     allowedSwapper: '0x0000000000000000000000000000000000000000' // TODO needed?
   }
 
-  let pricingTransactionReceipt: TransactionReceipt
+  let pricingTransactionReceipt: providers.TransactionResponse
   switch (pricing.type) {
     case 'fixed':
       LoggerInstance.debug(
@@ -80,8 +85,12 @@ export async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
         publisherAccount,
         {
           ...pricing.freCreationParams,
-          fixedRate: web3.utils.toWei(pricing.freCreationParams.fixedRate),
-          marketFee: web3.utils.toWei(pricing.freCreationParams.marketFee)
+          fixedRate: ethersUtils.formatEther(
+            pricing.freCreationParams.fixedRate
+          ),
+          marketFee: ethersUtils.formatEther(
+            pricing.freCreationParams.marketFee
+          )
         }
       )
       break
@@ -111,8 +120,8 @@ export async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
 }
 
 export async function publishDDO(config: PublishDDOConfig) {
-  const { chainConfig, web3, ddo } = config
-  const publisherAccount = web3?.defaultAccount
+  const { chainConfig, signer, ddo } = config
+  const publisherAccount = await signer?.getAddress()
 
   // --------------------------------------------------
   // 1. Validate DDO schema
@@ -140,7 +149,7 @@ export async function publishDDO(config: PublishDDOConfig) {
   // --------------------------------------------------
   // 3. Write DDO into NFT metadata
   // --------------------------------------------------
-  const nft = new Nft(web3)
+  const nft = new Nft(signer, chainConfig.network, chainConfig)
 
   // TODO: let user set state
   const LIFECYCLE_STATE_ACTIVE = 0

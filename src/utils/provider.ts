@@ -15,7 +15,7 @@ import {
   UrlFile,
   UserCustomParameters
 } from '@oceanprotocol/lib'
-import Web3 from 'web3'
+import { Signer } from 'ethers'
 import { getOceanConfig } from '.'
 import { AssetWithAccessDetails } from '../@types/Compute'
 
@@ -121,7 +121,7 @@ export function getValidUntilTime(
 export async function approveProviderFee(
   asset: AssetWithAccessDetails,
   accountId: string,
-  web3: Web3,
+  signer: Signer,
   providerFeeAmount: string
 ): Promise<any> {
   const config = getOceanConfig(asset.chainId)
@@ -130,7 +130,7 @@ export async function approveProviderFee(
       ? getOceanConfig(asset.chainId).oceanTokenAddress
       : asset?.accessDetails?.baseToken?.address
   const txApproveWei = await approveWei(
-    web3,
+    signer,
     config,
     accountId,
     baseToken,
