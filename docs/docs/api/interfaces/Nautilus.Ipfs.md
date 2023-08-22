@@ -17,7 +17,7 @@ hash
 
 #### Defined in
 
-node_modules/@oceanprotocol/lib/dist/src/@types/File.d.ts:64
+oceanprotocol/ocean.js/dist/src/@types/File.d.ts:64
 
 ___
 
@@ -27,4 +27,4 @@ ___
 
 #### Defined in
 
-node_modules/@oceanprotocol/lib/dist/src/@types/File.d.ts:59
+oceanprotocol/ocean.js/dist/src/@types/File.d.ts:59

@@ -15,7 +15,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[src/@types/Publish.ts:80](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Publish.ts#L80)
+[nautilus/src/@types/Publish.ts:85](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L85)
 
 ___
 
@@ -25,7 +25,7 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:84](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Publish.ts#L84)
+[nautilus/src/@types/Publish.ts:89](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L89)
 
 ___
 
@@ -35,7 +35,7 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:81](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Publish.ts#L81)
+[nautilus/src/@types/Publish.ts:86](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L86)
 
 ___
 
@@ -45,14 +45,14 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:83](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Publish.ts#L83)
+[nautilus/src/@types/Publish.ts:88](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L88)
 
 ___
 
-### web3
+### signer
 
-• **web3**: `default`
+• **signer**: `Signer`
 
 #### Defined in
 
-[src/@types/Publish.ts:82](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Publish.ts#L82)
+[nautilus/src/@types/Publish.ts:87](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L87)

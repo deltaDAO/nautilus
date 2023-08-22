@@ -11,17 +11,17 @@ custom_edit_url: null
 
 ### constructor
 
-• `Private` **new Nautilus**(`web3`)
+• `Private` **new Nautilus**(`signer`)
 
 #### Parameters
 
 | Name | Type |
 | :------ | :------ |
-| `web3` | `default` |
+| `signer` | `Signer` |
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:31](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L31)
+[nautilus/src/Nautilus/Nautilus.ts:23](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Nautilus.ts#L23)
 
 ## Properties
 
@@ -31,111 +31,31 @@ custom_edit_url: null
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:29](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L29)
+[nautilus/src/Nautilus/Nautilus.ts:21](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Nautilus.ts#L21)
 
 ___
 
-### web3
+### signer
 
-• `Private` **web3**: `default`
+• `Private` **signer**: `Signer`
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:28](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L28)
+[nautilus/src/Nautilus/Nautilus.ts:20](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Nautilus.ts#L20)
 
 ## Methods
 
-### access
-
-▸ **access**(`accessConfig`): `Promise`<`string`\>
-
-#### Parameters
-
-| Name | Type | Description |
-| :------ | :------ | :------ |
-| `accessConfig` | `Omit`<[`AccessConfig`](../interfaces/types.AccessConfig.md), ``"chainConfig"`` \| ``"web3"``\> | configuration object |
-
-#### Returns
-
-`Promise`<`string`\>
-
-#### Defined in
-
-[src/Nautilus/Nautilus.ts:181](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L181)
-
-___
-
-### compute
-
-▸ **compute**(`computeConfig`): `Promise`<`ComputeJob` \| `ComputeJob`[]\>
-
-#### Parameters
-
-| Name | Type |
-| :------ | :------ |
-| `computeConfig` | `Omit`<[`ComputeConfig`](../interfaces/types.ComputeConfig.md), ``"chainConfig"`` \| ``"web3"``\> |
-
-#### Returns
-
-`Promise`<`ComputeJob` \| `ComputeJob`[]\>
-
-#### Defined in
-
-[src/Nautilus/Nautilus.ts:188](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L188)
-
-___
-
 ### getChainConfig
 
-▸ `Private` **getChainConfig**(): `Pick`<[`CreateAssetComfig`](../interfaces/types.CreateAssetComfig.md), ``"chainConfig"`` \| ``"web3"``\>
+▸ `Private` **getChainConfig**(): `Pick`<[`CreateAssetConfig`](../interfaces/types.CreateAssetConfig.md), ``"signer"`` \| ``"chainConfig"``\>
 
 #### Returns
 
-`Pick`<[`CreateAssetComfig`](../interfaces/types.CreateAssetComfig.md), ``"chainConfig"`` \| ``"web3"``\>
+`Pick`<[`CreateAssetConfig`](../interfaces/types.CreateAssetConfig.md), ``"signer"`` \| ``"chainConfig"``\>
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:95](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L95)
-
-___
-
-### getComputeResult
-
-▸ **getComputeResult**(`computeResultConfig`): `Promise`<`string`\>
-
-#### Parameters
-
-| Name | Type |
-| :------ | :------ |
-| `computeResultConfig` | `Omit`<[`ComputeResultConfig`](../interfaces/types.ComputeResultConfig.md), ``"web3"``\> |
-
-#### Returns
-
-`Promise`<`string`\>
-
-#### Defined in
-
-[src/Nautilus/Nautilus.ts:204](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L204)
-
-___
-
-### getComputeStatus
-
-▸ **getComputeStatus**(`computeStatusConfig`): `Promise`<`ComputeJob`\>
-
-#### Parameters
-
-| Name | Type |
-| :------ | :------ |
-| `computeStatusConfig` | `Omit`<[`ComputeStatusConfig`](../interfaces/types.ComputeStatusConfig.md), ``"web3"``\> |
-
-#### Returns
-
-`Promise`<`ComputeJob`\>
-
-#### Defined in
-
-[src/Nautilus/Nautilus.ts:195](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L195)
+[nautilus/src/Nautilus/Nautilus.ts:94](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Nautilus.ts#L94)
 
 ___
 
@@ -149,7 +69,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:107](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L107)
+[nautilus/src/Nautilus/Nautilus.ts:106](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Nautilus.ts#L106)
 
 ___
 
@@ -163,7 +83,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:82](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L82)
+[nautilus/src/Nautilus/Nautilus.ts:81](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Nautilus.ts#L81)
 
 ___
 
@@ -183,7 +103,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:55](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L55)
+[nautilus/src/Nautilus/Nautilus.ts:54](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Nautilus.ts#L54)
 
 ___
 
@@ -203,13 +123,13 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:59](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L59)
+[nautilus/src/Nautilus/Nautilus.ts:58](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Nautilus.ts#L58)
 
 ___
 
 ### publish
 
-▸ **publish**(`asset`): `Promise`<{ `ddo`: `DDO` ; `nftAddress`: `string` ; `services`: { `datatokenAddress`: `string` ; `pricingTransactionReceipt`: `TransactionReceipt` ; `service`: `NautilusService`<[`ServiceTypes`](../enums/Nautilus.ServiceTypes.md), [`FileTypes`](../enums/Nautilus.FileTypes.md)\>  }[] ; `setMetadataTxReceipt`: { `transactionReceipt`: `TransactionReceipt`  }  }\>
+▸ **publish**(`asset`): `Promise`<[`PublishResponse`](../interfaces/types.PublishResponse.md)\>
 
 #### Parameters
 
@@ -219,17 +139,17 @@ ___
 
 #### Returns
 
-`Promise`<{ `ddo`: `DDO` ; `nftAddress`: `string` ; `services`: { `datatokenAddress`: `string` ; `pricingTransactionReceipt`: `TransactionReceipt` ; `service`: `NautilusService`<[`ServiceTypes`](../enums/Nautilus.ServiceTypes.md), [`FileTypes`](../enums/Nautilus.FileTypes.md)\>  }[] ; `setMetadataTxReceipt`: { `transactionReceipt`: `TransactionReceipt`  }  }\>
+`Promise`<[`PublishResponse`](../interfaces/types.PublishResponse.md)\>
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:111](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L111)
+[nautilus/src/Nautilus/Nautilus.ts:110](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Nautilus.ts#L110)
 
 ___
 
 ### create
 
-▸ `Static` **create**(`web3`, `config?`): `Promise`<[`Nautilus`](Nautilus.Nautilus.md)\>
+▸ `Static` **create**(`signer`, `config?`): `Promise`<[`Nautilus`](Nautilus.Nautilus.md)\>
 
 Creates a new Nautilus instance
 
@@ -237,7 +157,7 @@ Creates a new Nautilus instance
 
 | Name | Type |
 | :------ | :------ |
-| `web3` | `default` |
+| `signer` | `Signer` |
 | `config?` | `Partial`<`Config`\> |
 
 #### Returns
@@ -246,7 +166,7 @@ Creates a new Nautilus instance
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:38](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L38)
+[nautilus/src/Nautilus/Nautilus.ts:30](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Nautilus.ts#L30)
 
 ___
 
@@ -269,4 +189,4 @@ ocean.js LoggerInstance is used for logging
 
 #### Defined in
 
-[src/Nautilus/Nautilus.ts:50](https://github.com/deltaDAO/nautilus/blob/89168de/src/Nautilus/Nautilus.ts#L50)
+[nautilus/src/Nautilus/Nautilus.ts:49](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Nautilus.ts#L49)

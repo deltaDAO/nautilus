@@ -22,7 +22,7 @@ custom_edit_url: null
 - [ComputeResultConfig](../interfaces/types.ComputeResultConfig.md)
 - [ComputeStatusConfig](../interfaces/types.ComputeStatusConfig.md)
 - [ConsumerParameter](../interfaces/types.ConsumerParameter.md)
-- [CreateAssetComfig](../interfaces/types.CreateAssetComfig.md)
+- [CreateAssetConfig](../interfaces/types.CreateAssetConfig.md)
 - [CreateDatatokenConfig](../interfaces/types.CreateDatatokenConfig.md)
 - [IAssetBuilder](../interfaces/types.IAssetBuilder.md)
 - [IBuilder](../interfaces/types.IBuilder.md)
@@ -31,6 +31,7 @@ custom_edit_url: null
 - [OrderPriceAndFees](../interfaces/types.OrderPriceAndFees.md)
 - [PricingConfig](../interfaces/types.PricingConfig.md)
 - [PublishDDOConfig](../interfaces/types.PublishDDOConfig.md)
+- [PublishResponse](../interfaces/types.PublishResponse.md)
 - [TokenInfo](../interfaces/types.TokenInfo.md)
 - [TokenParameters](../interfaces/types.TokenParameters.md)
 
@@ -46,7 +47,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[src/@types/Publish.ts:18](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Publish.ts#L18)
+[nautilus/src/@types/Publish.ts:23](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L23)
 
 ___
 
@@ -56,7 +57,7 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:16](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Publish.ts#L16)
+[nautilus/src/@types/Publish.ts:21](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L21)
 
 ___
 
@@ -66,7 +67,7 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:47](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Publish.ts#L47)
+[nautilus/src/@types/Publish.ts:52](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L52)
 
 ___
 
@@ -76,7 +77,7 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:31](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Publish.ts#L31)
+[nautilus/src/@types/Publish.ts:36](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L36)
 
 ___
 
@@ -86,7 +87,7 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:52](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Publish.ts#L52)
+[nautilus/src/@types/Publish.ts:57](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L57)
 
 ___
 
@@ -96,7 +97,7 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:69](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Publish.ts#L69)
+[nautilus/src/@types/Publish.ts:74](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L74)
 
 ___
 
@@ -106,4 +107,4 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:59](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Publish.ts#L59)
+[nautilus/src/@types/Publish.ts:64](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L64)

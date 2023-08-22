@@ -17,7 +17,7 @@ The config type for index.access requests
 
 #### Defined in
 
-[src/@types/Access.ts:8](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Access.ts#L8)
+[nautilus/src/@types/Access.ts:8](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Access.ts#L8)
 
 ___
 
@@ -27,7 +27,7 @@ ___
 
 #### Defined in
 
-[src/@types/Access.ts:10](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Access.ts#L10)
+[nautilus/src/@types/Access.ts:10](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Access.ts#L10)
 
 ___
 
@@ -37,7 +37,7 @@ ___
 
 #### Defined in
 
-[src/@types/Access.ts:12](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Access.ts#L12)
+[nautilus/src/@types/Access.ts:12](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Access.ts#L12)
 
 ___
 
@@ -47,7 +47,17 @@ ___
 
 #### Defined in
 
-[src/@types/Access.ts:11](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Access.ts#L11)
+[nautilus/src/@types/Access.ts:11](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Access.ts#L11)
+
+___
+
+### signer
+
+• **signer**: `Signer`
+
+#### Defined in
+
+[nautilus/src/@types/Access.ts:9](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Access.ts#L9)
 
 ___
 
@@ -57,14 +67,4 @@ ___
 
 #### Defined in
 
-[src/@types/Access.ts:13](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Access.ts#L13)
-
-___
-
-### web3
-
-• **web3**: `default`
-
-#### Defined in
-
-[src/@types/Access.ts:9](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Access.ts#L9)
+[nautilus/src/@types/Access.ts:13](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Access.ts#L13)
