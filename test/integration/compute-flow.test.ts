@@ -17,15 +17,16 @@ import {
 import { getTestConfig } from '../fixtures/Config'
 import { nftParams } from '../fixtures/NftCreateData'
 import { getSigner, MUMBAI_NODE_URI } from '../fixtures/Web3'
+import { Signer } from 'ethers'
 
 describe('Nautilus compute flow integration test', async () => {
   // PRIVATE_KEY_TESTS_1 (algorithm publisher)
-  const algoPublisherSigner = getSigner(1, MUMBAI_NODE_URI)
-  const algoPublisherAddress = await algoPublisherSigner.getAddress()
+  let algoPublisherSigner: Signer
+  let algoPublisherAddress: string
 
   // PRIVATE_KEY_TESTS_2 (dataset publisher)
-  const datasetPublisherSigner = getSigner(1, MUMBAI_NODE_URI)
-  const datasetPublisherAddress = await datasetPublisherSigner.getAddress()
+  let datasetPublisherSigner: Signer
+  let datasetPublisherAddress: string
 
   let nautilusDatasetPublisher: Nautilus
   let nautilusAlgoPublisher: Nautilus
@@ -37,10 +38,18 @@ describe('Nautilus compute flow integration test', async () => {
   before(async () => {
     Nautilus.setLogLevel(LogLevel.Verbose)
 
+    // PRIVATE_KEY_TESTS_1 (algorithm publisher)
+    algoPublisherSigner = getSigner(1, MUMBAI_NODE_URI)
+    algoPublisherAddress = await algoPublisherSigner.getAddress()
+
     nautilusAlgoPublisher = await Nautilus.create(
       algoPublisherSigner,
       await getTestConfig(algoPublisherSigner)
     )
+
+    // PRIVATE_KEY_TESTS_2 (dataset publisher)
+    datasetPublisherSigner = getSigner(1, MUMBAI_NODE_URI)
+    datasetPublisherAddress = await datasetPublisherSigner.getAddress()
 
     nautilusDatasetPublisher = await Nautilus.create(
       datasetPublisherSigner,
