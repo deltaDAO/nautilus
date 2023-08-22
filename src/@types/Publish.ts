@@ -10,7 +10,6 @@ import {
   Service
 } from '@oceanprotocol/lib'
 import { Signer } from 'ethers'
-import Web3 from 'web3'
 import { PricingConfigWithoutOwner } from '../Nautilus'
 import { NautilusConsumerParameter } from '../Nautilus/Asset/ConsumerParameters'
 

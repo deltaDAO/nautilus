@@ -4,21 +4,11 @@ import {
   LogLevel,
   LoggerInstance
 } from '@oceanprotocol/lib'
-import Web3 from 'web3'
-import { AccessConfig } from '../@types/Access'
-import {
-  ComputeConfig,
-  ComputeResultConfig,
-  ComputeStatusConfig
-} from '../@types/Compute'
-import { access } from '../access'
-import { compute, getStatus, retrieveResult } from '../compute'
-import { createAsset, createDatatokenAndPricing, publishDDO } from '../publish'
-import { NautilusAsset } from './Asset/NautilusAsset'
+import { Signer, utils as ethersUtils } from 'ethers'
 import { CreateAssetConfig } from '../@types'
+import { createAsset, createDatatokenAndPricing, publishDDO } from '../publish'
 import { getAllPromisesOnArray } from '../utils'
-import { Signer } from 'ethers'
-import { sign } from 'crypto'
+import { NautilusAsset } from './Asset/NautilusAsset'
 
 export { LogLevel } from '@oceanprotocol/lib'
 
@@ -95,9 +85,9 @@ export class Nautilus {
       this.config.providerUri?.length > 0 &&
       this.config.nodeUri?.length > 0 &&
       this.config.subgraphUri?.length > 0 &&
-      Web3.utils.isAddress(this.config.fixedRateExchangeAddress) &&
-      Web3.utils.isAddress(this.config.dispenserAddress) &&
-      Web3.utils.isAddress(this.config.nftFactoryAddress)
+      ethersUtils.isAddress(this.config.fixedRateExchangeAddress) &&
+      ethersUtils.isAddress(this.config.dispenserAddress) &&
+      ethersUtils.isAddress(this.config.nftFactoryAddress)
     )
   }
 
