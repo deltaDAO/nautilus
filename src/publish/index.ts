@@ -109,6 +109,7 @@ export async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
         chainConfig.dispenserAddress,
         dispenserParams
       )
+      break
   }
 
   LoggerInstance.debug(
