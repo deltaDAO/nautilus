@@ -1,5 +1,5 @@
 import assert from 'assert'
-import { Wallet } from 'ethers'
+import { Signer } from 'ethers'
 import {
   AssetBuilder,
   ConsumerParameterBuilder,
@@ -17,7 +17,7 @@ import {
   datasetService,
   getPricing
 } from '../fixtures/AssetConfig'
-import { MUMBAI_NODE_URI, getWallet } from '../fixtures/Web3'
+import { MUMBAI_NODE_URI, getSigner } from '../fixtures/Web3'
 
 const nodeUri = MUMBAI_NODE_URI
 
@@ -25,24 +25,26 @@ describe('Publish Integration tests', function () {
   // set timeout for this describe block considering tsx will happen
   this.timeout(50000)
 
-  let wallet: Wallet
+  let signer: Signer
+  let signerAddress: string
   let nautilus: Nautilus
   let providerUri: string
 
   before(async () => {
     Nautilus.setLogLevel(LogLevel.Verbose)
-    wallet = getWallet(1, nodeUri)
+    signer = getSigner(1, nodeUri)
+    signerAddress = await signer.getAddress()
 
-    console.log('Testing with wallet:', wallet.address)
+    console.log('Testing with signer:', signerAddress)
 
-    nautilus = await Nautilus.create(wallet, {
+    nautilus = await Nautilus.create(signer, {
       metadataCacheUri: process.env.METADATA_CACHE_URI_TEST
     })
 
     providerUri =
       process.env.PROVIDER_URI_TEST || nautilus.getOceanConfig().providerUri
 
-    console.log('Testing with wallet:', wallet.address)
+    console.log('Testing with signer:', signerAddress)
   })
 
   it('publishes a free access asset', async () => {
@@ -54,7 +56,7 @@ describe('Publish Integration tests', function () {
       .setServiceEndpoint(providerUri)
       .setTimeout(datasetService.timeout)
       .addFile(datasetService.files[0])
-      .setPricing(await getPricing(wallet, 'free'))
+      .setPricing(await getPricing(signer, 'free'))
       .build()
 
     const assetBuilder = new AssetBuilder()
@@ -63,7 +65,7 @@ describe('Publish Integration tests', function () {
       .setDescription('A dataset publishing test')
       .setLicense('MIT')
       .setName('Test Publish Dataset Free')
-      .setOwner(wallet.address)
+      .setOwner(signerAddress)
       .setType('dataset')
       .addService(service)
       .build()
@@ -82,7 +84,7 @@ describe('Publish Integration tests', function () {
       .setServiceEndpoint(providerUri)
       .setTimeout(datasetService.timeout)
       .addFile(datasetService.files[0])
-      .setPricing(await getPricing(wallet, 'fixed'))
+      .setPricing(await getPricing(signer, 'fixed'))
       .build()
 
     const assetBuilder = new AssetBuilder()
@@ -91,7 +93,7 @@ describe('Publish Integration tests', function () {
       .setDescription('A dataset publishing test')
       .setLicense('MIT')
       .setName('Test Publish Dataset Fixed')
-      .setOwner(wallet.address)
+      .setOwner(signerAddress)
       .setType('dataset')
       .addService(service)
       .build()
@@ -109,7 +111,7 @@ describe('Publish Integration tests', function () {
     const service = serviceBuilder
       .setServiceEndpoint(providerUri)
       .setTimeout(datasetService.timeout)
-      .setPricing(await getPricing(wallet, 'free'))
+      .setPricing(await getPricing(signer, 'free'))
       .addFile(datasetService.files[0])
       .build()
 
@@ -119,10 +121,10 @@ describe('Publish Integration tests', function () {
       .setDescription('A dataset publishing test')
       .setLicense('MIT')
       .setName('Test Publish Dataset Service Credentials Free')
-      .setOwner(wallet.address)
+      .setOwner(signerAddress)
       .setType('dataset')
       .addService(service)
-      .addCredentialAddresses(CredentialListTypes.ALLOW, [wallet.address])
+      .addCredentialAddresses(CredentialListTypes.ALLOW, [signerAddress])
       .build()
 
     const result = await nautilus.publish(asset)
@@ -150,7 +152,7 @@ describe('Publish Integration tests', function () {
       .addConsumerParameter(numberParameter)
       .addConsumerParameter(booleanParameter)
       .addConsumerParameter(selectParameter)
-      .setPricing(await getPricing(wallet, 'free'))
+      .setPricing(await getPricing(signer, 'free'))
       .build()
 
     const assetBuilder = new AssetBuilder()
@@ -159,7 +161,7 @@ describe('Publish Integration tests', function () {
       .setDescription('A dataset publishing test')
       .setLicense('MIT')
       .setName('Test Publish Dataset Service Params Free')
-      .setOwner(wallet.address)
+      .setOwner(signerAddress)
       .setType('dataset')
       .addService(service)
       .build()
@@ -184,7 +186,7 @@ describe('Publish Integration tests', function () {
     const service = serviceBuilder
       .setServiceEndpoint(providerUri)
       .setTimeout(algorithmService.timeout)
-      .setPricing(await getPricing(wallet, 'fixed'))
+      .setPricing(await getPricing(signer, 'fixed'))
       .addFile(algorithmService.files[0])
       .build()
 
@@ -194,7 +196,7 @@ describe('Publish Integration tests', function () {
       .setDescription('A dataset publishing test')
       .setLicense('MIT')
       .setName('Test Publish Algorithm Params Fixed')
-      .setOwner(wallet.address)
+      .setOwner(signerAddress)
       .setType('algorithm')
       .addService(service)
       .setAlgorithm({

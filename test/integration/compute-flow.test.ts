@@ -16,16 +16,16 @@ import {
 } from '../fixtures/AssetConfig'
 import { getTestConfig } from '../fixtures/Config'
 import { nftParams } from '../fixtures/NftCreateData'
-import { getWallet, MUMBAI_NODE_URI } from '../fixtures/Web3'
+import { getSigner, MUMBAI_NODE_URI } from '../fixtures/Web3'
 
 describe('Nautilus compute flow integration test', async () => {
   // PRIVATE_KEY_TESTS_1 (algorithm publisher)
-  const algoPublisherWallet = getWallet(1, MUMBAI_NODE_URI)
-  const algoPublisherAddress = await algoPublisherWallet.getAddress()
+  const algoPublisherSigner = getSigner(1, MUMBAI_NODE_URI)
+  const algoPublisherAddress = await algoPublisherSigner.getAddress()
 
   // PRIVATE_KEY_TESTS_2 (dataset publisher)
-  const datasetPublisherWallet = getWallet(1, MUMBAI_NODE_URI)
-  const datasetPublisherAddress = await datasetPublisherWallet.getAddress()
+  const datasetPublisherSigner = getSigner(1, MUMBAI_NODE_URI)
+  const datasetPublisherAddress = await datasetPublisherSigner.getAddress()
 
   let nautilusDatasetPublisher: Nautilus
   let nautilusAlgoPublisher: Nautilus
@@ -38,13 +38,13 @@ describe('Nautilus compute flow integration test', async () => {
     Nautilus.setLogLevel(LogLevel.Verbose)
 
     nautilusAlgoPublisher = await Nautilus.create(
-      algoPublisherWallet,
-      await getTestConfig(algoPublisherWallet)
+      algoPublisherSigner,
+      await getTestConfig(algoPublisherSigner)
     )
 
     nautilusDatasetPublisher = await Nautilus.create(
-      datasetPublisherWallet,
-      await getTestConfig(datasetPublisherWallet)
+      datasetPublisherSigner,
+      await getTestConfig(datasetPublisherSigner)
     )
   })
 
@@ -61,7 +61,7 @@ describe('Nautilus compute flow integration test', async () => {
       .setServiceEndpoint(providerUri)
       .setTimeout(algorithmService.timeout)
       .addFile(algorithmService.files[0])
-      .setPricing(await getPricing(algoPublisherWallet, 'free'))
+      .setPricing(await getPricing(algoPublisherSigner, 'free'))
       .build()
 
     // configure the asset
@@ -99,7 +99,7 @@ describe('Nautilus compute flow integration test', async () => {
       .setServiceEndpoint(providerUri)
       .setTimeout(datasetService.timeout)
       .addFile(datasetService.files[0])
-      .setPricing(await getPricing(datasetPublisherWallet, 'free'))
+      .setPricing(await getPricing(datasetPublisherSigner, 'free'))
       .build()
 
     // configure the asset

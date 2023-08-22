@@ -1,10 +1,10 @@
-import { Wallet, providers } from 'ethers'
+import { Signer, Wallet, providers } from 'ethers'
 import dotenv from 'dotenv'
 dotenv.config()
 
 export const MUMBAI_NODE_URI = 'https://rpc-mumbai.maticvigil.com'
 
-export function getWallet(key: 1 | 2 = 1, nodeUri?: string): Wallet {
+export function getSigner(key: 1 | 2 = 1, nodeUri?: string): Signer {
   const providerUrl = nodeUri || MUMBAI_NODE_URI
 
   console.log(`Using test key ${key} on ${providerUrl} to create wallet.`)

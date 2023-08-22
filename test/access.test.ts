@@ -1,13 +1,13 @@
 import { LoggerInstance } from '@oceanprotocol/lib'
 import { Nautilus, LogLevel } from '../src'
-import { getWallet } from './fixtures/Web3'
+import { getSigner } from './fixtures/Web3'
 import assert from 'assert'
 
 describe('Access', () => {
   let nautilus: Nautilus
   before(async () => {
     Nautilus.setLogLevel(LogLevel.Verbose)
-    nautilus = await Nautilus.create(getWallet())
+    nautilus = await Nautilus.create(getSigner())
   })
 
   it('should download a free dataset', async () => {

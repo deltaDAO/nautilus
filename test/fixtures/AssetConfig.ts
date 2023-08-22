@@ -7,7 +7,7 @@ import {
 import { getTestConfig } from './Config'
 import { freParams } from './FixedRateExchangeParams'
 import { datatokenParams } from './DatatokenParams'
-import { Wallet } from 'ethers'
+import { Signer } from 'ethers'
 
 export const datasetMetadata: MetadataConfig = {
   type: 'dataset',
@@ -74,10 +74,10 @@ export const fixedPricing: PricingConfig = {
 }
 
 export async function getPricing(
-  wallet: Wallet,
+  signer: Signer,
   type?: PricingConfig['type']
 ): Promise<PricingConfigWithoutOwner> {
-  const config = await getTestConfig(wallet)
+  const config = await getTestConfig(signer)
 
   switch (type) {
     case 'fixed':
