@@ -1,6 +1,7 @@
 import {
   Config,
   LoggerInstance,
+  ProviderFees,
   UserCustomParameters
 } from '@oceanprotocol/lib'
 import { Signer } from 'ethers'
@@ -62,6 +63,7 @@ export async function getAssetWithPrice(
   asset: AssetWithAccessDetails,
   signer: Signer,
   config: Config,
+  providerFees: ProviderFees,
   userCustomParameters?: UserCustomParameters
 ): Promise<AssetWithAccessDetailsAndPrice> {
   return {
@@ -70,6 +72,7 @@ export async function getAssetWithPrice(
       asset,
       signer,
       config,
+      providerFees,
       userCustomParameters
     )
   }

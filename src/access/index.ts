@@ -50,10 +50,23 @@ export async function access(accessConfig: AccessConfig) {
 
   LoggerInstance.debug('[access] AccessDetails:', accessDetails)
 
+  const accessService = serviceId
+    ? getServiceById(asset, serviceId)
+    : getServiceByName(asset, 'access')
+
+  const initializeData = await initializeProvider(
+    assetWithAccessDetails,
+    signerAddress,
+    accessService,
+    fileIndex,
+    userdata
+  )
+
   const assetWithPrice = await getAssetWithPrice(
     assetWithAccessDetails,
     signer,
     config,
+    initializeData.providerFee,
     userdata
   )
 
@@ -61,10 +74,6 @@ export async function access(accessConfig: AccessConfig) {
     '[access] AssetWithprice:',
     assetWithPrice.orderPriceAndFees
   )
-
-  const accessService = serviceId
-    ? getServiceById(asset, serviceId)
-    : getServiceByName(asset, 'access')
 
   if (isOwned(accessDetails)) {
     LoggerInstance.debug(
@@ -78,14 +87,6 @@ export async function access(accessConfig: AccessConfig) {
       userdata
     )
   }
-
-  const initializeData = await initializeProvider(
-    assetWithAccessDetails,
-    signerAddress,
-    accessService,
-    fileIndex,
-    userdata
-  )
 
   const orderTx = await order({
     signer,

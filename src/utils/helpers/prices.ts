@@ -2,6 +2,7 @@ import {
   Config,
   FixedRateExchange,
   PriceAndFees,
+  ProviderFees,
   ProviderInstance,
   UserCustomParameters
 } from '@oceanprotocol/lib'
@@ -34,6 +35,7 @@ export async function getOrderPriceAndFees(
   asset: AssetWithAccessDetails,
   signer: Signer,
   config: Config,
+  providerFees: ProviderFees,
   userCustomParameters?: UserCustomParameters
 ): Promise<OrderPriceAndFees> {
   const orderPriceAndFees = {
@@ -48,17 +50,7 @@ export async function getOrderPriceAndFees(
 
   const signerAddress = await signer.getAddress()
 
-  // fetch provider fee
-  const initializeData = await ProviderInstance.initialize(
-    asset?.id,
-    asset?.services[0].id,
-    0,
-    signerAddress,
-    asset?.services[0].serviceEndpoint,
-    undefined,
-    userCustomParameters
-  )
-  orderPriceAndFees.providerFee = initializeData.providerFee
+  orderPriceAndFees.providerFee = providerFees
 
   // fetch price and swap fees
   if (asset?.accessDetails?.type === 'fixed') {

@@ -53,15 +53,20 @@ export async function initializeProvider(
   fileIndex = 0,
   consumerParameters?: UserCustomParameters
 ) {
-  return await ProviderInstance.initialize(
-    asset.id,
-    service.id,
-    fileIndex,
-    accountId,
-    service.serviceEndpoint,
-    undefined,
-    consumerParameters
-  )
+  try {
+    return await ProviderInstance.initialize(
+      asset.id,
+      service.id,
+      fileIndex,
+      accountId,
+      service.serviceEndpoint,
+      undefined,
+      consumerParameters
+    )
+  } catch (error) {
+    LoggerInstance.error(`Error initializing provider for access!`)
+    return null
+  }
 }
 
 export async function initializeProviderForCompute(

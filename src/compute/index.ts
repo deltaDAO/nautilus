@@ -112,6 +112,7 @@ export async function compute(computeConfig: ComputeConfig) {
       signerAddress,
       computeEnv
     )
+
     // 4. Get prices and fees for the assets
     const { datasetWithPrice, algorithmWithPrice } =
       await getComputeAssetPrices(
@@ -213,11 +214,31 @@ async function getComputeAssetPrices(
   config: Config,
   providerInitializeResults: ProviderComputeInitializeResults
 ) {
-  const datasetWithPrice = await getAssetWithPrice(dataset, signer, config)
+  LoggerInstance.debug('Initializing provider for compute')
+
+  // get fees for dataset from providerInitializeResults.datasets array
+  const datasetInitializeResult = providerInitializeResults.datasets.find(
+    (initializeResult) =>
+      dataset.datatokens
+        .map((dt) => dt.address)
+        .includes(initializeResult.datatoken)
+  )
+  const datasetWithPrice = await getAssetWithPrice(
+    dataset,
+    signer,
+    config,
+    datasetInitializeResult.providerFee
+  )
+
   if (!datasetWithPrice?.orderPriceAndFees)
     throw new Error('Error setting dataset price and fees!')
 
-  const algorithmWithPrice = await getAssetWithPrice(algo, signer, config)
+  const algorithmWithPrice = await getAssetWithPrice(
+    algo,
+    signer,
+    config,
+    providerInitializeResults.algorithm.providerFee
+  )
   if (!algorithmWithPrice?.orderPriceAndFees)
     throw new Error('Error setting algorithm price and fees!')
 
