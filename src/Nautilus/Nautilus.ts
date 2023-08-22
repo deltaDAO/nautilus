@@ -5,10 +5,19 @@ import {
   LoggerInstance
 } from '@oceanprotocol/lib'
 import { Signer, utils as ethersUtils } from 'ethers'
-import { CreateAssetConfig, PublishResponse } from '../@types'
+import {
+  AccessConfig,
+  ComputeConfig,
+  ComputeResultConfig,
+  ComputeStatusConfig,
+  CreateAssetConfig,
+  PublishResponse
+} from '../@types'
 import { createAsset, createDatatokenAndPricing, publishDDO } from '../publish'
 import { getAllPromisesOnArray } from '../utils'
 import { NautilusAsset } from './Asset/NautilusAsset'
+import { access } from '../access'
+import { compute, getStatus, retrieveResult } from '../compute'
 
 export { LogLevel } from '@oceanprotocol/lib'
 
@@ -178,39 +187,39 @@ export class Nautilus {
     }
   }
 
-  // /**
-  //  * @param accessConfig configuration object
-  //  */
-  // async access(accessConfig: Omit<AccessConfig, 'web3' | 'chainConfig'>) {
-  //   return await access({
-  //     ...accessConfig,
-  //     ...this.getChainConfig()
-  //   })
-  // }
+  /**
+   * @param accessConfig configuration object
+   */
+  async access(accessConfig: Omit<AccessConfig, 'signer' | 'chainConfig'>) {
+    return await access({
+      ...accessConfig,
+      ...this.getChainConfig()
+    })
+  }
 
-  // async compute(computeConfig: Omit<ComputeConfig, 'web3' | 'chainConfig'>) {
-  //   return await compute({
-  //     ...computeConfig,
-  //     ...this.getChainConfig()
-  //   })
-  // }
+  async compute(computeConfig: Omit<ComputeConfig, 'signer' | 'chainConfig'>) {
+    return await compute({
+      ...computeConfig,
+      ...this.getChainConfig()
+    })
+  }
 
-  // async getComputeStatus(
-  //   computeStatusConfig: Omit<ComputeStatusConfig, 'web3'>
-  // ) {
-  //   return await getStatus({
-  //     ...computeStatusConfig,
-  //     web3: this.web3
-  //   })
-  // }
+  async getComputeStatus(
+    computeStatusConfig: Omit<ComputeStatusConfig, 'signer'>
+  ) {
+    return await getStatus({
+      ...computeStatusConfig,
+      signer: this.signer
+    })
+  }
 
-  // async getComputeResult(
-  //   computeResultConfig: Omit<ComputeResultConfig, 'web3'>
-  // ) {
-  //   return await retrieveResult({
-  //     ...computeResultConfig,
-  //     web3: this.web3
-  //   })
-  // }
+  async getComputeResult(
+    computeResultConfig: Omit<ComputeResultConfig, 'signer'>
+  ) {
+    return await retrieveResult({
+      ...computeResultConfig,
+      signer: this.signer
+    })
+  }
   // #endregion
 }
