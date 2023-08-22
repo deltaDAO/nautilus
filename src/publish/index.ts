@@ -97,7 +97,6 @@ export async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
     case 'free':
       LoggerInstance.debug('[publish] Creating dispenser for datatoken...', {
         pricing,
-        datatoken,
         datatokenAddress,
         publisherAccount,
         dispenserAddress: chainConfig.dispenserAddress,
