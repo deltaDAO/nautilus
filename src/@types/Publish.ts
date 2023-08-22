@@ -9,8 +9,13 @@ import {
   NftCreateData,
   Service
 } from '@oceanprotocol/lib'
-import { Signer } from 'ethers'
-import { PricingConfigWithoutOwner } from '../Nautilus'
+import { Signer, providers } from 'ethers'
+import {
+  FileTypes,
+  NautilusService,
+  PricingConfigWithoutOwner,
+  ServiceTypes
+} from '../Nautilus'
 import { NautilusConsumerParameter } from '../Nautilus/Asset/ConsumerParameters'
 
 export type ConsumerParameterType = 'text' | 'number' | 'boolean' | 'select'
@@ -88,4 +93,15 @@ export interface PublishDDOConfig {
   chainConfig: Config
   signer: Signer
   ddo: DDO
+}
+
+export interface PublishResponse {
+  nftAddress: string
+  services: {
+    service: NautilusService<ServiceTypes, FileTypes>
+    datatokenAddress: string
+    pricingTransactionReceipt: providers.TransactionResponse
+  }[]
+  ddo: DDO
+  setMetadataTxReceipt: providers.TransactionResponse
 }

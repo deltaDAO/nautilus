@@ -173,7 +173,7 @@ export async function publishDDO(config: PublishDDOConfig) {
     transactionReceipt
   })
 
-  return { transactionReceipt }
+  return transactionReceipt
 }
 
 // TODO evaluate if we need these (1 transaction for multiple actions)

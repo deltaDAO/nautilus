@@ -5,7 +5,7 @@ import {
   LoggerInstance
 } from '@oceanprotocol/lib'
 import { Signer, utils as ethersUtils } from 'ethers'
-import { CreateAssetConfig } from '../@types'
+import { CreateAssetConfig, PublishResponse } from '../@types'
 import { createAsset, createDatatokenAndPricing, publishDDO } from '../publish'
 import { getAllPromisesOnArray } from '../utils'
 import { NautilusAsset } from './Asset/NautilusAsset'
@@ -107,7 +107,7 @@ export class Nautilus {
     return this.config
   }
 
-  async publish(asset: NautilusAsset) {
+  async publish(asset: NautilusAsset): Promise<PublishResponse> {
     const { signer, chainConfig } = this.getChainConfig()
 
     // --------------------------------------------------
