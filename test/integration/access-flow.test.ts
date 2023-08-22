@@ -1,6 +1,6 @@
+import { Aquarius } from '@oceanprotocol/lib'
 import assert from 'assert'
-import { AssetBuilder, Nautilus, LogLevel } from '../../src'
-import { ConsumerParameterBuilder } from '../../src/Nautilus/Asset/ConsumerParameters'
+import { AssetBuilder, LogLevel, Nautilus } from '../../src'
 import {
   FileTypes,
   ServiceBuilder,
@@ -14,10 +14,13 @@ import {
 import { getTestConfig } from '../fixtures/Config'
 import { nftParams } from '../fixtures/NftCreateData'
 import { MUMBAI_NODE_URI, getSigner } from '../fixtures/Web3'
-import { Aquarius } from '@oceanprotocol/lib'
+import { expect } from 'chai'
 
-describe('Nautilus access flow integration test', () => {
+describe('Access Flow Integration', function () {
   let downloadAssetDid: string
+  let serviceEndpoint: string
+
+  this.timeout(70000)
 
   before(() => {
     Nautilus.setLogLevel(LogLevel.Verbose)
@@ -30,13 +33,14 @@ describe('Nautilus access flow integration test', () => {
     const nautilus = await Nautilus.create(signer, await getTestConfig(signer))
 
     const { providerUri } = nautilus.getOceanConfig()
+    serviceEndpoint = providerUri
 
     const serviceBuilder = new ServiceBuilder(
       ServiceTypes.ACCESS,
       FileTypes.URL
     )
     const service = serviceBuilder
-      .setServiceEndpoint(providerUri)
+      .setServiceEndpoint(serviceEndpoint)
       .setTimeout(algorithmService.timeout)
       .addFile(algorithmService.files[0])
       .setPricing(await getPricing(signer, 'free'))
@@ -70,14 +74,15 @@ describe('Nautilus access flow integration test', () => {
 
     // wait until ddo is found in metadata cache
     const aquarius = new Aquarius(nautilus.getOceanConfig().metadataCacheUri)
+    console.log(
+      `Waiting for aquarius at ${aquarius.aquariusURL} to access ${downloadAssetDid}`
+    )
     await aquarius.waitForAqua(downloadAssetDid)
 
-    assert(false, 'Re-activate test')
+    const accessUrl = await nautilus.access({
+      assetDid: downloadAssetDid
+    })
 
-    // const accessUrl = await nautilus.access({
-    //   assetDid: downloadAssetDid
-    // })
-
-    // assert(accessUrl)
-  }).timeout(30000)
+    expect(accessUrl).to.match(new RegExp(serviceEndpoint))
+  })
 })
