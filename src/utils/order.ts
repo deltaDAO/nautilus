@@ -230,6 +230,7 @@ export async function order({
           throw new Error(e)
         }
       }
+      break
     }
   }
 }
