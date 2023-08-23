@@ -243,6 +243,63 @@ const selectParam = consumerParameterBuilder
 serviceBuilder.addConsumerParameter(selectParam)
 ```
 
+#### Compute Services
+
+To publish a service to be allowed for computation utilizing [Compute-to-Data](https://docs.oceanprotocol.com/developers/compute-to-data), we are able to set some additional information in case we need to.
+The so called `compute` object of a service allows us to specify the following attributes:
+
+- `allowRawAlgorithm`
+- `allowNetworkAccess`
+- `publisherTrustedAlgorithmPublishers`
+- `publisherTrustedAlgorithms`
+
+You can find out more about the specifications at the [official documentation](https://docs.oceanprotocol.com/developers/compute-to-data/compute-options).
+
+Without any custom configuration, the `ServiceBuilder` adheres to the principle of least privilige, by setting the following values:
+
+```ts
+service.compute = {
+  allowNetworkAccess: false,
+  allowRawAlgorithm: false,
+  publisherTrustedAlgorithmPublishers: [],
+  publisherTrustedAlgorithms: []
+}
+```
+
+> **_NOTE:_** This means, that by default **no algorithm will be allowed** to run computations on our dataset, without updating the metadata at a later point in time.
+
+However, the `ServiceBuilder` class also supports setting these attributes to the desired values before publishing:
+
+```ts
+// Allow raw algorithms on this service
+serviceBuilder.allowRawAlgorithms()
+
+// Prevent raw algorithms on this service
+serviceBuilder.allowRawAlgorithms(false)
+
+// Allow network access during computation
+serviceBuilder.allowAlgorithmNetworkAccess()
+
+// Prevent network access during computation
+serviceBuilder.allowAlgorithmNetworkAccess(false)
+
+// Add a trusted algorithm to be allowed to run computations
+const trustedAlgorithm = {
+  did: '0x1234...',
+  filesChecksum: '...', // can be calculated using the ocean-provider of the algorithm service
+  containerSectionChecksum: '...' //Hash of algorithm’s metadata.algorithm.container section
+}
+serviceBuilder.addTrustedAlgorithm(trustedAlgorithm)
+
+// Add any algorithm published by a given address to be allowed to run computations
+const publisherAddress = '0x1234addressOfPublisher'
+serviceBuilder.addTrustedAlgorithmPublisher(publisherAddress)
+```
+
+> **_NOTE:_** Make sure to set the `ServiceType` of your service to `ServiceType.COMPUTE`, as the `compute` object is ignored for access type services.
+
+_We aim to support automated calculations for trusted algorithm checksums in the future._
+
 #### Datatoken
 
 Optionally, we can specify some information for the access token, like the name and symbol, to be used. This will be displayed in Ocean Markets and also can be used to identify your service in the network (e.g., when visiting block explorers).
@@ -252,6 +309,18 @@ const name = 'My Datatoken Name'
 const symbol = 'SYMBOL'
 
 serviceBuilder.setDatatokenNameAndSymbol(name, symbol)
+```
+
+#### Service name and description
+
+If we want to provide some human readable metadata for our service, we can utilize the `name` and `description` properties respectively. The `ServiceBuilder` class supports setting these:
+
+```ts
+const name = 'Service Name'
+const description = 'A descriptive text about my service.'
+
+serviceBuilder.setName(name)
+serviceBuilder.setDescription(description)
 ```
 
 #### Adding services via the AssetBuilder
