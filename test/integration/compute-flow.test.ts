@@ -16,7 +16,7 @@ import {
 } from '../fixtures/AssetConfig'
 import { getTestConfig } from '../fixtures/Config'
 import { nftParams } from '../fixtures/NftCreateData'
-import { getSigner, MUMBAI_NODE_URI } from '../fixtures/Web3'
+import { getSigner, MUMBAI_NODE_URI } from '../fixtures/Ethers'
 import { Signer } from 'ethers'
 import { expect } from 'chai'
 

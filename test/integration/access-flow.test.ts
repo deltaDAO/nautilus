@@ -13,7 +13,7 @@ import {
 } from '../fixtures/AssetConfig'
 import { getTestConfig } from '../fixtures/Config'
 import { nftParams } from '../fixtures/NftCreateData'
-import { MUMBAI_NODE_URI, getSigner } from '../fixtures/Web3'
+import { MUMBAI_NODE_URI, getSigner } from '../fixtures/Ethers'
 import { expect } from 'chai'
 
 describe('Access Flow Integration', function () {

@@ -17,7 +17,7 @@ import {
   datasetService,
   getPricing
 } from '../fixtures/AssetConfig'
-import { MUMBAI_NODE_URI, getSigner } from '../fixtures/Web3'
+import { MUMBAI_NODE_URI, getSigner } from '../fixtures/Ethers'
 
 const nodeUri = MUMBAI_NODE_URI
 
