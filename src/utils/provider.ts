@@ -4,6 +4,8 @@ import {
   ComputeAlgorithm,
   ComputeAsset,
   ComputeEnvironment,
+  ComputeJob,
+  ComputeOutput,
   FileInfo,
   GraphqlQuery,
   Ipfs,
@@ -105,6 +107,31 @@ export async function initializeProviderForCompute(
   } catch (error) {
     LoggerInstance.error(`Error initializing provider for the compute job!`)
     return null
+  }
+}
+
+export async function startComputeJob(
+  providerUri: string,
+  dataset: ComputeAsset,
+  algorithm: ComputeAlgorithm,
+  signer: Signer,
+  computeEnv: ComputeEnvironment,
+  output: ComputeOutput
+): Promise<ComputeJob | ComputeJob[]> {
+  try {
+    return await ProviderInstance.computeStart(
+      providerUri,
+      signer,
+      computeEnv?.id,
+      dataset,
+      algorithm,
+      null,
+      null,
+      output
+    )
+  } catch (error) {
+    LoggerInstance.error('Error starting compute job!')
+    LoggerInstance.error(error)
   }
 }
 

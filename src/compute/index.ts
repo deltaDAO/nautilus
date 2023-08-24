@@ -25,7 +25,8 @@ import {
 import { isOrderable, order, reuseOrder } from '../utils/order'
 import {
   approveProviderFee,
-  initializeProviderForCompute
+  initializeProviderForCompute,
+  startComputeJob
 } from '../utils/provider'
 
 export async function compute(computeConfig: ComputeConfig) {
@@ -179,12 +180,8 @@ export async function compute(computeConfig: ComputeConfig) {
       publishOutput: true // TODO should be configuarable
     }
 
-    const controller = new AbortController()
-
-    const response = await ProviderInstance.computeStart(
+    const response = await startComputeJob(
       dataset.services[0].serviceEndpoint,
-      signer,
-      computeEnv?.id,
       computeAsset,
       {
         documentId: algorithmConfig.did,
@@ -192,11 +189,10 @@ export async function compute(computeConfig: ComputeConfig) {
         transferTxId: algorithmOrderTx,
         ...algorithmConfig
       },
-      controller.signal,
-      null,
+      signer,
+      computeEnv,
       output
     )
-    if (!response) throw new Error('Error starting compute job.')
 
     // ==== Extract compute job execution end ====
     LoggerInstance.debug('[compute] Starting compute job response: ', response)
@@ -217,11 +213,12 @@ async function getComputeAssetPrices(
   LoggerInstance.debug('Initializing provider for compute')
 
   // get fees for dataset from providerInitializeResults.datasets array
-  const datatokenAddresses = dataset.datatokens.map(dt => dt.address)
+  const datatokenAddresses = dataset.datatokens.map((dt) => dt.address)
 
   const datasetInitializeResult = providerInitializeResults.datasets.find(
-  initializeResult => datatokenAddresses.includes(initializeResult.datatoken)
-)
+    (initializeResult) =>
+      datatokenAddresses.includes(initializeResult.datatoken)
+  )
   const datasetWithPrice = await getAssetWithPrice(
     dataset,
     signer,
