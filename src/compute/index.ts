@@ -217,12 +217,11 @@ async function getComputeAssetPrices(
   LoggerInstance.debug('Initializing provider for compute')
 
   // get fees for dataset from providerInitializeResults.datasets array
+  const datatokenAddresses = dataset.datatokens.map(dt => dt.address)
+
   const datasetInitializeResult = providerInitializeResults.datasets.find(
-    (initializeResult) =>
-      dataset.datatokens
-        .map((dt) => dt.address)
-        .includes(initializeResult.datatoken)
-  )
+  initializeResult => datatokenAddresses.includes(initializeResult.datatoken)
+)
   const datasetWithPrice = await getAssetWithPrice(
     dataset,
     signer,
