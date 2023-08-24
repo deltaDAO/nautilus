@@ -47,22 +47,17 @@ Make sure you have [ethers](https://www.npmjs.com/package/ethers) installed:
 npm install ethers@^5.7.2
 ```
 
-Setup the `JsonRpcProvider` to use:
-
-```ts
-import { providers } from 'ethers'
-
-const provider = new providers.JsonRpcProvider(
-  'https://matic-mumbai.chainstacklabs.com'
-) // can be replaced with any Ocean Protocol supported network
-```
-
 Next, create the ethers `Signer` you want to use for the automations. In this example we create a `Wallet` from a given private key.
 
 ```ts
 import { Wallet, providers } from 'ethers'
 // This example assumes you have an environment variable named PRIVATE_KEY
 // You can use a package like dotenv to load environment variables
+
+// Setup the ethers provider to use
+const provider = new providers.JsonRpcProvider(
+  'https://matic-mumbai.chainstacklabs.com' // can be replaced with any Ocean Protocol supported network
+)
 
 const wallet = new Wallet(process.env.PRIVATE_KEY, provider)
 ```
