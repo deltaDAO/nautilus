@@ -65,6 +65,7 @@ export async function initializeProvider(
     )
   } catch (error) {
     LoggerInstance.error(`Error initializing provider for access!`)
+    LoggerInstance.error(error)
     return null
   }
 }
