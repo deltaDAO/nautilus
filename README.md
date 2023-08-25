@@ -186,7 +186,7 @@ serviceBuilder.setPricing({
     fixedRateAddress: '0x25e1926E3d57eC0651e89C654AB0FA182C6D5CF7', // Fixed Rate Contract address on Mumbai network
     baseTokenAddress: '0xd8992Ed72C445c35Cb4A2be468568Ed1079357c8', // OCEAN token contract address on Mumbai network
     baseTokenDecimals: 18, // adjusted to OCEAN token
-    datatokenDecimals: 18, // adjusted to OCEAN token
+    datatokenDecimals: 18,
     fixedRate: '1', // PRICE
     marketFee: '0',
     marketFeeCollector: '0x0000000000000000000000000000000000000000'
