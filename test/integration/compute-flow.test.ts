@@ -16,16 +16,20 @@ import {
 } from '../fixtures/AssetConfig'
 import { getTestConfig } from '../fixtures/Config'
 import { nftParams } from '../fixtures/NftCreateData'
-import { getWeb3 } from '../fixtures/Web3'
+import { getSigner, MUMBAI_NODE_URI } from '../fixtures/Ethers'
+import { Signer } from 'ethers'
+import { expect } from 'chai'
 
-const nodeUri = 'https://matic-mumbai.chainstacklabs.com'
+describe('Compute Flow Integration', async function () {
+  this.timeout(90000)
 
-describe('Nautilus compute flow integration test', async () => {
   // PRIVATE_KEY_TESTS_1 (algorithm publisher)
-  const web3AlgoPublisher = getWeb3(1, nodeUri)
+  let algoPublisherSigner: Signer
+  let algoPublisherAddress: string
 
   // PRIVATE_KEY_TESTS_2 (dataset publisher)
-  const web3DatasetPublisher = getWeb3(1, nodeUri)
+  let datasetPublisherSigner: Signer
+  let datasetPublisherAddress: string
 
   let nautilusDatasetPublisher: Nautilus
   let nautilusAlgoPublisher: Nautilus
@@ -37,14 +41,22 @@ describe('Nautilus compute flow integration test', async () => {
   before(async () => {
     Nautilus.setLogLevel(LogLevel.Verbose)
 
+    // PRIVATE_KEY_TESTS_1 (algorithm publisher)
+    algoPublisherSigner = getSigner(1, MUMBAI_NODE_URI)
+    algoPublisherAddress = await algoPublisherSigner.getAddress()
+
     nautilusAlgoPublisher = await Nautilus.create(
-      web3AlgoPublisher,
-      await getTestConfig(web3AlgoPublisher)
+      algoPublisherSigner,
+      await getTestConfig(algoPublisherSigner)
     )
 
+    // PRIVATE_KEY_TESTS_2 (dataset publisher)
+    datasetPublisherSigner = getSigner(2, MUMBAI_NODE_URI)
+    datasetPublisherAddress = await datasetPublisherSigner.getAddress()
+
     nautilusDatasetPublisher = await Nautilus.create(
-      web3DatasetPublisher,
-      await getTestConfig(web3DatasetPublisher)
+      datasetPublisherSigner,
+      await getTestConfig(datasetPublisherSigner)
     )
   })
 
@@ -61,7 +73,7 @@ describe('Nautilus compute flow integration test', async () => {
       .setServiceEndpoint(providerUri)
       .setTimeout(algorithmService.timeout)
       .addFile(algorithmService.files[0])
-      .setPricing(await getPricing(web3AlgoPublisher, 'free'))
+      .setPricing(await getPricing(algoPublisherSigner, 'free'))
       .build()
 
     // configure the asset
@@ -71,7 +83,7 @@ describe('Nautilus compute flow integration test', async () => {
       .setDescription('A compute algorithm publishing test')
       .setLicense('MIT')
       .setName('Test Publish Compute Algorithm')
-      .setOwner(web3AlgoPublisher.defaultAccount)
+      .setOwner(algoPublisherAddress)
       .setType('algorithm')
       .setNftData(nftParams)
       .addService(service)
@@ -81,10 +93,10 @@ describe('Nautilus compute flow integration test', async () => {
     // publish
     const result = await nautilusAlgoPublisher.publish(asset)
 
-    assert(result)
+    expect(result).to.have.property('ddo').to.have.property('id')
 
     computeAlgorithmDid = result.ddo.id
-  }).timeout(30000)
+  })
 
   it('publishes a compute dataset asset', async () => {
     // serviceEndpoint to use for the test asset
@@ -99,7 +111,7 @@ describe('Nautilus compute flow integration test', async () => {
       .setServiceEndpoint(providerUri)
       .setTimeout(datasetService.timeout)
       .addFile(datasetService.files[0])
-      .setPricing(await getPricing(web3DatasetPublisher, 'free'))
+      .setPricing(await getPricing(datasetPublisherSigner, 'free'))
       .build()
 
     // configure the asset
@@ -109,7 +121,7 @@ describe('Nautilus compute flow integration test', async () => {
       .setDescription('A compute dataset publishing test')
       .setLicense('MIT')
       .setName('Test Publish Compute Dataset')
-      .setOwner(web3DatasetPublisher.defaultAccount)
+      .setOwner(datasetPublisherAddress)
       .setType('dataset')
       .setNftData(nftParams)
       .addService(service)
@@ -118,15 +130,18 @@ describe('Nautilus compute flow integration test', async () => {
     // publish
     const result = await nautilusDatasetPublisher.publish(asset)
 
-    assert(result)
+    expect(result).to.have.property('ddo').to.have.property('id')
 
     computeDatasetDid = result.ddo.id
-  }).timeout(30000)
+  })
 
   it('starts a compute job', async () => {
     // wait until DDOs are found in metadata cache
     const aquarius = new Aquarius(
       nautilusDatasetPublisher.getOceanConfig().metadataCacheUri
+    )
+    console.log(
+      `Waiting for aquarius at ${aquarius.aquariusURL} to cache algo and dataset...`
     )
     await aquarius.waitForAqua(computeAlgorithmDid)
     await aquarius.waitForAqua(computeDatasetDid)
@@ -142,14 +157,15 @@ describe('Nautilus compute flow integration test', async () => {
 
     const computeJob = Array.isArray(startedJob) ? startedJob[0] : startedJob
 
-    assert(computeJob)
+    expect(computeJob).to.have.property('jobId')
 
     computeJobId = computeJob.jobId
-  }).timeout(90000)
+  })
 
   it('should get compute status', async () => {
     const status = await getStatusHelper(nautilusDatasetPublisher, computeJobId)
-    assert(status)
+
+    expect(status).to.have.property('status').to.be.greaterThan(0)
   })
 
   it('should get download url for compute result', async () => {
@@ -162,7 +178,7 @@ describe('Nautilus compute flow integration test', async () => {
       providerUri
     })
 
-    assert(resultUrl)
+    expect(resultUrl).to.match(new RegExp(providerUri))
   })
     // TODO: either increase timeout or introduce different solution to wait for ctd to finish
     // takes longer on live test networks (e.g. Mumbai ~4 minutes)

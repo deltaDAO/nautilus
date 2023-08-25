@@ -17,7 +17,7 @@ Headers key value pairs associated with the asset GET request
 
 #### Defined in
 
-node_modules/@oceanprotocol/lib/dist/src/@types/File.d.ts:48
+oceanprotocol/ocean.js/dist/src/@types/File.d.ts:48
 
 ___
 
@@ -27,7 +27,7 @@ ___
 
 #### Defined in
 
-node_modules/@oceanprotocol/lib/dist/src/@types/File.d.ts:33
+oceanprotocol/ocean.js/dist/src/@types/File.d.ts:33
 
 ___
 
@@ -39,7 +39,7 @@ query
 
 #### Defined in
 
-node_modules/@oceanprotocol/lib/dist/src/@types/File.d.ts:43
+oceanprotocol/ocean.js/dist/src/@types/File.d.ts:43
 
 ___
 
@@ -49,7 +49,7 @@ ___
 
 #### Defined in
 
-node_modules/@oceanprotocol/lib/dist/src/@types/File.d.ts:29
+oceanprotocol/ocean.js/dist/src/@types/File.d.ts:29
 
 ___
 
@@ -61,4 +61,4 @@ Endpoint URL
 
 #### Defined in
 
-node_modules/@oceanprotocol/lib/dist/src/@types/File.d.ts:38
+oceanprotocol/ocean.js/dist/src/@types/File.d.ts:38

@@ -4,6 +4,8 @@ import {
   ComputeAlgorithm,
   ComputeAsset,
   ComputeEnvironment,
+  ComputeJob,
+  ComputeOutput,
   FileInfo,
   GraphqlQuery,
   Ipfs,
@@ -15,7 +17,7 @@ import {
   UrlFile,
   UserCustomParameters
 } from '@oceanprotocol/lib'
-import Web3 from 'web3'
+import { Signer } from 'ethers'
 import { getOceanConfig } from '.'
 import { AssetWithAccessDetails } from '../@types/Compute'
 
@@ -53,15 +55,21 @@ export async function initializeProvider(
   fileIndex = 0,
   consumerParameters?: UserCustomParameters
 ) {
-  return await ProviderInstance.initialize(
-    asset.id,
-    service.id,
-    fileIndex,
-    accountId,
-    service.serviceEndpoint,
-    undefined,
-    consumerParameters
-  )
+  try {
+    return await ProviderInstance.initialize(
+      asset.id,
+      service.id,
+      fileIndex,
+      accountId,
+      service.serviceEndpoint,
+      undefined,
+      consumerParameters
+    )
+  } catch (error) {
+    LoggerInstance.error(`Error initializing provider for access!`)
+    LoggerInstance.error(error)
+    return null
+  }
 }
 
 export async function initializeProviderForCompute(
@@ -102,6 +110,31 @@ export async function initializeProviderForCompute(
   }
 }
 
+export async function startComputeJob(
+  providerUri: string,
+  dataset: ComputeAsset,
+  algorithm: ComputeAlgorithm,
+  signer: Signer,
+  computeEnv: ComputeEnvironment,
+  output: ComputeOutput
+): Promise<ComputeJob | ComputeJob[]> {
+  try {
+    return await ProviderInstance.computeStart(
+      providerUri,
+      signer,
+      computeEnv?.id,
+      dataset,
+      algorithm,
+      null,
+      null,
+      output
+    )
+  } catch (error) {
+    LoggerInstance.error('Error starting compute job!')
+    LoggerInstance.error(error)
+  }
+}
+
 export function getValidUntilTime(
   computeEnvMaxJobDuration: number,
   datasetTimeout?: number,
@@ -121,7 +154,7 @@ export function getValidUntilTime(
 export async function approveProviderFee(
   asset: AssetWithAccessDetails,
   accountId: string,
-  web3: Web3,
+  signer: Signer,
   providerFeeAmount: string
 ): Promise<any> {
   const config = getOceanConfig(asset.chainId)
@@ -130,7 +163,7 @@ export async function approveProviderFee(
       ? getOceanConfig(asset.chainId).oceanTokenAddress
       : asset?.accessDetails?.baseToken?.address
   const txApproveWei = await approveWei(
-    web3,
+    signer,
     config,
     accountId,
     baseToken,

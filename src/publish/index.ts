@@ -12,19 +12,24 @@ import {
   CreateDatatokenConfig,
   PublishDDOConfig
 } from '../@types/Publish'
-import { TransactionReceipt } from 'web3-core'
+import { utils as ethersUtils, providers } from 'ethers'
 
 export async function createAsset(assetConfig: CreateAssetConfig) {
   LoggerInstance.debug('[publish] Publishing new asset NFT...')
   // --------------------------------------------------
   // 1. Create NFT with NftFactory
   // --------------------------------------------------
-  const { web3, chainConfig, nftParams } = assetConfig
-  const publisherAccount = web3?.defaultAccount
-  const nftFactory = new NftFactory(chainConfig.nftFactoryAddress, web3)
+  const { signer, chainConfig, nftParams } = assetConfig
+  const publisherAccount = await signer?.getAddress()
+  const nftFactory = new NftFactory(
+    chainConfig.nftFactoryAddress,
+    signer,
+    chainConfig.network,
+    chainConfig
+  )
 
   // TODO  add try catch error handling
-  const nftAddress = await nftFactory.createNFT(publisherAccount, nftParams)
+  const nftAddress = await nftFactory.createNFT(nftParams)
 
   LoggerInstance.debug('[publish] NFT published:', nftAddress)
   return { nftAddress }
@@ -35,10 +40,10 @@ export async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
   // 1. Create Datatoken
   // --------------------------------------------------
   LoggerInstance.debug('[publish] Creating datatoken...')
-  const { chainConfig, web3, nftAddress, datatokenParams, pricing } = config
-  const publisherAccount = web3?.defaultAccount
+  const { chainConfig, signer, nftAddress, datatokenParams, pricing } = config
+  const publisherAccount = await signer?.getAddress()
 
-  const nft = new Nft(web3)
+  const nft = new Nft(signer, chainConfig.network, chainConfig)
 
   const datatokenAddress = await nft.createDatatoken(
     nftAddress,
@@ -59,16 +64,16 @@ export async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
   // --------------------------------------------------
   // 2. Create Pricing
   // --------------------------------------------------
-  const datatoken = new Datatoken(web3)
+  const datatoken = new Datatoken(signer, chainConfig.network, chainConfig)
 
   const dispenserParams: DispenserParams = {
-    maxTokens: web3.utils.toWei('1'),
-    maxBalance: web3.utils.toWei('1'),
+    maxTokens: ethersUtils.parseEther('1').toString(),
+    maxBalance: ethersUtils.parseEther('1').toString(),
     withMint: true,
     allowedSwapper: '0x0000000000000000000000000000000000000000' // TODO needed?
   }
 
-  let pricingTransactionReceipt: TransactionReceipt
+  let pricingTransactionReceipt: providers.TransactionResponse
   switch (pricing.type) {
     case 'fixed':
       LoggerInstance.debug(
@@ -80,15 +85,18 @@ export async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
         publisherAccount,
         {
           ...pricing.freCreationParams,
-          fixedRate: web3.utils.toWei(pricing.freCreationParams.fixedRate),
-          marketFee: web3.utils.toWei(pricing.freCreationParams.marketFee)
+          fixedRate: ethersUtils
+            .parseEther(pricing.freCreationParams.fixedRate)
+            .toString(),
+          marketFee: ethersUtils
+            .parseEther(pricing.freCreationParams.marketFee)
+            .toString()
         }
       )
       break
     case 'free':
       LoggerInstance.debug('[publish] Creating dispenser for datatoken...', {
         pricing,
-        datatoken,
         datatokenAddress,
         publisherAccount,
         dispenserAddress: chainConfig.dispenserAddress,
@@ -100,6 +108,7 @@ export async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
         chainConfig.dispenserAddress,
         dispenserParams
       )
+      break
   }
 
   LoggerInstance.debug(
@@ -111,8 +120,8 @@ export async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
 }
 
 export async function publishDDO(config: PublishDDOConfig) {
-  const { chainConfig, web3, ddo } = config
-  const publisherAccount = web3?.defaultAccount
+  const { chainConfig, signer, ddo } = config
+  const publisherAccount = await signer?.getAddress()
 
   // --------------------------------------------------
   // 1. Validate DDO schema
@@ -140,11 +149,11 @@ export async function publishDDO(config: PublishDDOConfig) {
   // --------------------------------------------------
   // 3. Write DDO into NFT metadata
   // --------------------------------------------------
-  const nft = new Nft(web3)
+  const nft = new Nft(signer, chainConfig.network, chainConfig)
 
   // TODO: let user set state
   const LIFECYCLE_STATE_ACTIVE = 0
-  const FLAGS = '0x2' // market sets '0x02' insteadconst validateResult = await aquariusInstance.validate(ddo) of '0x2', theoretically used by aquarius or provider, not implemented yet, will remain hardcoded
+  const FLAGS = '0x02' // market sets '0x02' insteadconst validateResult = await aquariusInstance.validate(ddo) of '0x2', theoretically used by aquarius or provider, not implemented yet, will remain hardcoded
 
   LoggerInstance.debug('[publish] Set Metadata...')
   const transactionReceipt = await nft.setMetadata(
@@ -163,7 +172,7 @@ export async function publishDDO(config: PublishDDOConfig) {
     transactionReceipt
   })
 
-  return { transactionReceipt }
+  return transactionReceipt
 }
 
 // TODO evaluate if we need these (1 transaction for multiple actions)

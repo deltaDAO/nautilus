@@ -21,7 +21,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[src/@types/Compute.ts:27](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Compute.ts#L27)
+[nautilus/src/@types/Compute.ts:27](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Compute.ts#L27)
 
 ___
 
@@ -31,14 +31,14 @@ ___
 
 #### Defined in
 
-[src/@types/Compute.ts:28](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Compute.ts#L28)
+[nautilus/src/@types/Compute.ts:28](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Compute.ts#L28)
 
 ___
 
-### web3
+### signer
 
-• **web3**: `default`
+• **signer**: `Signer`
 
 #### Defined in
 
-[src/@types/Compute.ts:29](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Compute.ts#L29)
+[nautilus/src/@types/Compute.ts:29](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Compute.ts#L29)

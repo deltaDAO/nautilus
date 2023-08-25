@@ -7,7 +7,7 @@ import {
   UserCustomParameters
 } from '@oceanprotocol/lib'
 import Decimal from 'decimal.js'
-import Web3 from 'web3'
+import { Signer } from 'ethers'
 import {
   AccessDetails,
   AssetWithAccessDetails,
@@ -20,9 +20,9 @@ import {
 export async function getFixedBuyPrice(
   accessDetails: AccessDetails,
   config: Config,
-  web3: Web3
+  signer: Signer
 ): Promise<PriceAndFees> {
-  const fixed = new FixedRateExchange(config.fixedRateExchangeAddress, web3)
+  const fixed = new FixedRateExchange(config.fixedRateExchangeAddress, signer)
   const estimatedPrice = await fixed.calcBaseInGivenDatatokensOut(
     accessDetails.addressOrId,
     '1',
@@ -33,8 +33,9 @@ export async function getFixedBuyPrice(
 
 export async function getOrderPriceAndFees(
   asset: AssetWithAccessDetails,
-  web3: Web3,
+  signer: Signer,
   config: Config,
+  providerFees: ProviderFees,
   userCustomParameters?: UserCustomParameters
 ): Promise<OrderPriceAndFees> {
   const orderPriceAndFees = {
@@ -47,21 +48,13 @@ export async function getOrderPriceAndFees(
     opcFee: '0'
   } as OrderPriceAndFees
 
-  // fetch provider fee
-  const initializeData = await ProviderInstance.initialize(
-    asset?.id,
-    asset?.services[0].id,
-    0,
-    web3.defaultAccount,
-    asset?.services[0].serviceEndpoint,
-    undefined,
-    userCustomParameters
-  )
-  orderPriceAndFees.providerFee = initializeData.providerFee
+  const signerAddress = await signer.getAddress()
+
+  orderPriceAndFees.providerFee = providerFees
 
   // fetch price and swap fees
   if (asset?.accessDetails?.type === 'fixed') {
-    const fixed = await getFixedBuyPrice(asset?.accessDetails, config, web3)
+    const fixed = await getFixedBuyPrice(asset?.accessDetails, config, signer)
     orderPriceAndFees.price = fixed.baseTokenAmount
     orderPriceAndFees.opcFee = fixed.oceanFeeAmount
   }

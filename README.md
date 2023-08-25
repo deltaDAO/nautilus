@@ -9,12 +9,15 @@ A typescript library helping to navigate the OCEAN. It enables configurable auto
   - [Configuring a new Nautilus instance](#configuring-a-new-nautilus-instance)
   - [Automated Publishing](#automated-publishing)
     - [Services](#services)
-    - [Consumer Parameters](#consumer-parameters)
-    - [Pricing](#pricing)
+      - [Pricing](#pricing)
+      - [Consumer Parameters](#consumer-parameters)
+      - [Compute Services](#compute-services)
+      - [Datatoken](#datatoken)
+      - [Service name and description](#service-name-and-description)
     - [Asset Owner](#asset-owner)
     - [Optional Configurations](#optional-configurations)
       - [Credentials](#credentials)
-      - [Datatoken](#datatoken)
+      - [Tags and Categories](#tags-and-categories)
     - [Building the Asset](#building-the-asset)
   - [Automated Compute Jobs](#automated-compute-jobs)
     - [Basic Config](#basic-config)
@@ -36,30 +39,27 @@ Install Nautilus:
 npm install @deltadao/nautilus
 ```
 
-Make sure you have [web3](https://www.npmjs.com/package/web3) installed:
+Make sure you have [ethers](https://www.npmjs.com/package/ethers) installed:
 
-> Currently it's highly recommended to use `web3` in version `1.9.0`. Other versions may cause problems. Future versions of Nautilus will be migrated to `ethers` since the underlying [oceanjs](https://github.com/oceanprotocol/ocean.js/tree/main) in versions `>3.0.0` require [ethers](https://www.npmjs.com/package/ethers).
+> Currently [oceanjs](https://github.com/oceanprotocol/ocean.js/tree/main) does support [Ethers v5](https://docs.ethers.org/v5/). Version 6 is not yet supported and may cause problems.
 
 ```shell
-npm install web3@1.9.0
+npm install ethers@^5.7.2
 ```
 
-Setup the `Web3` instance to use:
+Next, create the ethers `Signer` you want to use for the automations. In this example we create a `Wallet` from a given private key.
 
 ```ts
-import Web3 from 'web3'
-
-const web3 = new Web3('https://matic-mumbai.chainstacklabs.com') // can be replaced with any Ocean Protocol supported network
-```
-
-Next, add the account you want to use for the automations:
-
-```ts
+import { Wallet, providers } from 'ethers'
 // This example assumes you have an environment variable named PRIVATE_KEY
 // You can use a package like dotenv to load environment variables
-const account = web3.eth.accounts.privateKeyToAccount(process.env.PRIVATE_KEY)
-web3.eth.accounts.wallet.add(account)
-web3.defaultAccount = account.address // currently required, will be optional in later versions
+
+// Setup the ethers provider to use
+const provider = new providers.JsonRpcProvider(
+  'https://matic-mumbai.chainstacklabs.com' // can be replaced with any Ocean Protocol supported network
+)
+
+const wallet = new Wallet(process.env.PRIVATE_KEY, provider)
 ```
 
 Now you can use the static `create()` method of the `Nautilus` class to construct a new instance:
@@ -69,7 +69,7 @@ Now you can use the static `create()` method of the `Nautilus` class to construc
 import { Nautilus } from '@deltadao/nautilus'
 
 // create the instance
-const nautilus = await Nautilus.create(web3)
+const nautilus = await Nautilus.create(wallet)
 ```
 
 If want to use a custom configuration, you can set an additional parameter in the `create` call. For guidance on which configurations are needed you can have a look at the [Ocean Library Docs](https://docs.oceanprotocol.com/building-with-ocean/using-ocean-libraries/configuration#create-a-configuration-file).
@@ -86,7 +86,7 @@ const customConfig = {
 }
 
 // Setting the custom config in addition to the chainId
-const customNautilus = await Nautilus.create(web3, customConfig)
+const customNautilus = await Nautilus.create(wallet, customConfig)
 ```
 
 We now have a `Nautilus` instance that can be used to publish and consume assets on the specified network.
@@ -156,25 +156,50 @@ const urlFile = {
   method: 'GET'
 }
 
-const service = serviceBuilder
-  .setServiceEndpoint('https://ocean.provider.to/use') // the access controller to be in control of this asset
+serviceBuilder
+  .setServiceEndpoint('https://v4.provider.oceanprotocol.com') // v4 ocean provider, maintained by the Ocean Protocol Foundation
   .setTimeout(0) // Timeout in seconds (0 means unlimited access after purchase)
   .addFile(urlFile)
-  .build()
-
-assetBuilder.addService(service)
 ```
 
 > **_NOTE:_** If you want to publish an algorithm or dataset for computation make sure to set `ServiceBuilder(ServiceTypes.COMPUTE, ...)`.
 
-The code above will build a new `access` service, serving a `url` type file that is available at `https://link.to/my/asset`. The service will be accessible via the ocean provider hosted at `https://ocean.provider.to/use`.
+The code above will build a new `access` service, serving a `url` type file that is available at `https://link.to/my/asset`. The service will be accessible via the ocean provider hosted at `https://v4.provider.oceanprotocol.com`.
+
+> **_NOTE:_** You should specify the provider instance to use, as this is the access controlling component in the stack. You can be fully self-sovereign by using a self-deployed instance or use a trusted third party instance of your choice.
 
 The supported `ServiceTypes` are `ACCESS` and `COMPUTE`.
 <br />The supported `FileTypes` are `URL`, `GRAPHQL`, `ARWEAVE`, `IPFS` and `SMARTCONTRACT`.
 
 For more info on the different types and their available configuration, please refer to the official [Ocean Protocl Documentation](https://docs.oceanprotocol.com/core-concepts/did-ddo#files).
 
-### Consumer Parameters
+#### Pricing
+
+We also want to also specify the pricing for our asset. The `ServiceBuilder` provides a function for this that we can make use of:
+
+```ts
+// Example of a fixed asset
+serviceBuilder.setPricing({
+  type: 'fixed', // 'fixed' or 'free'
+  // freCreationParams can be ommitted for 'free' pricing schemas
+  freCreationParams: {
+    fixedRateAddress: '0x25e1926E3d57eC0651e89C654AB0FA182C6D5CF7', // Fixed Rate Contract address on Mumbai network
+    baseTokenAddress: '0xd8992Ed72C445c35Cb4A2be468568Ed1079357c8', // OCEAN token contract address on Mumbai network
+    baseTokenDecimals: 18, // adjusted to OCEAN token
+    datatokenDecimals: 18, // adjusted to OCEAN token
+    fixedRate: '1', // PRICE
+    marketFee: '0',
+    marketFeeCollector: '0x0000000000000000000000000000000000000000'
+  }
+})
+
+// Example of a free asset
+serviceBuilder.setPricing({
+  type: 'free'
+})
+```
+
+#### Consumer Parameters
 
 It is also possible to publish assets with `consumerParameters`. These are parameters that consumers can provide values for during consumption. For examples and the full overview on these parameters you can refer to the [Consumer Parameters section of the Ocean Protocol Docs](https://docs.oceanprotocol.com/core-concepts/did-ddo#consumer-parameters).
 
@@ -216,30 +241,94 @@ const selectParam = consumerParameterBuilder
 serviceBuilder.addConsumerParameter(selectParam)
 ```
 
-### Pricing
+#### Compute Services
 
-We also want to also specify the pricing for our asset. The `AssetBuilder` provides a function for this that we can make use of:
+To publish a service to be allowed for computation utilizing [Compute-to-Data](https://docs.oceanprotocol.com/developers/compute-to-data), we are able to set some additional information in case we need to.
+The so called `compute` object of a service allows us to specify the following attributes:
+
+- `allowRawAlgorithm`
+- `allowNetworkAccess`
+- `publisherTrustedAlgorithmPublishers`
+- `publisherTrustedAlgorithms`
+
+You can find out more about the specifications at the [official documentation](https://docs.oceanprotocol.com/developers/compute-to-data/compute-options).
+
+Without any custom configuration, the `ServiceBuilder` adheres to the principle of least privilige, by setting the following values:
 
 ```ts
-// Example of a fixed asset
-assetBuilder.setPricing({
-  type: 'fixed', // 'fixed' or 'free'
-  // freCreationParams can be ommitted for 'free' pricing schemas
-  freCreationParams: {
-    fixedRateAddress: '0x25e1926E3d57eC0651e89C654AB0FA182C6D5CF7', // Fixed Rate Contract address on Mumbai network
-    baseTokenAddress: '0xd8992Ed72C445c35Cb4A2be468568Ed1079357c8', // OCEAN token contract address on Mumbai network
-    baseTokenDecimals: 18, // adjusted to OCEAN token
-    datatokenDecimals: 18, // adjusted to OCEAN token
-    fixedRate: '1', // PRICE
-    marketFee: '0',
-    marketFeeCollector: '0x0000000000000000000000000000000000000000'
-  }
-})
+service.compute = {
+  allowNetworkAccess: false,
+  allowRawAlgorithm: false,
+  publisherTrustedAlgorithmPublishers: [],
+  publisherTrustedAlgorithms: []
+}
+```
 
-// Example of a free asset
-assetBuilder.setPricing({
-  type: 'free'
-})
+> **_NOTE:_** This means, that by default **no algorithm will be allowed** to run computations on our dataset, without updating the metadata at a later point in time.
+
+However, the `ServiceBuilder` class also supports setting these attributes to the desired values before publishing:
+
+```ts
+// Allow raw algorithms on this service
+serviceBuilder.allowRawAlgorithms()
+
+// Prevent raw algorithms on this service
+serviceBuilder.allowRawAlgorithms(false)
+
+// Allow network access during computation
+serviceBuilder.allowAlgorithmNetworkAccess()
+
+// Prevent network access during computation
+serviceBuilder.allowAlgorithmNetworkAccess(false)
+
+// Add a trusted algorithm to be allowed to run computations
+const trustedAlgorithm = {
+  did: '0x1234...',
+  filesChecksum: '...', // can be calculated using the ocean-provider of the algorithm service
+  containerSectionChecksum: '...' //Hash of algorithm’s metadata.algorithm.container section
+}
+serviceBuilder.addTrustedAlgorithm(trustedAlgorithm)
+
+// Add any algorithm published by a given address to be allowed to run computations
+const publisherAddress = '0x1234addressOfPublisher'
+serviceBuilder.addTrustedAlgorithmPublisher(publisherAddress)
+```
+
+> **_NOTE:_** Make sure to set the `ServiceType` of your service to `ServiceType.COMPUTE`, as the `compute` object is ignored for access type services.
+
+_We aim to support automated calculations for trusted algorithm checksums in the future._
+
+#### Datatoken
+
+Optionally, we can specify some information for the access token, like the name and symbol, to be used. This will be displayed in Ocean Markets and also can be used to identify your service in the network (e.g., when visiting block explorers).
+
+```ts
+const name = 'My Datatoken Name'
+const symbol = 'SYMBOL'
+
+serviceBuilder.setDatatokenNameAndSymbol(name, symbol)
+```
+
+#### Service name and description
+
+If we want to provide some human readable metadata for our service, we can utilize the `name` and `description` properties respectively. The `ServiceBuilder` class supports setting these:
+
+```ts
+const name = 'Service Name'
+const description = 'A descriptive text about my service.'
+
+serviceBuilder.setName(name)
+serviceBuilder.setDescription(description)
+```
+
+#### Adding services via the AssetBuilder
+
+Once our service is correctly configured, we can simply call the `build()` function of our builder and add it to the asset using our `AssetBuilder` instance:
+
+```ts
+const service = serviceBuilder.build()
+
+assetBuilder.addService(service)
 ```
 
 ### Asset Owner
@@ -247,8 +336,8 @@ assetBuilder.setPricing({
 We also have to make sure we specify the owner of the asset, that will be used for the publishing process:
 
 ```ts
-// Set the owner using the web3 instance we setup in the initial nautilus configuration
-const owner = web3.defaultAccount
+// Set the owner using the Wallet instance we setup in the initial nautilus configuration
+const owner = wallet.address
 
 assetBuilder.setOwner(owner)
 ```
@@ -268,20 +357,24 @@ const whitelistedAddresses = [
 ]
 
 // whitelisting addresses to be allowed to access our service
-assetBuilder.addCredentialAddresses(CredentialListTypes.ALLOW, whitelistedAddresses)
+assetBuilder.addCredentialAddresses(
+  CredentialListTypes.ALLOW,
+  whitelistedAddresses
+)
 ```
 
 We can either provide a whitelist of addresses that should be allowed to consume our service (`CredentialListTypes.ALLOW`) or we can specifically blacklist certain addresses restricting the access on our service (simply change the list type to `CredentialListTypes.DENY`).
 
-#### Datatoken
+#### Tags and Categories
 
-Optionally, we can specify some information for the access token, like the name and symbol, to be used. This will be displayed in Ocean Markets and also can be used to identify your service in the network (e.g., when visiting block explorers).
+We can set tags or categories for our asset using the respective functions. In the current implementation it is encouraged to prefer tags over categories, as they have better support throughout the stack, e.g., in various frontend applications.
 
 ```ts
-const name = 'My Datatoken Name'
-const symbol = 'SYMBOL'
+const categories = ['Category 1', 'Category 2']
+assetBuilder.addCategories(categories)
 
-assetBuilder.setDatatokenNameAndSymbol(name, symbol)
+const tags = ['my-awesome-tag', 'another tag']
+assetBuilder.addTags(tags)
 ```
 
 ### Building the Asset
@@ -296,10 +389,27 @@ const result = await nautilus.publish(asset)
   The publishing result will look something like this:
   
   {
-    erc721Address: '0xC874F7956CBBFd36F8EA7394EafF415A62F1A548',
-    datatokenAddress: '0x36176CB161554862a630545665e8769e8649C30B',
-    txHash: '0x154932e1b3c52ddbaffda559ed103a5e5b542199bf3b7f85bc393d1488306555',
-    DID: 'did:op:941b503aa8303cebd8130e7ddc0e5e82c7536c385059723981a4b1d392dc43e0'
+    nftAddress: '0xC874F7956CBBFd36F8EA7394EafF415A62F1A548',
+    services: [{
+      service: {
+        type: 'access',
+        files: [...],
+        ...
+      },
+      datatokenAddress: '0x36176CB161554862a630545665e8769e8649C30B',
+      pricingTransactionReceipt: {
+        hash: '0x154932e1b3c52ddbaffda559ed103a5e5b542199bf3b7f85bc393d1488306555',
+        ...
+      }
+    }],
+    ddo: {
+      id: 'did:op:941b503aa8303cebd8130e7ddc0e5e82c7536c385059723981a4b1d392dc43e0',
+      ...
+    },
+    setMetadataTxReceipt: {
+      hash: '0x154932e1b3c52ddbaffda559ed103a5e5b542199bf3b7f85bc393d1488306555',
+      ...
+    }
   }
 */
 ```
@@ -387,12 +497,12 @@ const jobId = computeJob[0].jobId // make sure to save your jobId to retrieve re
 Once you have started a compute job it is possible to get status reports via the `.getComputeStatus()` function.
 For this you need to have the `jobId` as well as the `providerUri` endpoint that is used for orchestrating and accessing the compute job.
 
-In most cases `providerUri` will be the `serviceEndpoint` of the `compute` service of the dataset that was computed on.
+The `providerUri`, meaning the used access controller, will be the `serviceEndpoint` of the `compute` service of the dataset that was computed on.
 
 ```ts
 const computeJob = await nautilus.getComputeStatus({
   jobId, // use your previously saved jobId
-  providerUri: 'https://v4.provider.oceanprotocol.com/' // default ocean provider(serviceEndpoint)
+  providerUri: 'https://v4.provider.oceanprotocol.com/' // replace with the respective ocean provider (serviceEndpoint) of the compute dataset service
 })
 ```
 
@@ -444,7 +554,7 @@ Once again you will need the `jobId` as well as the `providerUri` as specified i
 ```ts
 const computeResultUrl = await nautilus.getComputeResult({
   jobId, // use your previously saved jobId
-  providerUri: 'https://v4.provider.oceanprotocol.com/' // default ocean provider(serviceEndpoint)
+  providerUri: 'https://v4.provider.oceanprotocol.com/' // replace with the respective ocean provider (serviceEndpoint) of the compute dataset service
 })
 ```
 

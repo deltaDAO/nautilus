@@ -4,19 +4,20 @@ import {
   LogLevel,
   LoggerInstance
 } from '@oceanprotocol/lib'
-import Web3 from 'web3'
-import { AccessConfig } from '../@types/Access'
+import { Signer, utils as ethersUtils } from 'ethers'
 import {
+  AccessConfig,
   ComputeConfig,
   ComputeResultConfig,
-  ComputeStatusConfig
-} from '../@types/Compute'
+  ComputeStatusConfig,
+  CreateAssetConfig,
+  PublishResponse
+} from '../@types'
+import { createAsset, createDatatokenAndPricing, publishDDO } from '../publish'
+import { getAllPromisesOnArray } from '../utils'
+import { NautilusAsset } from './Asset/NautilusAsset'
 import { access } from '../access'
 import { compute, getStatus, retrieveResult } from '../compute'
-import { createAsset, createDatatokenAndPricing, publishDDO } from '../publish'
-import { NautilusAsset } from './Asset/NautilusAsset'
-import { CreateAssetConfig } from '../@types'
-import { getAllPromisesOnArray } from '../utils'
 
 export { LogLevel } from '@oceanprotocol/lib'
 
@@ -25,18 +26,25 @@ export { LogLevel } from '@oceanprotocol/lib'
  * Nautilus class
  */
 export class Nautilus {
-  private web3: Web3
+  private signer: Signer
   private config: Config
 
-  private constructor(web3: Web3) {
-    this.web3 = web3
+  private constructor(signer: Signer) {
+    this.signer = signer
   }
 
   /**
    * Creates a new Nautilus instance
    */
-  static async create(web3: Web3, config?: Partial<Config>): Promise<Nautilus> {
-    const instance = new Nautilus(web3)
+  static async create(
+    signer: Signer,
+    config?: Partial<Config>
+  ): Promise<Nautilus> {
+    LoggerInstance.debug(
+      'Creating new Nautilus instance with signer',
+      await signer.getAddress()
+    )
+    const instance = new Nautilus(signer)
 
     await instance.init(config)
 
@@ -57,7 +65,7 @@ export class Nautilus {
   }
 
   private async loadOceanConfig(config?: Partial<Config>) {
-    const chainId = await this.web3.eth.getChainId()
+    const chainId = await this.signer.getChainId()
 
     const oceanConfig = new ConfigHelper().getConfig(chainId)
     if (!oceanConfig)
@@ -86,18 +94,18 @@ export class Nautilus {
       this.config.providerUri?.length > 0 &&
       this.config.nodeUri?.length > 0 &&
       this.config.subgraphUri?.length > 0 &&
-      Web3.utils.isAddress(this.config.fixedRateExchangeAddress) &&
-      Web3.utils.isAddress(this.config.dispenserAddress) &&
-      Web3.utils.isAddress(this.config.nftFactoryAddress)
+      ethersUtils.isAddress(this.config.fixedRateExchangeAddress) &&
+      ethersUtils.isAddress(this.config.dispenserAddress) &&
+      ethersUtils.isAddress(this.config.nftFactoryAddress)
     )
   }
 
-  private getChainConfig(): Pick<CreateAssetConfig, 'web3' | 'chainConfig'> {
-    if (!this.web3 || !this.config)
+  private getChainConfig(): Pick<CreateAssetConfig, 'signer' | 'chainConfig'> {
+    if (!this.signer || !this.config)
       throw Error('Web3 and chainConfig are required.')
 
     return {
-      web3: this.web3,
+      signer: this.signer,
       chainConfig: this.config
     }
   }
@@ -108,8 +116,8 @@ export class Nautilus {
     return this.config
   }
 
-  async publish(asset: NautilusAsset) {
-    const { web3, chainConfig } = this.getChainConfig()
+  async publish(asset: NautilusAsset): Promise<PublishResponse> {
+    const { signer, chainConfig } = this.getChainConfig()
 
     // --------------------------------------------------
     // 1. Create NFT if needed
@@ -118,11 +126,11 @@ export class Nautilus {
 
     if (!nftAddress) {
       const nftCreationResult = await createAsset({
-        web3,
+        signer,
         chainConfig,
         nftParams: asset.getNftParams()
       })
-      nftAddress = nftCreationResult.nftAddress
+      nftAddress = nftCreationResult.nftAddress.toString()
     }
 
     // --------------------------------------------------
@@ -133,7 +141,7 @@ export class Nautilus {
       async (service) => {
         const { datatokenAddress, pricingTransactionReceipt } =
           await createDatatokenAndPricing({
-            web3,
+            signer,
             chainConfig,
             nftAddress,
             pricing: {
@@ -166,7 +174,7 @@ export class Nautilus {
     })
 
     const setMetadataTxReceipt = await publishDDO({
-      web3,
+      signer,
       chainConfig,
       ddo
     })
@@ -182,14 +190,14 @@ export class Nautilus {
   /**
    * @param accessConfig configuration object
    */
-  async access(accessConfig: Omit<AccessConfig, 'web3' | 'chainConfig'>) {
+  async access(accessConfig: Omit<AccessConfig, 'signer' | 'chainConfig'>) {
     return await access({
       ...accessConfig,
       ...this.getChainConfig()
     })
   }
 
-  async compute(computeConfig: Omit<ComputeConfig, 'web3' | 'chainConfig'>) {
+  async compute(computeConfig: Omit<ComputeConfig, 'signer' | 'chainConfig'>) {
     return await compute({
       ...computeConfig,
       ...this.getChainConfig()
@@ -197,20 +205,20 @@ export class Nautilus {
   }
 
   async getComputeStatus(
-    computeStatusConfig: Omit<ComputeStatusConfig, 'web3'>
+    computeStatusConfig: Omit<ComputeStatusConfig, 'signer'>
   ) {
     return await getStatus({
       ...computeStatusConfig,
-      web3: this.web3
+      signer: this.signer
     })
   }
 
   async getComputeResult(
-    computeResultConfig: Omit<ComputeResultConfig, 'web3'>
+    computeResultConfig: Omit<ComputeResultConfig, 'signer'>
   ) {
     return await retrieveResult({
       ...computeResultConfig,
-      web3: this.web3
+      signer: this.signer
     })
   }
   // #endregion

@@ -11,7 +11,14 @@ export default class DocsPlugin extends Plugin {
 
   async beforeBump() {
     const { version } = this.config.contextOptions
-    await this.prepareDocsForNewVersion(version)
+    const isDryRun = this.config.options['dry-run']
+    const withDocsOption = this.config.options['with-docs']
+
+    const shouldPrepareDocs =
+      withDocsOption === undefined || withDocsOption !== 'false'
+
+    if (!isDryRun && shouldPrepareDocs)
+      await this.prepareDocsForNewVersion(version)
   }
 
   async prepareDocsForNewVersion(version) {

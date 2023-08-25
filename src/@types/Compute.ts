@@ -1,5 +1,5 @@
 import { Asset, Config, ProviderFees } from '@oceanprotocol/lib'
-import Web3 from 'web3'
+import { Signer } from 'ethers'
 
 export interface ComputeAsset {
   did: string
@@ -18,7 +18,7 @@ export interface ComputeAlgorithm extends ComputeAsset {
 export interface ComputeConfig {
   dataset: ComputeAsset
   algorithm: ComputeAlgorithm
-  web3: Web3
+  signer: Signer
   chainConfig: Config
   additionalDatasets?: ComputeAsset[]
 }
@@ -26,7 +26,7 @@ export interface ComputeConfig {
 export interface ComputeStatusConfig {
   jobId: string
   providerUri: string
-  web3: Web3
+  signer: Signer
 }
 
 export interface ComputeResultConfig extends ComputeStatusConfig {

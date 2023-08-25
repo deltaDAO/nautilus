@@ -1,6 +1,6 @@
+import { Aquarius } from '@oceanprotocol/lib'
 import assert from 'assert'
-import { AssetBuilder, Nautilus, LogLevel } from '../../src'
-import { ConsumerParameterBuilder } from '../../src/Nautilus/Asset/ConsumerParameters'
+import { AssetBuilder, LogLevel, Nautilus } from '../../src'
 import {
   FileTypes,
   ServiceBuilder,
@@ -13,11 +13,14 @@ import {
 } from '../fixtures/AssetConfig'
 import { getTestConfig } from '../fixtures/Config'
 import { nftParams } from '../fixtures/NftCreateData'
-import { MUMBAI_NODE_URI, getWeb3 } from '../fixtures/Web3'
-import { Aquarius } from '@oceanprotocol/lib'
+import { MUMBAI_NODE_URI, getSigner } from '../fixtures/Ethers'
+import { expect } from 'chai'
 
-describe('Nautilus access flow integration test', () => {
+describe('Access Flow Integration', function () {
   let downloadAssetDid: string
+  let serviceEndpoint: string
+
+  this.timeout(70000)
 
   before(() => {
     Nautilus.setLogLevel(LogLevel.Verbose)
@@ -26,20 +29,21 @@ describe('Nautilus access flow integration test', () => {
   // 1. Publish Download Asset -> store did
   it('publishes a download asset', async () => {
     // Setup Nautilus instance for publisher (PRIVATE_KEY_TESTS_1)
-    const web3 = getWeb3(1, MUMBAI_NODE_URI)
-    const nautilus = await Nautilus.create(web3, await getTestConfig(web3))
+    const signer = getSigner(1, MUMBAI_NODE_URI)
+    const nautilus = await Nautilus.create(signer, await getTestConfig(signer))
 
     const { providerUri } = nautilus.getOceanConfig()
+    serviceEndpoint = providerUri
 
     const serviceBuilder = new ServiceBuilder(
       ServiceTypes.ACCESS,
       FileTypes.URL
     )
     const service = serviceBuilder
-      .setServiceEndpoint(providerUri)
+      .setServiceEndpoint(serviceEndpoint)
       .setTimeout(algorithmService.timeout)
       .addFile(algorithmService.files[0])
-      .setPricing(await getPricing(web3, 'free'))
+      .setPricing(await getPricing(signer, 'free'))
       .build()
 
     const assetBuilder = new AssetBuilder()
@@ -48,7 +52,7 @@ describe('Nautilus access flow integration test', () => {
       .setDescription('A publishing test with custom userdata')
       .setLicense('MIT')
       .setName('Test Publish Algorithm')
-      .setOwner(web3.defaultAccount)
+      .setOwner(await signer.getAddress())
       .setType('algorithm')
       .setNftData(nftParams)
       .addService(service)
@@ -65,17 +69,20 @@ describe('Nautilus access flow integration test', () => {
   // 2. Access the Download Asset (1.)
   it('accesses a download asset', async () => {
     // Setup Nautilus instance for consumer (PRIVATE_KEY_TESTS_2)
-    const web3 = getWeb3(2, nodeUri)
-    const nautilus = await Nautilus.create(web3, await getTestConfig(web3))
+    const signer = getSigner(2, MUMBAI_NODE_URI)
+    const nautilus = await Nautilus.create(signer, await getTestConfig(signer))
 
     // wait until ddo is found in metadata cache
     const aquarius = new Aquarius(nautilus.getOceanConfig().metadataCacheUri)
+    console.log(
+      `Waiting for aquarius at ${aquarius.aquariusURL} to access ${downloadAssetDid}`
+    )
     await aquarius.waitForAqua(downloadAssetDid)
 
     const accessUrl = await nautilus.access({
       assetDid: downloadAssetDid
     })
 
-    assert(accessUrl)
-  }).timeout(30000)
+    expect(accessUrl).to.match(new RegExp(serviceEndpoint))
+  })
 })

@@ -25,7 +25,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[src/@types/Compute.ts:27](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Compute.ts#L27)
+[nautilus/src/@types/Compute.ts:27](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Compute.ts#L27)
 
 ___
 
@@ -39,7 +39,7 @@ ___
 
 #### Defined in
 
-[src/@types/Compute.ts:28](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Compute.ts#L28)
+[nautilus/src/@types/Compute.ts:28](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Compute.ts#L28)
 
 ___
 
@@ -49,18 +49,18 @@ ___
 
 #### Defined in
 
-[src/@types/Compute.ts:33](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Compute.ts#L33)
+[nautilus/src/@types/Compute.ts:33](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Compute.ts#L33)
 
 ___
 
-### web3
+### signer
 
-• **web3**: `default`
+• **signer**: `Signer`
 
 #### Inherited from
 
-[ComputeStatusConfig](types.ComputeStatusConfig.md).[web3](types.ComputeStatusConfig.md#web3)
+[ComputeStatusConfig](types.ComputeStatusConfig.md).[signer](types.ComputeStatusConfig.md#signer)
 
 #### Defined in
 
-[src/@types/Compute.ts:29](https://github.com/deltaDAO/nautilus/blob/89168de/src/@types/Compute.ts#L29)
+[nautilus/src/@types/Compute.ts:29](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Compute.ts#L29)

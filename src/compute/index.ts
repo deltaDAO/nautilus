@@ -9,7 +9,7 @@ import {
   ProviderComputeInitializeResults,
   ProviderInstance
 } from '@oceanprotocol/lib'
-import Web3 from 'web3'
+import { Signer } from 'ethers'
 import {
   AssetWithAccessDetails,
   ComputeConfig,
@@ -25,24 +25,26 @@ import {
 import { isOrderable, order, reuseOrder } from '../utils/order'
 import {
   approveProviderFee,
-  initializeProviderForCompute
+  initializeProviderForCompute,
+  startComputeJob
 } from '../utils/provider'
 
 export async function compute(computeConfig: ComputeConfig) {
   const {
     dataset: datasetConfig, // TODO consider syncing naming with type to prevent renaming
     algorithm: algorithmConfig,
-    web3,
+    signer,
     chainConfig,
     additionalDatasets: additionalDatasetsConfig
   } = computeConfig
-  const account = web3?.defaultAccount
 
-  if (!datasetConfig || !algorithmConfig || !web3 || !account) {
+  const signerAddress = await signer.getAddress()
+
+  if (!datasetConfig || !algorithmConfig || !signer || !signerAddress) {
     LoggerInstance.error('Missing config(s)', {
       datasetConfig,
       algorithmConfig,
-      account
+      account: signerAddress
     })
     throw new Error('Cannot start compute. Missing config(s).')
   }
@@ -56,7 +58,7 @@ export async function compute(computeConfig: ComputeConfig) {
     '\nwith algorithm',
     algorithmDid,
     '\nfor account',
-    account
+    signerAddress
   )
 
   const assetIdentifiers = [datasetConfig, algorithmConfig]
@@ -69,7 +71,7 @@ export async function compute(computeConfig: ComputeConfig) {
     const assets = await getAssetsWithAccessDetails(
       assetIdentifiers,
       chainConfig,
-      web3
+      signer
     )
 
     const dataset = assets.find((asset) => asset.id === datasetDid)
@@ -108,15 +110,16 @@ export async function compute(computeConfig: ComputeConfig) {
     const providerInitializeResults = await initializeProviderForCompute(
       dataset,
       algo,
-      web3.defaultAccount,
+      signerAddress,
       computeEnv
     )
+
     // 4. Get prices and fees for the assets
     const { datasetWithPrice, algorithmWithPrice } =
       await getComputeAssetPrices(
         algo,
         dataset,
-        web3,
+        signer,
         chainConfig,
         providerInitializeResults
       )
@@ -128,16 +131,16 @@ export async function compute(computeConfig: ComputeConfig) {
 
     // TODO remove? never used. maybe missing feature to check if datatoken already in wallet?
     const algoDatatokenBalance = await getDatatokenBalance(
-      web3,
+      signer,
       algo.services[0].datatokenAddress
     )
 
     // TODO ==== Extract asset ordering start ====
     const algorithmOrderTx = await handleComputeOrder(
-      web3,
+      signer,
       algo,
       algorithmWithPrice?.orderPriceAndFees,
-      web3.defaultAccount,
+      signerAddress,
       providerInitializeResults.algorithm,
       chainConfig,
       computeEnv.consumerAddress
@@ -146,15 +149,15 @@ export async function compute(computeConfig: ComputeConfig) {
 
     // TODO remove? never used. maybe missing feature to check if datatoken already in wallet?
     const datasetDatatokenBalance = await getDatatokenBalance(
-      web3,
+      signer,
       algo.services[0].datatokenAddress
     )
 
     const datasetOrderTx = await handleComputeOrder(
-      web3,
+      signer,
       dataset,
       datasetWithPrice?.orderPriceAndFees,
-      web3.defaultAccount,
+      signerAddress,
       providerInitializeResults.datasets[0],
       chainConfig,
       computeEnv.consumerAddress
@@ -177,13 +180,8 @@ export async function compute(computeConfig: ComputeConfig) {
       publishOutput: true // TODO should be configuarable
     }
 
-    const controller = new AbortController()
-
-    const response = await ProviderInstance.computeStart(
+    const response = await startComputeJob(
       dataset.services[0].serviceEndpoint,
-      web3,
-      web3.defaultAccount,
-      computeEnv?.id,
       computeAsset,
       {
         documentId: algorithmConfig.did,
@@ -191,11 +189,10 @@ export async function compute(computeConfig: ComputeConfig) {
         transferTxId: algorithmOrderTx,
         ...algorithmConfig
       },
-      controller.signal,
-      null,
+      signer,
+      computeEnv,
       output
     )
-    if (!response) throw new Error('Error starting compute job.')
 
     // ==== Extract compute job execution end ====
     LoggerInstance.debug('[compute] Starting compute job response: ', response)
@@ -209,15 +206,35 @@ export async function compute(computeConfig: ComputeConfig) {
 async function getComputeAssetPrices(
   algo: AssetWithAccessDetails,
   dataset: AssetWithAccessDetails,
-  web3: Web3,
+  signer: Signer,
   config: Config,
   providerInitializeResults: ProviderComputeInitializeResults
 ) {
-  const datasetWithPrice = await getAssetWithPrice(dataset, web3, config)
+  LoggerInstance.debug('Initializing provider for compute')
+
+  // get fees for dataset from providerInitializeResults.datasets array
+  const datatokenAddresses = dataset.datatokens.map((dt) => dt.address)
+
+  const datasetInitializeResult = providerInitializeResults.datasets.find(
+    (initializeResult) =>
+      datatokenAddresses.includes(initializeResult.datatoken)
+  )
+  const datasetWithPrice = await getAssetWithPrice(
+    dataset,
+    signer,
+    config,
+    datasetInitializeResult.providerFee
+  )
+
   if (!datasetWithPrice?.orderPriceAndFees)
     throw new Error('Error setting dataset price and fees!')
 
-  const algorithmWithPrice = await getAssetWithPrice(algo, web3, config)
+  const algorithmWithPrice = await getAssetWithPrice(
+    algo,
+    signer,
+    config,
+    providerInitializeResults.algorithm.providerFee
+  )
   if (!algorithmWithPrice?.orderPriceAndFees)
     throw new Error('Error setting algorithm price and fees!')
 
@@ -225,16 +242,18 @@ async function getComputeAssetPrices(
 }
 
 export async function getStatus(computeStatusConfig: ComputeStatusConfig) {
-  const { jobId, web3, providerUri } = computeStatusConfig
+  const { jobId, signer, providerUri } = computeStatusConfig
+  const signerAddress = await signer.getAddress()
+
   LoggerInstance.debug('[compute] Retrieve job status:', {
     jobId,
     providerUri,
-    account: web3.defaultAccount
+    account: signerAddress
   })
   try {
     const status = await ProviderInstance.computeStatus(
       providerUri,
-      web3.defaultAccount,
+      signerAddress,
       jobId
     )
     LoggerInstance.debug('[compute] computeStatus response: ', status)
@@ -248,7 +267,7 @@ export async function getStatus(computeStatusConfig: ComputeStatusConfig) {
 }
 
 export async function retrieveResult(computeResultConfig: ComputeResultConfig) {
-  const { providerUri, web3, jobId, resultIndex } = computeResultConfig
+  const { providerUri, signer, jobId, resultIndex } = computeResultConfig
   const job = await getStatus(computeResultConfig)
 
   if (job?.status !== 70) {
@@ -280,8 +299,7 @@ export async function retrieveResult(computeResultConfig: ComputeResultConfig) {
   LoggerInstance.debug(`[compute] Build result url...`)
   return await ProviderInstance.getComputeResultUrl(
     providerUri,
-    web3,
-    web3.defaultAccount,
+    signer,
     jobId,
     index
   )
@@ -309,7 +327,7 @@ export async function getComputeEnviroment(
 }
 
 export async function handleComputeOrder(
-  web3: Web3,
+  signer: Signer,
   asset: AssetWithAccessDetails,
   orderPriceAndFees: OrderPriceAndFees,
   accountId: string,
@@ -341,7 +359,7 @@ export async function handleComputeOrder(
       const txApproveProvider = await approveProviderFee(
         asset,
         accountId,
-        web3,
+        signer,
         initializeData.providerFee.providerFeeAmount
       )
 
@@ -356,30 +374,29 @@ export async function handleComputeOrder(
 
     if (initializeData?.validOrder) {
       LoggerInstance.debug('[compute] Calling reuseOrder ...', initializeData)
-      const txReuseOrder = await reuseOrder(
-        web3,
+      const txReuseOrder = await reuseOrder({
+        signer,
         asset,
-        accountId,
-        initializeData.validOrder,
-        initializeData.providerFee
-      )
+        validOrderTx: initializeData.validOrder,
+        providerFees: initializeData.providerFee
+      })
       if (!txReuseOrder) throw new Error('Failed to reuse order!')
       LoggerInstance.debug('[compute] Reused order:', txReuseOrder)
-      return txReuseOrder?.transactionHash
+      return txReuseOrder?.hash
     }
 
     LoggerInstance.debug('[compute] Calling order ...', initializeData)
-    const txStartOrder = await order(
-      web3,
+    const txStartOrder = await order({
+      signer,
       asset,
       orderPriceAndFees,
       accountId,
       config,
-      initializeData?.providerFee,
+      providerFees: initializeData?.providerFee,
       computeConsumerAddress
-    )
+    })
     LoggerInstance.debug('[compute] Order succeeded', txStartOrder)
-    return txStartOrder?.transactionHash
+    return txStartOrder?.hash
   } catch (error) {
     LoggerInstance.error(`[compute] ${error.message}`)
   }

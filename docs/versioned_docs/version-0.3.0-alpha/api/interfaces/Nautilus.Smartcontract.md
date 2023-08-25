@@ -17,7 +17,7 @@ Function ABI (not the entire smartcontract abi)
 
 #### Defined in
 
-node_modules/@oceanprotocol/lib/dist/src/@types/File.d.ts:82
+oceanprotocol/ocean.js/dist/src/@types/File.d.ts:82
 
 ___
 
@@ -29,7 +29,7 @@ Smartcontract address
 
 #### Defined in
 
-node_modules/@oceanprotocol/lib/dist/src/@types/File.d.ts:72
+oceanprotocol/ocean.js/dist/src/@types/File.d.ts:72
 
 ___
 
@@ -41,7 +41,7 @@ ChainId
 
 #### Defined in
 
-node_modules/@oceanprotocol/lib/dist/src/@types/File.d.ts:77
+oceanprotocol/ocean.js/dist/src/@types/File.d.ts:77
 
 ___
 
@@ -51,4 +51,4 @@ ___
 
 #### Defined in
 
-node_modules/@oceanprotocol/lib/dist/src/@types/File.d.ts:67
+oceanprotocol/ocean.js/dist/src/@types/File.d.ts:67

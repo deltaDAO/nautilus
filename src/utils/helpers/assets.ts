@@ -4,7 +4,7 @@ import {
   ProviderFees,
   UserCustomParameters
 } from '@oceanprotocol/lib'
-import Web3 from 'web3'
+import { Signer } from 'ethers'
 import {
   AssetWithAccessDetails,
   AssetWithAccessDetailsAndPrice,
@@ -17,12 +17,14 @@ import { getOrderPriceAndFees } from './prices'
 export async function getAssetsWithAccessDetails(
   identifiers: ComputeAsset[],
   config: Config,
-  web3: Web3
+  signer: Signer
 ): Promise<AssetWithAccessDetails[]> {
   const controller = new AbortController()
   LoggerInstance.debug(
     `Retrieving ${identifiers.length} assets from metadata cache ...`
   )
+
+  const signerAddress = await signer.getAddress()
 
   const assets = await Promise.all(
     identifiers.map((asset) =>
@@ -46,7 +48,7 @@ export async function getAssetsWithAccessDetails(
         config.subgraphUri,
         asset.datatokens[serviceIndex].address,
         asset.services[serviceIndex].timeout,
-        web3.defaultAccount
+        signerAddress
       )
     })
   )
@@ -59,12 +61,19 @@ export async function getAssetsWithAccessDetails(
 
 export async function getAssetWithPrice(
   asset: AssetWithAccessDetails,
-  web3: Web3,
+  signer: Signer,
   config: Config,
+  providerFees: ProviderFees,
   userCustomParameters?: UserCustomParameters
 ): Promise<AssetWithAccessDetailsAndPrice> {
   return {
     ...asset,
-    orderPriceAndFees: await getOrderPriceAndFees(asset, web3, config)
+    orderPriceAndFees: await getOrderPriceAndFees(
+      asset,
+      signer,
+      config,
+      providerFees,
+      userCustomParameters
+    )
   }
 }

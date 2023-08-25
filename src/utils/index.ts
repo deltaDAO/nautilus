@@ -5,7 +5,7 @@ import {
   Datatoken,
   Service
 } from '@oceanprotocol/lib'
-import Web3 from 'web3'
+import { Signer } from 'ethers'
 
 export function getOceanConfig(
   chainId: number,
@@ -31,9 +31,12 @@ export function getServiceByName(asset: Asset, serviceName: string): Service {
   return asset.services?.find((s) => s.type === serviceName)
 }
 
-export async function getDatatokenBalance(web3: Web3, datatokenAddress) {
+export async function getDatatokenBalance(signer: Signer, datatokenAddress) {
   return Number(
-    await new Datatoken(web3).balance(datatokenAddress, web3.defaultAccount)
+    await new Datatoken(signer).balance(
+      datatokenAddress,
+      await signer.getAddress()
+    )
   )
 }
 
