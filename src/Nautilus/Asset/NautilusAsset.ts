@@ -10,6 +10,7 @@ import {
 import { FileTypes, NautilusService, ServiceTypes } from './Service'
 import { params } from './constants/datatoken.constants'
 import { createData } from './constants/nft.constants'
+import { NautilusConsumerParameter } from './ConsumerParameters'
 
 export type PricingConfigWithoutOwner = {
   type: PricingConfig['type']
@@ -86,10 +87,10 @@ export class NautilusAsset {
         algorithm: this.metadata.algorithm
           ? {
               ...this.metadata.algorithm,
-              consumerParameters:
-                this.metadata.algorithm?.consumerParameters?.map((param) =>
-                  param.getConfig()
-                )
+              consumerParameters: (
+                this.metadata.algorithm
+                  ?.consumerParameters as NautilusConsumerParameter[]
+              )?.map((param) => param.getConfig())
             }
           : undefined
       },
