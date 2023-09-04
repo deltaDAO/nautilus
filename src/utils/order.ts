@@ -108,6 +108,9 @@ export async function order({
 
   LoggerInstance.debug('[order] order type', asset.accessDetails?.type)
 
+  const templateId = Number(asset.accessDetails?.templateId)
+  LoggerInstance.debug('[order] order templateId', templateId)
+
   switch (asset.accessDetails?.type) {
     case 'fixed': {
       const freParams = {
@@ -120,7 +123,7 @@ export async function order({
         marketFeeAddress: ZERO_ADDRESS
       } as FreOrderParams
 
-      if (asset.accessDetails.templateId === 1) {
+      if (templateId === 1) {
         // buy datatoken
         const txApprove = await approve(
           signer,
@@ -137,6 +140,7 @@ export async function order({
           false
         )
         if (!txApprove) {
+          LoggerInstance.error('Unable to approve datatoken tx')
           return
         }
         const fre = new FixedRateExchange(
@@ -160,7 +164,7 @@ export async function order({
         )
       }
 
-      if (asset.accessDetails.templateId === 2) {
+      if (templateId === 2) {
         const txApprove = await approve(
           signer,
           config,
@@ -175,9 +179,12 @@ export async function order({
           ),
           false
         )
+
         if (!txApprove) {
+          LoggerInstance.debug('Unable to approve datatoken tx')
           return
         }
+
         return await datatoken.buyFromFreAndOrder(
           asset.accessDetails.datatoken.address,
           orderParams,
@@ -189,10 +196,10 @@ export async function order({
     case 'free': {
       LoggerInstance.debug(
         '[order] order with type "free" for templateId:',
-        asset.accessDetails.templateId
+        templateId
       )
 
-      if (asset.accessDetails.templateId === 1) {
+      if (templateId === 1) {
         const dispenser = new Dispenser(config.dispenserAddress, signer)
         LoggerInstance.debug('[order] free order: dispenser', dispenser.address)
         const dispenserTx = await dispenser.dispense(
@@ -213,7 +220,7 @@ export async function order({
           orderParams._consumeMarketFee
         )
       }
-      if (asset.accessDetails.templateId === 2) {
+      if (templateId === 2) {
         LoggerInstance.debug('[order] buying from datatoken', {
           datatoken: asset.services[0].datatokenAddress,
           accountId,
