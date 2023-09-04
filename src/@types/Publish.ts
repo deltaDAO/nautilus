@@ -100,8 +100,8 @@ export interface PublishResponse {
   services: {
     service: NautilusService<ServiceTypes, FileTypes>
     datatokenAddress: string
-    pricingTransactionReceipt: providers.TransactionResponse
+    tx: providers.TransactionReceipt
   }[]
   ddo: DDO
-  setMetadataTxReceipt: providers.TransactionResponse
+  setMetadataTxReceipt: providers.TransactionReceipt
 }

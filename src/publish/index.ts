@@ -116,7 +116,9 @@ export async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
     pricingTransactionReceipt
   )
 
-  return { datatokenAddress, pricingTransactionReceipt }
+  const tx = await pricingTransactionReceipt.wait()
+
+  return { datatokenAddress, tx }
 }
 
 export async function publishDDO(config: PublishDDOConfig) {
@@ -167,12 +169,14 @@ export async function publishDDO(config: PublishDDOConfig) {
     validateResult.hash
   )
 
+  const tx = await transactionReceipt.wait()
+
   LoggerInstance.debug(`[publish] Published metadata on NFT.`, {
     ddo,
-    transactionReceipt
+    tx: tx.transactionHash
   })
 
-  return transactionReceipt
+  return tx
 }
 
 // TODO evaluate if we need these (1 transaction for multiple actions)
