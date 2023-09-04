@@ -1,7 +1,7 @@
 {
   "name": "@deltadao/nautilus",
   "source": "./src/index.ts",
-  "version": "0.3.0-alpha10",
+  "version": "0.3.0-alpha11",
   "description": "A typescript library enabling automated publish & consume in Ocean Protocol ecosystems",
   "main": "./dist/lib.js",
   "umd:main": "./dist/lib.umd.js",
