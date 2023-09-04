@@ -381,8 +381,9 @@ export async function handleComputeOrder(
         providerFees: initializeData.providerFee
       })
       if (!txReuseOrder) throw new Error('Failed to reuse order!')
-      LoggerInstance.debug('[compute] Reused order:', txReuseOrder)
-      return txReuseOrder?.hash
+      const tx = await txReuseOrder.wait()
+      LoggerInstance.debug('[compute] Reused order:', tx)
+      return tx?.transactionHash
     }
 
     LoggerInstance.debug('[compute] Calling order ...', initializeData)
@@ -395,8 +396,9 @@ export async function handleComputeOrder(
       providerFees: initializeData?.providerFee,
       computeConsumerAddress
     })
-    LoggerInstance.debug('[compute] Order succeeded', txStartOrder)
-    return txStartOrder?.hash
+    const tx = await txStartOrder.wait()
+    LoggerInstance.debug('[compute] Order succeeded', tx)
+    return tx?.transactionHash
   } catch (error) {
     LoggerInstance.error(`[compute] ${error.message}`)
   }

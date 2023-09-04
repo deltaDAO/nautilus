@@ -125,7 +125,7 @@ export async function order({
 
       if (templateId === 1) {
         // buy datatoken
-        const txApprove = await approve(
+        const tx = await approve(
           signer,
           config,
           accountId,
@@ -139,6 +139,9 @@ export async function order({
           ),
           false
         )
+
+        const txApprove = typeof tx !== 'number' ? await tx.wait() : tx
+
         if (!txApprove) {
           LoggerInstance.error('Unable to approve datatoken tx')
           return
@@ -154,6 +157,7 @@ export async function order({
           ZERO_ADDRESS,
           '0'
         )
+        await freTx.wait()
 
         return await datatoken.startOrder(
           asset.accessDetails.datatoken.address,
@@ -165,7 +169,7 @@ export async function order({
       }
 
       if (templateId === 2) {
-        const txApprove = await approve(
+        const tx = await approve(
           signer,
           config,
           accountId,
@@ -180,8 +184,10 @@ export async function order({
           false
         )
 
+        const txApprove = typeof tx !== 'number' ? await tx.wait() : tx
+
         if (!txApprove) {
-          LoggerInstance.debug('Unable to approve datatoken tx')
+          LoggerInstance.error('Unable to approve datatoken tx')
           return
         }
 
@@ -207,6 +213,8 @@ export async function order({
           '1',
           accountId
         )
+        await dispenserTx.wait()
+
         LoggerInstance.debug(
           '[order] free order: dispenser tx',
           dispenserTx.hash
