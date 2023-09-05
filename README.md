@@ -14,6 +14,7 @@ A typescript library helping to navigate the OCEAN. It enables configurable auto
       - [Compute Services](#compute-services)
       - [Datatoken](#datatoken)
       - [Service name and description](#service-name-and-description)
+      - [Adding services via the AssetBuilder](#adding-services-via-the-assetbuilder)
     - [Asset Owner](#asset-owner)
     - [Optional Configurations](#optional-configurations)
       - [Credentials](#credentials)
@@ -28,6 +29,10 @@ A typescript library helping to navigate the OCEAN. It enables configurable auto
   - [Automated Access](#automated-access)
   - [API Documentation](#api-documentation)
   - [License](#license)
+
+> [!NOTE]  
+> You can find full TypeScript examples in the [nautilus-examples](https://github.com/deltaDAO/nautilus-examples) repository.
+
 
 ## Configuring a new Nautilus instance
 
