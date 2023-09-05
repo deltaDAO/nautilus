@@ -16,6 +16,8 @@
     "build": "npm run clean && microbundle build --format modern,esm,cjs,umd --compress --tsconfig tsconfig.json",
     "docs:build": "typedoc",
     "docs:watch": "typedoc --watch",
+    "install:docusaurus": "cd docs && npm install",
+    "start:docusaurus": "cd docs && npm run start",
     "changelog": "auto-changelog -p",
     "clean": "rm -rf ./dist/",
     "mocha": "TS_NODE_PROJECT='./test/tsconfig.json' mocha --config=test/.mocharc.json --node-env=test --exit",
