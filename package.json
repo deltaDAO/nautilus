@@ -28,7 +28,7 @@
     "release": "release-it",
     "prepublishOnly": "npm run build",
     "lint": "eslint --ignore-path .gitignore --ext .ts && npm run type-check",
-    "codegen:apollo": "apollo client:codegen --endpoint=https://v4.subgraph.goerli.oceanprotocol.com/subgraphs/name/oceanprotocol/ocean-subgraph --target typescript --tsFileExtension=d.ts --outputFlat src/@types/subgraph/",
+    "codegen:graphql": "graphql-codegen && npm run lint",
     "type-check": "tsc --noEmit"
   },
   "repository": {
@@ -50,13 +50,16 @@
     "urql": "^3.0.4"
   },
   "devDependencies": {
+    "@graphql-codegen/cli": "^5.0.0",
+    "@graphql-codegen/near-operation-file-preset": "^2.5.0",
+    "@graphql-codegen/typescript": "^4.0.1",
+    "@graphql-codegen/typescript-operations": "^4.0.1",
     "@types/chai": "^4.3.5",
     "@types/mocha": "^10.0.1",
     "@types/node": "^18.15.11",
     "@types/sinon": "^10.0.16",
     "@typescript-eslint/eslint-plugin": "^5.56.0",
     "@typescript-eslint/parser": "^5.56.0",
-    "apollo": "^2.34.0",
     "auto-changelog": "^2.4.0",
     "chai": "^4.3.7",
     "dotenv": "^16.0.3",
@@ -73,8 +76,8 @@
     "typescript": "^5.0.2"
   },
   "peerDependencies": {
-    "ethers": "^5.7.2",
-    "@oceanprotocol/lib": "3.1.1"
+    "@oceanprotocol/lib": "3.1.1",
+    "ethers": "^5.7.2"
   },
   "overrides": {
     "graphql": "15.8.0"
@@ -97,6 +100,31 @@
     },
     "npm": {
       "publish": false
+    }
+  },
+  "codegen": {
+    "schema": "https://v4.subgraph.goerli.oceanprotocol.com/subgraphs/name/oceanprotocol/ocean-subgraph",
+    "documents": "./src/**/*.graphql",
+    "generates": {
+      "./src/@types/subgraph/api.d.ts": {
+        "plugins": [
+          "typescript"
+        ]
+      },
+      "./src/": {
+        "preset": "near-operation-file",
+        "presetConfig": {
+          "baseTypesPath": "@types/subgraph/api.ts",
+          "extension": ".d.ts"
+        },
+        "plugins": [
+          "typescript-operations"
+        ],
+        "config": {
+          "omitOperationSuffix": true,
+          "typesPrefix": "I"
+        }
+      }
     }
   }
 }
