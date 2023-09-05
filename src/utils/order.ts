@@ -108,6 +108,9 @@ export async function order({
 
   LoggerInstance.debug('[order] order type', asset.accessDetails?.type)
 
+  const templateId = Number(asset.accessDetails?.templateId)
+  LoggerInstance.debug('[order] order templateId', templateId)
+
   switch (asset.accessDetails?.type) {
     case 'fixed': {
       const freParams = {
@@ -120,9 +123,9 @@ export async function order({
         marketFeeAddress: ZERO_ADDRESS
       } as FreOrderParams
 
-      if (asset.accessDetails.templateId === 1) {
+      if (templateId === 1) {
         // buy datatoken
-        const txApprove = await approve(
+        const tx = await approve(
           signer,
           config,
           accountId,
@@ -136,7 +139,11 @@ export async function order({
           ),
           false
         )
+
+        const txApprove = typeof tx !== 'number' ? await tx.wait() : tx
+
         if (!txApprove) {
+          LoggerInstance.error('Unable to approve datatoken tx')
           return
         }
         const fre = new FixedRateExchange(
@@ -150,6 +157,7 @@ export async function order({
           ZERO_ADDRESS,
           '0'
         )
+        await freTx.wait()
 
         return await datatoken.startOrder(
           asset.accessDetails.datatoken.address,
@@ -160,8 +168,8 @@ export async function order({
         )
       }
 
-      if (asset.accessDetails.templateId === 2) {
-        const txApprove = await approve(
+      if (templateId === 2) {
+        const tx = await approve(
           signer,
           config,
           accountId,
@@ -175,9 +183,14 @@ export async function order({
           ),
           false
         )
+
+        const txApprove = typeof tx !== 'number' ? await tx.wait() : tx
+
         if (!txApprove) {
+          LoggerInstance.error('Unable to approve datatoken tx')
           return
         }
+
         return await datatoken.buyFromFreAndOrder(
           asset.accessDetails.datatoken.address,
           orderParams,
@@ -189,10 +202,10 @@ export async function order({
     case 'free': {
       LoggerInstance.debug(
         '[order] order with type "free" for templateId:',
-        asset.accessDetails.templateId
+        templateId
       )
 
-      if (asset.accessDetails.templateId === 1) {
+      if (templateId === 1) {
         const dispenser = new Dispenser(config.dispenserAddress, signer)
         LoggerInstance.debug('[order] free order: dispenser', dispenser.address)
         const dispenserTx = await dispenser.dispense(
@@ -200,6 +213,8 @@ export async function order({
           '1',
           accountId
         )
+        await dispenserTx.wait()
+
         LoggerInstance.debug(
           '[order] free order: dispenser tx',
           dispenserTx.hash
@@ -213,7 +228,7 @@ export async function order({
           orderParams._consumeMarketFee
         )
       }
-      if (asset.accessDetails.templateId === 2) {
+      if (templateId === 2) {
         LoggerInstance.debug('[order] buying from datatoken', {
           datatoken: asset.services[0].datatokenAddress,
           accountId,

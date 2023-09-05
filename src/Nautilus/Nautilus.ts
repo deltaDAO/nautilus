@@ -139,28 +139,27 @@ export class Nautilus {
     const services = await getAllPromisesOnArray(
       asset.ddo.services,
       async (service) => {
-        const { datatokenAddress, pricingTransactionReceipt } =
-          await createDatatokenAndPricing({
-            signer,
-            chainConfig,
-            nftAddress,
-            pricing: {
-              ...service.pricing,
-              freCreationParams: {
-                ...service.pricing.freCreationParams,
-                owner: asset.owner
-              }
-            },
-            datatokenParams: {
-              ...service.datatokenCreateParams,
-              minter: asset.owner,
-              paymentCollector: asset.owner
+        const { datatokenAddress, tx } = await createDatatokenAndPricing({
+          signer,
+          chainConfig,
+          nftAddress,
+          pricing: {
+            ...service.pricing,
+            freCreationParams: {
+              ...service.pricing.freCreationParams,
+              owner: asset.owner
             }
-          })
+          },
+          datatokenParams: {
+            ...service.datatokenCreateParams,
+            minter: asset.owner,
+            paymentCollector: asset.owner
+          }
+        })
 
         service.datatokenAddress = datatokenAddress
 
-        return { service, datatokenAddress, pricingTransactionReceipt }
+        return { service, datatokenAddress, tx }
       }
     )
 

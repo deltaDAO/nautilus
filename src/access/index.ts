@@ -97,7 +97,9 @@ export async function access(accessConfig: AccessConfig) {
     providerFees: initializeData?.providerFee
   })
 
-  assetWithAccessDetails.accessDetails.validOrderTx = orderTx.hash
+  const tx = await orderTx.wait()
+
+  assetWithAccessDetails.accessDetails.validOrderTx = tx?.transactionHash
   return await getAssetDownloadUrl(
     assetWithPrice,
     signer,

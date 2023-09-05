@@ -1,7 +1,7 @@
 {
   "name": "@deltadao/nautilus",
   "source": "./src/index.ts",
-  "version": "0.3.0-alpha10",
+  "version": "0.3.0-alpha15",
   "description": "A typescript library enabling automated publish & consume in Ocean Protocol ecosystems",
   "main": "./dist/lib.js",
   "umd:main": "./dist/lib.umd.js",
@@ -40,7 +40,7 @@
   },
   "homepage": "https://github.com/deltaDAO/nautilus#readme",
   "dependencies": {
-    "@oceanprotocol/lib": "^3.0.4",
+    "@oceanprotocol/lib": "^3.1.1",
     "@urql/exchange-refocus": "^1.0.0",
     "axios": "^1.3.4",
     "decimal.js": "^10.4.3",
