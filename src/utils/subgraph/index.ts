@@ -9,7 +9,7 @@ import {
   TypedDocumentNode
 } from 'urql'
 import { AccessDetails } from '../../@types/Compute'
-import { TokenPriceQuery_token as TokenPrice } from '../../@types/subgraph/TokenPriceQuery'
+import { ITokenPriceQuery } from './TokenPriceQuery'
 
 let client: Client
 
@@ -53,7 +53,7 @@ export async function fetchData(
 }
 
 export function getAccessDetailsFromTokenPrice(
-  tokenPrice: TokenPrice,
+  tokenPrice: ITokenPriceQuery['token'],
   timeout?: number
 ): AccessDetails {
   const accessDetails = {} as AccessDetails
