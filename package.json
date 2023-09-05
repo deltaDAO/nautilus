@@ -72,6 +72,10 @@
     "ts-node": "^10.9.1",
     "typescript": "^5.0.2"
   },
+  "peerDependencies": {
+    "ethers": "^5.7.2",
+    "@oceanprotocol/lib": "3.1.1"
+  },
   "overrides": {
     "graphql": "15.8.0"
   },
