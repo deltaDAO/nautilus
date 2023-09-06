@@ -5,8 +5,8 @@ import {
   getAccessDetailsFromTokenPrice,
   getQueryContext
 } from '../subgraph'
-import { ITokenPriceQuery } from '../subgraph/TokenPriceQuery'
-import * as TokenPriceQuery from '../subgraph/TokenPriceQuery.graphql'
+import { ITokenPriceQuery } from '../subgraph/TokenPriceQuery.gql.generated'
+import { tokenPriceQuery } from '../subgraph/TokenPriceQuery.gql'
 import { LoggerInstance } from '@oceanprotocol/lib'
 
 export async function getAccessDetails(
@@ -22,7 +22,7 @@ export async function getAccessDetails(
       { datatokenId: string; account: string }
     > = await fetchData(
       subgraphUri,
-      TokenPriceQuery,
+      tokenPriceQuery,
       {
         datatokenId: datatokenAddress.toLowerCase(),
         account: account?.toLowerCase()

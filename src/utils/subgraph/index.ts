@@ -9,7 +9,7 @@ import {
   TypedDocumentNode
 } from 'urql'
 import { AccessDetails } from '../../@types/Compute'
-import { ITokenPriceQuery } from './TokenPriceQuery'
+import { ITokenPriceQuery } from './TokenPriceQuery.gql.generated'
 
 let client: Client
 

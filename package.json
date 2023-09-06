@@ -28,7 +28,7 @@
     "release": "release-it",
     "prepublishOnly": "npm run build",
     "lint": "eslint --ignore-path .gitignore --ext .ts && npm run type-check",
-    "codegen:graphql": "graphql-codegen && npm run lint",
+    "generate": "graphql-codegen && npm run lint",
     "type-check": "tsc --noEmit"
   },
   "repository": {
@@ -104,9 +104,9 @@
   },
   "codegen": {
     "schema": "https://v4.subgraph.goerli.oceanprotocol.com/subgraphs/name/oceanprotocol/ocean-subgraph",
-    "documents": "./src/**/*.graphql",
+    "documents": "./src/**/*.gql.ts",
     "generates": {
-      "./src/@types/subgraph/api.d.ts": {
+      "./src/@types/subgraph/api.ts": {
         "plugins": [
           "typescript"
         ]
@@ -115,7 +115,7 @@
         "preset": "near-operation-file",
         "presetConfig": {
           "baseTypesPath": "@types/subgraph/api.ts",
-          "extension": ".d.ts"
+          "extension": ".generated.ts"
         },
         "plugins": [
           "typescript-operations"
