@@ -21,7 +21,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[nautilus/src/Nautilus/Nautilus.ts:23](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Nautilus.ts#L23)
+[src/Nautilus/Nautilus.ts:32](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Nautilus.ts#L32)
 
 ## Properties
 
@@ -31,7 +31,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[nautilus/src/Nautilus/Nautilus.ts:21](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Nautilus.ts#L21)
+[src/Nautilus/Nautilus.ts:30](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Nautilus.ts#L30)
 
 ___
 
@@ -41,9 +41,49 @@ ___
 
 #### Defined in
 
-[nautilus/src/Nautilus/Nautilus.ts:20](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Nautilus.ts#L20)
+[src/Nautilus/Nautilus.ts:29](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Nautilus.ts#L29)
 
 ## Methods
+
+### access
+
+▸ **access**(`accessConfig`): `Promise`<`string`\>
+
+#### Parameters
+
+| Name | Type | Description |
+| :------ | :------ | :------ |
+| `accessConfig` | `Omit`<[`AccessConfig`](../interfaces/types.AccessConfig.md), ``"signer"`` \| ``"chainConfig"``\> | configuration object |
+
+#### Returns
+
+`Promise`<`string`\>
+
+#### Defined in
+
+[src/Nautilus/Nautilus.ts:192](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Nautilus.ts#L192)
+
+___
+
+### compute
+
+▸ **compute**(`computeConfig`): `Promise`<`ComputeJob` \| `ComputeJob`[]\>
+
+#### Parameters
+
+| Name | Type |
+| :------ | :------ |
+| `computeConfig` | `Omit`<[`ComputeConfig`](../interfaces/types.ComputeConfig.md), ``"signer"`` \| ``"chainConfig"``\> |
+
+#### Returns
+
+`Promise`<`ComputeJob` \| `ComputeJob`[]\>
+
+#### Defined in
+
+[src/Nautilus/Nautilus.ts:199](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Nautilus.ts#L199)
+
+___
 
 ### getChainConfig
 
@@ -55,7 +95,47 @@ ___
 
 #### Defined in
 
-[nautilus/src/Nautilus/Nautilus.ts:94](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Nautilus.ts#L94)
+[src/Nautilus/Nautilus.ts:103](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Nautilus.ts#L103)
+
+___
+
+### getComputeResult
+
+▸ **getComputeResult**(`computeResultConfig`): `Promise`<`string`\>
+
+#### Parameters
+
+| Name | Type |
+| :------ | :------ |
+| `computeResultConfig` | `Omit`<[`ComputeResultConfig`](../interfaces/types.ComputeResultConfig.md), ``"signer"``\> |
+
+#### Returns
+
+`Promise`<`string`\>
+
+#### Defined in
+
+[src/Nautilus/Nautilus.ts:215](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Nautilus.ts#L215)
+
+___
+
+### getComputeStatus
+
+▸ **getComputeStatus**(`computeStatusConfig`): `Promise`<`ComputeJob`\>
+
+#### Parameters
+
+| Name | Type |
+| :------ | :------ |
+| `computeStatusConfig` | `Omit`<[`ComputeStatusConfig`](../interfaces/types.ComputeStatusConfig.md), ``"signer"``\> |
+
+#### Returns
+
+`Promise`<`ComputeJob`\>
+
+#### Defined in
+
+[src/Nautilus/Nautilus.ts:206](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Nautilus.ts#L206)
 
 ___
 
@@ -69,7 +149,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/Nautilus/Nautilus.ts:106](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Nautilus.ts#L106)
+[src/Nautilus/Nautilus.ts:115](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Nautilus.ts#L115)
 
 ___
 
@@ -83,7 +163,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/Nautilus/Nautilus.ts:81](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Nautilus.ts#L81)
+[src/Nautilus/Nautilus.ts:90](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Nautilus.ts#L90)
 
 ___
 
@@ -103,7 +183,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/Nautilus/Nautilus.ts:54](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Nautilus.ts#L54)
+[src/Nautilus/Nautilus.ts:63](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Nautilus.ts#L63)
 
 ___
 
@@ -123,7 +203,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/Nautilus/Nautilus.ts:58](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Nautilus.ts#L58)
+[src/Nautilus/Nautilus.ts:67](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Nautilus.ts#L67)
 
 ___
 
@@ -143,7 +223,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/Nautilus/Nautilus.ts:110](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Nautilus.ts#L110)
+[src/Nautilus/Nautilus.ts:119](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Nautilus.ts#L119)
 
 ___
 
@@ -166,7 +246,7 @@ Creates a new Nautilus instance
 
 #### Defined in
 
-[nautilus/src/Nautilus/Nautilus.ts:30](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Nautilus.ts#L30)
+[src/Nautilus/Nautilus.ts:39](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Nautilus.ts#L39)
 
 ___
 
@@ -189,4 +269,4 @@ ocean.js LoggerInstance is used for logging
 
 #### Defined in
 
-[nautilus/src/Nautilus/Nautilus.ts:49](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Nautilus.ts#L49)
+[src/Nautilus/Nautilus.ts:58](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Nautilus.ts#L58)

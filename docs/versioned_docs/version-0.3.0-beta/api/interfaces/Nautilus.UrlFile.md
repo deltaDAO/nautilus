@@ -17,7 +17,7 @@ Headers key value pairs associated with the asset GET request
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/File.d.ts:26
+node_modules/@oceanprotocol/lib/dist/src/@types/File.d.ts:26
 
 ___
 
@@ -29,7 +29,7 @@ File index.
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/File.d.ts:11
+node_modules/@oceanprotocol/lib/dist/src/@types/File.d.ts:11
 
 ___
 
@@ -41,7 +41,7 @@ HTTP method used
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/File.d.ts:21
+node_modules/@oceanprotocol/lib/dist/src/@types/File.d.ts:21
 
 ___
 
@@ -51,7 +51,7 @@ ___
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/File.d.ts:6
+node_modules/@oceanprotocol/lib/dist/src/@types/File.d.ts:6
 
 ___
 
@@ -63,4 +63,4 @@ File URL.
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/File.d.ts:16
+node_modules/@oceanprotocol/lib/dist/src/@types/File.d.ts:16

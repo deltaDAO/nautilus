@@ -27,7 +27,7 @@ Contexts used for validation.
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/DDO/DDO.d.ts:11
+node_modules/@oceanprotocol/lib/dist/src/@types/DDO/DDO.d.ts:11
 
 ___
 
@@ -41,7 +41,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/@types/Compute.ts:65](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Compute.ts#L65)
+[src/@types/Compute.ts:65](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Compute.ts#L65)
 
 ___
 
@@ -57,7 +57,7 @@ ChainId of the network the DDO was published to.
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/DDO/DDO.d.ts:33
+node_modules/@oceanprotocol/lib/dist/src/@types/DDO/DDO.d.ts:33
 
 ___
 
@@ -74,7 +74,7 @@ in addition to the services definition.
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/DDO/DDO.d.ts:49
+node_modules/@oceanprotocol/lib/dist/src/@types/DDO/DDO.d.ts:49
 
 ___
 
@@ -90,7 +90,7 @@ Contains information about the ERC20 Datatokens attached to asset services.
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/Asset.d.ts:130
+node_modules/@oceanprotocol/lib/dist/src/@types/Asset.d.ts:130
 
 ___
 
@@ -106,7 +106,7 @@ Contains information about the last transaction that created or updated the DDO.
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/Asset.d.ts:135
+node_modules/@oceanprotocol/lib/dist/src/@types/Asset.d.ts:135
 
 ___
 
@@ -123,7 +123,7 @@ Computed as sha256(address of NFT contract + chainId)
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/DDO/DDO.d.ts:17
+node_modules/@oceanprotocol/lib/dist/src/@types/DDO/DDO.d.ts:17
 
 ___
 
@@ -139,7 +139,7 @@ Stores an object describing the asset.
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/DDO/DDO.d.ts:38
+node_modules/@oceanprotocol/lib/dist/src/@types/DDO/DDO.d.ts:38
 
 ___
 
@@ -155,7 +155,7 @@ Contains information about the ERC721 NFT contract which represents the intellec
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/Asset.d.ts:125
+node_modules/@oceanprotocol/lib/dist/src/@types/Asset.d.ts:125
 
 ___
 
@@ -171,7 +171,7 @@ NFT contract address
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/DDO/DDO.d.ts:28
+node_modules/@oceanprotocol/lib/dist/src/@types/DDO/DDO.d.ts:28
 
 ___
 
@@ -181,7 +181,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/@types/Compute.ts:69](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Compute.ts#L69)
+[src/@types/Compute.ts:69](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Compute.ts#L69)
 
 ___
 
@@ -199,7 +199,7 @@ Marketplace interfaces are encouraged to prevent certain user actions like downl
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/Asset.d.ts:147
+node_modules/@oceanprotocol/lib/dist/src/@types/Asset.d.ts:147
 
 ___
 
@@ -215,7 +215,7 @@ Stores an array of services defining access to the asset.
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/DDO/DDO.d.ts:43
+node_modules/@oceanprotocol/lib/dist/src/@types/DDO/DDO.d.ts:43
 
 ___
 
@@ -231,7 +231,7 @@ The stats section contains different statistics fields. This section is added by
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/Asset.d.ts:140
+node_modules/@oceanprotocol/lib/dist/src/@types/Asset.d.ts:140
 
 ___
 
@@ -248,4 +248,4 @@ referring to the DDO spec version
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/DDO/DDO.d.ts:23
+node_modules/@oceanprotocol/lib/dist/src/@types/DDO/DDO.d.ts:23

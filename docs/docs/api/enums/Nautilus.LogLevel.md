@@ -15,7 +15,7 @@ custom_edit_url: null
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/utils/Logger.d.ts:3
+node_modules/@oceanprotocol/lib/dist/src/utils/Logger.d.ts:3
 
 ___
 
@@ -25,7 +25,7 @@ ___
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/utils/Logger.d.ts:5
+node_modules/@oceanprotocol/lib/dist/src/utils/Logger.d.ts:5
 
 ___
 
@@ -35,7 +35,7 @@ ___
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/utils/Logger.d.ts:2
+node_modules/@oceanprotocol/lib/dist/src/utils/Logger.d.ts:2
 
 ___
 
@@ -45,7 +45,7 @@ ___
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/utils/Logger.d.ts:6
+node_modules/@oceanprotocol/lib/dist/src/utils/Logger.d.ts:6
 
 ___
 
@@ -55,4 +55,4 @@ ___
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/utils/Logger.d.ts:4
+node_modules/@oceanprotocol/lib/dist/src/utils/Logger.d.ts:4

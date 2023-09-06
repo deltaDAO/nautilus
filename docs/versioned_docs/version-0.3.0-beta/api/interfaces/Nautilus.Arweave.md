@@ -17,7 +17,7 @@ transactionId
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/File.d.ts:56
+node_modules/@oceanprotocol/lib/dist/src/@types/File.d.ts:56
 
 ___
 
@@ -27,4 +27,4 @@ ___
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/File.d.ts:51
+node_modules/@oceanprotocol/lib/dist/src/@types/File.d.ts:51

@@ -25,7 +25,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[nautilus/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:11](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L11)
+[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:11](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L11)
 
 ## Methods
 
@@ -45,7 +45,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[nautilus/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:53](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L53)
+[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:53](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L53)
 
 ___
 
@@ -63,7 +63,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:66](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L66)
+[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:66](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L66)
 
 ___
 
@@ -81,7 +81,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:13](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L13)
+[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:13](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L13)
 
 ___
 
@@ -101,7 +101,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:47](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L47)
+[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:47](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L47)
 
 ___
 
@@ -121,7 +121,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:29](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L29)
+[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:29](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L29)
 
 ___
 
@@ -141,7 +141,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:35](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L35)
+[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:35](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L35)
 
 ___
 
@@ -161,7 +161,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:23](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L23)
+[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:23](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L23)
 
 ___
 
@@ -181,7 +181,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:41](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L41)
+[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:41](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L41)
 
 ___
 
@@ -201,4 +201,4 @@ ___
 
 #### Defined in
 
-[nautilus/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:17](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L17)
+[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:17](https://github.com/deltaDAO/nautilus/blob/40edf26/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L17)

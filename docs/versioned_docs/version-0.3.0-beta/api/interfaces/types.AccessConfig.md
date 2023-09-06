@@ -17,7 +17,7 @@ The config type for index.access requests
 
 #### Defined in
 
-[nautilus/src/@types/Access.ts:8](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Access.ts#L8)
+[src/@types/Access.ts:8](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Access.ts#L8)
 
 ___
 
@@ -27,7 +27,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/@types/Access.ts:10](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Access.ts#L10)
+[src/@types/Access.ts:10](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Access.ts#L10)
 
 ___
 
@@ -37,7 +37,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/@types/Access.ts:12](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Access.ts#L12)
+[src/@types/Access.ts:12](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Access.ts#L12)
 
 ___
 
@@ -47,7 +47,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/@types/Access.ts:11](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Access.ts#L11)
+[src/@types/Access.ts:11](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Access.ts#L11)
 
 ___
 
@@ -57,7 +57,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/@types/Access.ts:9](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Access.ts#L9)
+[src/@types/Access.ts:9](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Access.ts#L9)
 
 ___
 
@@ -67,4 +67,4 @@ ___
 
 #### Defined in
 
-[nautilus/src/@types/Access.ts:13](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Access.ts#L13)
+[src/@types/Access.ts:13](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Access.ts#L13)

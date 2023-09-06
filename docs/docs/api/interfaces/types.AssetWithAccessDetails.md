@@ -29,7 +29,7 @@ Asset.@context
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/DDO/DDO.d.ts:11
+node_modules/@oceanprotocol/lib/dist/src/@types/DDO/DDO.d.ts:11
 
 ___
 
@@ -39,7 +39,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/@types/Compute.ts:65](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Compute.ts#L65)
+[src/@types/Compute.ts:65](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Compute.ts#L65)
 
 ___
 
@@ -55,7 +55,7 @@ Asset.chainId
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/DDO/DDO.d.ts:33
+node_modules/@oceanprotocol/lib/dist/src/@types/DDO/DDO.d.ts:33
 
 ___
 
@@ -72,7 +72,7 @@ Asset.credentials
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/DDO/DDO.d.ts:49
+node_modules/@oceanprotocol/lib/dist/src/@types/DDO/DDO.d.ts:49
 
 ___
 
@@ -88,7 +88,7 @@ Asset.datatokens
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/Asset.d.ts:130
+node_modules/@oceanprotocol/lib/dist/src/@types/Asset.d.ts:130
 
 ___
 
@@ -104,7 +104,7 @@ Asset.event
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/Asset.d.ts:135
+node_modules/@oceanprotocol/lib/dist/src/@types/Asset.d.ts:135
 
 ___
 
@@ -121,7 +121,7 @@ Asset.id
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/DDO/DDO.d.ts:17
+node_modules/@oceanprotocol/lib/dist/src/@types/DDO/DDO.d.ts:17
 
 ___
 
@@ -137,7 +137,7 @@ Asset.metadata
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/DDO/DDO.d.ts:38
+node_modules/@oceanprotocol/lib/dist/src/@types/DDO/DDO.d.ts:38
 
 ___
 
@@ -153,7 +153,7 @@ Asset.nft
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/Asset.d.ts:125
+node_modules/@oceanprotocol/lib/dist/src/@types/Asset.d.ts:125
 
 ___
 
@@ -169,7 +169,7 @@ Asset.nftAddress
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/DDO/DDO.d.ts:28
+node_modules/@oceanprotocol/lib/dist/src/@types/DDO/DDO.d.ts:28
 
 ___
 
@@ -187,7 +187,7 @@ Asset.purgatory
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/Asset.d.ts:147
+node_modules/@oceanprotocol/lib/dist/src/@types/Asset.d.ts:147
 
 ___
 
@@ -203,7 +203,7 @@ Asset.services
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/DDO/DDO.d.ts:43
+node_modules/@oceanprotocol/lib/dist/src/@types/DDO/DDO.d.ts:43
 
 ___
 
@@ -219,7 +219,7 @@ Asset.stats
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/Asset.d.ts:140
+node_modules/@oceanprotocol/lib/dist/src/@types/Asset.d.ts:140
 
 ___
 
@@ -236,4 +236,4 @@ Asset.version
 
 #### Defined in
 
-oceanprotocol/ocean.js/dist/src/@types/DDO/DDO.d.ts:23
+node_modules/@oceanprotocol/lib/dist/src/@types/DDO/DDO.d.ts:23

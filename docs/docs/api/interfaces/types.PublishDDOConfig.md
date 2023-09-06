@@ -15,7 +15,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[nautilus/src/@types/Publish.ts:93](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L93)
+[src/@types/Publish.ts:93](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Publish.ts#L93)
 
 ___
 
@@ -25,7 +25,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/@types/Publish.ts:95](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L95)
+[src/@types/Publish.ts:95](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Publish.ts#L95)
 
 ___
 
@@ -35,4 +35,4 @@ ___
 
 #### Defined in
 
-[nautilus/src/@types/Publish.ts:94](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L94)
+[src/@types/Publish.ts:94](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Publish.ts#L94)

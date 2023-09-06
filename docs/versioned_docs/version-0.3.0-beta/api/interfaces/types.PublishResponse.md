@@ -15,7 +15,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[nautilus/src/@types/Publish.ts:105](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L105)
+[src/@types/Publish.ts:105](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Publish.ts#L105)
 
 ___
 
@@ -25,24 +25,24 @@ ___
 
 #### Defined in
 
-[nautilus/src/@types/Publish.ts:99](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L99)
+[src/@types/Publish.ts:99](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Publish.ts#L99)
 
 ___
 
 ### services
 
-• **services**: { `datatokenAddress`: `string` ; `pricingTransactionReceipt`: `TransactionResponse` ; `service`: `NautilusService`<[`ServiceTypes`](../enums/Nautilus.ServiceTypes.md), [`FileTypes`](../enums/Nautilus.FileTypes.md)\>  }[]
+• **services**: { `datatokenAddress`: `string` ; `service`: `NautilusService`<[`ServiceTypes`](../enums/Nautilus.ServiceTypes.md), [`FileTypes`](../enums/Nautilus.FileTypes.md)\> ; `tx`: `TransactionReceipt`  }[]
 
 #### Defined in
 
-[nautilus/src/@types/Publish.ts:100](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L100)
+[src/@types/Publish.ts:100](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Publish.ts#L100)
 
 ___
 
 ### setMetadataTxReceipt
 
-• **setMetadataTxReceipt**: `TransactionResponse`
+• **setMetadataTxReceipt**: `TransactionReceipt`
 
 #### Defined in
 
-[nautilus/src/@types/Publish.ts:106](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L106)
+[src/@types/Publish.ts:106](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Publish.ts#L106)

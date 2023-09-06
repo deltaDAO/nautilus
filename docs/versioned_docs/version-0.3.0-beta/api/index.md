@@ -41,7 +41,6 @@ A typescript library helping to navigate the OCEAN. It enables configurable auto
 > [!NOTE]  
 > You can find full TypeScript examples in the [nautilus-examples](https://github.com/deltaDAO/nautilus-examples) repository.
 
-
 ## Configuring a new Nautilus instance
 
 Setting up a new `Nautilus` instance to perform automated tasks, like publish & consume, is rather simple.
@@ -644,4 +643,3 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ```
-

@@ -47,7 +47,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[nautilus/src/@types/Publish.ts:23](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L23)
+[src/@types/Publish.ts:23](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Publish.ts#L23)
 
 ___
 
@@ -57,7 +57,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/@types/Publish.ts:21](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L21)
+[src/@types/Publish.ts:21](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Publish.ts#L21)
 
 ___
 
@@ -67,7 +67,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/@types/Publish.ts:52](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L52)
+[src/@types/Publish.ts:52](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Publish.ts#L52)
 
 ___
 
@@ -77,7 +77,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/@types/Publish.ts:36](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L36)
+[src/@types/Publish.ts:36](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Publish.ts#L36)
 
 ___
 
@@ -87,7 +87,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/@types/Publish.ts:57](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L57)
+[src/@types/Publish.ts:57](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Publish.ts#L57)
 
 ___
 
@@ -97,7 +97,7 @@ ___
 
 #### Defined in
 
-[nautilus/src/@types/Publish.ts:74](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L74)
+[src/@types/Publish.ts:74](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Publish.ts#L74)
 
 ___
 
@@ -107,4 +107,4 @@ ___
 
 #### Defined in
 
-[nautilus/src/@types/Publish.ts:64](https://github.com/deltaDAO/nautilus/blob/75cfaa6/src/@types/Publish.ts#L64)
+[src/@types/Publish.ts:64](https://github.com/deltaDAO/nautilus/blob/40edf26/src/@types/Publish.ts#L64)
