@@ -28,7 +28,7 @@
     "release": "release-it",
     "prepublishOnly": "npm run build",
     "lint": "eslint --ignore-path .gitignore --ext .ts && npm run type-check",
-    "generate": "graphql-codegen && npm run lint",
+    "generate:graphql": "graphql-codegen && npm run lint",
     "type-check": "tsc --noEmit"
   },
   "repository": {
