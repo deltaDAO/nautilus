@@ -1,15 +1,25 @@
-import { DDO, Service, generateDid } from '@oceanprotocol/lib'
-import { MetadataConfig } from '../../@types'
+import {
+  Asset,
+  Credentials,
+  DDO,
+  LoggerInstance,
+  Service,
+  generateDid
+} from '@oceanprotocol/lib'
+import { LifecycleStates, MetadataConfig } from '../../@types'
 import {
   dateToStringNoMS,
   getAllPromisesOnArray,
-  combineArraysAndReplaceItems
+  combineArraysAndReplaceItems,
+  removeDuplicatesFromArray
 } from '../../utils'
 import {
   FileTypes,
   NautilusService,
   ServiceTypes
 } from './Service/NautilusService'
+import { getAsset } from '../../utils/aquarius'
+import { Nautilus } from '../Nautilus'
 
 export class NautilusDDO {
   id: string
@@ -19,8 +29,13 @@ export class NautilusDDO {
   version: string = '4.1.0'
   metadata: Partial<MetadataConfig> = {}
   services: NautilusService<ServiceTypes, FileTypes>[] = []
+  removeServices: string[] = []
 
   private ddo: DDO
+  credentials: Credentials = {
+    allow: [],
+    deny: []
+  }
 
   static createFromDDO(ddo: DDO): NautilusDDO {
     const nautilusDDO = new NautilusDDO()
@@ -32,7 +47,36 @@ export class NautilusDDO {
     nautilusDDO.chainId = ddo.chainId
     nautilusDDO.version = ddo.version
 
+    if (ddo.credentials?.allow)
+      nautilusDDO.credentials.allow = ddo.credentials.allow
+    if (ddo.credentials?.deny)
+      nautilusDDO.credentials.deny = ddo.credentials.deny
+
     return nautilusDDO
+  }
+
+  static async createFromDID(
+    did: string,
+    nautilus: Nautilus
+  ): Promise<{ aquariusAsset: Asset; nautilusDDO: NautilusDDO }> {
+    const config = nautilus.getOceanConfig()
+
+    const asset = await getAsset(config.metadataCacheUri, did)
+    if (!asset)
+      throw new Error(
+        `No asset found for ${asset} in cache ${config.metadataCacheUri}`
+      )
+    if (asset.nft.state === LifecycleStates.REVOKED_BY_PUBLISHER)
+      LoggerInstance.warn('Unable to fetch asset: Revoked by publisher')
+
+    const ddo: DDO = asset as DDO // TODO remove data fields from Aquarius Asset which do not belong to DOO
+
+    const nautilusDDO = this.createFromDDO(ddo)
+    return { aquariusAsset: asset, nautilusDDO }
+  }
+
+  getOriginalDDO() {
+    return this.ddo
   }
 
   private async buildDDOServices(): Promise<Service[]> {
@@ -68,20 +112,42 @@ export class NautilusDDO {
     // take ddo.services
     const existingServices: Service[] = this.ddo?.services || []
 
-    // we simply return ddo.services, if nothing new was added
-    if (this.services.length < 1) return existingServices
+    // remove service from existing services if id changes to prevent old service after edit
+    for (const service of this.services) {
+      const isFilesObjectChanged = !!(
+        (service.editExistingService && service.filesEdited) ||
+        (service.editExistingService && service.serviceEndpointEdited) ||
+        service.pricing
+      )
 
-    // build new services if needed
-    const newServices = await this.buildDDOServices()
+      if (service.id && isFilesObjectChanged) {
+        this.removeServices.push(service.id)
+      }
+    }
 
-    // replace all existing services with new ones, based on the servie.id
-    const replacedServices = combineArraysAndReplaceItems(
-      existingServices,
-      newServices,
-      NautilusDDO.replaceServiceBasedOnId
+    let newServices: Service[]
+    if (this.services.length > 0) {
+      // build new services if needed
+      newServices = await this.buildDDOServices()
+    }
+
+    this.removeServices = removeDuplicatesFromArray(this.removeServices)
+
+    const reducedExistingServices = existingServices.filter(
+      (service) => !this.removeServices.includes(service.id)
     )
 
-    return replacedServices
+    // replace all existing services with new ones, based on the servie.id
+    let replacedServices: Service[] | PromiseLike<Service[]>
+    if (this.services.length > 0) {
+      replacedServices = combineArraysAndReplaceItems(
+        reducedExistingServices,
+        newServices,
+        NautilusDDO.replaceServiceBasedOnId
+      )
+    }
+
+    return replacedServices || reducedExistingServices
   }
 
   private async buildDDO(create: boolean): Promise<DDO> {
@@ -110,7 +176,8 @@ export class NautilusDDO {
       chainId: this.chainId,
       version: this.version,
       metadata: newMetadata,
-      services: newServices
+      services: newServices,
+      credentials: this.credentials
     }
 
     return this.ddo

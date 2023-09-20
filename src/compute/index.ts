@@ -31,7 +31,7 @@ import {
 
 export async function compute(computeConfig: ComputeConfig) {
   const {
-    dataset: datasetConfig, // TODO consider syncing naming with type to prevent renaming
+    dataset: datasetConfig, // TODO consider syncing naming to prevent renaming
     algorithm: algorithmConfig,
     signer,
     chainConfig,

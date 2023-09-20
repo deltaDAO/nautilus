@@ -35,10 +35,10 @@ describe('Access Flow Integration', function () {
     const { providerUri } = nautilus.getOceanConfig()
     serviceEndpoint = providerUri
 
-    const serviceBuilder = new ServiceBuilder(
-      ServiceTypes.ACCESS,
-      FileTypes.URL
-    )
+    const serviceBuilder = new ServiceBuilder({
+      serviceType: ServiceTypes.ACCESS,
+      fileType: FileTypes.URL
+    })
     const service = serviceBuilder
       .setServiceEndpoint(serviceEndpoint)
       .setTimeout(algorithmService.timeout)

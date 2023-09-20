@@ -12,6 +12,7 @@ import {
 import { Signer, providers } from 'ethers'
 import {
   FileTypes,
+  NautilusAsset,
   NautilusService,
   PricingConfigWithoutOwner,
   ServiceTypes
@@ -93,6 +94,7 @@ export interface PublishDDOConfig {
   chainConfig: Config
   signer: Signer
   ddo: DDO
+  asset?: NautilusAsset
 }
 
 export interface PublishResponse {

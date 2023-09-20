@@ -48,10 +48,10 @@ describe('Publish Integration tests', function () {
   })
 
   it('publishes a free access asset', async () => {
-    const serviceBuilder = new ServiceBuilder(
-      ServiceTypes.ACCESS,
-      FileTypes.URL
-    )
+    const serviceBuilder = new ServiceBuilder({
+      serviceType: ServiceTypes.ACCESS,
+      fileType: FileTypes.URL
+    })
     const service = serviceBuilder
       .setServiceEndpoint(providerUri)
       .setTimeout(datasetService.timeout)
@@ -76,10 +76,10 @@ describe('Publish Integration tests', function () {
   })
 
   it('publishes a fixed price access asset', async () => {
-    const serviceBuilder = new ServiceBuilder(
-      ServiceTypes.ACCESS,
-      FileTypes.URL
-    )
+    const serviceBuilder = new ServiceBuilder({
+      serviceType: ServiceTypes.ACCESS,
+      fileType: FileTypes.URL
+    })
     const service = serviceBuilder
       .setServiceEndpoint(providerUri)
       .setTimeout(datasetService.timeout)
@@ -104,10 +104,10 @@ describe('Publish Integration tests', function () {
   })
 
   it('publishes an asset with credentials', async () => {
-    const serviceBuilder = new ServiceBuilder(
-      ServiceTypes.ACCESS,
-      FileTypes.URL
-    )
+    const serviceBuilder = new ServiceBuilder({
+      serviceType: ServiceTypes.ACCESS,
+      fileType: FileTypes.URL
+    })
     const service = serviceBuilder
       .setServiceEndpoint(providerUri)
       .setTimeout(datasetService.timeout)
@@ -133,10 +133,10 @@ describe('Publish Integration tests', function () {
   })
 
   it('publishes an asset with service consumerParamters', async () => {
-    const serviceBuilder = new ServiceBuilder(
-      ServiceTypes.ACCESS,
-      FileTypes.URL
-    )
+    const serviceBuilder = new ServiceBuilder({
+      serviceType: ServiceTypes.ACCESS,
+      fileType: FileTypes.URL
+    })
     const {
       textParameter,
       numberParameter,
@@ -172,10 +172,10 @@ describe('Publish Integration tests', function () {
   })
 
   it('publishes an asset with algorithm metadata consumerParamters', async () => {
-    const serviceBuilder = new ServiceBuilder(
-      ServiceTypes.COMPUTE,
-      FileTypes.URL
-    )
+    const serviceBuilder = new ServiceBuilder({
+      serviceType: ServiceTypes.COMPUTE,
+      fileType: FileTypes.URL
+    })
     const {
       textParameter,
       numberParameter,

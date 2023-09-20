@@ -65,10 +65,10 @@ describe('Compute Flow Integration', async function () {
     const { providerUri } = nautilusAlgoPublisher.getOceanConfig()
 
     // Create the "compute" service
-    const serviceBuilder = new ServiceBuilder(
-      ServiceTypes.COMPUTE,
-      FileTypes.URL
-    )
+    const serviceBuilder = new ServiceBuilder({
+      serviceType: ServiceTypes.COMPUTE,
+      fileType: FileTypes.URL
+    })
     const service = serviceBuilder
       .setServiceEndpoint(providerUri)
       .setTimeout(algorithmService.timeout)
@@ -103,10 +103,10 @@ describe('Compute Flow Integration', async function () {
     const { providerUri } = nautilusDatasetPublisher.getOceanConfig()
 
     // Create the "compute" service
-    const serviceBuilder = new ServiceBuilder(
-      ServiceTypes.COMPUTE,
-      FileTypes.URL
-    )
+    const serviceBuilder = new ServiceBuilder({
+      serviceType: ServiceTypes.COMPUTE,
+      fileType: FileTypes.URL
+    })
     const service = serviceBuilder
       .setServiceEndpoint(providerUri)
       .setTimeout(datasetService.timeout)

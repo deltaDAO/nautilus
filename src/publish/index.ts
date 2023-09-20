@@ -13,6 +13,7 @@ import {
   PublishDDOConfig
 } from '../@types/Publish'
 import { utils as ethersUtils, providers } from 'ethers'
+import { LifecycleStates } from '../@types'
 
 export async function createAsset(assetConfig: CreateAssetConfig) {
   LoggerInstance.debug('[publish] Publishing new asset NFT...')
@@ -122,7 +123,7 @@ export async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
 }
 
 export async function publishDDO(config: PublishDDOConfig) {
-  const { chainConfig, signer, ddo } = config
+  const { chainConfig, signer, ddo, asset } = config
   const publisherAccount = await signer?.getAddress()
 
   // --------------------------------------------------
@@ -134,7 +135,8 @@ export async function publishDDO(config: PublishDDOConfig) {
   const aquarius = new Aquarius(chainConfig.metadataCacheUri)
   const validateResult = await aquarius.validate(ddo)
 
-  if (!validateResult.valid) throw new Error('Validating Metadata failed')
+  if (!validateResult.valid)
+    throw new Error(`Validating Metadata failed: ${validateResult?.errors}`)
 
   // --------------------------------------------------
   // 2. Encrypt DDO
@@ -153,15 +155,16 @@ export async function publishDDO(config: PublishDDOConfig) {
   // --------------------------------------------------
   const nft = new Nft(signer, chainConfig.network, chainConfig)
 
-  // TODO: let user set state
-  const LIFECYCLE_STATE_ACTIVE = 0
+  const lifecycleState = asset?.lifecycleState || LifecycleStates.ACTIVE
   const FLAGS = '0x02' // market sets '0x02' insteadconst validateResult = await aquariusInstance.validate(ddo) of '0x2', theoretically used by aquarius or provider, not implemented yet, will remain hardcoded
+
+  LoggerInstance.debug(`[publish] Asset lifecycleState: ${lifecycleState}`)
 
   LoggerInstance.debug('[publish] Set Metadata...')
   const transactionReceipt = await nft.setMetadata(
     ddo.nftAddress,
     publisherAccount,
-    LIFECYCLE_STATE_ACTIVE,
+    lifecycleState,
     chainConfig.providerUri,
     '',
     FLAGS,
@@ -171,9 +174,22 @@ export async function publishDDO(config: PublishDDOConfig) {
 
   const tx = await transactionReceipt.wait()
 
+  // TODO should be reflected in return
+  let stateTxReceipt: providers.TransactionResponse
+  let stateTx: providers.TransactionReceipt
+  if (asset?.lifecycleState) {
+    stateTxReceipt = await nft.setMetadataState(
+      ddo.nftAddress,
+      publisherAccount,
+      lifecycleState
+    )
+    stateTx = await stateTxReceipt.wait()
+  }
+
   LoggerInstance.debug(`[publish] Published metadata on NFT.`, {
-    ddo,
-    tx: tx.transactionHash
+    ddo, // TODO remove asset values like nft from DDO
+    tx: tx.transactionHash,
+    stateTx
   })
 
   return tx

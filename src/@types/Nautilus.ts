@@ -1,4 +1,4 @@
-import { Metadata, PublisherTrustedAlgorithm } from '@oceanprotocol/lib'
+import { Asset, Metadata, PublisherTrustedAlgorithm } from '@oceanprotocol/lib'
 import { NautilusConsumerParameter } from '../Nautilus/Asset/ConsumerParameters'
 import { NautilusAsset } from '../Nautilus/Asset/NautilusAsset'
 import {
@@ -12,10 +12,26 @@ import {
   NftCreateDataWithoutOwner,
   PricingConfig
 } from './Publish'
+import { NautilusDDO } from '../Nautilus/Asset/NautilusDDO'
 
 export interface NautilusOptions {
   skipDefaultConfig: boolean
 }
+
+export type AssetBuilderConfig = {
+  nautilusDDO: NautilusDDO
+  aquariusAsset: Asset
+}
+
+export type ServiceBuilderConfig =
+  | {
+      serviceType: ServiceTypes
+      fileType: FileTypes
+    }
+  | {
+      aquariusAsset: Asset
+      serviceId: string
+    }
 
 export interface IBuilder<T> {
   build: () => T
@@ -25,6 +41,15 @@ export interface IBuilder<T> {
 export enum CredentialListTypes {
   ALLOW = 'allow',
   DENY = 'deny'
+}
+
+export enum LifecycleStates {
+  ACTIVE = 0,
+  END_OF_LIFE = 1,
+  DEPRECATED = 2,
+  REVOKED_BY_PUBLISHER = 3,
+  ORDERING_DISABLED_TEMPORARILY = 4,
+  ASSET_UNLISTED = 5
 }
 
 export interface IAssetBuilder extends IBuilder<NautilusAsset> {

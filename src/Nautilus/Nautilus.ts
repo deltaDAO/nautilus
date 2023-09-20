@@ -18,6 +18,8 @@ import { getAllPromisesOnArray } from '../utils'
 import { NautilusAsset } from './Asset/NautilusAsset'
 import { access } from '../access'
 import { compute, getStatus, retrieveResult } from '../compute'
+import { FileTypes, NautilusService, ServiceTypes } from './Asset'
+import { TransactionReceipt } from '@ethersproject/abstract-provider'
 
 export { LogLevel } from '@oceanprotocol/lib'
 
@@ -176,6 +178,70 @@ export class Nautilus {
       signer,
       chainConfig,
       ddo
+    })
+
+    return {
+      nftAddress,
+      services,
+      ddo,
+      setMetadataTxReceipt
+    }
+  }
+
+  async edit(asset: NautilusAsset): Promise<PublishResponse> {
+    const { signer, chainConfig } = this.getChainConfig()
+    const { nftAddress, services: nautilusDDOServices } = asset.ddo
+
+    let services: {
+      service: NautilusService<ServiceTypes, FileTypes>
+      datatokenAddress: string
+      tx: TransactionReceipt
+    }[]
+
+    // This includes fresh published services
+    const changedPriceServices = nautilusDDOServices.filter(
+      (nautilusService) => nautilusService.pricing
+    )
+
+    if (changedPriceServices.length > 0) {
+      services = await getAllPromisesOnArray(
+        changedPriceServices,
+        async (service) => {
+          const { datatokenAddress, tx } = await createDatatokenAndPricing({
+            signer,
+            chainConfig,
+            nftAddress,
+            pricing: {
+              ...service.pricing,
+              freCreationParams: {
+                ...service.pricing.freCreationParams,
+                owner: asset.owner
+              }
+            },
+            datatokenParams: {
+              ...service.datatokenCreateParams,
+              minter: asset.owner,
+              paymentCollector: asset.owner
+            }
+          })
+
+          service.datatokenAddress = datatokenAddress
+
+          return { service, datatokenAddress, tx }
+        }
+      )
+    }
+    const ddo = await asset.ddo.getDDO({
+      create: false,
+      chainId: chainConfig.chainId,
+      nftAddress
+    })
+
+    const setMetadataTxReceipt = await publishDDO({
+      signer,
+      chainConfig,
+      ddo,
+      asset
     })
 
     return {
