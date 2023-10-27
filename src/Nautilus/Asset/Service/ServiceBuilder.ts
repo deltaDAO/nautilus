@@ -144,9 +144,19 @@ export class ServiceBuilder<
     return this
   }
 
+  addAdditionalInformation(additionalInformation: { [key: string]: any }) {
+    this.service.additionalInformation = {
+      ...this.service.additionalInformation,
+      ...additionalInformation
+    }
+
+    return this
+  }
+
   // #region compute
   allowRawAlgorithms(allow = true) {
-    if (this.service.type !== 'compute') return
+    if (this.service.type !== 'compute')
+      throw new Error('Illegal operation, asset is not a compute asset!')
 
     this.service.compute.allowRawAlgorithm = allow
 
@@ -154,7 +164,8 @@ export class ServiceBuilder<
   }
 
   allowAlgorithmNetworkAccess(allow = true) {
-    if (this.service.type !== 'compute') return
+    if (this.service.type !== 'compute')
+      throw new Error('Illegal operation, asset is not a compute asset!')
 
     this.service.compute.allowNetworkAccess = allow
 
@@ -162,31 +173,110 @@ export class ServiceBuilder<
   }
 
   addTrustedAlgorithm(algorithm: PublisherTrustedAlgorithm) {
-    if (this.service.type !== 'compute') return
+    if (this.service.type !== 'compute') {
+      throw new Error('Illegal operation, asset is not a compute asset!')
+    }
 
-    if (
-      this.service.compute.publisherTrustedAlgorithms === null ||
-      this.service.compute.publisherTrustedAlgorithms === undefined
-    ) {
+    if (!this.service.compute.publisherTrustedAlgorithms) {
       this.service.compute.publisherTrustedAlgorithms = [algorithm]
-    } else {
+      return this
+    }
+
+    const index = this.service.compute.publisherTrustedAlgorithms.findIndex(
+      (existingAlgorithm) => existingAlgorithm.did === algorithm.did
+    )
+
+    // If the algorithm with the same DID doesn't exist, add it, then return
+    if (index === -1) {
       this.service.compute.publisherTrustedAlgorithms.push(algorithm)
+      return this
+    }
+
+    // If either checksum is different, replace the existing algorithm
+    const existing = this.service.compute.publisherTrustedAlgorithms[index]
+    if (
+      existing.containerSectionChecksum !==
+        algorithm.containerSectionChecksum ||
+      existing.filesChecksum !== algorithm.filesChecksum
+    ) {
+      this.service.compute.publisherTrustedAlgorithms[index] = algorithm
     }
 
     return this
   }
 
-  addTrustedAlgorithmPublisher(publisher: string) {
-    if (this.service.type !== 'compute') return
+  removeTrustedAlgorithm(did: string) {
+    if (this.service.type !== 'compute')
+      throw new Error('Illegal operation, asset is not a compute asset!')
+
+    this.service.compute.publisherTrustedAlgorithms =
+      this.service.compute.publisherTrustedAlgorithms.filter(
+        (algorithm) => algorithm.did !== did
+      )
+
+    return this
+  }
+
+  setAllAlgorithmsTrusted() {
+    this.service.compute.publisherTrustedAlgorithms = null
+
+    return this
+  }
+
+  setAllAlgorithmsUntrusted() {
+    this.service.compute.publisherTrustedAlgorithms = []
+
+    return this
+  }
+
+  addTrustedAlgorithmPublisher(publisherAddress: string) {
+    if (this.service.type !== 'compute') {
+      throw new Error('Illegal operation, asset is not a compute asset!')
+    }
+
+    if (!this.service.compute.publisherTrustedAlgorithmPublishers) {
+      this.service.compute.publisherTrustedAlgorithmPublishers = [
+        publisherAddress
+      ]
+      return this
+    }
 
     if (
-      this.service.compute.publisherTrustedAlgorithmPublishers === null ||
-      this.service.compute.publisherTrustedAlgorithmPublishers === undefined
+      !this.service.compute.publisherTrustedAlgorithmPublishers.includes(
+        publisherAddress
+      )
     ) {
-      this.service.compute.publisherTrustedAlgorithmPublishers = [publisher]
-    } else {
-      this.service.compute.publisherTrustedAlgorithmPublishers.push(publisher)
+      this.service.compute.publisherTrustedAlgorithmPublishers.push(
+        publisherAddress
+      )
     }
+
+    return this
+  }
+
+  removeTrustedAlgorithmPublisher(publisherAddress: string) {
+    if (this.service.type !== 'compute')
+      throw new Error('Illegal operation, asset is not a compute asset!')
+
+    const lowerCasePublisherAddress = publisherAddress.toLowerCase()
+
+    // Remove all occurrences of publisherAddress
+    this.service.compute.publisherTrustedAlgorithmPublishers =
+      this.service.compute.publisherTrustedAlgorithmPublishers.filter(
+        (address) => address.toLowerCase() !== lowerCasePublisherAddress
+      )
+
+    return this
+  }
+
+  setAllAlgorithmPublishersTrusted() {
+    this.service.compute.publisherTrustedAlgorithmPublishers = null
+
+    return this
+  }
+
+  setAllAlgorithmPublishersUntrusted() {
+    this.service.compute.publisherTrustedAlgorithmPublishers = []
 
     return this
   }

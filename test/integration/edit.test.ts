@@ -361,20 +361,23 @@ describe('Edit Integration tests', function () {
     assert(result)
   })
 
-  it('edit services - compute add and allow', async () => {
+  it('edit services - compute add trusted algos and publishers', async () => {
     const { aquariusAsset, nautilusDDO } = await NautilusDDO.createFromDID(
-      'did:op:2ce1394d3ed258d5bcc00d2ee432fcc9dc05f2d3ef9069c57ba5319da7a03772',
+      'did:op:94a2c281b6b0a09067310c77c5d49c3610b5ead5a31157f65f2c84022a1bc32e',
       nautilus
     )
 
     const serviceBuilderConfig = {
       aquariusAsset,
       serviceId:
-        'a25b6ef33d518b9908540fbf34d6ce2b77a09539c01988f1ba6a156d97980ab7'
+        '975a3647318a5a865c5030dc8cb16b9ef91dc82b490dd2440ffa059c7d8d7c0f'
     }
 
     const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
     const service = serviceBuilder
+      .addTrustedAlgorithmPublisher(
+        '0x6432956a98E522F1B8a73a45245a5C6ff2c7f8f1'
+      )
       .addTrustedAlgorithmPublisher(
         '0x6432956a98E522F1B8a73a45245a5C6ff2c7f8f1'
       )
@@ -385,8 +388,97 @@ describe('Edit Integration tests', function () {
         filesChecksum:
           'cbd7b9964fa887f5f3acd48d2312435da2e351fa0c4689169b53ae2ec2014173'
       })
+      .addTrustedAlgorithm({
+        did: 'did:op:b39190deee2d92b74a02fbb01381599ae03b6630ceec362339a136c8fe1e413e',
+        containerSectionChecksum:
+          'b7862dd501b091347db86fd009fc8c9cb7bb23347c40271d30063a3e1f2fe555',
+        filesChecksum:
+          'cbd7b9964fa887f5f3acd48d2312435da2e351fa0c4689169b53ae2ec2014173'
+      })
       .allowAlgorithmNetworkAccess()
       .allowRawAlgorithms()
+      .build()
+
+    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
+    const asset = assetBuilder.addService(service).build()
+
+    const result = await nautilus.edit(asset)
+
+    assert(result)
+  })
+
+  it('edit services - compute trust all publishers and algos', async () => {
+    const { aquariusAsset, nautilusDDO } = await NautilusDDO.createFromDID(
+      'did:op:94a2c281b6b0a09067310c77c5d49c3610b5ead5a31157f65f2c84022a1bc32e',
+      nautilus
+    )
+
+    const serviceBuilderConfig = {
+      aquariusAsset,
+      serviceId:
+        '975a3647318a5a865c5030dc8cb16b9ef91dc82b490dd2440ffa059c7d8d7c0f'
+    }
+
+    const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
+    const service = serviceBuilder
+      .setAllAlgorithmsTrusted()
+      .setAllAlgorithmPublishersTrusted()
+      .build()
+
+    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
+    const asset = assetBuilder.addService(service).build()
+
+    const result = await nautilus.edit(asset)
+
+    assert(result)
+  })
+
+  it('edit services - compute remove publishers and algos', async () => {
+    const { aquariusAsset, nautilusDDO } = await NautilusDDO.createFromDID(
+      'did:op:94a2c281b6b0a09067310c77c5d49c3610b5ead5a31157f65f2c84022a1bc32e',
+      nautilus
+    )
+
+    const serviceBuilderConfig = {
+      aquariusAsset,
+      serviceId:
+        '975a3647318a5a865c5030dc8cb16b9ef91dc82b490dd2440ffa059c7d8d7c0f'
+    }
+
+    const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
+    const service = serviceBuilder
+      .removeTrustedAlgorithm(
+        'did:op:b39190deee2d92b74a02fbb01381599ae03b6630ceec362339a136c8fe1e413e'
+      )
+      .removeTrustedAlgorithmPublisher(
+        '0x6432956a98E522F1B8a73a45245a5C6ff2c7f8f1'
+      )
+      .build()
+
+    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
+    const asset = assetBuilder.addService(service).build()
+
+    const result = await nautilus.edit(asset)
+
+    assert(result)
+  })
+
+  it('edit services - compute untrust publishers and algos', async () => {
+    const { aquariusAsset, nautilusDDO } = await NautilusDDO.createFromDID(
+      'did:op:94a2c281b6b0a09067310c77c5d49c3610b5ead5a31157f65f2c84022a1bc32e',
+      nautilus
+    )
+
+    const serviceBuilderConfig = {
+      aquariusAsset,
+      serviceId:
+        '975a3647318a5a865c5030dc8cb16b9ef91dc82b490dd2440ffa059c7d8d7c0f'
+    }
+
+    const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
+    const service = serviceBuilder
+      .setAllAlgorithmsUntrusted()
+      .setAllAlgorithmPublishersUntrusted()
       .build()
 
     const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
@@ -423,22 +515,29 @@ describe('Edit Integration tests', function () {
     assert(result)
   })
 
-  // TODO to be implemented
-  it.skip('edit services - set additionalInfo', async () => {
+  it('edit services - add additionalInfo', async () => {
     const { aquariusAsset, nautilusDDO } = await NautilusDDO.createFromDID(
-      'did:op:2ce1394d3ed258d5bcc00d2ee432fcc9dc05f2d3ef9069c57ba5319da7a03772',
+      'did:op:bd1efbfe5efc527c0371f0db2d9302837cab242b951a15a624b7c792ba470f8e',
       nautilus
     )
 
     const serviceBuilderConfig = {
       aquariusAsset,
       serviceId:
-        'a25b6ef33d518b9908540fbf34d6ce2b77a09539c01988f1ba6a156d97980ab7'
+        'de18fb14a671ffad7c3f67bd6d44222b64f265dc4a4a28806b30f00b01f7158a'
     }
 
     const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
     const service = serviceBuilder
-      // .setAdditionalInfo() // TODO to be implemented
+      .addAdditionalInformation({
+        test: 'SuperInf2',
+        number: 6,
+        nested: { name: 'nested2' }
+      })
+      .addAdditionalInformation({
+        additional: undefined,
+        nested: { name: 'overwritten3' }
+      })
       .build()
 
     const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
