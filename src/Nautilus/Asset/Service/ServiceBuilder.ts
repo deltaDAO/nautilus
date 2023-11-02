@@ -172,35 +172,41 @@ export class ServiceBuilder<
     return this
   }
 
-  addTrustedAlgorithm(algorithm: PublisherTrustedAlgorithm) {
+  addTrustedAlgorithms(algorithms: PublisherTrustedAlgorithm[]) {
     if (this.service.type !== 'compute') {
       throw new Error('Illegal operation, asset is not a compute asset!')
     }
 
+    // Check if the algorithms array is empty
+    if (algorithms.length === 0) {
+      throw new Error('No algorithms provided.')
+    }
+
+    // Initialize the publisherTrustedAlgorithms array if it doesn't exist
     if (!this.service.compute.publisherTrustedAlgorithms) {
-      this.service.compute.publisherTrustedAlgorithms = [algorithm]
-      return this
+      this.service.compute.publisherTrustedAlgorithms = []
     }
 
-    const index = this.service.compute.publisherTrustedAlgorithms.findIndex(
-      (existingAlgorithm) => existingAlgorithm.did === algorithm.did
-    )
+    algorithms.forEach((algorithm) => {
+      const index = this.service.compute.publisherTrustedAlgorithms.findIndex(
+        (existingAlgorithm) => existingAlgorithm.did === algorithm.did
+      )
 
-    // If the algorithm with the same DID doesn't exist, add it, then return
-    if (index === -1) {
-      this.service.compute.publisherTrustedAlgorithms.push(algorithm)
-      return this
-    }
-
-    // If either checksum is different, replace the existing algorithm
-    const existing = this.service.compute.publisherTrustedAlgorithms[index]
-    if (
-      existing.containerSectionChecksum !==
-        algorithm.containerSectionChecksum ||
-      existing.filesChecksum !== algorithm.filesChecksum
-    ) {
-      this.service.compute.publisherTrustedAlgorithms[index] = algorithm
-    }
+      if (index === -1) {
+        // Algorithm with the same DID doesn't exist, add it
+        this.service.compute.publisherTrustedAlgorithms.push(algorithm)
+      } else {
+        // If either checksum is different, replace the existing algorithm
+        const existing = this.service.compute.publisherTrustedAlgorithms[index]
+        if (
+          existing.containerSectionChecksum !==
+            algorithm.containerSectionChecksum ||
+          existing.filesChecksum !== algorithm.filesChecksum
+        ) {
+          this.service.compute.publisherTrustedAlgorithms[index] = algorithm
+        }
+      }
+    })
 
     return this
   }

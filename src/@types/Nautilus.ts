@@ -89,8 +89,8 @@ export interface IServiceBuilder<S extends ServiceTypes, F extends FileTypes>
     parameter: NautilusConsumerParameter
   ) => IServiceBuilder<S, F>
   addTrustedAlgorithmPublisher: (publisher: string) => IServiceBuilder<S, F>
-  addTrustedAlgorithm: (
-    algorithm: PublisherTrustedAlgorithm
+  addTrustedAlgorithms: (
+    algorithms: PublisherTrustedAlgorithm[]
   ) => IServiceBuilder<S, F>
   allowRawAlgorithms: (allow?: boolean) => IServiceBuilder<S, F>
   allowAlgorithmNetworkAccess: (allow?: boolean) => IServiceBuilder<S, F>
