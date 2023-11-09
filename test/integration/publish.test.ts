@@ -132,7 +132,7 @@ describe('Publish Integration tests', function () {
     assert(result)
   })
 
-  it('publishes an asset with service consumerParamters', async () => {
+  it('publishes an asset with service consumerParameters', async () => {
     const serviceBuilder = new ServiceBuilder({
       serviceType: ServiceTypes.ACCESS,
       fileType: FileTypes.URL
@@ -171,7 +171,7 @@ describe('Publish Integration tests', function () {
     assert(result)
   })
 
-  it('publishes an asset with algorithm metadata consumerParamters', async () => {
+  it('publishes an asset with algorithm metadata consumerParameters', async () => {
     const serviceBuilder = new ServiceBuilder({
       serviceType: ServiceTypes.COMPUTE,
       fileType: FileTypes.URL
