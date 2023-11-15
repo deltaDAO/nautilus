@@ -20,6 +20,7 @@ import { access } from '../access'
 import { compute, getStatus, retrieveResult } from '../compute'
 import { FileTypes, NautilusService, ServiceTypes } from './Asset'
 import { TransactionReceipt } from '@ethersproject/abstract-provider'
+import { resolvePublisherTrustedAlgorithms } from '../utils/helpers/trusted-algorithms'
 
 export { LogLevel } from '@oceanprotocol/lib'
 
@@ -136,7 +137,16 @@ export class Nautilus {
     }
 
     // --------------------------------------------------
-    // 2. Create Datatokens and Pricing for new Services
+    // 2. resolve publisher trusted algorithm checksums
+    // --------------------------------------------------
+
+    await resolvePublisherTrustedAlgorithms(
+      asset.ddo.services,
+      chainConfig.metadataCacheUri
+    )
+
+    // --------------------------------------------------
+    // 3. Create Datatokens and Pricing for new Services
     // --------------------------------------------------
     const services = await getAllPromisesOnArray(
       asset.ddo.services,
@@ -166,7 +176,7 @@ export class Nautilus {
     )
 
     // --------------------------------------------------
-    // 3. Create the DDO and publish it on NFT
+    // 4. Create the DDO and publish it on NFT
     // --------------------------------------------------
     const ddo = await asset.ddo.getDDO({
       create: true,
@@ -197,6 +207,11 @@ export class Nautilus {
       datatokenAddress: string
       tx: TransactionReceipt
     }[]
+
+    await resolvePublisherTrustedAlgorithms(
+      nautilusDDOServices,
+      chainConfig.metadataCacheUri
+    )
 
     // This includes fresh published services
     const changedPriceServices = nautilusDDOServices.filter(

@@ -9,7 +9,10 @@ import {
   UrlFile,
   getHash
 } from '@oceanprotocol/lib'
-import { DatatokenCreateParamsWithoutOwner } from '../../../@types/Publish'
+import {
+  DatatokenCreateParamsWithoutOwner,
+  TrustedAlgorithmAsset
+} from '../../../@types/Publish'
 import {
   getEncryptedFiles,
   getFileInfo,
@@ -84,6 +87,8 @@ export class NautilusService<
     publisherTrustedAlgorithmPublishers: [],
     publisherTrustedAlgorithms: []
   }
+
+  addedPublisherTrustedAlgorithms: TrustedAlgorithmAsset[] = []
 
   consumerParameters?: NautilusConsumerParameter[] = []
   additionalInformation?: { [key: string]: any }

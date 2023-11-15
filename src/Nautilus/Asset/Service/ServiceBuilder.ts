@@ -1,4 +1,4 @@
-import { PublisherTrustedAlgorithm, Service, Asset } from '@oceanprotocol/lib'
+import { Service } from '@oceanprotocol/lib'
 import { IServiceBuilder, ServiceBuilderConfig } from '../../../@types/Nautilus'
 import {
   ConsumerParameterBuilder,
@@ -12,7 +12,8 @@ import {
 } from './NautilusService'
 import {
   ConsumerParameterSelectOption,
-  DatatokenCreateParamsWithoutOwner
+  DatatokenCreateParamsWithoutOwner,
+  TrustedAlgorithmAsset
 } from '../../../@types/Publish'
 import { PricingConfigWithoutOwner } from '../NautilusAsset'
 
@@ -172,39 +173,34 @@ export class ServiceBuilder<
     return this
   }
 
-  addTrustedAlgorithms(algorithms: PublisherTrustedAlgorithm[]) {
+  addTrustedAlgorithms(trustedAlgorithmAssets: TrustedAlgorithmAsset[]) {
     if (this.service.type !== 'compute') {
       throw new Error('Illegal operation, asset is not a compute asset!')
     }
 
-    // Check if the algorithms array is empty
-    if (algorithms.length === 0) {
-      throw new Error('No algorithms provided.')
+    if (trustedAlgorithmAssets.length === 0) {
+      throw new Error('No TrustedAlgorithmAssets provided.')
     }
 
-    // Initialize the publisherTrustedAlgorithms array if it doesn't exist
-    if (!this.service.compute.publisherTrustedAlgorithms) {
-      this.service.compute.publisherTrustedAlgorithms = []
-    }
+    trustedAlgorithmAssets.forEach((trustedAlgorithmAsset) => {
+      const existingIndex =
+        this.service.addedPublisherTrustedAlgorithms.findIndex(
+          (existingAsset) => existingAsset.did === trustedAlgorithmAsset.did
+        )
 
-    algorithms.forEach((algorithm) => {
-      const index = this.service.compute.publisherTrustedAlgorithms.findIndex(
-        (existingAlgorithm) => existingAlgorithm.did === algorithm.did
-      )
-
-      if (index === -1) {
-        // Algorithm with the same DID doesn't exist, add it
-        this.service.compute.publisherTrustedAlgorithms.push(algorithm)
+      if (existingIndex > -1) {
+        // Merge serviceIds
+        this.service.addedPublisherTrustedAlgorithms[existingIndex].serviceIds =
+          Array.from(
+            new Set([
+              ...(this.service.addedPublisherTrustedAlgorithms[existingIndex]
+                .serviceIds || []),
+              ...(trustedAlgorithmAsset.serviceIds || [])
+            ])
+          )
       } else {
-        // If either checksum is different, replace the existing algorithm
-        const existing = this.service.compute.publisherTrustedAlgorithms[index]
-        if (
-          existing.containerSectionChecksum !==
-            algorithm.containerSectionChecksum ||
-          existing.filesChecksum !== algorithm.filesChecksum
-        ) {
-          this.service.compute.publisherTrustedAlgorithms[index] = algorithm
-        }
+        // Add new trusted algorithm asset
+        this.service.addedPublisherTrustedAlgorithms.push(trustedAlgorithmAsset)
       }
     })
 

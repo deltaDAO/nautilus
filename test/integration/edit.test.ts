@@ -11,8 +11,7 @@ import {
   NautilusAsset,
   NautilusService,
   ServiceBuilder,
-  ServiceTypes,
-  getPublisherTrustedAlgorithms
+  ServiceTypes
 } from '../../src'
 import { algorithmMetadata, datasetService } from '../fixtures/AssetConfig'
 import { MUMBAI_NODE_URI, getSigner } from '../fixtures/Ethers'
@@ -362,38 +361,6 @@ describe('Edit Integration tests', function () {
     assert(result)
   })
 
-  it('edit services - compute add trusted algos based on dids', async () => {
-    const { aquariusAsset, nautilusDDO } = await NautilusDDO.createFromDID(
-      'did:op:94a2c281b6b0a09067310c77c5d49c3610b5ead5a31157f65f2c84022a1bc32e',
-      nautilus
-    )
-
-    const trustedAlgorithms = await getPublisherTrustedAlgorithms(
-      [
-        'did:op:02961b8c52b0273bac94f776a88ed13833cbc50bc2bc666ab7495751941546dc'
-      ],
-      nautilus
-    )
-
-    const serviceBuilderConfig = {
-      aquariusAsset,
-      serviceId:
-        '975a3647318a5a865c5030dc8cb16b9ef91dc82b490dd2440ffa059c7d8d7c0f'
-    }
-
-    const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
-    const service = serviceBuilder
-      .addTrustedAlgorithms(trustedAlgorithms)
-      .build()
-
-    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
-    const asset = assetBuilder.addService(service).build()
-
-    const result = await nautilus.edit(asset)
-
-    assert(result)
-  })
-
   it('edit services - compute add trusted algos and publishers', async () => {
     const { aquariusAsset, nautilusDDO } = await NautilusDDO.createFromDID(
       'did:op:94a2c281b6b0a09067310c77c5d49c3610b5ead5a31157f65f2c84022a1bc32e',
@@ -416,18 +383,10 @@ describe('Edit Integration tests', function () {
       )
       .addTrustedAlgorithms([
         {
-          did: 'did:op:b39190deee2d92b74a02fbb01381599ae03b6630ceec362339a136c8fe1e413e',
-          containerSectionChecksum:
-            'b7862dd501b091347db86fd009fc8c9cb7bb23347c40271d30063a3e1f2fe1a4',
-          filesChecksum:
-            'cbd7b9964fa887f5f3acd48d2312435da2e351fa0c4689169b53ae2ec2014173'
+          did: 'did:op:b39190deee2d92b74a02fbb01381599ae03b6630ceec362339a136c8fe1e413e'
         },
         {
-          did: 'did:op:b39190deee2d92b74a02fbb01381599ae03b6630ceec362339a136c8fe1e413e',
-          containerSectionChecksum:
-            'b7862dd501b091347db86fd009fc8c9cb7bb23347c40271d30063a3e1f2fe555',
-          filesChecksum:
-            'cbd7b9964fa887f5f3acd48d2312435da2e351fa0c4689169b53ae2ec2014173'
+          did: 'did:op:b39190deee2d92b74a02fbb01381599ae03b6630ceec362339a136c8fe1e413e'
         }
       ])
       .allowAlgorithmNetworkAccess()
