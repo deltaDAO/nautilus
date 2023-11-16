@@ -178,7 +178,7 @@ export class ServiceBuilder<
       throw new Error('Illegal operation, asset is not a compute asset!')
     }
 
-    if (trustedAlgorithmAssets.length === 0) {
+    if (!trustedAlgorithmAssets || trustedAlgorithmAssets.length === 0) {
       throw new Error('No TrustedAlgorithmAssets provided.')
     }
 
