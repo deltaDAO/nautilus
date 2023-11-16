@@ -41,6 +41,8 @@ async function getPublisherTrustedAlgorithms(
     const containerChecksum =
       asset.metadata.algorithm.container.entrypoint +
       asset.metadata.algorithm.container.checksum
+
+    // Trusted Algorithms Docs https://docs.oceanprotocol.com/developers/compute-to-data/compute-options#trusted-algorithms
     const trustedAlgorithm = {
       did: asset.id,
       containerSectionChecksum: getHash(containerChecksum),
