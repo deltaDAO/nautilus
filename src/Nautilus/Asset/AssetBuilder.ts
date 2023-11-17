@@ -1,5 +1,5 @@
+import { Asset } from '@oceanprotocol/lib'
 import {
-  AssetBuilderConfig,
   CredentialListTypes,
   IAssetBuilder,
   LifecycleStates
@@ -12,21 +12,17 @@ import {
   NautilusService,
   ServiceTypes
 } from './Service/NautilusService'
+import { NautilusDDO } from './NautilusDDO'
 
 export class AssetBuilder implements IAssetBuilder {
   private asset: NautilusAsset
 
-  constructor(config?: AssetBuilderConfig) {
-    if (
-      (!config?.nautilusDDO && config?.aquariusAsset) ||
-      (config?.nautilusDDO && !config?.aquariusAsset)
-    ) {
-      throw new Error('Invalid AssetBuilder cunstructor parameter combination')
-    }
-    if (config?.nautilusDDO && config?.aquariusAsset) {
-      this.asset = new NautilusAsset(config.nautilusDDO)
-      this.asset.owner = config.aquariusAsset.nft.owner
-      this.asset.lifecycleState = config.aquariusAsset.nft.state
+  constructor(aquariusAsset?: Asset) {
+    if (aquariusAsset) {
+      const nautilusDDO = NautilusDDO.createFromAquariusAsset(aquariusAsset)
+      this.asset = new NautilusAsset(nautilusDDO)
+      this.asset.owner = aquariusAsset.nft.owner
+      this.asset.lifecycleState = aquariusAsset.nft.state
     } else {
       this.asset = new NautilusAsset()
     }

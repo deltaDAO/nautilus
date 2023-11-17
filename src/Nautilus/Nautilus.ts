@@ -1,4 +1,5 @@
 import {
+  Asset,
   Config,
   ConfigHelper,
   LogLevel,
@@ -21,6 +22,7 @@ import { compute, getStatus, retrieveResult } from '../compute'
 import { FileTypes, NautilusService, ServiceTypes } from './Asset'
 import { TransactionReceipt } from '@ethersproject/abstract-provider'
 import { resolvePublisherTrustedAlgorithms } from '../utils/helpers/trusted-algorithms'
+import { getAsset, getAssets } from '../utils/aquarius'
 
 export { LogLevel } from '@oceanprotocol/lib'
 
@@ -264,6 +266,22 @@ export class Nautilus {
       services,
       ddo,
       setMetadataTxReceipt
+    }
+  }
+
+  async getAquariusAssets(dids: string[]): Promise<{ [key: string]: Asset }> {
+    try {
+      return await getAssets(this.config.metadataCacheUri, dids)
+    } catch (error) {
+      throw new Error(`getAquariusAssets failed: ${error}`)
+    }
+  }
+
+  async getAquariusAsset(did: string): Promise<Asset> {
+    try {
+      return await getAsset(this.config.metadataCacheUri, did)
+    } catch (error) {
+      throw new Error(`getAquariusAsset failed: ${error}`)
     }
   }
 

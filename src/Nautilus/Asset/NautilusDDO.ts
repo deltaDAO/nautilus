@@ -2,11 +2,10 @@ import {
   Asset,
   Credentials,
   DDO,
-  LoggerInstance,
   Service,
   generateDid
 } from '@oceanprotocol/lib'
-import { LifecycleStates, MetadataConfig } from '../../@types'
+import { MetadataConfig } from '../../@types'
 import {
   dateToStringNoMS,
   getAllPromisesOnArray,
@@ -18,8 +17,6 @@ import {
   NautilusService,
   ServiceTypes
 } from './Service/NautilusService'
-import { getAsset } from '../../utils/aquarius'
-import { Nautilus } from '../Nautilus'
 
 export class NautilusDDO {
   id: string
@@ -35,6 +32,12 @@ export class NautilusDDO {
   credentials: Credentials = {
     allow: [],
     deny: []
+  }
+
+  static createFromAquariusAsset(aquariusAsset: Asset): NautilusDDO {
+    const ddo = this.transformAquariusAssetToDDO(aquariusAsset)
+
+    return this.createFromDDO(ddo)
   }
 
   static createFromDDO(ddo: DDO): NautilusDDO {
@@ -53,26 +56,6 @@ export class NautilusDDO {
       nautilusDDO.credentials.deny = ddo.credentials.deny
 
     return nautilusDDO
-  }
-
-  static async createFromDID(
-    did: string,
-    nautilus: Nautilus
-  ): Promise<{ aquariusAsset: Asset; nautilusDDO: NautilusDDO }> {
-    const config = nautilus.getOceanConfig()
-
-    const asset = await getAsset(config.metadataCacheUri, did)
-    if (!asset)
-      throw new Error(
-        `No asset found for ${asset} in cache ${config.metadataCacheUri}`
-      )
-    if (asset.nft.state === LifecycleStates.REVOKED_BY_PUBLISHER)
-      LoggerInstance.warn('Unable to fetch asset: Revoked by publisher')
-
-    const ddo: DDO = asset as DDO // TODO remove data fields from Aquarius Asset which do not belong to DOO
-
-    const nautilusDDO = this.createFromDDO(ddo)
-    return { aquariusAsset: asset, nautilusDDO }
   }
 
   getOriginalDDO() {
@@ -259,5 +242,21 @@ export class NautilusDDO {
 
     // Otherwise we return the replacement
     return replacementService
+  }
+
+  static transformAquariusAssetToDDO(aquariusAsset: Asset): DDO {
+    const ddo = structuredClone(aquariusAsset)
+
+    const unwantedAssetAttributes = [
+      'nft',
+      'datatokens',
+      'event',
+      'stats',
+      'purgatory'
+    ]
+    for (const attribute of unwantedAssetAttributes) {
+      delete ddo[attribute]
+    }
+    return ddo as DDO
   }
 }
