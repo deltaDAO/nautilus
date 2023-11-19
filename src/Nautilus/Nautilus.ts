@@ -3,7 +3,8 @@ import {
   Config,
   ConfigHelper,
   LogLevel,
-  LoggerInstance
+  LoggerInstance,
+  Nft
 } from '@oceanprotocol/lib'
 import { Signer, utils as ethersUtils } from 'ethers'
 import {
@@ -12,6 +13,7 @@ import {
   ComputeResultConfig,
   ComputeStatusConfig,
   CreateAssetConfig,
+  LifecycleStates,
   PublishResponse
 } from '../@types'
 import { createAsset, createDatatokenAndPricing, publishDDO } from '../publish'
@@ -189,7 +191,8 @@ export class Nautilus {
     const setMetadataTxReceipt = await publishDDO({
       signer,
       chainConfig,
-      ddo
+      ddo,
+      asset
     })
 
     return {
@@ -283,6 +286,32 @@ export class Nautilus {
     } catch (error) {
       throw new Error(`getAquariusAsset failed: ${error}`)
     }
+  }
+
+  async setAssetLifecycleState(aquariusAsset: Asset, state: LifecycleStates) {
+    const { signer } = this.getChainConfig()
+    const address = await signer.getAddress()
+    const nft = new Nft(signer)
+    const existingNftState = aquariusAsset.nft.state
+
+    if (existingNftState === state) {
+      LoggerInstance.warn(
+        `[lifecycle] Asset lifecycle state is already ${state} (${LifecycleStates[state]}), action aborted`
+      )
+      return
+    }
+    LoggerInstance.debug(
+      `[lifecycle] Change asset lifecycle state from ${existingNftState} (${LifecycleStates[existingNftState]}) to ${state} (${LifecycleStates[state]}) `
+    )
+
+    const stateTxReceipt = await nft.setMetadataState(
+      aquariusAsset.nft.address,
+      address,
+      state
+    )
+    const stateTx = await stateTxReceipt.wait()
+
+    return stateTx
   }
 
   /**

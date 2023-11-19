@@ -21,7 +21,6 @@ export async function createAsset(assetConfig: CreateAssetConfig) {
   // 1. Create NFT with NftFactory
   // --------------------------------------------------
   const { signer, chainConfig, nftParams } = assetConfig
-  const publisherAccount = await signer?.getAddress()
   const nftFactory = new NftFactory(
     chainConfig.nftFactoryAddress,
     signer,
@@ -174,22 +173,9 @@ export async function publishDDO(config: PublishDDOConfig) {
 
   const tx = await transactionReceipt.wait()
 
-  // TODO should be reflected in return
-  let stateTxReceipt: providers.TransactionResponse
-  let stateTx: providers.TransactionReceipt
-  if (asset?.lifecycleState) {
-    stateTxReceipt = await nft.setMetadataState(
-      ddo.nftAddress,
-      publisherAccount,
-      lifecycleState
-    )
-    stateTx = await stateTxReceipt.wait()
-  }
-
   LoggerInstance.debug(`[publish] Published metadata on NFT.`, {
-    ddo, // TODO remove asset values like nft from DDO
-    tx: tx.transactionHash,
-    stateTx
+    ddo,
+    tx
   })
 
   return tx
