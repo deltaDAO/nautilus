@@ -302,7 +302,7 @@ export class ServiceBuilder<
   setPricing(pricing: PricingConfigWithoutOwner) {
     if (this.service.editExistingService)
       throw new Error(
-        'Can not set new Pricing configs for existing assets. Use static editPrice() function.'
+        'Can not set new pricing configs for existing services using the builder. Use nautilus.setServicePrice() method instead.'
       )
     this.service.pricing = pricing
 

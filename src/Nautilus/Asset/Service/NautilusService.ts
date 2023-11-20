@@ -1,6 +1,5 @@
 import {
   Arweave,
-  FixedRateExchange,
   GraphqlQuery,
   Ipfs,
   Service,
@@ -21,10 +20,6 @@ import {
 import { NautilusConsumerParameter } from '../ConsumerParameters'
 import { PricingConfigWithoutOwner } from '../NautilusAsset'
 import { params as DatatokenConstantParams } from '../constants/datatoken.constants'
-import { Nautilus } from '../../Nautilus'
-import { Signer } from 'ethers'
-import { getAsset } from '../../../utils/aquarius'
-import { getAccessDetails } from '../../../utils/helpers/access-details'
 
 export {
   Arweave,
@@ -104,40 +99,6 @@ export class NautilusService<
 
   private initDatatokenData() {
     this.datatokenCreateParams = DatatokenConstantParams
-  }
-
-  public static async editPrice(
-    nautilus: Nautilus,
-    signer: Signer,
-    did: string,
-    serviceId: string,
-    newPrice: string
-  ) {
-    const config = nautilus.getOceanConfig()
-
-    const aquariusAsset = await getAsset(config.metadataCacheUri, did)
-
-    const service: Service = aquariusAsset.services.find(
-      (service) => service.id === serviceId
-    )
-
-    const fixedRateInstance = new FixedRateExchange(
-      config.fixedRateExchangeAddress,
-      signer
-    )
-
-    const accessDetails = await getAccessDetails(
-      config.subgraphUri,
-      service.datatokenAddress
-    )
-
-    const tx = await fixedRateInstance.setRate(
-      accessDetails.addressOrId,
-      newPrice
-    )
-    const txReceipt = await tx.wait()
-
-    return txReceipt
   }
 
   async getOceanService(

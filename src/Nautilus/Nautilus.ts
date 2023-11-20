@@ -29,6 +29,7 @@ import { FileTypes, NautilusService, ServiceTypes } from './Asset'
 import { TransactionReceipt } from '@ethersproject/abstract-provider'
 import { resolvePublisherTrustedAlgorithms } from '../utils/helpers/trusted-algorithms'
 import { getAsset, getAssets } from '../utils/aquarius'
+import { editPrice } from '../utils/contracts'
 
 export { LogLevel } from '@oceanprotocol/lib'
 
@@ -248,6 +249,24 @@ export class Nautilus {
       ddo,
       setMetadataTxReceipt
     }
+  }
+
+  async setServicePrice(
+    aquaAsset: Asset,
+    serviceId: string,
+    newPrice: string
+  ): Promise<TransactionReceipt> {
+    if (typeof newPrice !== 'string' || isNaN(parseFloat(newPrice))) {
+      throw new Error('newPrice must be a numeric string')
+    }
+
+    return await editPrice(
+      aquaAsset,
+      serviceId,
+      newPrice,
+      this.config,
+      this.signer
+    )
   }
 
   async getAquariusAssets(dids: string[]): Promise<{ [key: string]: Asset }> {
