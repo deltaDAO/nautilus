@@ -1,5 +1,6 @@
 import {
   Aquarius,
+  Config,
   Datatoken,
   DispenserParams,
   LoggerInstance,
@@ -12,8 +13,10 @@ import {
   CreateDatatokenConfig,
   PublishDDOConfig
 } from '../@types/Publish'
-import { utils as ethersUtils, providers } from 'ethers'
+import { Signer, utils as ethersUtils, providers } from 'ethers'
+import { TransactionReceipt } from '@ethersproject/abstract-provider'
 import { LifecycleStates } from '../@types'
+import { FileTypes, NautilusService, ServiceTypes } from '../Nautilus'
 
 export async function createAsset(assetConfig: CreateAssetConfig) {
   LoggerInstance.debug('[publish] Publishing new asset NFT...')
@@ -35,7 +38,7 @@ export async function createAsset(assetConfig: CreateAssetConfig) {
   return { nftAddress }
 }
 
-export async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
+async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
   // --------------------------------------------------
   // 1. Create Datatoken
   // --------------------------------------------------
@@ -179,6 +182,40 @@ export async function publishDDO(config: PublishDDOConfig) {
   })
 
   return tx
+}
+
+export async function createServiceWithDatatokenAndPricing(
+  service: NautilusService<ServiceTypes, FileTypes>,
+  signer: Signer,
+  chainConfig: Config,
+  nftAddress: string,
+  assetOwner: string
+): Promise<{
+  service: NautilusService<ServiceTypes, FileTypes>
+  datatokenAddress: string
+  tx: TransactionReceipt
+}> {
+  const { datatokenAddress, tx } = await createDatatokenAndPricing({
+    signer,
+    chainConfig,
+    nftAddress,
+    pricing: {
+      ...service.pricing,
+      freCreationParams: {
+        ...service.pricing.freCreationParams,
+        owner: assetOwner
+      }
+    },
+    datatokenParams: {
+      ...service.datatokenCreateParams,
+      minter: assetOwner,
+      paymentCollector: assetOwner
+    }
+  })
+
+  service.datatokenAddress = datatokenAddress
+
+  return { service, datatokenAddress, tx }
 }
 
 // TODO evaluate if we need these (1 transaction for multiple actions)

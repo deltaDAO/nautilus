@@ -16,7 +16,11 @@ import {
   LifecycleStates,
   PublishResponse
 } from '../@types'
-import { createAsset, createDatatokenAndPricing, publishDDO } from '../publish'
+import {
+  createAsset,
+  createServiceWithDatatokenAndPricing,
+  publishDDO
+} from '../publish'
 import { getAllPromisesOnArray } from '../utils'
 import { NautilusAsset } from './Asset/NautilusAsset'
 import { access } from '../access'
@@ -155,27 +159,13 @@ export class Nautilus {
     const services = await getAllPromisesOnArray(
       asset.ddo.services,
       async (service) => {
-        const { datatokenAddress, tx } = await createDatatokenAndPricing({
+        return createServiceWithDatatokenAndPricing(
+          service,
           signer,
           chainConfig,
           nftAddress,
-          pricing: {
-            ...service.pricing,
-            freCreationParams: {
-              ...service.pricing.freCreationParams,
-              owner: asset.owner
-            }
-          },
-          datatokenParams: {
-            ...service.datatokenCreateParams,
-            minter: asset.owner,
-            paymentCollector: asset.owner
-          }
-        })
-
-        service.datatokenAddress = datatokenAddress
-
-        return { service, datatokenAddress, tx }
+          asset.owner
+        )
       }
     )
 
@@ -227,30 +217,17 @@ export class Nautilus {
       services = await getAllPromisesOnArray(
         changedPriceServices,
         async (service) => {
-          const { datatokenAddress, tx } = await createDatatokenAndPricing({
+          return createServiceWithDatatokenAndPricing(
+            service,
             signer,
             chainConfig,
             nftAddress,
-            pricing: {
-              ...service.pricing,
-              freCreationParams: {
-                ...service.pricing.freCreationParams,
-                owner: asset.owner
-              }
-            },
-            datatokenParams: {
-              ...service.datatokenCreateParams,
-              minter: asset.owner,
-              paymentCollector: asset.owner
-            }
-          })
-
-          service.datatokenAddress = datatokenAddress
-
-          return { service, datatokenAddress, tx }
+            asset.owner
+          )
         }
       )
     }
+
     const ddo = await asset.ddo.getDDO({
       create: false,
       chainId: chainConfig.chainId,
