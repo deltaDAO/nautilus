@@ -154,11 +154,7 @@ export class NautilusService<
     const datatokenAddress = dtAddress || this.datatokenAddress
     if (!datatokenAddress) throw new Error('datatokenAddress is required')
 
-    const isFilesObjectChanged = !!(
-      (this.editExistingService && this.filesEdited) ||
-      (this.editExistingService && this.serviceEndpointEdited) ||
-      this.pricing
-    )
+    const isFilesObjectChanged = this.checkIfFilesObjectChanged()
 
     let encryptedFiles: string
 
@@ -220,5 +216,13 @@ export class NautilusService<
     }
 
     return true
+  }
+
+  checkIfFilesObjectChanged(): boolean {
+    return (
+      (this.editExistingService &&
+        (this.filesEdited || this.serviceEndpointEdited)) ||
+      !!this.pricing
+    )
   }
 }

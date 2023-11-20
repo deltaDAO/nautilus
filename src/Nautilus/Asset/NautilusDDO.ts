@@ -97,11 +97,7 @@ export class NautilusDDO {
 
     // remove service from existing services if id changes to prevent old service after edit
     for (const service of this.services) {
-      const isFilesObjectChanged = !!(
-        (service.editExistingService && service.filesEdited) ||
-        (service.editExistingService && service.serviceEndpointEdited) ||
-        service.pricing
-      )
+      const isFilesObjectChanged = service.checkIfFilesObjectChanged()
 
       if (service.id && isFilesObjectChanged) {
         this.removeServices.push(service.id)
