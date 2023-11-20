@@ -213,6 +213,7 @@ export class Nautilus {
       (nautilusService) => nautilusService.pricing
     )
 
+    // TODO check if service prices can be changed via datatoken replacement (currently buggy could be a caching problem)
     if (changedPriceServices.length > 0) {
       services = await getAllPromisesOnArray(
         changedPriceServices,
