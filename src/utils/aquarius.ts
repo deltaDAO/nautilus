@@ -35,7 +35,7 @@ export async function getAsset(
 export async function getAssets(
   metadataCacheUri: string,
   dids: string[]
-): Promise<{ [key: string]: Asset }> {
+): Promise<{ [did: string]: Asset }> {
   const apiPath = '/api/aquarius/assets/query'
 
   if (!metadataCacheUri) {
@@ -62,7 +62,7 @@ export async function getAssets(
     }
   }
 
-  const assets: { [key: string]: Asset } = {}
+  const assets: { [did: string]: Asset } = {}
 
   try {
     const fullAquariusUrl = new URL(apiPath, metadataCacheUri).href

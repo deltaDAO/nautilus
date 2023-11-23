@@ -269,7 +269,7 @@ export class Nautilus {
     )
   }
 
-  async getAquariusAssets(dids: string[]): Promise<{ [key: string]: Asset }> {
+  async getAquariusAssets(dids: string[]): Promise<{ [did: string]: Asset }> {
     try {
       return await getAssets(this.config.metadataCacheUri, dids)
     } catch (error) {
