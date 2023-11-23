@@ -17,6 +17,7 @@ import {
   NautilusService,
   ServiceTypes
 } from './Service/NautilusService'
+import { transformAquariusAssetToDDO } from '../../utils/aquarius'
 
 export class NautilusDDO {
   id: string
@@ -35,7 +36,7 @@ export class NautilusDDO {
   }
 
   static createFromAquariusAsset(aquariusAsset: Asset): NautilusDDO {
-    const ddo = this.transformAquariusAssetToDDO(aquariusAsset)
+    const ddo = transformAquariusAssetToDDO(aquariusAsset)
 
     return this.createFromDDO(ddo)
   }
@@ -238,21 +239,5 @@ export class NautilusDDO {
 
     // Otherwise we return the replacement
     return replacementService
-  }
-
-  static transformAquariusAssetToDDO(aquariusAsset: Asset): DDO {
-    const ddo = structuredClone(aquariusAsset)
-
-    const unwantedAssetAttributes = [
-      'nft',
-      'datatokens',
-      'event',
-      'stats',
-      'purgatory'
-    ]
-    for (const attribute of unwantedAssetAttributes) {
-      delete ddo[attribute]
-    }
-    return ddo as DDO
   }
 }
