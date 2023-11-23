@@ -1,5 +1,6 @@
-import { Asset, LoggerInstance } from '@oceanprotocol/lib'
+import { Asset, DDO, LoggerInstance } from '@oceanprotocol/lib'
 import axios, { AxiosResponse } from 'axios'
+import { AQUARIUS_ASSET_EXTENDED_DDO_PROPS } from './constants'
 
 export async function getAsset(
   metadataCacheUri: string,
@@ -35,7 +36,7 @@ export async function getAsset(
 export async function getAssets(
   metadataCacheUri: string,
   dids: string[]
-): Promise<{ [key: string]: Asset }> {
+): Promise<{ [did: string]: Asset }> {
   const apiPath = '/api/aquarius/assets/query'
 
   if (!metadataCacheUri) {
@@ -62,7 +63,7 @@ export async function getAssets(
     }
   }
 
-  const assets: { [key: string]: Asset } = {}
+  const assets: { [did: string]: Asset } = {}
 
   try {
     const fullAquariusUrl = new URL(apiPath, metadataCacheUri).href
@@ -87,4 +88,13 @@ export async function getAssets(
     LoggerInstance.error(`Error in retrieving assets: ${error.message}`)
     throw error
   }
+}
+
+export function transformAquariusAssetToDDO(aquariusAsset: Asset): DDO {
+  const ddo = structuredClone(aquariusAsset)
+
+  for (const attribute of AQUARIUS_ASSET_EXTENDED_DDO_PROPS) {
+    delete ddo[attribute]
+  }
+  return ddo as DDO
 }

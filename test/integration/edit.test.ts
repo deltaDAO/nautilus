@@ -674,7 +674,7 @@ describe('Edit Integration tests', function () {
       fixedPriceComputeDataset?.id
     )
 
-    const serviceId = fixedPriceComputeDataset?.services?.[0]?.id
+    const serviceId = fixedPriceComputeDataset?.services?.[1]?.id
 
     const assetBuilder = new AssetBuilder(aquariusAsset)
     const asset = assetBuilder.removeService(serviceId).build()
