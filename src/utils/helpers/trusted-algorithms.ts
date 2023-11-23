@@ -76,41 +76,40 @@ export async function resolvePublisherTrustedAlgorithms(
   metadataCacheUri: string
 ) {
   for (const service of nautilusDDOServices) {
-    if (service.addedPublisherTrustedAlgorithms.length > 0) {
-      const dids = service.addedPublisherTrustedAlgorithms.map(
-        (asset) => asset.did
-      )
-      const newPublisherTrustedAlgorithms = await getPublisherTrustedAlgorithms(
-        dids,
-        metadataCacheUri
-      )
+    if (service.addedPublisherTrustedAlgorithms?.length) continue
 
-      if (service.compute?.publisherTrustedAlgorithms?.length === 0) {
-        service.compute.publisherTrustedAlgorithms =
-          newPublisherTrustedAlgorithms
-        return
-      }
+    const dids = service.addedPublisherTrustedAlgorithms.map(
+      (asset) => asset.did
+    )
+    const newPublisherTrustedAlgorithms = await getPublisherTrustedAlgorithms(
+      dids,
+      metadataCacheUri
+    )
 
-      newPublisherTrustedAlgorithms.forEach((algorithm) => {
-        const index = service.compute.publisherTrustedAlgorithms.findIndex(
-          (existingAlgorithm) => existingAlgorithm.did === algorithm.did
-        )
-
-        if (index === -1) {
-          // Algorithm with the same DID doesn't exist, add it
-          service.compute.publisherTrustedAlgorithms.push(algorithm)
-        } else {
-          // If either checksum is different, replace the existing algorithm
-          const existing = service.compute.publisherTrustedAlgorithms[index]
-          if (
-            existing.containerSectionChecksum !==
-              algorithm.containerSectionChecksum ||
-            existing.filesChecksum !== algorithm.filesChecksum
-          ) {
-            service.compute.publisherTrustedAlgorithms[index] = algorithm
-          }
-        }
-      })
+    if (service.compute?.publisherTrustedAlgorithms?.length === 0) {
+      service.compute.publisherTrustedAlgorithms = newPublisherTrustedAlgorithms
+      return
     }
+
+    newPublisherTrustedAlgorithms.forEach((algorithm) => {
+      const index = service.compute.publisherTrustedAlgorithms.findIndex(
+        (existingAlgorithm) => existingAlgorithm.did === algorithm.did
+      )
+
+      if (index === -1) {
+        // Algorithm with the same DID doesn't exist, add it
+        service.compute.publisherTrustedAlgorithms.push(algorithm)
+      } else {
+        // If either checksum is different, replace the existing algorithm
+        const existing = service.compute.publisherTrustedAlgorithms[index]
+        if (
+          existing.containerSectionChecksum !==
+            algorithm.containerSectionChecksum ||
+          existing.filesChecksum !== algorithm.filesChecksum
+        ) {
+          service.compute.publisherTrustedAlgorithms[index] = algorithm
+        }
+      }
+    })
   }
 }
