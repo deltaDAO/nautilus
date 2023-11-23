@@ -107,3 +107,8 @@ export interface PublishResponse {
   ddo: DDO
   setMetadataTxReceipt: providers.TransactionReceipt
 }
+
+export type TrustedAlgorithmAsset = {
+  did: string
+  serviceIds?: string[]
+}

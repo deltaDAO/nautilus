@@ -1,9 +1,8 @@
-import { Nft, NftCreateData } from '@oceanprotocol/lib'
+import { NftCreateData } from '@oceanprotocol/lib'
 import { NftCreateDataWithoutOwner, PricingConfig } from '../../@types/Publish'
 import { NautilusDDO } from './NautilusDDO'
 import { nftInitialCreateData } from './constants/nft.constants'
 import { LifecycleStates } from '../../@types'
-import { Signer } from 'ethers'
 
 export type PricingConfigWithoutOwner = {
   type: PricingConfig['type']
@@ -27,24 +26,6 @@ export class NautilusAsset {
     }
 
     this.initNftData()
-  }
-
-  public static async setLifecycleState(
-    signer: Signer,
-    nftAddress: string,
-    publisherAccount: string,
-    state: LifecycleStates
-  ) {
-    const nft = new Nft(signer)
-
-    const stateTxReceipt = await nft.setMetadataState(
-      nftAddress,
-      publisherAccount,
-      state
-    )
-    const stateTx = await stateTxReceipt.wait()
-
-    return stateTx
   }
 
   private initNftData() {

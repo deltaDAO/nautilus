@@ -12,15 +12,9 @@ import {
   NftCreateDataWithoutOwner,
   PricingConfig
 } from './Publish'
-import { NautilusDDO } from '../Nautilus/Asset/NautilusDDO'
 
 export interface NautilusOptions {
   skipDefaultConfig: boolean
-}
-
-export type AssetBuilderConfig = {
-  nautilusDDO: NautilusDDO
-  aquariusAsset: Asset
 }
 
 export type ServiceBuilderConfig =

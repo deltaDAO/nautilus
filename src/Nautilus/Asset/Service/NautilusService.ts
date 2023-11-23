@@ -1,6 +1,5 @@
 import {
   Arweave,
-  FixedRateExchange,
   GraphqlQuery,
   Ipfs,
   Service,
@@ -9,7 +8,10 @@ import {
   UrlFile,
   getHash
 } from '@oceanprotocol/lib'
-import { DatatokenCreateParamsWithoutOwner } from '../../../@types/Publish'
+import {
+  DatatokenCreateParamsWithoutOwner,
+  TrustedAlgorithmAsset
+} from '../../../@types/Publish'
 import {
   getEncryptedFiles,
   getFileInfo,
@@ -18,10 +20,6 @@ import {
 import { NautilusConsumerParameter } from '../ConsumerParameters'
 import { PricingConfigWithoutOwner } from '../NautilusAsset'
 import { params as DatatokenConstantParams } from '../constants/datatoken.constants'
-import { Nautilus } from '../../Nautilus'
-import { Signer } from 'ethers'
-import { getAsset } from '../../../utils/aquarius'
-import { getAccessDetails } from '../../../utils/helpers/access-details'
 
 export {
   Arweave,
@@ -85,6 +83,8 @@ export class NautilusService<
     publisherTrustedAlgorithms: []
   }
 
+  addedPublisherTrustedAlgorithms: TrustedAlgorithmAsset[] = []
+
   consumerParameters?: NautilusConsumerParameter[] = []
   additionalInformation?: { [key: string]: any }
 
@@ -101,40 +101,6 @@ export class NautilusService<
     this.datatokenCreateParams = DatatokenConstantParams
   }
 
-  public static async editPrice(
-    nautilus: Nautilus,
-    signer: Signer,
-    did: string,
-    serviceId: string,
-    newPrice: string
-  ) {
-    const config = nautilus.getOceanConfig()
-
-    const aquariusAsset = await getAsset(config.metadataCacheUri, did)
-
-    const service: Service = aquariusAsset.services.find(
-      (service) => service.id === serviceId
-    )
-
-    const fixedRateInstance = new FixedRateExchange(
-      config.fixedRateExchangeAddress,
-      signer
-    )
-
-    const accessDetails = await getAccessDetails(
-      config.subgraphUri,
-      service.datatokenAddress
-    )
-
-    const tx = await fixedRateInstance.setRate(
-      accessDetails.addressOrId,
-      newPrice
-    )
-    const txReceipt = await tx.wait()
-
-    return txReceipt
-  }
-
   async getOceanService(
     chainId: number,
     nftAddress: string,
@@ -149,11 +115,7 @@ export class NautilusService<
     const datatokenAddress = dtAddress || this.datatokenAddress
     if (!datatokenAddress) throw new Error('datatokenAddress is required')
 
-    const isFilesObjectChanged = !!(
-      (this.editExistingService && this.filesEdited) ||
-      (this.editExistingService && this.serviceEndpointEdited) ||
-      this.pricing
-    )
+    const isFilesObjectChanged = this.checkIfFilesObjectChanged()
 
     let encryptedFiles: string
 
@@ -215,5 +177,13 @@ export class NautilusService<
     }
 
     return true
+  }
+
+  checkIfFilesObjectChanged(): boolean {
+    return (
+      (this.editExistingService &&
+        (this.filesEdited || this.serviceEndpointEdited)) ||
+      !!this.pricing
+    )
   }
 }

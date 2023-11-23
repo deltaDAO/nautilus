@@ -5,20 +5,17 @@ import {
   PublisherTrustedAlgorithm,
   getHash
 } from '@oceanprotocol/lib'
-import { Nautilus } from '../../Nautilus'
 import { getAsset } from '../aquarius'
+import { FileTypes, NautilusService, ServiceTypes } from '../../Nautilus'
 
 // TODO replace hardcoded service index 0 with service id once supported by the stack
-export async function getPublisherTrustedAlgorithms(
+async function getPublisherTrustedAlgorithms(
   dids: string[],
-  nautilus: Nautilus
-) {
+  metadataCacheUri: string
+): Promise<PublisherTrustedAlgorithm[]> {
   const trustedAlgorithms: PublisherTrustedAlgorithm[] = []
-  const config = await nautilus.getOceanConfig()
 
-  const assetPromises = dids.map((did) =>
-    getAsset(config.metadataCacheUri, did)
-  )
+  const assetPromises = dids.map((did) => getAsset(metadataCacheUri, did))
   let assets: Asset[] = []
 
   try {
@@ -44,6 +41,8 @@ export async function getPublisherTrustedAlgorithms(
     const containerChecksum =
       asset.metadata.algorithm.container.entrypoint +
       asset.metadata.algorithm.container.checksum
+
+    // Trusted Algorithms Docs https://docs.oceanprotocol.com/developers/compute-to-data/compute-options#trusted-algorithms
     const trustedAlgorithm = {
       did: asset.id,
       containerSectionChecksum: getHash(containerChecksum),
@@ -69,5 +68,49 @@ async function getFileDidInfo(
     return response
   } catch (error) {
     throw new Error(`[Initialize check file did] Error:' ${error}`)
+  }
+}
+
+export async function resolvePublisherTrustedAlgorithms(
+  nautilusDDOServices: NautilusService<ServiceTypes, FileTypes>[],
+  metadataCacheUri: string
+) {
+  for (const service of nautilusDDOServices) {
+    if (service.addedPublisherTrustedAlgorithms.length > 0) {
+      const dids = service.addedPublisherTrustedAlgorithms.map(
+        (asset) => asset.did
+      )
+      const newPublisherTrustedAlgorithms = await getPublisherTrustedAlgorithms(
+        dids,
+        metadataCacheUri
+      )
+
+      if (service.compute?.publisherTrustedAlgorithms?.length === 0) {
+        service.compute.publisherTrustedAlgorithms =
+          newPublisherTrustedAlgorithms
+        return
+      }
+
+      newPublisherTrustedAlgorithms.forEach((algorithm) => {
+        const index = service.compute.publisherTrustedAlgorithms.findIndex(
+          (existingAlgorithm) => existingAlgorithm.did === algorithm.did
+        )
+
+        if (index === -1) {
+          // Algorithm with the same DID doesn't exist, add it
+          service.compute.publisherTrustedAlgorithms.push(algorithm)
+        } else {
+          // If either checksum is different, replace the existing algorithm
+          const existing = service.compute.publisherTrustedAlgorithms[index]
+          if (
+            existing.containerSectionChecksum !==
+              algorithm.containerSectionChecksum ||
+            existing.filesChecksum !== algorithm.filesChecksum
+          ) {
+            service.compute.publisherTrustedAlgorithms[index] = algorithm
+          }
+        }
+      })
+    }
   }
 }
