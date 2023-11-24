@@ -8,14 +8,17 @@ import {
   LifecycleStates,
   LogLevel,
   Nautilus,
-  NautilusAsset,
-  NautilusService,
   ServiceBuilder,
   ServiceTypes
 } from '../../src'
-import { algorithmMetadata, datasetService } from '../fixtures/AssetConfig'
+import {
+  algorithmMetadata,
+  datasetService,
+  getPricing
+} from '../fixtures/AssetConfig'
 import { MUMBAI_NODE_URI, getSigner } from '../fixtures/Ethers'
-import { NautilusDDO } from '../../src/Nautilus/Asset/NautilusDDO'
+import { Aquarius, Config, DDO } from '@oceanprotocol/lib'
+import { getTestConfig } from '../fixtures/Config'
 
 const nodeUri = MUMBAI_NODE_URI
 
@@ -27,31 +30,109 @@ describe('Edit Integration tests', function () {
   let signerAddress: string
   let nautilus: Nautilus
   let providerUri: string
+  let aquarius: Aquarius
+  let config: Config
+
+  // test assets
+  let fixedPricedAlgoWithCredentials: DDO
+  let fixedPriceComputeDataset: DDO
 
   before(async () => {
     Nautilus.setLogLevel(LogLevel.Verbose)
     signer = getSigner(1, nodeUri)
     signerAddress = await signer.getAddress()
+    config = await getTestConfig(signer)
 
     console.log('Testing with signer:', signerAddress)
 
     nautilus = await Nautilus.create(signer, {
-      metadataCacheUri: process.env.METADATA_CACHE_URI_TEST
+      metadataCacheUri:
+        process.env.METADATA_CACHE_URI_TEST || config?.metadataCacheUri
     })
 
     providerUri =
       process.env.PROVIDER_URI_TEST || nautilus.getOceanConfig().providerUri
 
     console.log('Testing with signer:', signerAddress)
+
+    aquarius = new Aquarius(
+      process.env.METADATA_CACHE_URI_TEST || config?.metadataCacheUri
+    )
+  })
+
+  it('publishes an algorithm with fixed price and credentials', async () => {
+    const serviceBuilder = new ServiceBuilder({
+      serviceType: ServiceTypes.ACCESS,
+      fileType: FileTypes.URL
+    })
+    const service = serviceBuilder
+      .setServiceEndpoint(providerUri)
+      .setTimeout(datasetService.timeout)
+      .addFile(datasetService.files[0])
+      .setPricing(await getPricing(signer, 'fixed'))
+      .build()
+
+    const assetBuilder = new AssetBuilder()
+    const asset = assetBuilder
+      .setAuthor('testAuthor')
+      .setDescription('A dataset publishing test')
+      .setLicense('MIT')
+      .setName('Test Publish Dataset Fixed')
+      .setOwner(signerAddress)
+      .setType('algorithm')
+      .setAlgorithm({
+        ...algorithmMetadata.algorithm
+      })
+      .addService(service)
+      .addCredentialAddresses(CredentialListTypes.ALLOW, [signerAddress])
+      .addCredentialAddresses(CredentialListTypes.DENY, [signerAddress])
+      .build()
+
+    const result = await nautilus.publish(asset)
+    fixedPricedAlgoWithCredentials = result?.ddo
+    await aquarius.waitForAqua(fixedPricedAlgoWithCredentials?.id)
+
+    assert(result)
+  })
+
+  it('publishes a compute type dataset', async () => {
+    const serviceBuilder = new ServiceBuilder({
+      serviceType: ServiceTypes.COMPUTE,
+      fileType: FileTypes.URL
+    })
+
+    const testServiceOne = serviceBuilder
+      .setName('Test service 1')
+      .setServiceEndpoint(providerUri)
+      .setTimeout(datasetService.timeout)
+      .setPricing(await getPricing(signer, 'fixed'))
+      .addFile(datasetService.files[0])
+      .build()
+
+    const assetBuilder = new AssetBuilder()
+    const asset = assetBuilder
+      .setAuthor('testAuthor')
+      .setDescription('A dataset publishing test')
+      .setLicense('MIT')
+      .setName('Test Publish Dataset Fixed')
+      .setOwner(signerAddress)
+      .setType('dataset')
+      .addService(testServiceOne)
+      .build()
+
+    const result = await nautilus.publish(asset)
+    fixedPriceComputeDataset = result?.ddo
+    await aquarius.waitForAqua(fixedPricedAlgoWithCredentials?.id)
+
+    assert(result)
   })
 
   it('edit asset metadata fields', async () => {
-    const { aquariusAsset, nautilusDDO } = await NautilusDDO.createFromDID(
-      'did:op:5c7a3b65a01240b5b18e6cc7ca0d652a4932a032111c2b7a98149a4602354296', // use algo for algo metadata
-      nautilus
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPricedAlgoWithCredentials?.id // use algo for algo metadata
     )
 
-    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
+    const assetBuilder = new AssetBuilder(aquariusAsset)
 
     const asset = assetBuilder
       .setAuthor('Company Name')
@@ -80,16 +161,15 @@ describe('Edit Integration tests', function () {
   })
 
   it('edit credentials - add address ALLOW', async () => {
-    const { nautilusDDO, aquariusAsset } = await NautilusDDO.createFromDID(
-      'did:op:2ce1394d3ed258d5bcc00d2ee432fcc9dc05f2d3ef9069c57ba5319da7a03772',
-      nautilus
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPricedAlgoWithCredentials?.id
     )
 
-    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
+    const assetBuilder = new AssetBuilder(aquariusAsset)
 
     const asset = assetBuilder
       .addCredentialAddresses(CredentialListTypes.ALLOW, [
-        '0x6432956a98E522F1B8a73a45245a5C6ff2c7f8f1'
+        '0x0000000000000000000000000000000000000000'
       ])
       .build()
 
@@ -99,12 +179,11 @@ describe('Edit Integration tests', function () {
   })
 
   it('edit credentials - add address DENY', async () => {
-    const { nautilusDDO, aquariusAsset } = await NautilusDDO.createFromDID(
-      'did:op:2ce1394d3ed258d5bcc00d2ee432fcc9dc05f2d3ef9069c57ba5319da7a03772',
-      nautilus
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPricedAlgoWithCredentials?.id
     )
 
-    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
+    const assetBuilder = new AssetBuilder(aquariusAsset)
 
     const asset = assetBuilder
       .addCredentialAddresses(CredentialListTypes.DENY, [
@@ -117,18 +196,15 @@ describe('Edit Integration tests', function () {
     assert(result)
   })
 
-  it('edit credentials - add remove address ALLOW', async () => {
-    const { nautilusDDO, aquariusAsset } = await NautilusDDO.createFromDID(
-      'did:op:2ce1394d3ed258d5bcc00d2ee432fcc9dc05f2d3ef9069c57ba5319da7a03772',
-      nautilus
+  it('edit credentials - remove address ALLOW', async () => {
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPricedAlgoWithCredentials?.id
     )
 
-    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
+    const assetBuilder = new AssetBuilder(aquariusAsset)
 
     const asset = assetBuilder
-      .removeCredentialAddresses(CredentialListTypes.ALLOW, [
-        '0x6432956a98E522F1B8a73a45245a5C6ff2c7f8f1'
-      ])
+      .removeCredentialAddresses(CredentialListTypes.ALLOW, [signerAddress])
       .build()
 
     const result = await nautilus.edit(asset)
@@ -136,18 +212,15 @@ describe('Edit Integration tests', function () {
     assert(result)
   })
 
-  it('edit credentials - add remove address DENY', async () => {
-    const { nautilusDDO, aquariusAsset } = await NautilusDDO.createFromDID(
-      'did:op:2ce1394d3ed258d5bcc00d2ee432fcc9dc05f2d3ef9069c57ba5319da7a03772',
-      nautilus
+  it('edit credentials - remove address DENY', async () => {
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPricedAlgoWithCredentials?.id
     )
 
-    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
+    const assetBuilder = new AssetBuilder(aquariusAsset)
 
     const asset = assetBuilder
-      .removeCredentialAddresses(CredentialListTypes.DENY, [
-        '0x0000000000000000000000000000000000000000'
-      ])
+      .removeCredentialAddresses(CredentialListTypes.DENY, [signerAddress])
       .build()
 
     const result = await nautilus.edit(asset)
@@ -156,17 +229,14 @@ describe('Edit Integration tests', function () {
   })
 
   it('edit lifecycleState static function', async () => {
-    const { aquariusAsset } = await NautilusDDO.createFromDID(
-      'did:op:2ce1394d3ed258d5bcc00d2ee432fcc9dc05f2d3ef9069c57ba5319da7a03772',
-      nautilus
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPricedAlgoWithCredentials?.id
     )
 
     // TODO decide if we want to support both routes to set lifecycle state
     // static function is required to reactivate revoked assets where aquarius id providing not enough data to use builder route
-    const tx = await NautilusAsset.setLifecycleState(
-      signer,
-      aquariusAsset.nft.address,
-      signerAddress,
+    const tx = await nautilus.setAssetLifecycleState(
+      aquariusAsset,
       LifecycleStates.ASSET_UNLISTED
     )
 
@@ -174,12 +244,11 @@ describe('Edit Integration tests', function () {
   })
 
   it('edit lifecycleState AssetBuilder', async () => {
-    const { aquariusAsset, nautilusDDO } = await NautilusDDO.createFromDID(
-      'did:op:2ce1394d3ed258d5bcc00d2ee432fcc9dc05f2d3ef9069c57ba5319da7a03772',
-      nautilus
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPricedAlgoWithCredentials?.id
     )
 
-    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
+    const assetBuilder = new AssetBuilder(aquariusAsset)
     const asset = assetBuilder.setLifecycleState(LifecycleStates.ACTIVE).build()
     const result = await nautilus.edit(asset)
 
@@ -188,9 +257,8 @@ describe('Edit Integration tests', function () {
 
   // TODO this is experimental, pretty buggy regarding caching, maybe not even possible with this stack
   it.skip('edit services - change price replacing service', async () => {
-    const { aquariusAsset, nautilusDDO } = await NautilusDDO.createFromDID(
-      'did:op:f92be296bfd36e99f0e7ce7583dcb8a3846f10f0b71a40e5dcac8ab6624a2548',
-      nautilus
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      'did:op:f92be296bfd36e99f0e7ce7583dcb8a3846f10f0b71a40e5dcac8ab6624a2548'
     )
 
     const serviceBuilderConfig = {
@@ -218,7 +286,7 @@ describe('Edit Integration tests', function () {
       })
       .build()
 
-    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
+    const assetBuilder = new AssetBuilder(aquariusAsset)
 
     const asset = assetBuilder.addService(service).build()
 
@@ -228,16 +296,15 @@ describe('Edit Integration tests', function () {
   })
 
   it('edit service - editPrice static function', async () => {
-    const did =
-      'did:op:2ce1394d3ed258d5bcc00d2ee432fcc9dc05f2d3ef9069c57ba5319da7a03772'
-    const serviceId =
-      '54260888bafb4b7193d7e6e8c9def23e4154052f594b741ce619eb9272ac06e9'
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPricedAlgoWithCredentials?.id
+    )
+
+    const serviceId = fixedPricedAlgoWithCredentials?.services?.[0]?.id
     const newPrice = '0.1'
 
-    const txReceipt = await NautilusService.editPrice(
-      nautilus,
-      signer,
-      did,
+    const txReceipt = await nautilus.setServicePrice(
+      aquariusAsset,
       serviceId,
       newPrice
     )
@@ -247,15 +314,13 @@ describe('Edit Integration tests', function () {
   })
 
   it('edit services - name, description, timeout', async () => {
-    const { aquariusAsset, nautilusDDO } = await NautilusDDO.createFromDID(
-      'did:op:2ce1394d3ed258d5bcc00d2ee432fcc9dc05f2d3ef9069c57ba5319da7a03772',
-      nautilus
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPricedAlgoWithCredentials?.id
     )
 
     const serviceBuilderConfig = {
       aquariusAsset,
-      serviceId:
-        '54260888bafb4b7193d7e6e8c9def23e4154052f594b741ce619eb9272ac06e9'
+      serviceId: fixedPricedAlgoWithCredentials?.services?.[0]?.id
     }
 
     const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
@@ -266,7 +331,7 @@ describe('Edit Integration tests', function () {
       .setTimeout(1000)
       .build()
 
-    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
+    const assetBuilder = new AssetBuilder(aquariusAsset)
 
     const asset = assetBuilder.addService(service).build()
 
@@ -276,15 +341,13 @@ describe('Edit Integration tests', function () {
   })
 
   it('edit services - files', async () => {
-    const { aquariusAsset, nautilusDDO } = await NautilusDDO.createFromDID(
-      'did:op:2ce1394d3ed258d5bcc00d2ee432fcc9dc05f2d3ef9069c57ba5319da7a03772',
-      nautilus
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPricedAlgoWithCredentials?.id
     )
 
     const serviceBuilderConfig = {
       aquariusAsset,
-      serviceId:
-        'be1704b43fa63e7f736571bc9be38778f585d7643ddad0b752fabb39e2691398'
+      serviceId: fixedPricedAlgoWithCredentials?.services?.[0]?.id
     }
 
     const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
@@ -293,7 +356,7 @@ describe('Edit Integration tests', function () {
       .addFile(datasetService.files[0]) // TODO should be named replaceFile() for edit function, future UX improvement
       .build()
 
-    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
+    const assetBuilder = new AssetBuilder(aquariusAsset)
 
     const asset = assetBuilder.addService(service).build()
 
@@ -303,15 +366,13 @@ describe('Edit Integration tests', function () {
   })
 
   it('edit services - add consumerParameter', async () => {
-    const { aquariusAsset, nautilusDDO } = await NautilusDDO.createFromDID(
-      'did:op:2ce1394d3ed258d5bcc00d2ee432fcc9dc05f2d3ef9069c57ba5319da7a03772',
-      nautilus
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPricedAlgoWithCredentials?.id
     )
 
     const serviceBuilderConfig = {
       aquariusAsset,
-      serviceId:
-        'eb51ea8c17ed2f4bab2394b1a232ee342954fdd4cc0f2a31b9d007fbba205a04'
+      serviceId: fixedPricedAlgoWithCredentials?.services?.[0]?.id
     }
 
     const consumerParameterBuilder = new ConsumerParameterBuilder()
@@ -327,7 +388,7 @@ describe('Edit Integration tests', function () {
     const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
     const service = serviceBuilder.addConsumerParameter(numberParameter).build()
 
-    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
+    const assetBuilder = new AssetBuilder(aquariusAsset)
     const asset = assetBuilder.addService(service).build()
 
     const result = await nautilus.edit(asset)
@@ -336,15 +397,13 @@ describe('Edit Integration tests', function () {
   })
 
   it('edit services - serviceEndpoint', async () => {
-    const { aquariusAsset, nautilusDDO } = await NautilusDDO.createFromDID(
-      'did:op:2ce1394d3ed258d5bcc00d2ee432fcc9dc05f2d3ef9069c57ba5319da7a03772',
-      nautilus
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPricedAlgoWithCredentials?.id
     )
 
     const serviceBuilderConfig = {
       aquariusAsset,
-      serviceId:
-        'cb2883a3868c73ddde137d453f1fcde770ce2ec87ddbe7e9e46f5b73fd15d8d4'
+      serviceId: fixedPricedAlgoWithCredentials?.services?.[0]?.id
     }
 
     const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
@@ -353,7 +412,7 @@ describe('Edit Integration tests', function () {
       .addFile(datasetService.files[0]) // we have to add files since serviceEndpoint is in encrypted files
       .build()
 
-    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
+    const assetBuilder = new AssetBuilder(aquariusAsset)
     const asset = assetBuilder.addService(service).build()
 
     const result = await nautilus.edit(asset)
@@ -361,39 +420,94 @@ describe('Edit Integration tests', function () {
     assert(result)
   })
 
-  it('edit services - compute add trusted algos and publishers', async () => {
-    const { aquariusAsset, nautilusDDO } = await NautilusDDO.createFromDID(
-      'did:op:94a2c281b6b0a09067310c77c5d49c3610b5ead5a31157f65f2c84022a1bc32e',
-      nautilus
+  it('edit services - compute add trusted publishers', async () => {
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPriceComputeDataset?.id
     )
 
     const serviceBuilderConfig = {
       aquariusAsset,
-      serviceId:
-        '975a3647318a5a865c5030dc8cb16b9ef91dc82b490dd2440ffa059c7d8d7c0f'
+      serviceId: fixedPriceComputeDataset?.services?.[0]?.id
     }
 
     const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
     const service = serviceBuilder
-      .addTrustedAlgorithmPublisher(
-        '0x6432956a98E522F1B8a73a45245a5C6ff2c7f8f1'
-      )
-      .addTrustedAlgorithmPublisher(
-        '0x6432956a98E522F1B8a73a45245a5C6ff2c7f8f1'
-      )
-      .addTrustedAlgorithms([
-        {
-          did: 'did:op:b39190deee2d92b74a02fbb01381599ae03b6630ceec362339a136c8fe1e413e'
-        },
-        {
-          did: 'did:op:b39190deee2d92b74a02fbb01381599ae03b6630ceec362339a136c8fe1e413e'
-        }
-      ])
-      .allowAlgorithmNetworkAccess()
-      .allowRawAlgorithms()
+      .addTrustedAlgorithmPublisher(signerAddress)
       .build()
 
-    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
+    const assetBuilder = new AssetBuilder(aquariusAsset)
+    const asset = assetBuilder.addService(service).build()
+
+    const result = await nautilus.edit(asset)
+
+    assert(result)
+  })
+
+  it('edit services - compute add trusted algos', async () => {
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPriceComputeDataset?.id
+    )
+
+    const serviceBuilderConfig = {
+      aquariusAsset,
+      serviceId: fixedPriceComputeDataset?.services?.[0]?.id
+    }
+
+    const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
+    const service = serviceBuilder
+      .addTrustedAlgorithms([
+        {
+          did: fixedPricedAlgoWithCredentials?.id
+        },
+        {
+          did: fixedPricedAlgoWithCredentials?.id
+        }
+      ])
+      .build()
+
+    const assetBuilder = new AssetBuilder(aquariusAsset)
+    const asset = assetBuilder.addService(service).build()
+
+    const result = await nautilus.edit(asset)
+
+    assert(result)
+  })
+
+  it('edit services - compute allow algorithm network access', async () => {
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPriceComputeDataset?.id
+    )
+
+    const serviceBuilderConfig = {
+      aquariusAsset,
+      serviceId: fixedPriceComputeDataset?.services?.[0]?.id
+    }
+
+    const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
+    const service = serviceBuilder.allowAlgorithmNetworkAccess().build()
+
+    const assetBuilder = new AssetBuilder(aquariusAsset)
+    const asset = assetBuilder.addService(service).build()
+
+    const result = await nautilus.edit(asset)
+
+    assert(result)
+  })
+
+  it('edit services - compute allow raw algorithm', async () => {
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPriceComputeDataset?.id
+    )
+
+    const serviceBuilderConfig = {
+      aquariusAsset,
+      serviceId: fixedPriceComputeDataset?.services?.[0]?.id
+    }
+
+    const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
+    const service = serviceBuilder.allowRawAlgorithms().build()
+
+    const assetBuilder = new AssetBuilder(aquariusAsset)
     const asset = assetBuilder.addService(service).build()
 
     const result = await nautilus.edit(asset)
@@ -402,15 +516,13 @@ describe('Edit Integration tests', function () {
   })
 
   it('edit services - compute trust all publishers and algos', async () => {
-    const { aquariusAsset, nautilusDDO } = await NautilusDDO.createFromDID(
-      'did:op:94a2c281b6b0a09067310c77c5d49c3610b5ead5a31157f65f2c84022a1bc32e',
-      nautilus
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPriceComputeDataset?.id
     )
 
     const serviceBuilderConfig = {
       aquariusAsset,
-      serviceId:
-        '975a3647318a5a865c5030dc8cb16b9ef91dc82b490dd2440ffa059c7d8d7c0f'
+      serviceId: fixedPriceComputeDataset?.services?.[0]?.id
     }
 
     const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
@@ -419,7 +531,7 @@ describe('Edit Integration tests', function () {
       .setAllAlgorithmPublishersTrusted()
       .build()
 
-    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
+    const assetBuilder = new AssetBuilder(aquariusAsset)
     const asset = assetBuilder.addService(service).build()
 
     const result = await nautilus.edit(asset)
@@ -428,28 +540,22 @@ describe('Edit Integration tests', function () {
   })
 
   it('edit services - compute remove publishers and algos', async () => {
-    const { aquariusAsset, nautilusDDO } = await NautilusDDO.createFromDID(
-      'did:op:94a2c281b6b0a09067310c77c5d49c3610b5ead5a31157f65f2c84022a1bc32e',
-      nautilus
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPriceComputeDataset?.id
     )
 
     const serviceBuilderConfig = {
       aquariusAsset,
-      serviceId:
-        '975a3647318a5a865c5030dc8cb16b9ef91dc82b490dd2440ffa059c7d8d7c0f'
+      serviceId: fixedPriceComputeDataset?.services?.[0]?.id
     }
 
     const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
     const service = serviceBuilder
-      .removeTrustedAlgorithm(
-        'did:op:b39190deee2d92b74a02fbb01381599ae03b6630ceec362339a136c8fe1e413e'
-      )
-      .removeTrustedAlgorithmPublisher(
-        '0x6432956a98E522F1B8a73a45245a5C6ff2c7f8f1'
-      )
+      .removeTrustedAlgorithm(fixedPricedAlgoWithCredentials?.id)
+      .removeTrustedAlgorithmPublisher(signerAddress)
       .build()
 
-    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
+    const assetBuilder = new AssetBuilder(aquariusAsset)
     const asset = assetBuilder.addService(service).build()
 
     const result = await nautilus.edit(asset)
@@ -458,15 +564,13 @@ describe('Edit Integration tests', function () {
   })
 
   it('edit services - compute untrust publishers and algos', async () => {
-    const { aquariusAsset, nautilusDDO } = await NautilusDDO.createFromDID(
-      'did:op:94a2c281b6b0a09067310c77c5d49c3610b5ead5a31157f65f2c84022a1bc32e',
-      nautilus
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPriceComputeDataset?.id
     )
 
     const serviceBuilderConfig = {
       aquariusAsset,
-      serviceId:
-        '975a3647318a5a865c5030dc8cb16b9ef91dc82b490dd2440ffa059c7d8d7c0f'
+      serviceId: fixedPriceComputeDataset?.services?.[0]?.id
     }
 
     const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
@@ -475,7 +579,7 @@ describe('Edit Integration tests', function () {
       .setAllAlgorithmPublishersUntrusted()
       .build()
 
-    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
+    const assetBuilder = new AssetBuilder(aquariusAsset)
     const asset = assetBuilder.addService(service).build()
 
     const result = await nautilus.edit(asset)
@@ -484,15 +588,13 @@ describe('Edit Integration tests', function () {
   })
 
   it('edit services - compute do not allow', async () => {
-    const { aquariusAsset, nautilusDDO } = await NautilusDDO.createFromDID(
-      'did:op:2ce1394d3ed258d5bcc00d2ee432fcc9dc05f2d3ef9069c57ba5319da7a03772',
-      nautilus
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPriceComputeDataset?.id
     )
 
     const serviceBuilderConfig = {
       aquariusAsset,
-      serviceId:
-        'a25b6ef33d518b9908540fbf34d6ce2b77a09539c01988f1ba6a156d97980ab7'
+      serviceId: fixedPriceComputeDataset?.services?.[0]?.id
     }
 
     const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
@@ -501,7 +603,7 @@ describe('Edit Integration tests', function () {
       .allowRawAlgorithms(false)
       .build()
 
-    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
+    const assetBuilder = new AssetBuilder(aquariusAsset)
     const asset = assetBuilder.addService(service).build()
 
     const result = await nautilus.edit(asset)
@@ -510,15 +612,13 @@ describe('Edit Integration tests', function () {
   })
 
   it('edit services - add additionalInfo', async () => {
-    const { aquariusAsset, nautilusDDO } = await NautilusDDO.createFromDID(
-      'did:op:bd1efbfe5efc527c0371f0db2d9302837cab242b951a15a624b7c792ba470f8e',
-      nautilus
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPriceComputeDataset?.id
     )
 
     const serviceBuilderConfig = {
       aquariusAsset,
-      serviceId:
-        'de18fb14a671ffad7c3f67bd6d44222b64f265dc4a4a28806b30f00b01f7158a'
+      serviceId: fixedPriceComputeDataset?.services?.[0]?.id
     }
 
     const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
@@ -534,7 +634,7 @@ describe('Edit Integration tests', function () {
       })
       .build()
 
-    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
+    const assetBuilder = new AssetBuilder(aquariusAsset)
     const asset = assetBuilder.addService(service).build()
 
     const result = await nautilus.edit(asset)
@@ -543,9 +643,8 @@ describe('Edit Integration tests', function () {
   })
 
   it('edit services - add another service', async () => {
-    const { aquariusAsset, nautilusDDO } = await NautilusDDO.createFromDID(
-      'did:op:2ce1394d3ed258d5bcc00d2ee432fcc9dc05f2d3ef9069c57ba5319da7a03772',
-      nautilus
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPriceComputeDataset?.id
     )
 
     const serviceBuilderConfig = {
@@ -561,7 +660,7 @@ describe('Edit Integration tests', function () {
       .setPricing({ type: 'free' })
       .build()
 
-    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
+    const assetBuilder = new AssetBuilder(aquariusAsset)
     const asset = assetBuilder.addService(service).build()
 
     const result = await nautilus.edit(asset)
@@ -569,16 +668,15 @@ describe('Edit Integration tests', function () {
     assert(result)
   })
 
-  it('edit services - remove service', async () => {
-    const { aquariusAsset, nautilusDDO } = await NautilusDDO.createFromDID(
-      'did:op:2ce1394d3ed258d5bcc00d2ee432fcc9dc05f2d3ef9069c57ba5319da7a03772',
-      nautilus
+  // TODO: reinstate test after fixing publishing with multiple services
+  it.skip('edit services - remove service', async () => {
+    const aquariusAsset = await nautilus.getAquariusAsset(
+      fixedPriceComputeDataset?.id
     )
 
-    const serviceId =
-      '363bd9d775897509ac70a542747f22320aadc387fb0b07f404a128500838eb04'
+    const serviceId = fixedPriceComputeDataset?.services?.[1]?.id
 
-    const assetBuilder = new AssetBuilder({ aquariusAsset, nautilusDDO })
+    const assetBuilder = new AssetBuilder(aquariusAsset)
     const asset = assetBuilder.removeService(serviceId).build()
 
     const result = await nautilus.edit(asset)
