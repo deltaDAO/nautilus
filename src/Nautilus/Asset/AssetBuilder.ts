@@ -1,4 +1,9 @@
-import { CredentialListTypes, IAssetBuilder } from '../../@types/Nautilus'
+import { Asset } from '@oceanprotocol/lib'
+import {
+  CredentialListTypes,
+  IAssetBuilder,
+  LifecycleStates
+} from '../../@types/Nautilus'
 import { MetadataConfig, NftCreateDataWithoutOwner } from '../../@types/Publish'
 import { combineArrays } from '../../utils'
 import { NautilusAsset } from './NautilusAsset'
@@ -7,9 +12,21 @@ import {
   NautilusService,
   ServiceTypes
 } from './Service/NautilusService'
+import { NautilusDDO } from './NautilusDDO'
 
 export class AssetBuilder implements IAssetBuilder {
-  private asset: NautilusAsset = new NautilusAsset()
+  private asset: NautilusAsset
+
+  constructor(aquariusAsset?: Asset) {
+    if (aquariusAsset) {
+      const nautilusDDO = NautilusDDO.createFromAquariusAsset(aquariusAsset)
+      this.asset = new NautilusAsset(nautilusDDO)
+      this.asset.owner = aquariusAsset.nft.owner
+      this.asset.lifecycleState = aquariusAsset.nft.state
+    } else {
+      this.asset = new NautilusAsset()
+    }
+  }
 
   reset() {
     this.asset = new NautilusAsset()
@@ -57,8 +74,20 @@ export class AssetBuilder implements IAssetBuilder {
     return this
   }
 
+  removeService(serviceId: string) {
+    this.asset.ddo.removeServices.push(serviceId)
+
+    return this
+  }
+
   setNftData(tokenData: NftCreateDataWithoutOwner) {
     this.asset.nftCreateData = tokenData
+
+    return this
+  }
+
+  setLifecycleState(state: LifecycleStates) {
+    this.asset.lifecycleState = state
 
     return this
   }
@@ -121,25 +150,52 @@ export class AssetBuilder implements IAssetBuilder {
 
   addCredentialAddresses(list: CredentialListTypes, addresses: string[]) {
     // first get the index of the address credential list
-    const addressCredentialIndex = this.asset.credentials[list].findIndex(
+    const addressCredentialIndex = this.asset.ddo.credentials[list].findIndex(
       (credential) => credential.type === 'address'
     )
 
     // get addresses already added to the credential values
     const oldAddresses =
-      this.asset.credentials[list][addressCredentialIndex]?.values || []
+      this.asset.ddo.credentials[list][addressCredentialIndex]?.values || []
 
     // add new values and remove duplicates
     const newAddresses = combineArrays(oldAddresses, addresses)
 
     // update the existing credential or add a new one for type address
     if (addressCredentialIndex > -1)
-      this.asset.credentials[list][addressCredentialIndex].values = newAddresses
+      this.asset.ddo.credentials[list][addressCredentialIndex].values =
+        newAddresses
     else
-      this.asset.credentials[list].push({
+      this.asset.ddo.credentials[list].push({
         type: 'address',
         values: newAddresses
       })
+
+    return this
+  }
+
+  removeCredentialAddresses(list: CredentialListTypes, addresses: string[]) {
+    // first get the index of the address credential list
+    const addressCredentialIndex = this.asset.ddo.credentials[list].findIndex(
+      (credential) => credential.type === 'address'
+    )
+
+    if (addressCredentialIndex === -1) return this
+
+    // get addresses already added to the credential values
+    const oldAddresses =
+      this.asset.ddo.credentials[list][addressCredentialIndex]?.values
+
+    const newAddresses = oldAddresses.filter(
+      (address) => !addresses.includes(address)
+    )
+
+    if (newAddresses.length > 0) {
+      this.asset.ddo.credentials[list][addressCredentialIndex].values =
+        newAddresses
+    } else {
+      this.asset.ddo.credentials[list].splice(addressCredentialIndex, 1)
+    }
 
     return this
   }

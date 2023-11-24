@@ -8,7 +8,10 @@ import {
   UrlFile,
   getHash
 } from '@oceanprotocol/lib'
-import { DatatokenCreateParamsWithoutOwner } from '../../../@types/Publish'
+import {
+  DatatokenCreateParamsWithoutOwner,
+  TrustedAlgorithmAsset
+} from '../../../@types/Publish'
 import {
   getEncryptedFiles,
   getFileInfo,
@@ -61,9 +64,14 @@ export class NautilusService<
   serviceEndpoint: string
   timeout: number
   files: ServiceFileType<FileType>[] = []
+  existingEncryptedFiles: string
 
   pricing: PricingConfigWithoutOwner
+  newPrice: string
   datatokenCreateParams: DatatokenCreateParamsWithoutOwner
+  editExistingService: boolean
+  filesEdited: boolean
+  serviceEndpointEdited: boolean
 
   name?: string
   description?: string
@@ -75,6 +83,8 @@ export class NautilusService<
     publisherTrustedAlgorithms: []
   }
 
+  addedPublisherTrustedAlgorithms: TrustedAlgorithmAsset[] = []
+
   consumerParameters?: NautilusConsumerParameter[] = []
   additionalInformation?: { [key: string]: any }
 
@@ -82,15 +92,9 @@ export class NautilusService<
   datatokenAddress?: string
 
   constructor() {
+    this.editExistingService = false
+    this.filesEdited = false
     this.initDatatokenData()
-    this.initPricing()
-  }
-
-  // TODO: refactor to not assume free pricing, but rather expect user to set this
-  private initPricing() {
-    this.pricing = {
-      type: 'free'
-    }
   }
 
   private initDatatokenData() {
@@ -111,26 +115,36 @@ export class NautilusService<
     const datatokenAddress = dtAddress || this.datatokenAddress
     if (!datatokenAddress) throw new Error('datatokenAddress is required')
 
-    const assetURL = {
-      datatokenAddress,
-      nftAddress,
-      files: this.files
-    }
+    const isFilesObjectChanged = this.checkIfFilesObjectChanged()
 
-    const encryptedFiles = await getEncryptedFiles(
-      assetURL,
-      chainId,
-      this.serviceEndpoint
-    )
+    let encryptedFiles: string
+
+    if (isFilesObjectChanged) {
+      if (this.files.length < 1) {
+        throw new Error('Can not encrypt files. No files defined!')
+      }
+
+      const assetURL = {
+        datatokenAddress,
+        nftAddress,
+        files: this.files
+      }
+
+      encryptedFiles = await getEncryptedFiles(
+        assetURL,
+        chainId,
+        this.serviceEndpoint
+      )
+    }
 
     // required attributes
     const oceanService: Service = {
-      id: this.id || getHash(encryptedFiles),
+      id: this.id && !isFilesObjectChanged ? this.id : getHash(encryptedFiles),
       datatokenAddress,
       type: this.type,
       serviceEndpoint: this.serviceEndpoint,
       timeout: this.timeout,
-      files: encryptedFiles
+      files: isFilesObjectChanged ? encryptedFiles : this.existingEncryptedFiles
     }
 
     // add optional attributes if they are defined
@@ -163,5 +177,13 @@ export class NautilusService<
     }
 
     return true
+  }
+
+  checkIfFilesObjectChanged(): boolean {
+    return (
+      (this.editExistingService &&
+        (this.filesEdited || this.serviceEndpointEdited)) ||
+      !!this.pricing
+    )
   }
 }

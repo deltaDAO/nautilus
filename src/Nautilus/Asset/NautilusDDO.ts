@@ -1,15 +1,23 @@
-import { DDO, Service, generateDid } from '@oceanprotocol/lib'
+import {
+  Asset,
+  Credentials,
+  DDO,
+  Service,
+  generateDid
+} from '@oceanprotocol/lib'
 import { MetadataConfig } from '../../@types'
 import {
   dateToStringNoMS,
   getAllPromisesOnArray,
-  combineArraysAndReplaceItems
+  combineArraysAndReplaceItems,
+  removeDuplicatesFromArray
 } from '../../utils'
 import {
   FileTypes,
   NautilusService,
   ServiceTypes
 } from './Service/NautilusService'
+import { transformAquariusAssetToDDO } from '../../utils/aquarius'
 
 export class NautilusDDO {
   id: string
@@ -19,8 +27,19 @@ export class NautilusDDO {
   version: string = '4.1.0'
   metadata: Partial<MetadataConfig> = {}
   services: NautilusService<ServiceTypes, FileTypes>[] = []
+  removeServices: string[] = []
 
   private ddo: DDO
+  credentials: Credentials = {
+    allow: [],
+    deny: []
+  }
+
+  static createFromAquariusAsset(aquariusAsset: Asset): NautilusDDO {
+    const ddo = transformAquariusAssetToDDO(aquariusAsset)
+
+    return this.createFromDDO(ddo)
+  }
 
   static createFromDDO(ddo: DDO): NautilusDDO {
     const nautilusDDO = new NautilusDDO()
@@ -32,7 +51,16 @@ export class NautilusDDO {
     nautilusDDO.chainId = ddo.chainId
     nautilusDDO.version = ddo.version
 
+    if (ddo.credentials?.allow)
+      nautilusDDO.credentials.allow = ddo.credentials.allow
+    if (ddo.credentials?.deny)
+      nautilusDDO.credentials.deny = ddo.credentials.deny
+
     return nautilusDDO
+  }
+
+  getOriginalDDO() {
+    return this.ddo
   }
 
   private async buildDDOServices(): Promise<Service[]> {
@@ -68,20 +96,38 @@ export class NautilusDDO {
     // take ddo.services
     const existingServices: Service[] = this.ddo?.services || []
 
-    // we simply return ddo.services, if nothing new was added
-    if (this.services.length < 1) return existingServices
+    // remove service from existing services if id changes to prevent old service after edit
+    for (const service of this.services) {
+      const isFilesObjectChanged = service.checkIfFilesObjectChanged()
 
-    // build new services if needed
-    const newServices = await this.buildDDOServices()
+      if (service.id && isFilesObjectChanged) {
+        this.removeServices.push(service.id)
+      }
+    }
 
-    // replace all existing services with new ones, based on the servie.id
-    const replacedServices = combineArraysAndReplaceItems(
-      existingServices,
-      newServices,
-      NautilusDDO.replaceServiceBasedOnId
+    let newServices: Service[]
+    if (this.services.length > 0) {
+      // build new services if needed
+      newServices = await this.buildDDOServices()
+    }
+
+    this.removeServices = removeDuplicatesFromArray(this.removeServices)
+
+    const reducedExistingServices = existingServices.filter(
+      (service) => !this.removeServices.includes(service.id)
     )
 
-    return replacedServices
+    // replace all existing services with new ones, based on the servie.id
+    let replacedServices: Service[] | PromiseLike<Service[]>
+    if (this.services.length > 0) {
+      replacedServices = combineArraysAndReplaceItems(
+        reducedExistingServices,
+        newServices,
+        NautilusDDO.replaceServiceBasedOnId
+      )
+    }
+
+    return replacedServices || reducedExistingServices
   }
 
   private async buildDDO(create: boolean): Promise<DDO> {
@@ -110,7 +156,8 @@ export class NautilusDDO {
       chainId: this.chainId,
       version: this.version,
       metadata: newMetadata,
-      services: newServices
+      services: newServices,
+      credentials: this.credentials
     }
 
     return this.ddo

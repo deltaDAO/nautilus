@@ -1,5 +1,6 @@
 import {
   Aquarius,
+  Config,
   Datatoken,
   DispenserParams,
   LoggerInstance,
@@ -12,7 +13,10 @@ import {
   CreateDatatokenConfig,
   PublishDDOConfig
 } from '../@types/Publish'
-import { utils as ethersUtils, providers } from 'ethers'
+import { Signer, utils as ethersUtils, providers } from 'ethers'
+import { TransactionReceipt } from '@ethersproject/abstract-provider'
+import { LifecycleStates } from '../@types'
+import { FileTypes, NautilusService, ServiceTypes } from '../Nautilus'
 
 export async function createAsset(assetConfig: CreateAssetConfig) {
   LoggerInstance.debug('[publish] Publishing new asset NFT...')
@@ -20,7 +24,6 @@ export async function createAsset(assetConfig: CreateAssetConfig) {
   // 1. Create NFT with NftFactory
   // --------------------------------------------------
   const { signer, chainConfig, nftParams } = assetConfig
-  const publisherAccount = await signer?.getAddress()
   const nftFactory = new NftFactory(
     chainConfig.nftFactoryAddress,
     signer,
@@ -35,7 +38,7 @@ export async function createAsset(assetConfig: CreateAssetConfig) {
   return { nftAddress }
 }
 
-export async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
+async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
   // --------------------------------------------------
   // 1. Create Datatoken
   // --------------------------------------------------
@@ -122,7 +125,7 @@ export async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
 }
 
 export async function publishDDO(config: PublishDDOConfig) {
-  const { chainConfig, signer, ddo } = config
+  const { chainConfig, signer, ddo, asset } = config
   const publisherAccount = await signer?.getAddress()
 
   // --------------------------------------------------
@@ -134,7 +137,8 @@ export async function publishDDO(config: PublishDDOConfig) {
   const aquarius = new Aquarius(chainConfig.metadataCacheUri)
   const validateResult = await aquarius.validate(ddo)
 
-  if (!validateResult.valid) throw new Error('Validating Metadata failed')
+  if (!validateResult.valid)
+    throw new Error(`Validating Metadata failed: ${validateResult?.errors}`)
 
   // --------------------------------------------------
   // 2. Encrypt DDO
@@ -153,15 +157,16 @@ export async function publishDDO(config: PublishDDOConfig) {
   // --------------------------------------------------
   const nft = new Nft(signer, chainConfig.network, chainConfig)
 
-  // TODO: let user set state
-  const LIFECYCLE_STATE_ACTIVE = 0
+  const lifecycleState = asset?.lifecycleState || LifecycleStates.ACTIVE
   const FLAGS = '0x02' // market sets '0x02' insteadconst validateResult = await aquariusInstance.validate(ddo) of '0x2', theoretically used by aquarius or provider, not implemented yet, will remain hardcoded
+
+  LoggerInstance.debug(`[publish] Asset lifecycleState: ${lifecycleState}`)
 
   LoggerInstance.debug('[publish] Set Metadata...')
   const transactionReceipt = await nft.setMetadata(
     ddo.nftAddress,
     publisherAccount,
-    LIFECYCLE_STATE_ACTIVE,
+    lifecycleState,
     chainConfig.providerUri,
     '',
     FLAGS,
@@ -173,10 +178,44 @@ export async function publishDDO(config: PublishDDOConfig) {
 
   LoggerInstance.debug(`[publish] Published metadata on NFT.`, {
     ddo,
-    tx: tx.transactionHash
+    tx
   })
 
   return tx
+}
+
+export async function createServiceWithDatatokenAndPricing(
+  service: NautilusService<ServiceTypes, FileTypes>,
+  signer: Signer,
+  chainConfig: Config,
+  nftAddress: string,
+  assetOwner: string
+): Promise<{
+  service: NautilusService<ServiceTypes, FileTypes>
+  datatokenAddress: string
+  tx: TransactionReceipt
+}> {
+  const { datatokenAddress, tx } = await createDatatokenAndPricing({
+    signer,
+    chainConfig,
+    nftAddress,
+    pricing: {
+      ...service.pricing,
+      freCreationParams: {
+        ...service.pricing.freCreationParams,
+        owner: assetOwner
+      }
+    },
+    datatokenParams: {
+      ...service.datatokenCreateParams,
+      minter: assetOwner,
+      paymentCollector: assetOwner
+    }
+  })
+
+  service.datatokenAddress = datatokenAddress
+
+  return { service, datatokenAddress, tx }
 }
 
 // TODO evaluate if we need these (1 transaction for multiple actions)

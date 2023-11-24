@@ -1,8 +1,10 @@
 import {
+  Asset,
   Config,
   ConfigHelper,
   LogLevel,
-  LoggerInstance
+  LoggerInstance,
+  Nft
 } from '@oceanprotocol/lib'
 import { Signer, utils as ethersUtils } from 'ethers'
 import {
@@ -11,13 +13,23 @@ import {
   ComputeResultConfig,
   ComputeStatusConfig,
   CreateAssetConfig,
+  LifecycleStates,
   PublishResponse
 } from '../@types'
-import { createAsset, createDatatokenAndPricing, publishDDO } from '../publish'
+import {
+  createAsset,
+  createServiceWithDatatokenAndPricing,
+  publishDDO
+} from '../publish'
 import { getAllPromisesOnArray } from '../utils'
 import { NautilusAsset } from './Asset/NautilusAsset'
 import { access } from '../access'
 import { compute, getStatus, retrieveResult } from '../compute'
+import { FileTypes, NautilusService, ServiceTypes } from './Asset'
+import { TransactionReceipt } from '@ethersproject/abstract-provider'
+import { resolvePublisherTrustedAlgorithms } from '../utils/helpers/trusted-algorithms'
+import { getAsset, getAssets } from '../utils/aquarius'
+import { editPrice } from '../utils/contracts'
 
 export { LogLevel } from '@oceanprotocol/lib'
 
@@ -134,37 +146,32 @@ export class Nautilus {
     }
 
     // --------------------------------------------------
-    // 2. Create Datatokens and Pricing for new Services
+    // 2. resolve publisher trusted algorithm checksums
+    // --------------------------------------------------
+
+    await resolvePublisherTrustedAlgorithms(
+      asset.ddo.services,
+      chainConfig.metadataCacheUri
+    )
+
+    // --------------------------------------------------
+    // 3. Create Datatokens and Pricing for new Services
     // --------------------------------------------------
     const services = await getAllPromisesOnArray(
       asset.ddo.services,
       async (service) => {
-        const { datatokenAddress, tx } = await createDatatokenAndPricing({
+        return createServiceWithDatatokenAndPricing(
+          service,
           signer,
           chainConfig,
           nftAddress,
-          pricing: {
-            ...service.pricing,
-            freCreationParams: {
-              ...service.pricing.freCreationParams,
-              owner: asset.owner
-            }
-          },
-          datatokenParams: {
-            ...service.datatokenCreateParams,
-            minter: asset.owner,
-            paymentCollector: asset.owner
-          }
-        })
-
-        service.datatokenAddress = datatokenAddress
-
-        return { service, datatokenAddress, tx }
+          asset.owner
+        )
       }
     )
 
     // --------------------------------------------------
-    // 3. Create the DDO and publish it on NFT
+    // 4. Create the DDO and publish it on NFT
     // --------------------------------------------------
     const ddo = await asset.ddo.getDDO({
       create: true,
@@ -175,7 +182,8 @@ export class Nautilus {
     const setMetadataTxReceipt = await publishDDO({
       signer,
       chainConfig,
-      ddo
+      ddo,
+      asset
     })
 
     return {
@@ -184,6 +192,123 @@ export class Nautilus {
       ddo,
       setMetadataTxReceipt
     }
+  }
+
+  async edit(asset: NautilusAsset): Promise<PublishResponse> {
+    const { signer, chainConfig } = this.getChainConfig()
+    const { nftAddress, services: nautilusDDOServices } = asset.ddo
+
+    let services: {
+      service: NautilusService<ServiceTypes, FileTypes>
+      datatokenAddress: string
+      tx: TransactionReceipt
+    }[]
+
+    await resolvePublisherTrustedAlgorithms(
+      nautilusDDOServices,
+      chainConfig.metadataCacheUri
+    )
+
+    // This includes fresh published services
+    const changedPriceServices = nautilusDDOServices.filter(
+      (nautilusService) => nautilusService.pricing
+    )
+
+    // TODO check if service prices can be changed via datatoken replacement (currently buggy could be a caching problem)
+    if (changedPriceServices.length > 0) {
+      services = await getAllPromisesOnArray(
+        changedPriceServices,
+        async (service) => {
+          return createServiceWithDatatokenAndPricing(
+            service,
+            signer,
+            chainConfig,
+            nftAddress,
+            asset.owner
+          )
+        }
+      )
+    }
+
+    const ddo = await asset.ddo.getDDO({
+      create: false,
+      chainId: chainConfig.chainId,
+      nftAddress
+    })
+
+    const setMetadataTxReceipt = await publishDDO({
+      signer,
+      chainConfig,
+      ddo,
+      asset
+    })
+
+    return {
+      nftAddress,
+      services,
+      ddo,
+      setMetadataTxReceipt
+    }
+  }
+
+  async setServicePrice(
+    aquaAsset: Asset,
+    serviceId: string,
+    newPrice: string
+  ): Promise<TransactionReceipt> {
+    if (typeof newPrice !== 'string' || isNaN(parseFloat(newPrice))) {
+      throw new Error('newPrice must be a numeric string')
+    }
+
+    return await editPrice(
+      aquaAsset,
+      serviceId,
+      newPrice,
+      this.config,
+      this.signer
+    )
+  }
+
+  async getAquariusAssets(dids: string[]): Promise<{ [did: string]: Asset }> {
+    try {
+      return await getAssets(this.config.metadataCacheUri, dids)
+    } catch (error) {
+      throw new Error(`getAquariusAssets failed: ${error}`)
+    }
+  }
+
+  async getAquariusAsset(did: string): Promise<Asset> {
+    try {
+      return await getAsset(this.config.metadataCacheUri, did)
+    } catch (error) {
+      throw new Error(`getAquariusAsset failed: ${error}`)
+    }
+  }
+
+  async setAssetLifecycleState(aquariusAsset: Asset, state: LifecycleStates) {
+    const { signer } = this.getChainConfig()
+    const address = await signer.getAddress()
+    const nft = new Nft(signer)
+    const existingNftState = aquariusAsset.nft.state
+
+    if (existingNftState === state) {
+      LoggerInstance.warn(
+        `[lifecycle] Asset lifecycle state is already ${state} (${LifecycleStates[state]}), action aborted`
+      )
+      return
+    }
+    LoggerInstance.debug(
+      `[lifecycle] Change asset lifecycle state from ${existingNftState} (${LifecycleStates[existingNftState]}) to ${state} (${LifecycleStates[state]}) `
+    )
+
+    const stateTxReceipt = await nft.setMetadataState(
+      aquariusAsset.nft.address,
+      address,
+      state
+    )
+    const stateTx = await stateTxReceipt.wait()
+
+    return stateTx
   }
 
   /**

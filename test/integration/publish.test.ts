@@ -48,10 +48,10 @@ describe('Publish Integration tests', function () {
   })
 
   it('publishes a free access asset', async () => {
-    const serviceBuilder = new ServiceBuilder(
-      ServiceTypes.ACCESS,
-      FileTypes.URL
-    )
+    const serviceBuilder = new ServiceBuilder({
+      serviceType: ServiceTypes.ACCESS,
+      fileType: FileTypes.URL
+    })
     const service = serviceBuilder
       .setServiceEndpoint(providerUri)
       .setTimeout(datasetService.timeout)
@@ -76,10 +76,10 @@ describe('Publish Integration tests', function () {
   })
 
   it('publishes a fixed price access asset', async () => {
-    const serviceBuilder = new ServiceBuilder(
-      ServiceTypes.ACCESS,
-      FileTypes.URL
-    )
+    const serviceBuilder = new ServiceBuilder({
+      serviceType: ServiceTypes.ACCESS,
+      fileType: FileTypes.URL
+    })
     const service = serviceBuilder
       .setServiceEndpoint(providerUri)
       .setTimeout(datasetService.timeout)
@@ -104,10 +104,10 @@ describe('Publish Integration tests', function () {
   })
 
   it('publishes an asset with credentials', async () => {
-    const serviceBuilder = new ServiceBuilder(
-      ServiceTypes.ACCESS,
-      FileTypes.URL
-    )
+    const serviceBuilder = new ServiceBuilder({
+      serviceType: ServiceTypes.ACCESS,
+      fileType: FileTypes.URL
+    })
     const service = serviceBuilder
       .setServiceEndpoint(providerUri)
       .setTimeout(datasetService.timeout)
@@ -132,11 +132,11 @@ describe('Publish Integration tests', function () {
     assert(result)
   })
 
-  it('publishes an asset with service consumerParamters', async () => {
-    const serviceBuilder = new ServiceBuilder(
-      ServiceTypes.ACCESS,
-      FileTypes.URL
-    )
+  it('publishes an asset with service consumerParameters', async () => {
+    const serviceBuilder = new ServiceBuilder({
+      serviceType: ServiceTypes.ACCESS,
+      fileType: FileTypes.URL
+    })
     const {
       textParameter,
       numberParameter,
@@ -171,11 +171,11 @@ describe('Publish Integration tests', function () {
     assert(result)
   })
 
-  it('publishes an asset with algorithm metadata consumerParamters', async () => {
-    const serviceBuilder = new ServiceBuilder(
-      ServiceTypes.COMPUTE,
-      FileTypes.URL
-    )
+  it('publishes an asset with algorithm metadata consumerParameters', async () => {
+    const serviceBuilder = new ServiceBuilder({
+      serviceType: ServiceTypes.COMPUTE,
+      fileType: FileTypes.URL
+    })
     const {
       textParameter,
       numberParameter,
@@ -208,6 +208,40 @@ describe('Publish Integration tests', function () {
           selectParameter.getConfig()
         ]
       })
+      .build()
+
+    const result = await nautilus.publish(asset)
+
+    assert(result)
+  })
+
+  // TODO use published algo did for addTrustedAlgorithms
+  it('publishes a fixed price compute dataset with trusted algorithm', async () => {
+    const serviceBuilder = new ServiceBuilder({
+      serviceType: ServiceTypes.COMPUTE,
+      fileType: FileTypes.URL
+    })
+    const service = serviceBuilder
+      .setServiceEndpoint(providerUri)
+      .setTimeout(datasetService.timeout)
+      .addFile(datasetService.files[0])
+      .setPricing(await getPricing(signer, 'fixed'))
+      .addTrustedAlgorithms([
+        {
+          did: 'did:op:02961b8c52b0273bac94f776a88ed13833cbc50bc2bc666ab7495751941546dc'
+        }
+      ])
+      .build()
+
+    const assetBuilder = new AssetBuilder()
+    const asset = assetBuilder
+      .setAuthor('testAuthor')
+      .setDescription('A dataset publishing test')
+      .setLicense('MIT')
+      .setName('Test Publish Dataset Fixed')
+      .setOwner(signerAddress)
+      .setType('dataset')
+      .addService(service)
       .build()
 
     const result = await nautilus.publish(asset)
