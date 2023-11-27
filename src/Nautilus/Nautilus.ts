@@ -157,18 +157,18 @@ export class Nautilus {
     // --------------------------------------------------
     // 3. Create Datatokens and Pricing for new Services
     // --------------------------------------------------
-    const services = await getAllPromisesOnArray(
-      asset.ddo.services,
-      async (service) => {
-        return createServiceWithDatatokenAndPricing(
+    const services = []
+    for (const service of asset.ddo.services) {
+      const serviceWithDatatokenAndPricing =
+        await createServiceWithDatatokenAndPricing(
           service,
           signer,
           chainConfig,
           nftAddress,
           asset.owner
         )
-      }
-    )
+      services.push(serviceWithDatatokenAndPricing)
+    }
 
     // --------------------------------------------------
     // 4. Create the DDO and publish it on NFT
