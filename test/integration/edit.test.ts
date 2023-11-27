@@ -96,20 +96,43 @@ describe('Edit Integration tests', function () {
   })
 
   it('publishes a compute type dataset', async () => {
-    const serviceBuilder = new ServiceBuilder({
-      serviceType: ServiceTypes.COMPUTE,
-      fileType: FileTypes.URL
-    })
-
-    const testServiceOne = serviceBuilder
-      .setName('Test service 1')
-      .setServiceEndpoint(providerUri)
-      .setTimeout(datasetService.timeout)
-      .setPricing(await getPricing(signer, 'fixed'))
-      .addFile(datasetService.files[0])
-      .build()
-
     const assetBuilder = new AssetBuilder()
+
+    const pricing = await getPricing(signer, 'fixed')
+    const services = [
+      {
+        name: 'test service 1',
+        serviceEndpoint: providerUri,
+        timeout: datasetService.timeout,
+        pricing,
+        file: datasetService.files[0]
+      },
+      {
+        name: 'test service 2',
+        serviceEndpoint: providerUri,
+        timeout: datasetService.timeout,
+        pricing,
+        file: datasetService.files[0]
+      }
+    ]
+
+    for (const service of services) {
+      const serviceBuilder = new ServiceBuilder({
+        serviceType: ServiceTypes.COMPUTE,
+        fileType: FileTypes.URL
+      })
+
+      const builtService = serviceBuilder
+        .setName(service.name)
+        .setServiceEndpoint(service.serviceEndpoint)
+        .setTimeout(service.timeout)
+        .setPricing(pricing)
+        .addFile(service.file)
+        .build()
+
+      assetBuilder.addService(builtService)
+    }
+
     const asset = assetBuilder
       .setAuthor('testAuthor')
       .setDescription('A dataset publishing test')
@@ -117,7 +140,6 @@ describe('Edit Integration tests', function () {
       .setName('Test Publish Dataset Fixed')
       .setOwner(signerAddress)
       .setType('dataset')
-      .addService(testServiceOne)
       .build()
 
     const result = await nautilus.publish(asset)
@@ -668,8 +690,7 @@ describe('Edit Integration tests', function () {
     assert(result)
   })
 
-  // TODO: reinstate test after fixing publishing with multiple services
-  it.skip('edit services - remove service', async () => {
+  it('edit services - remove service', async () => {
     const aquariusAsset = await nautilus.getAquariusAsset(
       fixedPriceComputeDataset?.id
     )
