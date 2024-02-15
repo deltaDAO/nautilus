@@ -169,7 +169,8 @@ describe('NautilusDDO', () => {
         'nftAddress',
         'chainId',
         'metadata',
-        'services'
+        'services',
+        'credentials'
       )
     })
 
