@@ -7,7 +7,6 @@ import {
   FileTypes,
   LogLevel,
   Nautilus,
-  NautilusConsumerParameter,
   ServiceBuilder,
   ServiceTypes
 } from '../../src'
@@ -18,6 +17,7 @@ import {
   getPricing
 } from '../fixtures/AssetConfig'
 import { MUMBAI_NODE_URI, getSigner } from '../fixtures/Ethers'
+import { ConsumerParameter } from '@oceanprotocol/lib'
 
 const nodeUri = MUMBAI_NODE_URI
 
@@ -202,10 +202,10 @@ describe('Publish Integration tests', function () {
       .setAlgorithm({
         ...algorithmMetadata.algorithm,
         consumerParameters: [
-          textParameter.getConfig(),
-          numberParameter.getConfig(),
-          booleanParameter.getConfig(),
-          selectParameter.getConfig()
+          textParameter,
+          numberParameter,
+          booleanParameter,
+          selectParameter
         ]
       })
       .build()
@@ -250,7 +250,7 @@ describe('Publish Integration tests', function () {
   })
 })
 
-function getConsumerParameters(): { [key: string]: NautilusConsumerParameter } {
+function getConsumerParameters(): { [key: string]: ConsumerParameter } {
   const customParamBuilder = new ConsumerParameterBuilder()
   const numberParameter = customParamBuilder
     .setType('number')
