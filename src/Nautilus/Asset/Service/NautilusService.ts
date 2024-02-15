@@ -1,5 +1,6 @@
 import {
   Arweave,
+  ConsumerParameter,
   GraphqlQuery,
   Ipfs,
   Service,
@@ -17,7 +18,6 @@ import {
   getFileInfo,
   isValidProvider
 } from '../../../utils/provider'
-import { NautilusConsumerParameter } from '../ConsumerParameters'
 import { PricingConfigWithoutOwner } from '../NautilusAsset'
 import { params as DatatokenConstantParams } from '../constants/datatoken.constants'
 
@@ -85,7 +85,7 @@ export class NautilusService<
 
   addedPublisherTrustedAlgorithms: TrustedAlgorithmAsset[] = []
 
-  consumerParameters?: NautilusConsumerParameter[] = []
+  consumerParameters?: ConsumerParameter[] = []
   additionalInformation?: { [key: string]: any }
 
   id?: string
@@ -154,11 +154,7 @@ export class NautilusService<
       oceanService.additionalInformation = this.additionalInformation
 
     if (this.consumerParameters.length > 0)
-      // TODO: remove ignore once we use updated ocean.js with correct types
-      // @ts-ignore
-      oceanService.consumerParameters = this.consumerParameters.map(
-        (parameter) => parameter.getConfig()
-      )
+      oceanService.consumerParameters = this.consumerParameters
 
     // we only add the compute attribute for `compute` type services
     if (this.type === ServiceTypes.COMPUTE) oceanService.compute = this.compute
