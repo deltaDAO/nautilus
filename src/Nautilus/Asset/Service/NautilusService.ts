@@ -119,7 +119,7 @@ export class NautilusService<
 
     let encryptedFiles: string
 
-    if (isFilesObjectChanged) {
+    if (isFilesObjectChanged || !this.existingEncryptedFiles) {
       if (this.files.length < 1) {
         throw new Error('Can not encrypt files. No files defined!')
       }
@@ -135,6 +135,8 @@ export class NautilusService<
         chainId,
         this.serviceEndpoint
       )
+    } else {
+      encryptedFiles = this.existingEncryptedFiles
     }
 
     // required attributes
@@ -144,7 +146,7 @@ export class NautilusService<
       type: this.type,
       serviceEndpoint: this.serviceEndpoint,
       timeout: this.timeout,
-      files: isFilesObjectChanged ? encryptedFiles : this.existingEncryptedFiles
+      files: encryptedFiles
     }
 
     // add optional attributes if they are defined
