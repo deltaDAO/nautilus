@@ -1,5 +1,6 @@
 import {
   Config,
+  ConsumerParameter,
   DatatokenCreateParams,
   DDO,
   Files,
@@ -17,21 +18,9 @@ import {
   PricingConfigWithoutOwner,
   ServiceTypes
 } from '../Nautilus'
-import { NautilusConsumerParameter } from '../Nautilus/Asset/ConsumerParameters'
-
-export type ConsumerParameterType = 'text' | 'number' | 'boolean' | 'select'
 
 export type ConsumerParameterSelectOption = {
   [value: string]: string
-}
-export interface ConsumerParameter {
-  name: string
-  type: ConsumerParameterType
-  label: string
-  required: boolean
-  description: string
-  default: string
-  options?: ConsumerParameterSelectOption[]
 }
 
 export type MetadataConfig = Omit<
@@ -39,7 +28,7 @@ export type MetadataConfig = Omit<
   'created' | 'updated' | 'algorithm'
 > & {
   algorithm?: MetadataAlgorithm & {
-    consumerParameters?: NautilusConsumerParameter[]
+    consumerParameters?: ConsumerParameter[]
   }
 }
 

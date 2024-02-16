@@ -1,17 +1,17 @@
 import assert from 'assert'
-import { ConsumerParameter } from '../../src/@types/Publish'
 import { ConsumerParameterBuilder } from '../../src/Nautilus/Asset/ConsumerParameters'
+import { ConsumerParameter } from '@oceanprotocol/lib'
 
 describe('ConsumerParameterBuilder', () => {
   it('builds text consumerParameter correctly', () => {
     const builder = new ConsumerParameterBuilder()
 
     const myParam: ConsumerParameter = {
-      type: 'text',
+      type: 'select',
       name: 'my-param',
       label: 'My Param',
       description: 'A description of my param for the enduser.',
-      default: 'defaultValue',
+      default: 'value',
       required: true
     }
 
@@ -24,7 +24,7 @@ describe('ConsumerParameterBuilder', () => {
       .setRequired(myParam.required)
       .build()
 
-    assert.deepEqual(textParam, myParam)
+    assert.deepStrictEqual(textParam, myParam)
   })
 
   it('builds number consumerParameter correctly', () => {
@@ -44,11 +44,11 @@ describe('ConsumerParameterBuilder', () => {
       .setName(myNumberParam.name)
       .setLabel(myNumberParam.label)
       .setDescription(myNumberParam.description)
-      .setDefault(myNumberParam.default.toString())
+      .setDefault(myNumberParam.default)
       .setRequired(myNumberParam.required)
       .build()
 
-    assert.deepEqual(numberParam, myNumberParam)
+    assert.deepStrictEqual(numberParam, myNumberParam)
   })
 
   it('builds boolean consumerParameter correctly', () => {
@@ -68,15 +68,17 @@ describe('ConsumerParameterBuilder', () => {
       .setName(myBooleanParam.name)
       .setLabel(myBooleanParam.label)
       .setDescription(myBooleanParam.description)
-      .setDefault(myBooleanParam.default.toString())
+      .setDefault(myBooleanParam.default)
       .setRequired(myBooleanParam.required)
       .build()
 
-    assert.deepEqual(booleanParam, myBooleanParam)
+    assert.deepStrictEqual(booleanParam, myBooleanParam)
   })
 
   it('builds select consumerParameter correctly', () => {
     const builder = new ConsumerParameterBuilder()
+
+    const options = [{ value: 'Label' }, { 'another-value': 'Another label' }]
 
     const mySelectParam: ConsumerParameter = {
       type: 'select',
@@ -85,7 +87,7 @@ describe('ConsumerParameterBuilder', () => {
       description: 'A description of my param for the enduser.',
       default: 'key',
       required: false,
-      options: [{ key: 'value' }, { key1: 'value1' }]
+      options: JSON.stringify(options)
     }
 
     builder
@@ -96,13 +98,13 @@ describe('ConsumerParameterBuilder', () => {
       .setDefault(mySelectParam.default)
       .setRequired(mySelectParam.required)
 
-    mySelectParam.options.forEach((opt) => {
-      builder.addOption(opt)
+    options.forEach((option) => {
+      builder.addOption(option)
     })
 
     const selectParam = builder.build()
 
-    assert.deepEqual(selectParam, mySelectParam)
+    assert.deepStrictEqual(selectParam, mySelectParam)
   })
 
   it('does not allow options for non-select type param', () => {

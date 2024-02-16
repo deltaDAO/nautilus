@@ -1,5 +1,9 @@
-import { Asset, Metadata, PublisherTrustedAlgorithm } from '@oceanprotocol/lib'
-import { NautilusConsumerParameter } from '../Nautilus/Asset/ConsumerParameters'
+import {
+  Asset,
+  ConsumerParameter,
+  Metadata,
+  PublisherTrustedAlgorithm
+} from '@oceanprotocol/lib'
 import { NautilusAsset } from '../Nautilus/Asset/NautilusAsset'
 import {
   FileTypes,
@@ -79,9 +83,7 @@ export interface IServiceBuilder<S extends ServiceTypes, F extends FileTypes>
   setDescription: (description: string) => IServiceBuilder<S, F>
   setServiceEndpoint: (endpoint: string) => IServiceBuilder<S, F>
   addFile: (file: ServiceFileType<F>) => IServiceBuilder<S, F>
-  addConsumerParameter: (
-    parameter: NautilusConsumerParameter
-  ) => IServiceBuilder<S, F>
+  addConsumerParameter: (parameter: ConsumerParameter) => IServiceBuilder<S, F>
   addTrustedAlgorithmPublisher: (publisher: string) => IServiceBuilder<S, F>
   addTrustedAlgorithms: (
     algorithms: PublisherTrustedAlgorithm[]

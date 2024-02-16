@@ -1,9 +1,6 @@
-import { Service } from '@oceanprotocol/lib'
+import { ConsumerParameter, Service } from '@oceanprotocol/lib'
 import { IServiceBuilder, ServiceBuilderConfig } from '../../../@types/Nautilus'
-import {
-  ConsumerParameterBuilder,
-  NautilusConsumerParameter
-} from '../ConsumerParameters'
+import { ConsumerParameterBuilder } from '../ConsumerParameters'
 import {
   FileTypes,
   NautilusService,
@@ -79,31 +76,8 @@ export class ServiceBuilder<
       if (service.additionalInformation)
         this.service.additionalInformation = service.additionalInformation
 
-      if (service.consumerParameters && service.consumerParameters.length > 0) {
-        for (const ddoParameter of service.consumerParameters) {
-          const builder = new ConsumerParameterBuilder()
-
-          builder
-            .setType(ddoParameter.type)
-            .setName(ddoParameter.name)
-            .setLabel(ddoParameter.label)
-            .setDescription(ddoParameter.description)
-            .setDefault(ddoParameter.default)
-            .setRequired(ddoParameter.required)
-
-          if (ddoParameter.options) {
-            const parameterOptions: ConsumerParameterSelectOption[] =
-              JSON.parse(ddoParameter.options)
-            for (const option of parameterOptions) {
-              builder.addOption(option)
-            }
-          }
-
-          const parameter = builder.build()
-
-          this.addConsumerParameter(parameter)
-        }
-      }
+      if (service.consumerParameters && service.consumerParameters.length > 0)
+        this.service.consumerParameters = service.consumerParameters
     }
   }
 
@@ -139,7 +113,7 @@ export class ServiceBuilder<
     return this
   }
 
-  addConsumerParameter(parameter: NautilusConsumerParameter) {
+  addConsumerParameter(parameter: ConsumerParameter) {
     this.service.consumerParameters.push(parameter)
 
     return this
