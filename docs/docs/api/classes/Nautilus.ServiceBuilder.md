@@ -39,7 +39,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:27](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L27)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:24](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L24)
 
 ## Properties
 
@@ -49,7 +49,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:25](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L25)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:22](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L22)
 
 ## Methods
 
@@ -69,7 +69,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:148](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L148)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:122](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L122)
 
 ___
 
@@ -81,7 +81,7 @@ ___
 
 | Name | Type |
 | :------ | :------ |
-| `parameter` | `NautilusConsumerParameter` |
+| `parameter` | `ConsumerParameter` |
 
 #### Returns
 
@@ -93,7 +93,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:142](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L142)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:116](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L116)
 
 ___
 
@@ -117,7 +117,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:110](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L110)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:84](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L84)
 
 ___
 
@@ -141,7 +141,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:234](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L234)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:208](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L208)
 
 ___
 
@@ -165,7 +165,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:176](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L176)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:150](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L150)
 
 ___
 
@@ -189,7 +189,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:167](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L167)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:141](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L141)
 
 ___
 
@@ -213,7 +213,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:158](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L158)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:132](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L132)
 
 ___
 
@@ -231,7 +231,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:317](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L317)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:291](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L291)
 
 ___
 
@@ -251,7 +251,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:210](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L210)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:184](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L184)
 
 ___
 
@@ -271,7 +271,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:259](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L259)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:233](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L233)
 
 ___
 
@@ -289,7 +289,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:313](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L313)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:287](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L287)
 
 ___
 
@@ -303,7 +303,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:274](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L274)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:248](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L248)
 
 ___
 
@@ -317,7 +317,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:280](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L280)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:254](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L254)
 
 ___
 
@@ -331,7 +331,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:222](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L222)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:196](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L196)
 
 ___
 
@@ -345,7 +345,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:228](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L228)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:202](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L202)
 
 ___
 
@@ -369,7 +369,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:286](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L286)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:260](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L260)
 
 ___
 
@@ -394,7 +394,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:292](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L292)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:266](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L266)
 
 ___
 
@@ -418,7 +418,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:136](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L136)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:110](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L110)
 
 ___
 
@@ -442,7 +442,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:130](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L130)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:104](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L104)
 
 ___
 
@@ -466,7 +466,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:302](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L302)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:276](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L276)
 
 ___
 
@@ -490,7 +490,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:123](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L123)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:97](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L97)
 
 ___
 
@@ -514,4 +514,4 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/ServiceBuilder.ts:117](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/ServiceBuilder.ts#L117)
+[src/Nautilus/Asset/Service/ServiceBuilder.ts:91](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/ServiceBuilder.ts#L91)

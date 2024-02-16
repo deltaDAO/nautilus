@@ -15,7 +15,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[src/@types/Compute.ts:47](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Compute.ts#L47)
+[src/@types/Compute.ts:47](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Compute.ts#L47)
 
 ___
 
@@ -25,7 +25,7 @@ ___
 
 #### Defined in
 
-[src/@types/Compute.ts:48](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Compute.ts#L48)
+[src/@types/Compute.ts:48](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Compute.ts#L48)
 
 ___
 
@@ -35,7 +35,7 @@ ___
 
 #### Defined in
 
-[src/@types/Compute.ts:49](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Compute.ts#L49)
+[src/@types/Compute.ts:49](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Compute.ts#L49)
 
 ___
 
@@ -45,7 +45,7 @@ ___
 
 #### Defined in
 
-[src/@types/Compute.ts:51](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Compute.ts#L51)
+[src/@types/Compute.ts:51](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Compute.ts#L51)
 
 ___
 
@@ -55,7 +55,7 @@ ___
 
 #### Defined in
 
-[src/@types/Compute.ts:50](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Compute.ts#L50)
+[src/@types/Compute.ts:50](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Compute.ts#L50)
 
 ___
 
@@ -65,7 +65,7 @@ ___
 
 #### Defined in
 
-[src/@types/Compute.ts:45](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Compute.ts#L45)
+[src/@types/Compute.ts:45](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Compute.ts#L45)
 
 ___
 
@@ -75,7 +75,7 @@ ___
 
 #### Defined in
 
-[src/@types/Compute.ts:53](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Compute.ts#L53)
+[src/@types/Compute.ts:53](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Compute.ts#L53)
 
 ___
 
@@ -85,7 +85,7 @@ ___
 
 #### Defined in
 
-[src/@types/Compute.ts:46](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Compute.ts#L46)
+[src/@types/Compute.ts:46](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Compute.ts#L46)
 
 ___
 
@@ -95,7 +95,7 @@ ___
 
 #### Defined in
 
-[src/@types/Compute.ts:44](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Compute.ts#L44)
+[src/@types/Compute.ts:44](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Compute.ts#L44)
 
 ___
 
@@ -105,4 +105,4 @@ ___
 
 #### Defined in
 
-[src/@types/Compute.ts:52](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Compute.ts#L52)
+[src/@types/Compute.ts:52](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Compute.ts#L52)

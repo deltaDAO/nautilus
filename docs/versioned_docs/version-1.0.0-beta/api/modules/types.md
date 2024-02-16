@@ -22,7 +22,6 @@ custom_edit_url: null
 - [ComputeConfig](../interfaces/types.ComputeConfig.md)
 - [ComputeResultConfig](../interfaces/types.ComputeResultConfig.md)
 - [ComputeStatusConfig](../interfaces/types.ComputeStatusConfig.md)
-- [ConsumerParameter](../interfaces/types.ConsumerParameter.md)
 - [CreateAssetConfig](../interfaces/types.CreateAssetConfig.md)
 - [CreateDatatokenConfig](../interfaces/types.CreateDatatokenConfig.md)
 - [IAssetBuilder](../interfaces/types.IAssetBuilder.md)
@@ -48,17 +47,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[src/@types/Publish.ts:24](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Publish.ts#L24)
-
-___
-
-### ConsumerParameterType
-
-Ƭ **ConsumerParameterType**: ``"text"`` \| ``"number"`` \| ``"boolean"`` \| ``"select"``
-
-#### Defined in
-
-[src/@types/Publish.ts:22](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Publish.ts#L22)
+[src/@types/Publish.ts:22](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Publish.ts#L22)
 
 ___
 
@@ -68,17 +57,17 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:53](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Publish.ts#L53)
+[src/@types/Publish.ts:42](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Publish.ts#L42)
 
 ___
 
 ### MetadataConfig
 
-Ƭ **MetadataConfig**: `Omit`<`Metadata`, ``"created"`` \| ``"updated"`` \| ``"algorithm"``\> & { `algorithm?`: `MetadataAlgorithm` & { `consumerParameters?`: `NautilusConsumerParameter`[]  }  }
+Ƭ **MetadataConfig**: `Omit`<`Metadata`, ``"created"`` \| ``"updated"`` \| ``"algorithm"``\> & { `algorithm?`: `MetadataAlgorithm` & { `consumerParameters?`: `ConsumerParameter`[]  }  }
 
 #### Defined in
 
-[src/@types/Publish.ts:37](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Publish.ts#L37)
+[src/@types/Publish.ts:26](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Publish.ts#L26)
 
 ___
 
@@ -88,7 +77,7 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:58](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Publish.ts#L58)
+[src/@types/Publish.ts:47](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Publish.ts#L47)
 
 ___
 
@@ -98,7 +87,7 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:75](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Publish.ts#L75)
+[src/@types/Publish.ts:64](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Publish.ts#L64)
 
 ___
 
@@ -108,17 +97,17 @@ ___
 
 #### Defined in
 
-[src/@types/Nautilus.ts:20](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Nautilus.ts#L20)
+[src/@types/Nautilus.ts:24](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Nautilus.ts#L24)
 
 ___
 
 ### ServiceConfig
 
-Ƭ **ServiceConfig**: `Omit`<`Service`, ``"files"`` \| ``"id"`` \| ``"datatokenAddress"``\> & { `consumerParameters?`: [`ConsumerParameter`](../interfaces/types.ConsumerParameter.md)[] ; `datatokenCreateParams`: [`DatatokenCreateParamsWithoutOwner`](types.md#datatokencreateparamswithoutowner) ; `files`: `Files`[``"files"``] ; `pricing`: [`PricingConfigWithoutOwner`](Nautilus.md#pricingconfigwithoutowner)  }
+Ƭ **ServiceConfig**: `Omit`<`Service`, ``"files"`` \| ``"id"`` \| ``"datatokenAddress"``\> & { `consumerParameters?`: `ConsumerParameter`[] ; `datatokenCreateParams`: [`DatatokenCreateParamsWithoutOwner`](types.md#datatokencreateparamswithoutowner) ; `files`: `Files`[``"files"``] ; `pricing`: [`PricingConfigWithoutOwner`](Nautilus.md#pricingconfigwithoutowner)  }
 
 #### Defined in
 
-[src/@types/Publish.ts:65](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Publish.ts#L65)
+[src/@types/Publish.ts:54](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Publish.ts#L54)
 
 ___
 
@@ -135,4 +124,4 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:111](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Publish.ts#L111)
+[src/@types/Publish.ts:100](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Publish.ts#L100)

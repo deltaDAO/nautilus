@@ -15,4 +15,4 @@ custom_edit_url: null
 
 #### Defined in
 
-[src/@types/Nautilus.ts:17](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Nautilus.ts#L17)
+[src/@types/Nautilus.ts:21](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Nautilus.ts#L21)

@@ -15,7 +15,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/NautilusService.ts:35](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/NautilusService.ts#L35)
+[src/Nautilus/Asset/Service/NautilusService.ts:35](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/NautilusService.ts#L35)
 
 ___
 
@@ -25,7 +25,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/NautilusService.ts:34](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/NautilusService.ts#L34)
+[src/Nautilus/Asset/Service/NautilusService.ts:34](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/NautilusService.ts#L34)
 
 ___
 
@@ -35,7 +35,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/NautilusService.ts:36](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/NautilusService.ts#L36)
+[src/Nautilus/Asset/Service/NautilusService.ts:36](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/NautilusService.ts#L36)
 
 ___
 
@@ -45,7 +45,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/NautilusService.ts:37](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/NautilusService.ts#L37)
+[src/Nautilus/Asset/Service/NautilusService.ts:37](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/NautilusService.ts#L37)
 
 ___
 
@@ -55,4 +55,4 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/Service/NautilusService.ts:33](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/Service/NautilusService.ts#L33)
+[src/Nautilus/Asset/Service/NautilusService.ts:33](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/Service/NautilusService.ts#L33)

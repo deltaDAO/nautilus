@@ -9,7 +9,7 @@ custom_edit_url: null
 
 ## Implements
 
-- [`IBuilder`](../interfaces/types.IBuilder.md)<`NautilusConsumerParameter`\>
+- [`IBuilder`](../interfaces/types.IBuilder.md)<`ConsumerParameter`\>
 
 ## Constructors
 
@@ -25,7 +25,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:11](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L11)
+[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:7](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L7)
 
 ## Methods
 
@@ -45,17 +45,17 @@ custom_edit_url: null
 
 #### Defined in
 
-[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:53](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L53)
+[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:49](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L49)
 
 ___
 
 ### build
 
-▸ **build**(): `NautilusConsumerParameter`
+▸ **build**(): { `default`: `string` ; `description`: `string` ; `label`: `string` ; `name`: `string` ; `required`: `boolean` = false; `type`: ``"number"`` \| ``"boolean"`` \| ``"text"`` \| ``"select"``  } \| { `default`: `string` ; `description`: `string` ; `label`: `string` ; `name`: `string` ; `options`: `string` ; `required`: `boolean` = false; `type`: ``"number"`` \| ``"boolean"`` \| ``"text"`` \| ``"select"``  }
 
 #### Returns
 
-`NautilusConsumerParameter`
+{ `default`: `string` ; `description`: `string` ; `label`: `string` ; `name`: `string` ; `required`: `boolean` = false; `type`: ``"number"`` \| ``"boolean"`` \| ``"text"`` \| ``"select"``  } \| { `default`: `string` ; `description`: `string` ; `label`: `string` ; `name`: `string` ; `options`: `string` ; `required`: `boolean` = false; `type`: ``"number"`` \| ``"boolean"`` \| ``"text"`` \| ``"select"``  }
 
 #### Implementation of
 
@@ -63,7 +63,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:66](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L66)
+[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:61](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L61)
 
 ___
 
@@ -81,7 +81,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:13](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L13)
+[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:9](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L9)
 
 ___
 
@@ -93,7 +93,7 @@ ___
 
 | Name | Type |
 | :------ | :------ |
-| `value` | `string` |
+| `value` | `string` \| `number` \| `boolean` |
 
 #### Returns
 
@@ -101,7 +101,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:47](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L47)
+[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:43](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L43)
 
 ___
 
@@ -121,7 +121,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:29](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L29)
+[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:25](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L25)
 
 ___
 
@@ -141,7 +141,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:35](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L35)
+[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:31](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L31)
 
 ___
 
@@ -161,7 +161,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:23](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L23)
+[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:19](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L19)
 
 ___
 
@@ -181,7 +181,7 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:41](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L41)
+[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:37](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L37)
 
 ___
 
@@ -193,7 +193,7 @@ ___
 
 | Name | Type |
 | :------ | :------ |
-| `type` | [`ConsumerParameterType`](../modules/types.md#consumerparametertype) |
+| `type` | ``"number"`` \| ``"boolean"`` \| ``"text"`` \| ``"select"`` |
 
 #### Returns
 
@@ -201,4 +201,4 @@ ___
 
 #### Defined in
 
-[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:17](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L17)
+[src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts:13](https://github.com/deltaDAO/nautilus/blob/300e017/src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.ts#L13)

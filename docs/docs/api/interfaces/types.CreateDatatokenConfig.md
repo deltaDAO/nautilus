@@ -15,7 +15,7 @@ custom_edit_url: null
 
 #### Defined in
 
-[src/@types/Publish.ts:86](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Publish.ts#L86)
+[src/@types/Publish.ts:75](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Publish.ts#L75)
 
 ___
 
@@ -25,7 +25,7 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:90](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Publish.ts#L90)
+[src/@types/Publish.ts:79](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Publish.ts#L79)
 
 ___
 
@@ -35,7 +35,7 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:87](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Publish.ts#L87)
+[src/@types/Publish.ts:76](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Publish.ts#L76)
 
 ___
 
@@ -45,7 +45,7 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:89](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Publish.ts#L89)
+[src/@types/Publish.ts:78](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Publish.ts#L78)
 
 ___
 
@@ -55,4 +55,4 @@ ___
 
 #### Defined in
 
-[src/@types/Publish.ts:88](https://github.com/deltaDAO/nautilus/blob/e44ffd7/src/@types/Publish.ts#L88)
+[src/@types/Publish.ts:77](https://github.com/deltaDAO/nautilus/blob/300e017/src/@types/Publish.ts#L77)
