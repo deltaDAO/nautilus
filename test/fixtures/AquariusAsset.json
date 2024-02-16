@@ -1,0 +1,178 @@
+{
+  "@context": ["https://w3id.org/did/v1"],
+  "id": "did:op:c7ce4d1ceccb2131d6fbe80592d4d76301d108ee3f003161434f051b41317440",
+  "nftAddress": "0xC4CF12Fb38C8169CFCb249ED4A6Cc73f92F941c5",
+  "version": "4.1.0",
+  "chainId": 32456,
+  "metadata": {
+    "created": "2024-02-06T16:29:12Z",
+    "updated": "2024-02-06T16:29:12Z",
+    "type": "algorithm",
+    "name": "Test Algo",
+    "description": "A demo algo to test compute functionality",
+    "tags": [],
+    "author": "",
+    "license": "https://market.oceanprotocol.com/terms",
+    "additionalInformation": {
+      "termsAndConditions": true,
+      "gaiaXInformation": {
+        "termsAndConditions": [
+          {
+            "url": "https://raw.githubusercontent.com/deltaDAO/mvg-portal/v4/content/pages/terms.md"
+          }
+        ],
+        "serviceSD": {
+          "url": ""
+        }
+      }
+    },
+    "algorithm": {
+      "language": "js",
+      "version": "0.1",
+      "container": {
+        "entrypoint": "node $ALGO",
+        "image": "node",
+        "tag": "latest",
+        "checksum": "sha256:2cc34c90ae08e9a7447d01513af15a1f37193b04bc3a84a2c13ff3065665b3a0"
+      },
+      "consumerParameters": [
+        {
+          "name": "hometown",
+          "type": "text",
+          "label": "Hometown",
+          "required": true,
+          "description": "What is your hometown?",
+          "default": "Nowhere"
+        },
+        {
+          "name": "age",
+          "type": "number",
+          "label": "Age",
+          "required": false,
+          "description": "Please fill your age",
+          "default": 0
+        },
+        {
+          "name": "developer",
+          "type": "boolean",
+          "label": "Developer",
+          "required": false,
+          "description": "Are you a developer?",
+          "default": false
+        },
+        {
+          "name": "languagePreference",
+          "type": "select",
+          "label": "Language",
+          "required": false,
+          "description": "Do you like NodeJs or Python",
+          "default": "nodejs",
+          "options": [
+            {
+              "nodejs": "I love NodeJs"
+            },
+            {
+              "python": "I love Python"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "services": [
+    {
+      "id": "b5e60d603a03b285a3b8cb25a4995cc9b3db5723b489a14738d2ee0e11dcd3db",
+      "type": "compute",
+      "files": "0x042d889f8b1f31979444f2cded7f4ece2b34be2e19e0218e16ed63fdde426d56f6eac6400d837a20d476486b964e6d91942f2006143f8fb78bd5ea0c1a61be20fefc9a1f91a6bf00fae344dfcfeebdb2ff512a100962680cf3cb15925e27e1797a7d618d3b6e757c9af41e2df947087e246cf3945eb511af92b126b9ff7e4281906a3d1f66a4ee5f057a2e949308f603f060cd7954480055322a00b6b7b66322e3ddc794a647f0946b4aee4c4e7543a4994f50f904be7142a970a20fa1f1408c9cf3b2598f865b149525149c6879d888ce3546154148e111f9756c442d2469eaf87a9160208c64d929506ea45be25f4b6817fb9f96ea9cf856fcfa619e51627dc0fbc269041a9567b4e94bb0874a0c48da56efc226f0ad1a14ea878ee0c98e3251d2a0710e506f714baf967a7ef02110018bd11ba2d02e81da118aa1fc523c4a5ec6760f881a384cfea7f4eb9bf11fead26d9571ec80004f3286cfa2",
+      "datatokenAddress": "0xcc7E4619Edb66808693AD09Ad3481d75c94a6c8B",
+      "serviceEndpoint": "https://provider.dev.pontus-x.eu",
+      "timeout": 86400,
+      "compute": {
+        "allowRawAlgorithm": false,
+        "allowNetworkAccess": true,
+        "publisherTrustedAlgorithmPublishers": [],
+        "publisherTrustedAlgorithms": []
+      },
+      "consumerParameters": [
+        {
+          "name": "hometown",
+          "type": "text",
+          "label": "Hometown",
+          "required": true,
+          "description": "What is your hometown?",
+          "default": "Nowhere"
+        },
+        {
+          "name": "age",
+          "type": "number",
+          "label": "Age",
+          "required": false,
+          "description": "Please fill your age",
+          "default": 0
+        },
+        {
+          "name": "developer",
+          "type": "boolean",
+          "label": "Developer",
+          "required": false,
+          "description": "Are you a developer?",
+          "default": false
+        },
+        {
+          "name": "languagePreference",
+          "type": "select",
+          "label": "Language",
+          "required": false,
+          "description": "Do you like NodeJs or Python",
+          "default": "nodejs",
+          "options": [
+            {
+              "nodejs": "I love NodeJs"
+            },
+            {
+              "python": "I love Python"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "credentials": {
+    "allow": [],
+    "deny": []
+  },
+  "event": {
+    "tx": "0x2be6f9c50566780bd9d7491df76170fd32913361c1a76ef7d8f4b5c40a324474",
+    "block": 155914,
+    "from": "0x9c26685b6E8e2997d9aAf3f1a642f1b1b3dB9580",
+    "contract": "0xC4CF12Fb38C8169CFCb249ED4A6Cc73f92F941c5",
+    "datetime": "2024-02-06T16:29:16"
+  },
+  "nft": {
+    "address": "0xC4CF12Fb38C8169CFCb249ED4A6Cc73f92F941c5",
+    "name": "GX Data NFT",
+    "symbol": "GX-NFT",
+    "state": 0,
+    "tokenURI": "data:application/json;base64,eyJuYW1lIjoiR1ggRGF0YSBORlQiLCJzeW1ib2wiOiJHWC1ORlQiLCJkZXNjcmlwdGlvbiI6IlRoaXMgTkZUIHJlcHJlc2VudHMgYW4gYXNzZXQgaW4gT2NlYW4gUHJvdG9jb2wgdjQgZWNvc3lzdGVtcy4iLCJleHRlcm5hbF91cmwiOiJodHRwczovL21pbmltYWwtZ2FpYS14LmV1L2Fzc2V0L2RpZDpvcDpjN2NlNGQxY2VjY2IyMTMxZDZmYmU4MDU5MmQ0ZDc2MzAxZDEwOGVlM2YwMDMxNjE0MzRmMDUxYjQxMzE3NDQwIiwiYmFja2dyb3VuZF9jb2xvciI6IjE0MTQxNCIsImltYWdlX2RhdGEiOiJkYXRhOmltYWdlL3N2Zyt4bWwsJTNDc3ZnIHZpZXdCb3g9JzAgMCA5OSA5OScgZmlsbD0ndW5kZWZpbmVkJyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnJTNFJTNDcGF0aCBmaWxsPSclMjMwMDk3OTNmZicgZD0nTTAsOTlMMCwyNEM5LDIyIDE4LDIwIDI5LDIyQzM5LDIzIDUxLDI5IDYzLDMxQzc0LDMyIDg2LDI5IDk5LDI3TDk5LDk5WicvJTNFJTNDcGF0aCBmaWxsPSclMjMwMDhiYWFmZicgZD0nTTAsOTlMMCw1NUM3LDU0IDE1LDUzIDI4LDUxQzQwLDQ4IDU2LDQ0IDY5LDQ1QzgxLDQ1IDkwLDQ5IDk5LDU0TDk5LDk5WiclM0UlM0MvcGF0aCUzRSUzQ3BhdGggZmlsbD0nJTIzMDA0OTY3ZmYnIGQ9J00wLDk5TDAsNzNDMTEsNzMgMjMsNzMgMzQsNzVDNDQsNzYgNTQsNzggNjUsNzlDNzUsNzkgODcsNzYgOTksNzRMOTksOTlaJyUzRSUzQy9wYXRoJTNFJTNDL3N2ZyUzRSJ9",
+    "owner": "0x9c26685b6E8e2997d9aAf3f1a642f1b1b3dB9580",
+    "created": "2024-02-06T16:29:16"
+  },
+  "datatokens": [
+    {
+      "address": "0xcc7E4619Edb66808693AD09Ad3481d75c94a6c8B",
+      "name": "Access Token",
+      "symbol": "GXAT",
+      "serviceId": "b5e60d603a03b285a3b8cb25a4995cc9b3db5723b489a14738d2ee0e11dcd3db"
+    }
+  ],
+  "stats": {
+    "allocated": 0,
+    "orders": 4,
+    "price": {
+      "value": 0
+    }
+  },
+  "purgatory": {
+    "state": false
+  }
+}

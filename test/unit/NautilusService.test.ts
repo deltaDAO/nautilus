@@ -4,7 +4,6 @@ import { FileTypes, NautilusService, ServiceTypes, UrlFile } from '../../src'
 import * as provider from '../../src/utils/provider'
 import { datasetService } from '../fixtures/AssetConfig'
 import { getConsumerParameters } from '../fixtures/ConsumerParameters'
-import { ProviderInstance } from '@oceanprotocol/lib'
 import { expectThrowsAsync } from '../utils.test'
 
 describe('NautilusService', () => {
@@ -30,124 +29,129 @@ describe('NautilusService', () => {
       providerMock.expects('isValidProvider').returns(Promise.resolve(true))
     })
 
-    it('sets the id correctly if given', async () => {
-      const nautilusService = new NautilusService<ServiceTypes, FileTypes.URL>()
-      const preDefinedId = 'my-pre-defined-id'
-      nautilusService.id = preDefinedId
+    describe('when it has no files', async () => {
+      it('throws an error', async () => {
+        const nautilusService = new NautilusService<
+          ServiceTypes,
+          FileTypes.URL
+        >()
 
-      const service = await nautilusService.getOceanService(
-        chainId,
-        nftAddress,
-        datatokenAddress
-      )
-
-      expect(service.id).to.eq(preDefinedId)
-    })
-
-    it('sets name and description correctly if given', async () => {
-      const nautilusService = new NautilusService<ServiceTypes, FileTypes.URL>()
-      const name = 'My Service Name'
-      const description = 'My Service Description'
-      nautilusService.name = name
-      nautilusService.description = description
-
-      const service = await nautilusService.getOceanService(
-        chainId,
-        nftAddress,
-        datatokenAddress
-      )
-
-      expect(service.name).to.eq(name)
-      expect(service.description).to.eq(description)
-    })
-
-    it('sets consumerParameters correctly if given', async () => {
-      const {
-        textParameter,
-        numberParameter,
-        booleanParameter,
-        selectParameter
-      } = getConsumerParameters()
-
-      const consumerParameters = [
-        textParameter,
-        numberParameter,
-        booleanParameter,
-        selectParameter
-      ]
-
-      const nautilusService = new NautilusService<ServiceTypes, FileTypes.URL>()
-      nautilusService.consumerParameters = consumerParameters
-
-      const service = await nautilusService.getOceanService(
-        chainId,
-        nftAddress,
-        datatokenAddress
-      )
-
-      expect(service)
-        .to.have.property('consumerParameters')
-        .eq(consumerParameters)
-    })
-
-    it('sets additionalInformation correctly if given', async () => {
-      const additionalInformation = {
-        customInfo: {
-          some: 'custom info'
-        }
-      }
-
-      const nautilusService = new NautilusService<ServiceTypes, FileTypes.URL>()
-      nautilusService.additionalInformation = additionalInformation
-
-      const service = await nautilusService.getOceanService(
-        chainId,
-        nftAddress,
-        datatokenAddress
-      )
-
-      expect(service)
-        .to.have.property('additionalInformation')
-        .eq(additionalInformation)
-    })
-
-    it('sets datatokenAddress correctly, when set via getOceanService', async () => {
-      const nautilusService = new NautilusService<ServiceTypes, FileTypes.URL>()
-
-      const service = await nautilusService.getOceanService(
-        chainId,
-        nftAddress,
-        datatokenAddress
-      )
-
-      expect(service).to.have.property('datatokenAddress').eq(datatokenAddress)
-    })
-
-    it('throws an error if no datatokenAddress is provided', async () => {
-      const nautilusService = new NautilusService<ServiceTypes, FileTypes.URL>()
-
-      await expectThrowsAsync(
-        () => nautilusService.getOceanService(chainId, nftAddress),
-        /datatokenAddress is required/
-      )
+        await expectThrowsAsync(() =>
+          nautilusService.getOceanService(chainId, nftAddress, datatokenAddress)
+        )
+      })
     })
 
     describe('when it has a valid files object', async () => {
+      let nautilusService: NautilusService<ServiceTypes, FileTypes.URL>
       const encryptedFiles = '0xencryptedFilesString'
       beforeEach(() => {
+        nautilusService = new NautilusService<ServiceTypes, FileTypes.URL>()
+        nautilusService.files = datasetService.files as UrlFile[]
+
         encryptedFilesExpectation.returns(Promise.resolve(encryptedFiles))
         providerMock
           .expects('getFileInfo')
           .returns(Promise.resolve([{ valid: true }]))
       })
 
-      it('correctly calls provider.encrypt', async () => {
-        const nautilusService = new NautilusService<
-          ServiceTypes,
-          FileTypes.URL
-        >()
+      it('sets the id correctly if given', async () => {
+        const preDefinedId = 'my-pre-defined-id'
+        nautilusService.id = preDefinedId
 
-        nautilusService.files = datasetService.files as UrlFile[]
+        const service = await nautilusService.getOceanService(
+          chainId,
+          nftAddress,
+          datatokenAddress
+        )
+
+        expect(service.id).to.eq(preDefinedId)
+      })
+
+      it('sets name and description correctly if given', async () => {
+        const name = 'My Service Name'
+        const description = 'My Service Description'
+        nautilusService.name = name
+        nautilusService.description = description
+
+        const service = await nautilusService.getOceanService(
+          chainId,
+          nftAddress,
+          datatokenAddress
+        )
+
+        expect(service.name).to.eq(name)
+        expect(service.description).to.eq(description)
+      })
+
+      it('sets consumerParameters correctly if given', async () => {
+        const {
+          textParameter,
+          numberParameter,
+          booleanParameter,
+          selectParameter
+        } = getConsumerParameters()
+
+        const consumerParameters = [
+          textParameter,
+          numberParameter,
+          booleanParameter,
+          selectParameter
+        ]
+
+        nautilusService.consumerParameters = consumerParameters
+
+        const service = await nautilusService.getOceanService(
+          chainId,
+          nftAddress,
+          datatokenAddress
+        )
+
+        expect(service)
+          .to.have.property('consumerParameters')
+          .eq(consumerParameters)
+      })
+
+      it('sets additionalInformation correctly if given', async () => {
+        const additionalInformation = {
+          customInfo: {
+            some: 'custom info'
+          }
+        }
+
+        nautilusService.additionalInformation = additionalInformation
+
+        const service = await nautilusService.getOceanService(
+          chainId,
+          nftAddress,
+          datatokenAddress
+        )
+
+        expect(service)
+          .to.have.property('additionalInformation')
+          .eq(additionalInformation)
+      })
+
+      it('sets datatokenAddress correctly, when set via getOceanService', async () => {
+        const service = await nautilusService.getOceanService(
+          chainId,
+          nftAddress,
+          datatokenAddress
+        )
+
+        expect(service)
+          .to.have.property('datatokenAddress')
+          .eq(datatokenAddress)
+      })
+
+      it('throws an error if no datatokenAddress is provided', async () => {
+        await expectThrowsAsync(
+          () => nautilusService.getOceanService(chainId, nftAddress),
+          /datatokenAddress is required/
+        )
+      })
+
+      it('correctly calls provider.encrypt', async () => {
         nautilusService.datatokenAddress = datatokenAddress
         nautilusService.serviceEndpoint = serviceEndpoint
 

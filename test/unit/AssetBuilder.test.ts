@@ -1,135 +1,123 @@
-// import { ZERO_ADDRESS } from '@oceanprotocol/lib'
-// import assert from 'assert'
-// import { AssetBuilder } from '../../src'
-// import {
-//   algorithmMetadata,
-//   datasetService,
-//   fixedPricing
-// } from '../fixtures/AssetConfig'
-// import { datatokenParams } from '../fixtures/DatatokenParams'
-// import { nftParams } from '../fixtures/NftCreateData'
-// import {
-//   FileTypes,
-//   NautilusService,
-//   ServiceBuilder,
-//   ServiceTypes
-// } from '../../src/Nautilus/Asset/Service'
+import { expect } from 'chai'
+import { AssetBuilder } from '../../src'
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '../../src/Nautilus/Asset/Service'
+import { algorithmMetadata, fixedPricing } from '../fixtures/AssetConfig'
+import { nftParams } from '../fixtures/NftCreateData'
+import * as AquariusAsset from '../fixtures/AquariusAsset.json'
+import { Asset } from '@oceanprotocol/lib'
 
-// describe('AssetBuilder', () => {
-//   it('builds asset.metadata correctly', async () => {
-//     const builder = new AssetBuilder()
+describe('AssetBuilder', () => {
+  it('builds asset.metadata correctly', async () => {
+    const builder = new AssetBuilder()
 
-//     const { type, name, author, description, license, algorithm } =
-//       algorithmMetadata
+    const { type, name, author, description, license, algorithm } =
+      algorithmMetadata
 
-//     const asset = builder
-//       .setType(type)
-//       .setName(name)
-//       .setAuthor(author)
-//       .setDescription(description)
-//       .setLicense(license)
-//       .setAlgorithm(algorithm)
-//       .build()
+    const asset = builder
+      .setType(type)
+      .setName(name)
+      .setAuthor(author)
+      .setDescription(description)
+      .setLicense(license)
+      .setAlgorithm(algorithm)
+      .build()
 
-//     assert.deepEqual(
-//       asset.ddo.metadata,
-//       algorithmMetadata,
-//       `asset.metadata does not equal the given input metadata`
-//     )
-//   })
+    expect(asset.ddo.metadata).to.deep.equal(algorithmMetadata)
+  })
 
-//   it('builds asset.pricing correctly', async () => {
-//     const builder = new ServiceBuilder(ServiceTypes.ACCESS, FileTypes.URL)
+  describe('when building from given aquariusAsset', async () => {
+    const aquariusAsset = AquariusAsset as Asset
+    const builder = new AssetBuilder(aquariusAsset)
+    const asset = builder.build()
+    const ddo = await asset.ddo.getDDO()
 
-//     const service = builder.setPricing(fixedPricing).build()
+    it('builds asset metadata correctly from aquariusAsset', async () => {
+      // remove updated value, as it gets calculated with getDDO
+      delete ddo.metadata.updated
+      delete aquariusAsset.metadata.updated
 
-//     assert.deepEqual(
-//       service.pricing,
-//       fixedPricing,
-//       `asset.pricing does not equal the given input pricing schema`
-//     )
-//   })
+      expect(ddo.metadata).to.deep.equal(aquariusAsset.metadata)
+    })
 
-//   it('builds asset.services correctly', async () => {
-//     const builder = new AssetBuilder()
-//     const service = datasetService as NautilusService<
-//       ServiceTypes.ACCESS,
-//       FileTypes.URL
-//     >
+    it('builds asset services correctly from aquariusAsset', async () => {
+      expect(ddo.services).to.deep.equal(aquariusAsset.services)
+    })
+  })
 
-//     const asset = builder.addService(service).build()
+  it('builds asset.pricing correctly', async () => {
+    const builder = new ServiceBuilder({
+      serviceType: ServiceTypes.ACCESS,
+      fileType: FileTypes.URL
+    })
 
-//     assert.ok(
-//       asset.services.includes(service),
-//       `asset.services does not contain the given input service`
-//     )
-//   })
+    const service = builder.setPricing(fixedPricing).build()
 
-//   it('builds asset.datatokenCreateParams correctly', async () => {
-//     const builder = new AssetBuilder()
+    expect(service.pricing).to.deep.equal(fixedPricing)
+  })
 
-//     const { name, symbol, ...params } = datatokenParams
+  // TODO: move to service tests
+  //   it('builds asset.datatokenCreateParams correctly', async () => {
+  //     const builder = new AssetBuilder()
 
-//     const asset = builder
-//       .setDatatokenData(params)
-//       .setDatatokenNameAndSymbol(name, symbol)
-//       .build()
+  //     const { name, symbol, ...params } = datatokenParams
 
-//     assert.deepEqual(
-//       asset.datatokenCreateParams,
-//       datatokenParams,
-//       `asset.datatokenCreateParams does not equal the given input datatokenParams`
-//     )
-//   })
+  //     const asset = builder
 
-//   it('builds asset.nftCreateData correctly', async () => {
-//     const builder = new AssetBuilder()
+  //       .setDatatokenNameAndSymbol(name, symbol)
+  //       .build()
 
-//     const asset = builder.setNftData(nftParams).build()
+  //     assert.deepEqual(
+  //       asset.datatokenCreateParams,
+  //       datatokenParams,
+  //       `asset.datatokenCreateParams does not equal the given input datatokenParams`
+  //     )
+  //   })
 
-//     assert.deepEqual(
-//       asset.nftCreateData,
-//       nftParams,
-//       `asset.nftCreateData does not equal the given input nftParams`
-//     )
-//   })
+  it('builds asset.nftCreateData correctly', async () => {
+    const builder = new AssetBuilder()
 
-//   it('builds asset.owner correctly', async () => {
-//     const builder = new AssetBuilder()
+    const asset = builder.setNftData(nftParams).build()
 
-//     const owner = 'owner'
+    expect(asset.nftCreateData).to.deep.equal(nftParams)
+  })
 
-//     const asset = builder.setOwner(owner).build()
+  it('builds asset.owner correctly', async () => {
+    const builder = new AssetBuilder()
 
-//     assert.equal(
-//       asset.owner,
-//       owner,
-//       'asset.owner does not match the given input owner'
-//     )
-//   })
+    const owner = 'owner'
 
-//   it('builds with default values', async () => {
-//     const builder = new AssetBuilder()
+    const asset = builder.setOwner(owner).build()
 
-//     const asset = builder.build()
+    expect(asset.owner).to.equal(owner)
+  })
 
-//     const { nftCreateData, datatokenCreateParams } = asset
+  it('builds with default nft values', async () => {
+    const builder = new AssetBuilder()
 
-//     // Default NftCreateData
-//     assert.ok(typeof nftCreateData.name === 'string')
-//     assert.ok(typeof nftCreateData.symbol === 'string')
-//     assert.ok(typeof nftCreateData.templateIndex === 'number')
-//     assert.ok(typeof nftCreateData.tokenURI === 'string')
-//     assert.ok(typeof nftCreateData.transferable === 'boolean')
+    const asset = builder.build()
 
-//     // Default DatatokenCreateParams
-//     assert.ok(typeof datatokenCreateParams.cap === 'string')
-//     assert.ok(typeof datatokenCreateParams.feeAmount === 'string')
-//     assert.ok(datatokenCreateParams.feeToken === ZERO_ADDRESS)
-//     assert.ok(datatokenCreateParams.mpFeeAddress === ZERO_ADDRESS)
-//     assert.ok(typeof datatokenCreateParams.templateIndex === 'number')
-//     // Datatoken name and symbol are undefined by default
-//     assert.ok(typeof datatokenCreateParams.name === 'undefined')
-//     assert.ok(typeof datatokenCreateParams.symbol === 'undefined')
-//   })
-// })
+    const { nftCreateData } = asset
+
+    // Default NftCreateData
+    expect(nftCreateData.name).to.be.a('string')
+    expect(nftCreateData.symbol).to.be.a('string')
+    expect(nftCreateData.templateIndex).to.be.a('number')
+    expect(nftCreateData.tokenURI).to.be.a('string')
+    expect(nftCreateData.transferable).to.be.a('boolean')
+
+    // TODO: move to service tests
+    // // Default DatatokenCreateParams
+    // assert.ok(typeof datatokenCreateParams.cap === 'string')
+    // assert.ok(typeof datatokenCreateParams.feeAmount === 'string')
+    // assert.ok(datatokenCreateParams.feeToken === ZERO_ADDRESS)
+    // assert.ok(datatokenCreateParams.mpFeeAddress === ZERO_ADDRESS)
+    // assert.ok(typeof datatokenCreateParams.templateIndex === 'number')
+    // // Datatoken name and symbol are undefined by default
+    // assert.ok(typeof datatokenCreateParams.name === 'undefined')
+    // assert.ok(typeof datatokenCreateParams.symbol === 'undefined')
+  })
+})
