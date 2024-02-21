@@ -59,7 +59,7 @@ export async function resolvePublisherTrustedAlgorithms(
   metadataCacheUri: string
 ) {
   for (const service of nautilusDDOServices) {
-    if (service.addedPublisherTrustedAlgorithms?.length) continue
+    if (service.addedPublisherTrustedAlgorithms?.length < 1) continue
 
     const dids = service.addedPublisherTrustedAlgorithms.map(
       (asset) => asset.did
@@ -71,7 +71,7 @@ export async function resolvePublisherTrustedAlgorithms(
 
     if (service.compute?.publisherTrustedAlgorithms?.length === 0) {
       service.compute.publisherTrustedAlgorithms = newPublisherTrustedAlgorithms
-      return
+      continue
     }
 
     newPublisherTrustedAlgorithms.forEach((algorithm) => {
