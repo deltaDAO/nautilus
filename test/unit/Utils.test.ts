@@ -62,8 +62,6 @@ describe.only('Utils', () => {
         'https://dummy.metadatacache'
       )
 
-      console.dir({ service, trustedAlgorithms }, { depth: null })
-
       expect(service)
         .to.have.property('compute')
         .to.have.property('publisherTrustedAlgorithms')
