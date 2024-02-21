@@ -7,6 +7,7 @@ import {
 } from '@oceanprotocol/lib'
 import { getAsset } from '../aquarius'
 import { FileTypes, NautilusService, ServiceTypes } from '../../Nautilus'
+import { checkDidFiles } from '../provider'
 
 // TODO replace hardcoded service index 0 with service id once supported by the stack
 async function getPublisherTrustedAlgorithms(
@@ -30,7 +31,7 @@ async function getPublisherTrustedAlgorithms(
       throw new Error(`Asset ${asset.id} is not of type algorithm`)
     if (!asset.services?.[0]) throw new Error(`No service in ${asset.id}`)
 
-    const filesChecksum = await getFileDidInfo(
+    const filesChecksum = await checkDidFiles(
       asset?.id,
       asset?.services?.[0]?.id,
       asset?.services?.[0]?.serviceEndpoint
@@ -51,24 +52,6 @@ async function getPublisherTrustedAlgorithms(
     trustedAlgorithms.push(trustedAlgorithm)
   }
   return trustedAlgorithms
-}
-
-async function getFileDidInfo(
-  did: string,
-  serviceId: string,
-  providerUrl: string
-): Promise<FileInfo[]> {
-  try {
-    const response = await ProviderInstance.checkDidFiles(
-      did,
-      serviceId,
-      providerUrl,
-      true
-    )
-    return response
-  } catch (error) {
-    throw new Error(`[Initialize check file did] Error:' ${error}`)
-  }
 }
 
 export async function resolvePublisherTrustedAlgorithms(

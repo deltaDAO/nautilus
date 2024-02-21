@@ -48,6 +48,24 @@ export async function getEncryptedFiles(
   }
 }
 
+export async function checkDidFiles(
+  did: string,
+  serviceId: string,
+  providerUrl: string
+): Promise<FileInfo[]> {
+  try {
+    const response = await ProviderInstance.checkDidFiles(
+      did,
+      serviceId,
+      providerUrl,
+      true
+    )
+    return response
+  } catch (error) {
+    throw new Error(`[Initialize check file did] Error:' ${error}`)
+  }
+}
+
 export async function initializeProvider(
   asset: AssetWithAccessDetails,
   accountId: string,
