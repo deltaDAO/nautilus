@@ -1,10 +1,10 @@
 import { expect } from 'chai'
 import sinon from 'sinon'
 import { FileTypes, NautilusService, ServiceTypes, UrlFile } from '../../src'
-import * as provider from '../../src/utils/provider'
 import { datasetService } from '../fixtures/AssetConfig'
 import { getConsumerParameters } from '../fixtures/ConsumerParameters'
 import { expectThrowsAsync } from '../utils.test'
+import { mockProvider } from '../mocks/provider'
 
 describe('NautilusService', () => {
   let providerMock: sinon.SinonMock
@@ -14,11 +14,11 @@ describe('NautilusService', () => {
   const nftAddress = '0x1234NFT'
   const datatokenAddress = '0x1234DATATOKEN'
 
-  beforeEach(() => {
-    providerMock = sinon.mock(provider)
+  before(() => {
+    providerMock = mockProvider()
   })
 
-  afterEach(() => {
+  after(() => {
     providerMock.restore()
   })
 
