@@ -7,7 +7,7 @@ import sinon from 'sinon'
 import { mockAquarius } from '../mocks/aquarius'
 import { mockProvider } from '../mocks/provider'
 
-describe.only('Utils', () => {
+describe('Utils', () => {
   let aquariusMock: sinon.SinonMock
   let providerMock: sinon.SinonMock
 
