@@ -14,7 +14,8 @@ import {
   ComputeStatusConfig,
   CreateAssetConfig,
   LifecycleStates,
-  PublishResponse
+  PublishResponse,
+  StopComputeConfig
 } from '../@types'
 import {
   createAsset,
@@ -24,12 +25,13 @@ import {
 import { getAllPromisesOnArray } from '../utils'
 import { NautilusAsset } from './Asset/NautilusAsset'
 import { access } from '../access'
-import { compute, getStatus, retrieveResult } from '../compute'
+import { compute, computeStop, getStatus, retrieveResult } from '../compute'
 import { FileTypes, NautilusService, ServiceTypes } from './Asset'
 import { TransactionReceipt } from '@ethersproject/abstract-provider'
 import { resolvePublisherTrustedAlgorithms } from '../utils/helpers/trusted-algorithms'
 import { getAsset, getAssets } from '../utils/aquarius'
 import { editPrice } from '../utils/contracts'
+import { stopComputeJob } from '../utils/provider'
 
 export { LogLevel } from '@oceanprotocol/lib'
 
@@ -342,6 +344,13 @@ export class Nautilus {
   ) {
     return await retrieveResult({
       ...computeResultConfig,
+      signer: this.signer
+    })
+  }
+
+  async computeStop(computeStatusConfig: Omit<StopComputeConfig, 'signer'>) {
+    return await computeStop({
+      ...computeStatusConfig,
       signer: this.signer
     })
   }

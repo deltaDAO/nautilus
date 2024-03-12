@@ -33,6 +33,13 @@ export interface ComputeResultConfig extends ComputeStatusConfig {
   resultIndex?: number
 }
 
+export interface StopComputeConfig {
+  did: string
+  jobId: string
+  providerUri: string
+  signer: Signer
+}
+
 export interface TokenInfo {
   address: string
   name: string
