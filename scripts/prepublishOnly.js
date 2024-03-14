@@ -2,11 +2,8 @@ import { dirname, join } from 'node:path'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'url'
 
-console.log({ meta: import.meta })
-
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
-console.log({ __filename, __dirname })
 const packageJsonPath = join(__dirname, '../src/package.json')
 const packageJson = JSON.parse(readFileSync(packageJsonPath).toString())
 
