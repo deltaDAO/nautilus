@@ -23,7 +23,7 @@
     "test:mocha:unit": "npm run mocha -- test/unit/**/*.test.ts",
     "test:mocha:integration": "npm run mocha -- test/integration/**/*.test.ts",
     "release": "release-it",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "node scripts/prepublishOnly.js",
     "lint": "eslint --ignore-path .gitignore --ext .ts && npm run type-check",
     "generate:graphql": "graphql-codegen && npm run lint",
     "typecheck": "tsc --noEmit"
