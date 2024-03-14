@@ -17,5 +17,5 @@
     "outDir": "./dist/",
     "declarationDir": "./dist/"
   },
-  "include": ["src/**/*", "scripts/**/*", "test/**/*"]
+  "include": ["src/**/*", "scripts/**/*", "test/**/*", "vocs.config.ts"]
 }
