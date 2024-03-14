@@ -66,8 +66,7 @@ export async function access(accessConfig: AccessConfig) {
     assetWithAccessDetails,
     signer,
     config,
-    initializeData.providerFee,
-    userdata
+    initializeData.providerFee
   )
 
   LoggerInstance.debug(

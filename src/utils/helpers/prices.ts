@@ -35,8 +35,7 @@ export async function getOrderPriceAndFees(
   asset: AssetWithAccessDetails,
   signer: Signer,
   config: Config,
-  providerFees: ProviderFees,
-  userCustomParameters?: UserCustomParameters
+  providerFees: ProviderFees
 ): Promise<OrderPriceAndFees> {
   const orderPriceAndFees = {
     price: '0',
@@ -47,8 +46,6 @@ export async function getOrderPriceAndFees(
     },
     opcFee: '0'
   } as OrderPriceAndFees
-
-  const signerAddress = await signer.getAddress()
 
   orderPriceAndFees.providerFee = providerFees
 

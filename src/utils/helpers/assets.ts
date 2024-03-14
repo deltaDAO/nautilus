@@ -63,8 +63,7 @@ export async function getAssetWithPrice(
   asset: AssetWithAccessDetails,
   signer: Signer,
   config: Config,
-  providerFees: ProviderFees,
-  userCustomParameters?: UserCustomParameters
+  providerFees: ProviderFees
 ): Promise<AssetWithAccessDetailsAndPrice> {
   return {
     ...asset,
@@ -72,8 +71,7 @@ export async function getAssetWithPrice(
       asset,
       signer,
       config,
-      providerFees,
-      userCustomParameters
+      providerFees
     )
   }
 }
