@@ -406,7 +406,7 @@ export async function handleComputeOrder(
   }
 }
 
-export async function computeStop(stopComputeConfig: StopComputeConfig) {
+export async function stopCompute(stopComputeConfig: StopComputeConfig) {
   const { did, jobId, providerUri, signer } = stopComputeConfig
 
   return await stopComputeJob(providerUri, did, jobId, signer)

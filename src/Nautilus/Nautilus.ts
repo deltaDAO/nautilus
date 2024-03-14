@@ -1,3 +1,4 @@
+import { TransactionReceipt } from '@ethersproject/abstract-provider'
 import {
   Asset,
   Config,
@@ -17,21 +18,19 @@ import {
   PublishResponse,
   StopComputeConfig
 } from '../@types'
+import { access } from '../access'
+import { compute, getStatus, retrieveResult, stopCompute } from '../compute'
 import {
   createAsset,
   createServiceWithDatatokenAndPricing,
   publishDDO
 } from '../publish'
 import { getAllPromisesOnArray } from '../utils'
-import { NautilusAsset } from './Asset/NautilusAsset'
-import { access } from '../access'
-import { compute, computeStop, getStatus, retrieveResult } from '../compute'
-import { FileTypes, NautilusService, ServiceTypes } from './Asset'
-import { TransactionReceipt } from '@ethersproject/abstract-provider'
-import { resolvePublisherTrustedAlgorithms } from '../utils/helpers/trusted-algorithms'
 import { getAsset, getAssets } from '../utils/aquarius'
 import { editPrice } from '../utils/contracts'
-import { stopComputeJob } from '../utils/provider'
+import { resolvePublisherTrustedAlgorithms } from '../utils/helpers/trusted-algorithms'
+import { FileTypes, NautilusService, ServiceTypes } from './Asset'
+import { NautilusAsset } from './Asset/NautilusAsset'
 
 export { LogLevel } from '@oceanprotocol/lib'
 
@@ -348,9 +347,9 @@ export class Nautilus {
     })
   }
 
-  async computeStop(computeStatusConfig: Omit<StopComputeConfig, 'signer'>) {
-    return await computeStop({
-      ...computeStatusConfig,
+  async stopCompute(stopComputeConfig: Omit<StopComputeConfig, 'signer'>) {
+    return await stopCompute({
+      ...stopComputeConfig,
       signer: this.signer
     })
   }
