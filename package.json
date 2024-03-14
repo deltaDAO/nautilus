@@ -14,10 +14,6 @@
   "scripts": {
     "start": "npm run clean && tsc -w",
     "build": "npm run clean && microbundle build --format modern,esm,cjs,umd --compress --tsconfig tsconfig.json",
-    "docs:build": "typedoc",
-    "docs:watch": "typedoc --watch",
-    "install:docusaurus": "cd docs && npm install",
-    "start:docusaurus": "cd docs && npm run start",
     "changelog": "auto-changelog -p",
     "clean": "rm -rf ./dist/",
     "mocha": "TS_NODE_PROJECT='./test/tsconfig.json' mocha --config=test/.mocharc.json --node-env=test --exit",
@@ -29,7 +25,10 @@
     "prepublishOnly": "npm run build",
     "lint": "eslint --ignore-path .gitignore --ext .ts && npm run type-check",
     "generate:graphql": "graphql-codegen && npm run lint",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "docs:dev": "vocs dev",
+    "docs:build": "vocs build",
+    "docs:preview": "vocs preview"
   },
   "repository": {
     "type": "git",
