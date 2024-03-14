@@ -5,6 +5,7 @@
     "test"
   ],
   "type": "module",
+  "private": true,
   "scripts": {
     "start": "npm run clean && tsc -w",
     "build": "npm run clean && npm run build:cjs && npm run build:esm && npm run build:types",
@@ -39,7 +40,6 @@
     "@types/sinon": "^10.0.16",
     "@typescript-eslint/eslint-plugin": "^5.56.0",
     "@typescript-eslint/parser": "^5.56.0",
-    "auto-changelog": "^2.4.0",
     "chai": "^4.3.7",
     "dotenv": "^16.0.3",
     "eslint": "^8.36.0",
@@ -48,29 +48,8 @@
     "eslint-plugin-prettier": "^4.2.1",
     "mocha": "^10.2.0",
     "prettier": "^2.8.7",
-    "release-it": "^16.1.5",
     "rimraf": "^5.0.5",
     "sinon": "^15.2.0",
     "typescript": "^5.0.2"
-  },
-  "release-it": {
-    "hooks": {
-      "after:bump": "npm run build && npm run changelog"
-    },
-    "plugins": {
-      "./scripts/release-it-documentation-checker-plugin.mjs": {}
-    },
-    "git": {
-      "tagName": "v${version}"
-    },
-    "github": {
-      "release": true,
-      "assets": [
-        "dist/lib.json"
-      ]
-    },
-    "npm": {
-      "publish": false
-    }
   }
 }
