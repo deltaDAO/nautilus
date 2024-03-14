@@ -4,32 +4,35 @@ on:
   workflow_dispatch:
 
 jobs:
-  # lint:
-  #   name: Lint
-  #   runs-on: ubuntu-latest
-  #   timeout-minutes: 5
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
 
-  #   steps:
-  #     - name: Clone repository
-  #       uses: actions/checkout@v4
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
 
-  #     - name: Install dependencies
-  #       uses: ./.github/actions/install-dependencies
+      - name: Install dependencies
+        uses: ./.github/actions/install-dependencies
 
-  #     - name: Lint code
-  #       run: npm format && bun lint:fix
+      # - name: Lint code
+      #   run: npm format && npm lint:fix
 
-  #     - uses: stefanzweifel/git-auto-commit-action@v5
-  #       env:
-  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  #       with:
-  #         commit_message: 'chore: format'
-  #         commit_user_name: 'github-actions[bot]'
-  #         commit_user_email: 'github-actions[bot]@users.noreply.github.com'
+      - name: Lint code
+        run: npm run lint:fix
+
+      - uses: stefanzweifel/git-auto-commit-action@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          commit_message: 'chore: format'
+          commit_user_name: 'github-actions[bot]'
+          commit_user_email: 'github-actions[bot]@users.noreply.github.com'
 
   build:
     name: Build
-    # needs: lint
+    needs: lint
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -45,7 +48,7 @@ jobs:
 
   types:
     name: Types
-    # needs: lint
+    needs: lint
     runs-on: ubuntu-latest
     timeout-minutes: 5
     strategy:
@@ -64,27 +67,27 @@ jobs:
       - name: Check types
         run: npm run typecheck
 
-  # test:
-  #   name: Test
-  #   runs-on: ubuntu-latest
-  #   timeout-minutes: 10
-  #   steps:
-  #     - name: Clone repository
-  #       uses: actions/checkout@v4
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
 
-  #     - name: Install dependencies
-  #       uses: ./.github/actions/install-dependencies
+      - name: Install dependencies
+        uses: ./.github/actions/install-dependencies
 
-  #     - name: Run tests
-  #       uses: nick-fields/retry@v3
-  #       with:
-  #         timeout_minutes: 10
-  #         max_attempts: 3
-  #         command: npm run test
-  #       env:
-  #         SOME_ENV: ${{ vars.SOME_ENV }}
+      - name: Run tests
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          command: npm run test:mocha:unit
+        # env:
+        #   SOME_ENV: ${{ vars.SOME_ENV }}
 
-  #     - name: Upload coverage reports to Codecov
-  #       uses: codecov/codecov-action@v4
-  #       with:
-  #         token: ${{ secrets.CODECOV_TOKEN }}
+      # - name: Upload coverage reports to Codecov
+      #   uses: codecov/codecov-action@v4
+      #   with:
+      #     token: ${{ secrets.CODECOV_TOKEN }}
