@@ -1,6 +1,0 @@
-{
-  "entryPoints": ["../src/Nautilus/index.ts", "../src/@types/index.ts"],
-  "tsconfig": "../tsconfig.json",
-  "readme": "../README.md",
-  "excludeInternal": true
-}
