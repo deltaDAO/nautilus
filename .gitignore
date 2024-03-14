@@ -1,5 +1,14 @@
+_cjs
+_esm
+_types
 node_modules
 .DS_STORE
-.env*
+
 dist
 .vscode
+
+.env*
+
+tsconfig*.tsbuildinfo
+
+.vercel
