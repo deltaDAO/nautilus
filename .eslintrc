@@ -5,8 +5,9 @@
     "ecmaFeatures": {
       "jsx": false
     },
-    "project": ["./tsconfig.json", "./test/tsconfig.json"]
+    "project": ["./tsconfig.json", "./test/tsconfig.json"],
   },
+  "ignorePatterns": ["docs/**/*"],
   "extends": ["oceanprotocol", "plugin:prettier/recommended"],
   "plugins": ["@typescript-eslint"],
   "rules": {
