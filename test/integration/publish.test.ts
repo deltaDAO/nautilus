@@ -17,6 +17,7 @@ import {
 } from '../fixtures/AssetConfig'
 import { MUMBAI_NODE_URI, getSigner } from '../fixtures/Ethers'
 import { ConsumerParameter } from '@oceanprotocol/lib'
+import { CredentialListTypes } from '../../src/@types'
 
 const nodeUri = MUMBAI_NODE_URI
 

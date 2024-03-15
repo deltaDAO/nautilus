@@ -29,7 +29,7 @@
     "test:mocha": "npm run mocha -- test/**/*.test.ts",
     "test:mocha:unit": "npm run mocha -- test/unit/**/*.test.ts",
     "test:mocha:integration": "npm run mocha -- test/integration/**/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && cd test && tsc --noEmit"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.5.0",

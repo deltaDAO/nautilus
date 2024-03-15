@@ -17,6 +17,7 @@ import {
 import { MUMBAI_NODE_URI, getSigner } from '../fixtures/Ethers'
 import { Aquarius, Config, DDO } from '@oceanprotocol/lib'
 import { getTestConfig } from '../fixtures/Config'
+import { CredentialListTypes, LifecycleStates } from '../../src/@types'
 
 const nodeUri = MUMBAI_NODE_URI
 
