@@ -1,12 +1,13 @@
 {
+  "type": "module",
   "compilerOptions": {
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "moduleResolution": "node",
-    "target": "ESNext",
-    "module": "ESNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2021",
+    "module": "NodeNext",
     "removeComments": false,
-    "lib": ["ESNext", "dom"],
+    "lib": ["ES2022", "DOM"],
     "sourceMap": true,
     "allowSyntheticDefaultImports": true,
     "experimentalDecorators": true,
@@ -17,5 +18,5 @@
     "outDir": "./dist/",
     "declarationDir": "./dist/"
   },
-  "include": ["src/**/*", "scripts/**/*", "test/**/*", "vocs.config.ts"]
+  "include": ["src/**/*", "scripts/**/*", "test/**/*"]
 }
