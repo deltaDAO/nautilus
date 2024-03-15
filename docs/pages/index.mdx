@@ -123,12 +123,12 @@ import { Wallet, providers } from 'ethers'
 
 // 2. Set up your client.
 const provider = new providers.JsonRpcProvider('https://rpc.dev.pontus-x.eu')
-const signer = new Wallet(process.env.key, provider)
+const signer = new Wallet('0x...', provider)
 const nautilus = await Nautilus.create(signer)
 
 // 3. Consume a service offering!
 const did = 'did:op:3cccb2963b99120426249b11f7b911526533237509cfad8e9671813a7adb2cec'
-const sharedData = await nautilus.access({ did })
+const sharedData = await nautilus.access({ assetDid: did })
 ```
 
 # Features
