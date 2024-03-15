@@ -1,8 +1,10 @@
 {
+  "workspaces": ["docs"],
   "name": "@deltadao/nautilus",
   "source": "./src/index.ts",
   "version": "1.0.0-beta.1",
   "description": "A typescript library enabling automated publish & consume in Ocean Protocol ecosystems",
+  "type": "module",
   "main": "./dist/lib.js",
   "umd:main": "./dist/lib.umd.js",
   "module": "./dist/lib.module.js",
@@ -26,9 +28,9 @@
     "lint": "eslint --ignore-path .gitignore --ext .ts && npm run type-check",
     "generate:graphql": "graphql-codegen && npm run lint",
     "type-check": "tsc --noEmit",
-    "docs:dev": "vocs dev",
-    "docs:build": "vocs build",
-    "docs:preview": "vocs preview"
+    "docs:dev": "cd docs && npm run dev",
+    "docs:build": "cd docs && npm run build",
+    "docs:preview": "cd docs && npm run preview"
   },
   "repository": {
     "type": "git",
@@ -46,8 +48,7 @@
     "axios": "^1.3.4",
     "decimal.js": "^10.4.3",
     "ethers": "^5.7.2",
-    "urql": "^3.0.4",
-    "vocs": "^1.0.0-alpha.43"
+    "urql": "^3.0.4"
   },
   "devDependencies": {
     "@graphql-codegen/cli": "^5.0.0",
