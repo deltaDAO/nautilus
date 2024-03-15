@@ -27,9 +27,11 @@
     "test:mocha:integration": "npm run mocha -- test/integration/**/*.test.ts",
     "release": "release-it",
     "prepublishOnly": "npm run build",
-    "lint": "eslint --ignore-path .gitignore --ext .ts && npm run type-check",
+    "format": "biome format . --write",
+    "lint": "biome check .",
+    "lint:fix": "npm run lint -- --apply",
     "generate:graphql": "graphql-codegen && npm run lint",
-    "type-check": "tsc --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "repository": {
     "type": "git",
