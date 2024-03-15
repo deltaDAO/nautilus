@@ -3,13 +3,12 @@ import { Signer } from 'ethers'
 import {
   AssetBuilder,
   ConsumerParameterBuilder,
-  CredentialListTypes,
   FileTypes,
   LogLevel,
   Nautilus,
   ServiceBuilder,
   ServiceTypes
-} from '../../src'
+} from '../../src/Nautilus'
 import {
   algorithmMetadata,
   algorithmService,

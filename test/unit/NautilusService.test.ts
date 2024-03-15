@@ -1,6 +1,11 @@
 import { expect } from 'chai'
 import sinon from 'sinon'
-import { FileTypes, NautilusService, ServiceTypes, UrlFile } from '../../src'
+import {
+  FileTypes,
+  NautilusService,
+  ServiceTypes,
+  UrlFile
+} from '../../src/Nautilus'
 import { datasetService } from '../fixtures/AssetConfig'
 import { getConsumerParameters } from '../fixtures/ConsumerParameters'
 import { expectThrowsAsync } from '../utils.test'
@@ -23,12 +28,6 @@ describe('NautilusService', () => {
   })
 
   describe('when it has a valid serviceEndpoint', async () => {
-    let encryptedFilesExpectation: sinon.SinonExpectation
-    beforeEach(() => {
-      encryptedFilesExpectation = providerMock.expects('getEncryptedFiles')
-      providerMock.expects('isValidProvider').returns(Promise.resolve(true))
-    })
-
     describe('when it has no files', async () => {
       it('throws an error', async () => {
         const nautilusService = new NautilusService<
@@ -45,14 +44,22 @@ describe('NautilusService', () => {
     describe('when it has a valid files object', async () => {
       let nautilusService: NautilusService<ServiceTypes, FileTypes.URL>
       const encryptedFiles = '0xencryptedFilesString'
+      let encryptedFilesExpectation: sinon.SinonExpectation
+
       beforeEach(() => {
         nautilusService = new NautilusService<ServiceTypes, FileTypes.URL>()
         nautilusService.files = datasetService.files as UrlFile[]
 
+        encryptedFilesExpectation = providerMock.expects('getEncryptedFiles')
         encryptedFilesExpectation.returns(Promise.resolve(encryptedFiles))
+        providerMock.expects('isValidProvider').returns(Promise.resolve(true))
         providerMock
           .expects('getFileInfo')
           .returns(Promise.resolve([{ valid: true }]))
+      })
+
+      afterEach(() => {
+        providerMock.verify()
       })
 
       it('sets the id correctly if given', async () => {
@@ -169,7 +176,6 @@ describe('NautilusService', () => {
           )
 
         expect(oceanService).to.have.property('files').eq(encryptedFiles)
-        providerMock.verify()
       })
 
       it('creates a valid access ocean service', async () => {
