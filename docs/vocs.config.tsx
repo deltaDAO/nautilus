@@ -11,20 +11,24 @@ export default defineConfig({
     'Navigate the data economy - a toolkit to intereact with OceanProtocol ecosystems.',
   head: (
     <>
-      <script
+      {/* <script
         src="https://cdn.usefathom.com/script.js"
-        data-site="BYCJMNBD"
         defer
+      /> */}
+      <script 
+        src="https://buttons.github.io/buttons.js"
+        async 
+        defer 
       />
     </>
   ),
-  // ogImageUrl: {
-  //   '/': '/og-image.png',
-  //   '/docs':
-  //     'https://vocs.dev/api/og?logo=%logo&title=%title&description=%description',
-  //   '/op-stack':
-  //     'https://vocs.dev/api/og?logo=%logo&title=%title&description=%description',
-  // },
+  ogImageUrl: {
+    '/': '/og-image.png',
+    '/docs':
+      'https://vocs.dev/api/og?title=%title&description=%description',
+    '/op-stack':
+      'https://vocs.dev/api/og?title=%title&description=%description',
+  },
   iconUrl: { light: '/favicons/light.png', dark: '/favicons/dark.png' },
   logoUrl: { light: '/icon-light.png', dark: '/icon-dark.png' },
   rootDir: '.',
@@ -38,8 +42,8 @@ export default defineConfig({
   sponsors: [],
   theme: {
     accentColor: {
-      light: '#ff9318',
-      dark: '#ffc517',
+      light: '#007599',
+      dark: '#00caff',
     },
   },
   topNav: [
@@ -67,7 +71,7 @@ export default defineConfig({
         // },
       ],
     },
-  ],
+  ]
 })
 
 function toPatchVersionRange(version: string) {

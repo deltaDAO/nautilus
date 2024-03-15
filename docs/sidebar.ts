@@ -5,7 +5,7 @@ export const sidebar = {
     {
       text: 'Introduction',
       items: [
-        { text: 'Why nautilus', link: '/docs/introduction' },
+        { text: 'Why Nautilus', link: '/docs/introduction' },
         { text: 'Getting Started', link: '/docs/getting-started' },
         { text: 'FAQ', link: '/docs/faq' },
       ],
