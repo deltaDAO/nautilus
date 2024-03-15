@@ -3,9 +3,6 @@
     "resolveJsonModule": true,
     "module": "CommonJS",
     "target": "ESNext",
-    "paths": {
-      "../../src/*": ["../src/*"]
-    },
     "esModuleInterop": true
   }
 }
