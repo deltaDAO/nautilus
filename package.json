@@ -23,7 +23,7 @@
     "lint": "eslint --ignore-path .gitignore --ext .ts",
     "lint:fix": "eslint --ignore-path .gitignore --ext .ts --fix",
     "mocha": "TS_NODE_PROJECT='./test/tsconfig.json' mocha --config=test/.mocharc.json --node-env=test --exit",
-    "prepublishOnly": "ts-node scripts/prepublishOnly.ts",
+    "prepublishOnly": "node scripts/prepublishOnly.js",
     "start:docusaurus": "cd docs && npm run start",
     "test": "npm run lint && npm run mocha -- test/**/*.test.ts test/*.test.ts",
     "test:mocha": "npm run mocha -- test/**/*.test.ts",
