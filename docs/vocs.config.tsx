@@ -4,7 +4,7 @@ import pkg from '../package.json'
 import { sidebar } from './sidebar'
 
 export default defineConfig({
-  baseUrl: 'https://nautilus.io',
+  baseUrl: 'https://nautilus.delta-dao.com',
   title: 'Nautilus',
   titleTemplate: '%s · Nautilus',
   description:
