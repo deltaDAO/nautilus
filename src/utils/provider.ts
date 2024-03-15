@@ -153,6 +153,26 @@ export async function startComputeJob(
   }
 }
 
+export async function stopComputeJob(
+  providerUri: string,
+  did: string,
+  jobId: string,
+  signer: Signer
+): Promise<ComputeJob | ComputeJob[]> {
+  try {
+    return await ProviderInstance.computeStop(
+      did,
+      await signer.getAddress(),
+      jobId,
+      providerUri,
+      signer
+    )
+  } catch (error) {
+    LoggerInstance.error('Error stopping compute job!')
+    LoggerInstance.error(error)
+  }
+}
+
 export function getValidUntilTime(
   computeEnvMaxJobDuration: number,
   datasetTimeout?: number,

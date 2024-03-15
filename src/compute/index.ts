@@ -15,7 +15,8 @@ import {
   ComputeConfig,
   ComputeResultConfig,
   ComputeStatusConfig,
-  OrderPriceAndFees
+  OrderPriceAndFees,
+  StopComputeConfig
 } from '../@types/Compute'
 import { getDatatokenBalance, getServiceByName } from '../utils'
 import {
@@ -26,7 +27,8 @@ import { isOrderable, order, reuseOrder } from '../utils/order'
 import {
   approveProviderFee,
   initializeProviderForCompute,
-  startComputeJob
+  startComputeJob,
+  stopComputeJob
 } from '../utils/provider'
 
 export async function compute(computeConfig: ComputeConfig) {
@@ -402,4 +404,10 @@ export async function handleComputeOrder(
   } catch (error) {
     LoggerInstance.error(`[compute] ${error.message}`)
   }
+}
+
+export async function stopCompute(stopComputeConfig: StopComputeConfig) {
+  const { did, jobId, providerUri, signer } = stopComputeConfig
+
+  return await stopComputeJob(providerUri, did, jobId, signer)
 }
