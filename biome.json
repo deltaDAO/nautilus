@@ -1,5 +1,14 @@
 {
 	"$schema": "https://biomejs.dev/schemas/1.6.1/schema.json",
+	"files": {
+		"ignore": [
+			"CHANGELOG.md",
+			"LICENSE",
+			"tsconfig.json",
+			"tsconfig.*.json",
+			"@types/subgraph/*.ts"
+		]
+	},
 	"vcs": {
 		"enabled": true,
 		"clientKind": "git",
