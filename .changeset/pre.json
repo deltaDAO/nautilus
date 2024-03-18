@@ -2,7 +2,11 @@
   "mode": "pre",
   "tag": "beta",
   "initialVersions": {
-    "@deltadao/nautilus": "1.0.0-beta.1"
+    "@deltadao/nautilus": "1.0.0-beta.1",
+    "docs": "0.0.0",
+    "test": "0.0.0"
   },
-  "changesets": []
+  "changesets": [
+    "small-tigers-repeat"
+  ]
 }

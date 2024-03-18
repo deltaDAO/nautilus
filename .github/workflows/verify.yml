@@ -20,15 +20,7 @@ jobs:
       #   run: npm format && npm lint:fix
 
       - name: Lint code
-        run: npm run lint:fix
-
-      - uses: stefanzweifel/git-auto-commit-action@v5
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          commit_message: 'chore: format'
-          commit_user_name: 'github-actions[bot]'
-          commit_user_email: 'github-actions[bot]@users.noreply.github.com'
+        run: npm run lint
 
   build:
     name: Build

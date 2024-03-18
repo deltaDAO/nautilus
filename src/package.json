@@ -1,7 +1,7 @@
 {
   "name": "@deltadao/nautilus",
   "description": "A typescript library enabling automated publish & consume in Ocean Protocol ecosystems",
-  "version": "1.0.0-beta.1",
+  "version": "1.0.0-beta.2",
   "type": "module",
   "main": "./_cjs/index.js",
   "module": "./_esm/index.js",
