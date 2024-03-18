@@ -2,7 +2,6 @@
   "mode": "pre",
   "tag": "beta",
   "initialVersions": {
-    "docs": "0.0.0",
     "@deltadao/nautilus": "1.0.0-beta.1"
   },
   "changesets": []
