@@ -1,4 +1,4 @@
-import { Nautilus } from '../../src'
+import { Nautilus } from '../../src/Nautilus'
 import { getSigner } from '../fixtures/Ethers'
 import assert from 'assert'
 import { LoggerInstance, LogLevel } from '@oceanprotocol/lib'
