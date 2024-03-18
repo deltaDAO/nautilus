@@ -18,6 +18,8 @@ jobs:
     name: Create version pull request
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permission:
+      pull-requests: write
 
     steps:
       - name: Clone repository
