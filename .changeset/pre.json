@@ -1,0 +1,8 @@
+{
+  "mode": "pre",
+  "tag": "beta",
+  "initialVersions": {
+    "@deltadao/nautilus": "1.0.0-beta.1"
+  },
+  "changesets": []
+}
