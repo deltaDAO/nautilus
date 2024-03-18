@@ -67,27 +67,27 @@ jobs:
       - name: Check types
         run: npm run typecheck
 
-  # test:
-  #   name: Test
-  #   runs-on: ubuntu-latest
-  #   timeout-minutes: 10
-  #   steps:
-  #     - name: Clone repository
-  #       uses: actions/checkout@v4
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
 
-  #     - name: Install dependencies
-  #       uses: ./.github/actions/install-dependencies
+      - name: Install dependencies
+        uses: ./.github/actions/install-dependencies
 
-  #     - name: Run tests
-  #       uses: nick-fields/retry@v3
-  #       with:
-  #         timeout_minutes: 10
-  #         max_attempts: 3
-  #         command: npm run test:mocha:unit
-  #       # env:
-  #       #   SOME_ENV: ${{ vars.SOME_ENV }}
+      - name: Run tests
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          command: npm run test:mocha:unit
+        # env:
+        #   SOME_ENV: ${{ vars.SOME_ENV }}
 
-  #     # - name: Upload coverage reports to Codecov
-  #     #   uses: codecov/codecov-action@v4
-  #     #   with:
-  #     #     token: ${{ secrets.CODECOV_TOKEN }}
+      # - name: Upload coverage reports to Codecov
+      #   uses: codecov/codecov-action@v4
+      #   with:
+      #     token: ${{ secrets.CODECOV_TOKEN }}
