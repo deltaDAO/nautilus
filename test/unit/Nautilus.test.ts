@@ -8,7 +8,8 @@ describe('Nautilus', () => {
     LoggerInstance.setLevel(LogLevel.Verbose)
   })
 
-  it('should initialize correctly', async () => {
+  // TODO: mock wallet for unit test
+  it.skip('should initialize correctly', async () => {
     const signer = getSigner()
     const nautilus = await Nautilus.create(signer)
 
