@@ -3,5 +3,11 @@ _esm
 _types
 node_modules
 .DS_STORE
-.env*
+
 dist
+
+.env*
+
+tsconfig*.tsbuildinfo
+
+.vercel

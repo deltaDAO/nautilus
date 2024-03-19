@@ -3,13 +3,12 @@ import { Signer } from 'ethers'
 import {
   AssetBuilder,
   ConsumerParameterBuilder,
-  CredentialListTypes,
   FileTypes,
   LogLevel,
   Nautilus,
   ServiceBuilder,
   ServiceTypes
-} from '../../src'
+} from '../../src/Nautilus'
 import {
   algorithmMetadata,
   algorithmService,
@@ -18,6 +17,7 @@ import {
 } from '../fixtures/AssetConfig'
 import { MUMBAI_NODE_URI, getSigner } from '../fixtures/Ethers'
 import { ConsumerParameter } from '@oceanprotocol/lib'
+import { CredentialListTypes } from '../../src/@types'
 
 const nodeUri = MUMBAI_NODE_URI
 

@@ -1,5 +1,4 @@
 import { Aquarius, ComputeJob, LoggerInstance } from '@oceanprotocol/lib'
-import assert from 'assert'
 import {
   AssetBuilder,
   FileTypes,
@@ -7,7 +6,7 @@ import {
   Nautilus,
   ServiceBuilder,
   ServiceTypes
-} from '../../src'
+} from '../../src/Nautilus'
 import {
   algorithmMetadata,
   algorithmService,

@@ -1,21 +1,6 @@
 {
-  "compilerOptions": {
-    "skipLibCheck": true,
-    "resolveJsonModule": true,
-    "moduleResolution": "node",
-    "target": "ESNext",
-    "module": "ESNext",
-    "removeComments": false,
-    "lib": ["ESNext", "dom"],
-    "sourceMap": true,
-    "allowSyntheticDefaultImports": true,
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
-    "esModuleInterop": true,
-    "declaration": true,
-    "preserveConstEnums": true,
-    "outDir": "./dist/",
-    "declarationDir": "./dist/"
-  },
-  "include": ["src/**/*", "scripts/**/*", "test/**/*"]
+  // This configuration is used for local development and type checking.
+  "extends": "./tsconfig.base.json",
+  "include": ["src"],
+  "exclude": []
 }

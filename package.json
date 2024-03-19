@@ -1,58 +1,37 @@
 {
-  "name": "@deltadao/nautilus",
-  "source": "./src/index.ts",
-  "version": "1.0.0-beta.1",
-  "description": "A typescript library enabling automated publish & consume in Ocean Protocol ecosystems",
-  "main": "./dist/lib.js",
-  "umd:main": "./dist/lib.umd.js",
-  "module": "./dist/lib.module.js",
-  "exports": {
-    "require": "./dist/lib.js",
-    "default": "./dist/lib.modern.js"
-  },
-  "types": "./dist/src/index.d.ts",
+  "workspaces": ["docs", "src", "test"],
+  "type": "module",
+  "private": true,
   "scripts": {
     "start": "npm run clean && tsc -w",
-    "build": "npm run clean && microbundle build --format modern,esm,cjs,umd --compress --tsconfig tsconfig.json",
+    "build": "npm run clean && npm run build:cjs && npm run build:esm && npm run build:types",
+    "build:cjs": "tsc --project ./tsconfig.build.json --module commonjs --outDir ./src/_cjs --removeComments --verbatimModuleSyntax false && printf '{\"type\":\"commonjs\"}' > ./src/_cjs/package.json",
+    "build:esm": "tsc --project ./tsconfig.build.json --module es2015 --outDir ./src/_esm && printf '{\"type\": \"module\",\"sideEffects\":false}' > ./src/_esm/package.json",
+    "build:types": "tsc --project ./tsconfig.build.json --module esnext --declarationDir ./src/_types --emitDeclarationOnly --declaration --declarationMap",
+    "changeset": "changeset",
+    "changeset:publish": "npm run prepublishOnly && npm run build && changeset publish",
+    "changeset:version": "changeset version && npm install --package-lock-only",
+    "clean": "rimraf src/_cjs src/_esm src/_types",
     "docs:build": "typedoc",
     "docs:watch": "typedoc --watch",
+    "format": "biome format . --write",
+    "generate:graphql": "graphql-codegen && npm run lint",
     "install:docusaurus": "cd docs && npm install",
-    "start:docusaurus": "cd docs && npm run start",
-    "changelog": "auto-changelog -p",
-    "clean": "rm -rf ./dist/",
+    "lint": "biome check .",
+    "lint:fix": "npm run lint -- --apply",
     "mocha": "TS_NODE_PROJECT='./test/tsconfig.json' mocha --config=test/.mocharc.json --node-env=test --exit",
+    "prepublishOnly": "node scripts/prepublishOnly.js",
+    "start:docusaurus": "cd docs && npm run start",
     "test": "npm run lint && npm run mocha -- test/**/*.test.ts test/*.test.ts",
     "test:mocha": "npm run mocha -- test/**/*.test.ts",
     "test:mocha:unit": "npm run mocha -- test/unit/**/*.test.ts",
     "test:mocha:integration": "npm run mocha -- test/integration/**/*.test.ts",
-    "release": "release-it",
-    "prepublishOnly": "npm run build",
-    "format": "biome format . --write",
-    "lint": "biome check .",
-    "lint:fix": "npm run lint -- --apply",
-    "generate:graphql": "graphql-codegen && npm run lint",
-    "typecheck": "tsc --noEmit"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/deltaDAO/nautilus.git"
-  },
-  "author": "deltaDAO",
-  "license": "Apache-2.0",
-  "bugs": {
-    "url": "https://github.com/deltaDAO/nautilus/issues"
-  },
-  "homepage": "https://github.com/deltaDAO/nautilus#readme",
-  "dependencies": {
-    "@oceanprotocol/lib": "^3.1.1",
-    "@urql/exchange-refocus": "^1.0.0",
-    "axios": "^1.3.4",
-    "decimal.js": "^10.4.3",
-    "ethers": "^5.7.2",
-    "urql": "^3.0.4"
+    "typecheck": "tsc --noEmit && cd test && tsc --noEmit"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.6.1",
+    "@changesets/changelog-github": "^0.5.0",
+    "@changesets/cli": "^2.27.1",
     "@graphql-codegen/cli": "^5.0.0",
     "@graphql-codegen/near-operation-file-preset": "^2.5.0",
     "@graphql-codegen/typescript": "^4.0.1",
@@ -61,66 +40,12 @@
     "@types/mocha": "^10.0.1",
     "@types/node": "^18.15.11",
     "@types/sinon": "^10.0.16",
-    "auto-changelog": "^2.4.0",
     "chai": "^4.3.7",
     "dotenv": "^16.0.3",
-    "microbundle": "0.14.2",
     "mocha": "^10.2.0",
-    "release-it": "^16.1.5",
+    "rimraf": "^5.0.5",
     "sinon": "^15.2.0",
-    "ts-node": "^10.9.1",
+    "ts-node": "^9.1.1",
     "typescript": "^5.0.2"
-  },
-  "peerDependencies": {
-    "@oceanprotocol/lib": "3.1.1",
-    "ethers": "^5.7.2"
-  },
-  "overrides": {
-    "graphql": "15.8.0"
-  },
-  "release-it": {
-    "hooks": {
-      "after:bump": "npm run build && npm run changelog"
-    },
-    "plugins": {
-      "./scripts/release-it-documentation-checker-plugin.mjs": {}
-    },
-    "git": {
-      "tagName": "v${version}"
-    },
-    "github": {
-      "release": true,
-      "assets": [
-        "dist/lib.json"
-      ]
-    },
-    "npm": {
-      "publish": false
-    }
-  },
-  "codegen": {
-    "schema": "https://v4.subgraph.goerli.oceanprotocol.com/subgraphs/name/oceanprotocol/ocean-subgraph",
-    "documents": "./src/**/*.gql.ts",
-    "generates": {
-      "./src/@types/subgraph/api.ts": {
-        "plugins": [
-          "typescript"
-        ]
-      },
-      "./src/": {
-        "preset": "near-operation-file",
-        "presetConfig": {
-          "baseTypesPath": "@types/subgraph/api.ts",
-          "extension": ".generated.ts"
-        },
-        "plugins": [
-          "typescript-operations"
-        ],
-        "config": {
-          "omitOperationSuffix": true,
-          "typesPrefix": "I"
-        }
-      }
-    }
   }
 }

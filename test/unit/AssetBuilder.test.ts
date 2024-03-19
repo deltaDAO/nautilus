@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { AssetBuilder } from '../../src'
+import { AssetBuilder } from '../../src/Nautilus'
 import {
   FileTypes,
   ServiceBuilder,
