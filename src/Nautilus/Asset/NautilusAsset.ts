@@ -1,8 +1,11 @@
-import { NftCreateData } from '@oceanprotocol/lib'
-import { NftCreateDataWithoutOwner, PricingConfig } from '../../@types/Publish'
+import type { NftCreateData } from '@oceanprotocol/lib'
+import type { LifecycleStates } from '../../@types'
+import type {
+  NftCreateDataWithoutOwner,
+  PricingConfig
+} from '../../@types/Publish'
 import { NautilusDDO } from './NautilusDDO'
 import { nftInitialCreateData } from './constants/nft.constants'
-import { LifecycleStates } from '../../@types'
 
 export type PricingConfigWithoutOwner = {
   type: PricingConfig['type']

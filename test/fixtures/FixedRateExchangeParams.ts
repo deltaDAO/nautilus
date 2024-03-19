@@ -1,4 +1,4 @@
-import { FreCreationParams, ZERO_ADDRESS } from '@oceanprotocol/lib'
+import { type FreCreationParams, ZERO_ADDRESS } from '@oceanprotocol/lib'
 
 export const freParams: Omit<
   FreCreationParams,

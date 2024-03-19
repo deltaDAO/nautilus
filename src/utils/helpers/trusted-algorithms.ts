@@ -1,12 +1,12 @@
 import {
-  Asset,
+  type Asset,
   FileInfo,
   ProviderInstance,
-  PublisherTrustedAlgorithm,
+  type PublisherTrustedAlgorithm,
   getHash
 } from '@oceanprotocol/lib'
+import type { FileTypes, NautilusService, ServiceTypes } from '../../Nautilus'
 import { getAsset } from '../aquarius'
-import { FileTypes, NautilusService, ServiceTypes } from '../../Nautilus'
 import { checkDidFiles } from '../provider'
 
 // TODO replace hardcoded service index 0 with service id once supported by the stack
@@ -74,7 +74,7 @@ export async function resolvePublisherTrustedAlgorithms(
       continue
     }
 
-    newPublisherTrustedAlgorithms.forEach((algorithm) => {
+    for (const algorithm of newPublisherTrustedAlgorithms) {
       const index = service.compute.publisherTrustedAlgorithms.findIndex(
         (existingAlgorithm) => existingAlgorithm.did === algorithm.did
       )
@@ -93,6 +93,6 @@ export async function resolvePublisherTrustedAlgorithms(
           service.compute.publisherTrustedAlgorithms[index] = algorithm
         }
       }
-    })
+    }
   }
 }

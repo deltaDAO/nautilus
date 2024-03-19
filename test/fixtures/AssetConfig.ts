@@ -1,13 +1,13 @@
-import { PricingConfigWithoutOwner } from '../../src/Nautilus'
-import {
+import type { Signer } from 'ethers'
+import type {
   MetadataConfig,
   PricingConfig,
   ServiceConfig
 } from '../../src/@types/Publish'
+import type { PricingConfigWithoutOwner } from '../../src/Nautilus'
 import { getTestConfig } from './Config'
-import { freParams } from './FixedRateExchangeParams'
 import { datatokenParams } from './DatatokenParams'
-import { Signer } from 'ethers'
+import { freParams } from './FixedRateExchangeParams'
 
 export const datasetMetadata: MetadataConfig = {
   type: 'dataset',

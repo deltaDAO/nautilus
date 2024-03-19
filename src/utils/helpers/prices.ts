@@ -1,14 +1,14 @@
 import {
-  Config,
+  type Config,
   FixedRateExchange,
-  PriceAndFees,
-  ProviderFees,
+  type PriceAndFees,
+  type ProviderFees,
   ProviderInstance,
   UserCustomParameters
 } from '@oceanprotocol/lib'
 import Decimal from 'decimal.js'
-import { Signer } from 'ethers'
-import {
+import type { Signer } from 'ethers'
+import type {
   AccessDetails,
   AssetWithAccessDetails,
   OrderPriceAndFees

@@ -1,11 +1,11 @@
 import {
-  Asset,
-  Config,
+  type Asset,
+  type Config,
   ConfigHelper,
   Datatoken,
-  Service
+  type Service
 } from '@oceanprotocol/lib'
-import { Signer } from 'ethers'
+import type { Signer } from 'ethers'
 
 export function getOceanConfig(
   chainId: number,
@@ -45,7 +45,7 @@ export function dateToStringNoMS(date: Date): string {
 }
 
 export function getAllPromisesOnArray<E, P>(
-  array: Array<E>,
+  array: E[],
   promise: (element: E) => Promise<P>
 ) {
   return Promise.all(array.map((e) => promise(e)))
@@ -87,7 +87,7 @@ export function combineArraysAndReplaceItems<T>(
   const arrayWithReplacedItems: T[] = []
 
   // loop through all existing items and replace based on the replace() function of user
-  array.forEach((existingItem) => {
+  for (const existingItem of array) {
     const replacedItem = replace(existingItem, newItems)
 
     // if the replacement was taken from newItems...
@@ -100,7 +100,7 @@ export function combineArraysAndReplaceItems<T>(
 
     // add the replacement to the return array
     arrayWithReplacedItems.push(replacedItem)
-  })
+  }
 
   // return a combination of all replacements and "non-duplicate" newItems
   return combineArrays(arrayWithReplacedItems, newItems)

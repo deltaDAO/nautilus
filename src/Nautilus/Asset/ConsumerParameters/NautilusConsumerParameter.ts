@@ -1,5 +1,5 @@
-import { ConsumerParameter } from '@oceanprotocol/lib'
-import { ConsumerParameterSelectOption } from '../../../@types/Publish'
+import type { ConsumerParameter } from '@oceanprotocol/lib'
+import type { ConsumerParameterSelectOption } from '../../../@types/Publish'
 
 /**
  * @internal
@@ -8,7 +8,7 @@ export class NautilusConsumerParameter implements ConsumerParameter {
   name: string
   type: ConsumerParameter['type']
   label: string
-  required: boolean = false
+  required = false
   description: string
   default: string
   _options?: ConsumerParameterSelectOption[] = []

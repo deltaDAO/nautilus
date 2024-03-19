@@ -1,4 +1,4 @@
-import * as Types from '../../@types/subgraph/api';
+import type * as Types from '../../@types/subgraph/api'
 
 export type ITokenPriceQueryVariables = Types.Exact<{
   datatokenId: Types.Scalars['ID']['input'];

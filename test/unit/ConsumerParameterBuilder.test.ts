@@ -1,6 +1,6 @@
-import assert from 'assert'
+import assert from 'node:assert'
+import type { ConsumerParameter } from '@oceanprotocol/lib'
 import { ConsumerParameterBuilder } from '../../src/Nautilus/Asset/ConsumerParameters'
-import { ConsumerParameter } from '@oceanprotocol/lib'
 
 describe('ConsumerParameterBuilder', () => {
   it('builds text consumerParameter correctly', () => {
@@ -98,9 +98,7 @@ describe('ConsumerParameterBuilder', () => {
       .setDefault(mySelectParam.default)
       .setRequired(mySelectParam.required)
 
-    options.forEach((option) => {
-      builder.addOption(option)
-    })
+    for (const option of options) builder.addOption(option)
 
     const selectParam = builder.build()
 

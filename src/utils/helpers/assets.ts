@@ -1,11 +1,11 @@
 import {
-  Config,
+  type Config,
   LoggerInstance,
-  ProviderFees,
+  type ProviderFees,
   UserCustomParameters
 } from '@oceanprotocol/lib'
-import { Signer } from 'ethers'
-import {
+import type { Signer } from 'ethers'
+import type {
   AssetWithAccessDetails,
   AssetWithAccessDetailsAndPrice,
   ComputeAsset

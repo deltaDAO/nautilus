@@ -1,8 +1,8 @@
-import {
+import type {
   Config,
   ConsumerParameter,
-  DatatokenCreateParams,
   DDO,
+  DatatokenCreateParams,
   Files,
   FreCreationParams,
   Metadata,
@@ -10,8 +10,8 @@ import {
   NftCreateData,
   Service
 } from '@oceanprotocol/lib'
-import { Signer, providers } from 'ethers'
-import {
+import type { Signer, providers } from 'ethers'
+import type {
   FileTypes,
   NautilusAsset,
   NautilusService,

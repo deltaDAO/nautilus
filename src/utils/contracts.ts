@@ -1,13 +1,14 @@
+import type { TransactionReceipt } from '@ethersproject/abstract-provider'
 import {
-  Asset,
-  Config,
+  type Asset,
+  type Config,
   FixedRateExchange,
   LoggerInstance,
-  Service
+  type Service
 } from '@oceanprotocol/lib'
-import { Signer } from 'ethers'
+import type { Signer } from 'ethers'
+import type { AccessDetails } from '../@types'
 import { getAccessDetails } from './helpers/access-details'
-import { TransactionReceipt } from '@ethersproject/abstract-provider'
 
 export async function editPrice(
   aquariusAsset: Asset,
@@ -40,7 +41,7 @@ export async function editPrice(
     signer
   )
 
-  let accessDetails
+  let accessDetails: AccessDetails
   try {
     accessDetails = await getAccessDetails(
       chainConfig.subgraphUri,

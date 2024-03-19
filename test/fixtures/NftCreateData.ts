@@ -1,4 +1,4 @@
-import { NftCreateData } from '@oceanprotocol/lib'
+import type { NftCreateData } from '@oceanprotocol/lib'
 
 export const nftParams: Omit<NftCreateData, 'owner'> = {
   name: 'Nautilus Dataservice NFT',

@@ -1,7 +1,7 @@
+import assert from 'node:assert'
+import { LogLevel, LoggerInstance } from '@oceanprotocol/lib'
 import { Nautilus } from '../../src/Nautilus'
 import { getSigner } from '../fixtures/Ethers'
-import assert from 'assert'
-import { LoggerInstance, LogLevel } from '@oceanprotocol/lib'
 
 describe('Nautilus', () => {
   before(() => {

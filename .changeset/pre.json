@@ -6,7 +6,5 @@
     "docs": "0.0.0",
     "test": "0.0.0"
   },
-  "changesets": [
-    "small-tigers-repeat"
-  ]
+  "changesets": ["small-tigers-repeat"]
 }

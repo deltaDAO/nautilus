@@ -1,6 +1,6 @@
-import { DDO, Service } from '@oceanprotocol/lib'
+import { randomUUID } from 'node:crypto'
+import type { DDO, Service } from '@oceanprotocol/lib'
 import { expect } from 'chai'
-import { randomUUID } from 'crypto'
 import sinon from 'sinon'
 import { NautilusService } from '../../src/Nautilus'
 import { NautilusDDO } from '../../src/Nautilus/Asset/NautilusDDO'
