@@ -17,10 +17,14 @@ export async function getAccessDetails(
 ): Promise<AccessDetails> {
   try {
     const queryContext = getQueryContext(subgraphUri)
+
     const tokenQueryResult: OperationResult<
       ITokenPriceQuery,
       { datatokenId: string; account: string }
-    > = await fetchData(
+    > = await fetchData<
+      ITokenPriceQuery,
+      { datatokenId: string; account: string }
+    >(
       subgraphUri,
       tokenPriceQuery,
       {
