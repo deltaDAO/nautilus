@@ -3,8 +3,8 @@
 <p align="center">
   <a href="https://nautilus.delta-dao.com">
       <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="https://github.com/deltaDAO/nautilus/raw/feat/vocs/docs/public/logo-dark.svg">
-        <img alt="nautilus logo" src="https://github.com/deltaDAO/nautilus/raw/feat/vocs/docs/public/logo-light.svg" width="auto" height="60">
+        <source media="(prefers-color-scheme: dark)" srcset="https://github.com/deltaDAO/nautilus/raw/main/docs/public/logo-dark.svg">
+        <img alt="nautilus logo" src="https://github.com/deltaDAO/nautilus/raw/main/docs/public/logo-light.svg" width="auto" height="60">
       </picture>
 </a>
 </p>
@@ -28,8 +28,8 @@
   </a>
   <a href="https://www.npmjs.com/package/deltadao/nautilus">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/github/actions/workflow/status/deltaDAO/nautilus/release.yml?colorA=21262d&colorB=21262d&style=for-the-badge">
-      <img src="https://img.shields.io/github/actions/workflow/status/deltaDAO/nautilus/release.yml?colorA=f6f8fa&colorB=f6f8fa&style=for-the-badge" alt="GitHub Actions Workflow Status">
+      <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/github/actions/workflow/status/deltaDAO/nautilus/changeset.yml?colorA=21262d&colorB=21262d&style=for-the-badge">
+      <img src="https://img.shields.io/github/actions/workflow/status/deltaDAO/nautilus/changeset.yml?colorA=f6f8fa&colorB=f6f8fa&style=for-the-badge" alt="GitHub Actions Workflow Status">
     </picture>
   </a>
 </p>
