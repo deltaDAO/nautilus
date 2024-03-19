@@ -1,5 +1,4 @@
 import { LoggerInstance } from '@oceanprotocol/lib'
-import { refocusExchange } from '@urql/exchange-refocus'
 import {
   type Client,
   type OperationContext,
@@ -30,7 +29,7 @@ export function geturqlClient(subgraphUri) {
   if (!client)
     client = createClient({
       url: `${subgraphUri}/subgraphs/name/oceanprotocol/ocean-subgraph`,
-      exchanges: [dedupExchange, refocusExchange(), fetchExchange]
+      exchanges: [dedupExchange, fetchExchange]
     })
 
   return client
