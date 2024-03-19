@@ -17,12 +17,10 @@
     "docs:preview": "cd docs && npm run preview",
     "format": "biome format . --write",
     "generate:graphql": "graphql-codegen && npm run lint",
-    "install:docusaurus": "cd docs && npm install",
     "lint": "biome check .",
     "lint:fix": "npm run lint -- --apply",
     "mocha": "TS_NODE_PROJECT='./test/tsconfig.json' mocha --config=test/.mocharc.json --node-env=test --exit",
     "prepublishOnly": "node scripts/prepublishOnly.js",
-    "start:docusaurus": "cd docs && npm run start",
     "test": "npm run lint && npm run mocha -- test/**/*.test.ts test/*.test.ts",
     "test:mocha": "npm run mocha -- test/**/*.test.ts",
     "test:mocha:unit": "npm run mocha -- test/unit/**/*.test.ts",
@@ -47,6 +45,6 @@
     "rimraf": "^5.0.5",
     "sinon": "^15.2.0",
     "ts-node": "^9.1.1",
-    "typescript": "^5.0.2"
+    "typescript": "^5.4.2"
   }
 }
