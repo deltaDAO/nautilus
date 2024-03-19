@@ -35,17 +35,19 @@ export function geturqlClient(subgraphUri) {
   return client
 }
 
-export async function fetchData(
+export async function fetchData<T, V>(
   subgraphUri: string,
   query: TypedDocumentNode,
   // biome-ignore lint/suspicious/noExplicitAny: client.query variables has an any type
   variables: any,
   context: OperationContext
-): Promise<OperationResult> {
+): Promise<OperationResult<T, V>> {
   try {
     const client = geturqlClient(subgraphUri)
 
-    const response = await client.query(query, variables, context).toPromise()
+    const response = await client
+      .query<T, V>(query, variables, context)
+      .toPromise()
     return response
   } catch (error) {
     LoggerInstance.error('Error fetchData: ', error.message)
