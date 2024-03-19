@@ -1,15 +1,15 @@
 import { expect } from 'chai'
-import sinon from 'sinon'
+import type sinon from 'sinon'
 import {
-  FileTypes,
+  type FileTypes,
   NautilusService,
   ServiceTypes,
-  UrlFile
+  type UrlFile
 } from '../../src/Nautilus'
 import { datasetService } from '../fixtures/AssetConfig'
 import { getConsumerParameters } from '../fixtures/ConsumerParameters'
-import { expectThrowsAsync } from '../utils.test'
 import { mockProvider } from '../mocks/provider'
+import { expectThrowsAsync } from '../utils.test'
 
 describe('NautilusService', () => {
   let providerMock: sinon.SinonMock

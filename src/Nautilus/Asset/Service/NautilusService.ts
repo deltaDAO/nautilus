@@ -1,15 +1,15 @@
 import {
-  Arweave,
-  ConsumerParameter,
-  GraphqlQuery,
-  Ipfs,
-  Service,
-  ServiceComputeOptions,
-  Smartcontract,
-  UrlFile,
+  type Arweave,
+  type ConsumerParameter,
+  type GraphqlQuery,
+  type Ipfs,
+  type Service,
+  type ServiceComputeOptions,
+  type Smartcontract,
+  type UrlFile,
   getHash
 } from '@oceanprotocol/lib'
-import {
+import type {
   DatatokenCreateParamsWithoutOwner,
   TrustedAlgorithmAsset
 } from '../../../@types/Publish'
@@ -18,7 +18,7 @@ import {
   getFileInfo,
   isValidProvider
 } from '../../../utils/provider'
-import { PricingConfigWithoutOwner } from '../NautilusAsset'
+import type { PricingConfigWithoutOwner } from '../NautilusAsset'
 import { params as DatatokenConstantParams } from '../constants/datatoken.constants'
 
 export {
@@ -46,12 +46,12 @@ export type ServiceFileType<FileType extends FileTypes> =
   FileType extends FileTypes.GRAPHQL
     ? GraphqlQuery
     : FileType extends FileTypes.ARWEAVE
-    ? Arweave
-    : FileType extends FileTypes.SMARTCONTRACT
-    ? Smartcontract
-    : FileType extends FileTypes.IPFS
-    ? Ipfs
-    : UrlFile
+      ? Arweave
+      : FileType extends FileTypes.SMARTCONTRACT
+        ? Smartcontract
+        : FileType extends FileTypes.IPFS
+          ? Ipfs
+          : UrlFile
 
 /**
  * @internal
@@ -86,6 +86,7 @@ export class NautilusService<
   addedPublisherTrustedAlgorithms: TrustedAlgorithmAsset[] = []
 
   consumerParameters?: ConsumerParameter[] = []
+  // biome-ignore lint/suspicious/noExplicitAny: can be any user defined information
   additionalInformation?: { [key: string]: any }
 
   id?: string

@@ -1,6 +1,6 @@
-import { ConsumerParameter } from '@oceanprotocol/lib'
-import { IBuilder } from '../../../@types/Nautilus'
-import { ConsumerParameterSelectOption } from '../../../@types/Publish'
+import type { ConsumerParameter } from '@oceanprotocol/lib'
+import type { IBuilder } from '../../../@types/Nautilus'
+import type { ConsumerParameterSelectOption } from '../../../@types/Publish'
 import { NautilusConsumerParameter } from './NautilusConsumerParameter'
 
 export class ConsumerParameterBuilder implements IBuilder<ConsumerParameter> {

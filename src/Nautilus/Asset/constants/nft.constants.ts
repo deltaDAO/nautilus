@@ -1,4 +1,4 @@
-import { NftCreateDataWithoutOwner } from '../../../@types/Publish'
+import type { NftCreateDataWithoutOwner } from '../../../@types/Publish'
 
 const name = 'Nautilus Dataservice NFT'
 const symbol = 'NAUTILUS-NFT'

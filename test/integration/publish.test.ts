@@ -1,5 +1,7 @@
-import assert from 'assert'
-import { Signer } from 'ethers'
+import assert from 'node:assert'
+import type { ConsumerParameter } from '@oceanprotocol/lib'
+import type { Signer } from 'ethers'
+import { CredentialListTypes } from '../../src/@types'
 import {
   AssetBuilder,
   ConsumerParameterBuilder,
@@ -16,8 +18,6 @@ import {
   getPricing
 } from '../fixtures/AssetConfig'
 import { MUMBAI_NODE_URI, getSigner } from '../fixtures/Ethers'
-import { ConsumerParameter } from '@oceanprotocol/lib'
-import { CredentialListTypes } from '../../src/@types'
 
 const nodeUri = MUMBAI_NODE_URI
 

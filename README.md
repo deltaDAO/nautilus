@@ -1,4 +1,39 @@
-# Nautilus
+<br />
+
+<p align="center">
+  <a href="https://nautilus.delta-dao.com">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="https://github.com/deltaDAO/nautilus/raw/feat/vocs/docs/public/logo-dark.svg">
+        <img alt="nautilus logo" src="https://github.com/deltaDAO/nautilus/raw/feat/vocs/docs/public/logo-light.svg" width="auto" height="60">
+      </picture>
+</a>
+</p>
+
+<p align="center">
+   The Data Economy TypeScript Toolkit
+<p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/deltadao/nautilus">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/npm/v/@deltadao/nautilus?colorA=21262d&colorB=21262d&style=for-the-badge">
+      <img src="https://img.shields.io/npm/v/@deltadao/nautilus?colorA=f6f8fa&colorB=f6f8fa&style=for-the-badge" alt="Version">
+    </picture>
+  </a>
+  <a href="https://github.com/deltaDAO/nautilus/blob/main/LICENSE">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/npm/l/@deltadao/nautilus?colorA=21262d&colorB=21262d&style=for-the-badge">
+      <img src="https://img.shields.io/npm/l/@deltadao/nautilus?colorA=f6f8fa&colorB=f6f8fa&style=for-the-badge" alt="Apache-2.0 License">
+    </picture>
+  </a>
+  <a href="https://www.npmjs.com/package/deltadao/nautilus">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/github/actions/workflow/status/deltaDAO/nautilus/release.yml?colorA=21262d&colorB=21262d&style=for-the-badge">
+      <img src="https://img.shields.io/github/actions/workflow/status/deltaDAO/nautilus/release.yml?colorA=f6f8fa&colorB=f6f8fa&style=for-the-badge" alt="GitHub Actions Workflow Status">
+    </picture>
+  </a>
+</p>
+
 
 A typescript library helping to navigate the OCEAN. It enables configurable automated publishing and consumption of assets in any [Ocean Protocol](https://oceanprotocol.com) ecosystem.
 

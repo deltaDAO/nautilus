@@ -1,5 +1,5 @@
-import { Asset, DDO, LoggerInstance } from '@oceanprotocol/lib'
-import axios, { AxiosResponse } from 'axios'
+import { type Asset, type DDO, LoggerInstance } from '@oceanprotocol/lib'
+import axios, { type AxiosResponse } from 'axios'
 import { AQUARIUS_ASSET_EXTENDED_DDO_PROPS } from './constants'
 
 export async function getAsset(
@@ -67,6 +67,8 @@ export async function getAssets(
 
   try {
     const fullAquariusUrl = new URL(apiPath, metadataCacheUri).href
+    // TODO: refactor to use Aquarius instance
+    // biome-ignore lint/suspicious/noExplicitAny: use aquarius response
     const response: AxiosResponse<any> = await axios.post(
       fullAquariusUrl,
       queryPayload
@@ -77,7 +79,7 @@ export async function getAssets(
     if (response?.status === 200 && response?.data?.hits) {
       for (const hit of response.data.hits.hits) {
         const asset: Asset = hit._source
-        if (asset && asset.id) {
+        if (asset?.id) {
           assets[asset.id.toLowerCase()] = asset
         }
       }

@@ -1,17 +1,17 @@
-import {
+import type {
   Asset,
   ConsumerParameter,
   Metadata,
   PublisherTrustedAlgorithm
 } from '@oceanprotocol/lib'
-import { NautilusAsset } from '../Nautilus/Asset/NautilusAsset'
-import {
+import type { NautilusAsset } from '../Nautilus/Asset/NautilusAsset'
+import type {
   FileTypes,
   NautilusService,
   ServiceFileType,
   ServiceTypes
 } from '../Nautilus/Asset/Service/NautilusService'
-import {
+import type {
   DatatokenCreateParamsWithoutOwner,
   NftCreateDataWithoutOwner,
   PricingConfig
@@ -63,6 +63,7 @@ export interface IAssetBuilder extends IBuilder<NautilusAsset> {
   setAlgorithm: (algorithm: Metadata['algorithm']) => IAssetBuilder
   setOwner: (owner: string) => IAssetBuilder
   addAdditionalInformation: (additionalInformation: {
+    // biome-ignore lint/suspicious/noExplicitAny: can be any user info
     [key: string]: any
   }) => IAssetBuilder
   setCopyrightHolder: (copyrightHolder: string) => IAssetBuilder
