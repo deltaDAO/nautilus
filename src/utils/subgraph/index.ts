@@ -1,12 +1,11 @@
 import { LoggerInstance } from '@oceanprotocol/lib'
-import { refocusExchange } from '@urql/exchange-refocus'
 import {
   Client,
+  OperationContext,
+  TypedDocumentNode,
   createClient,
   dedupExchange,
-  fetchExchange,
-  OperationContext,
-  TypedDocumentNode
+  fetchExchange
 } from 'urql'
 import { AccessDetails } from '../../@types/Compute'
 import { ITokenPriceQuery } from './TokenPriceQuery.gql.generated'
@@ -29,7 +28,7 @@ export function geturqlClient(subgraphUri) {
   if (!client)
     client = createClient({
       url: `${subgraphUri}/subgraphs/name/oceanprotocol/ocean-subgraph`,
-      exchanges: [dedupExchange, refocusExchange(), fetchExchange]
+      exchanges: [dedupExchange, fetchExchange]
     })
 
   return client

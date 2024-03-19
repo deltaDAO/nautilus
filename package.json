@@ -16,7 +16,7 @@
     "docs:dev": "cd docs && npm run dev",
     "docs:preview": "cd docs && npm run preview",
     "format": "biome format . --write",
-    "generate:graphql": "graphql-codegen && npm run lint",
+    "generate:graphql": "graphql-codegen",
     "lint": "biome check .",
     "lint:fix": "npm run lint -- --apply",
     "mocha": "TS_NODE_PROJECT='./test/tsconfig.json' mocha --config=test/.mocharc.json --node-env=test --exit",
@@ -46,5 +46,26 @@
     "sinon": "^15.2.0",
     "ts-node": "^9.1.1",
     "typescript": "^5.4.2"
+  },
+  "codegen": {
+    "schema": "https://v4.subgraph.goerli.oceanprotocol.com/subgraphs/name/oceanprotocol/ocean-subgraph",
+    "documents": "./src/**/*.gql.ts",
+    "generates": {
+      "./src/@types/subgraph/api.ts": {
+        "plugins": ["typescript"]
+      },
+      "./src/": {
+        "preset": "near-operation-file",
+        "presetConfig": {
+          "baseTypesPath": "@types/subgraph/api.ts",
+          "extension": ".generated.ts"
+        },
+        "plugins": ["typescript-operations"],
+        "config": {
+          "omitOperationSuffix": true,
+          "typesPrefix": "I"
+        }
+      }
+    }
   }
 }
