@@ -1,11 +1,13 @@
 _cjs
 _esm
 _types
-
 node_modules
 .DS_STORE
+
 dist
 
 .env*
 
 tsconfig*.tsbuildinfo
+
+.vercel

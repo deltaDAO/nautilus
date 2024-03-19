@@ -1,6 +1,6 @@
 import { Aquarius } from '@oceanprotocol/lib'
 import assert from 'assert'
-import { AssetBuilder, LogLevel, Nautilus } from '../../src'
+import { AssetBuilder, LogLevel, Nautilus } from '../../src/Nautilus'
 import {
   FileTypes,
   ServiceBuilder,

@@ -1,13 +1,13 @@
 import { DDO, Service } from '@oceanprotocol/lib'
 import { expect } from 'chai'
+import { randomUUID } from 'crypto'
 import sinon from 'sinon'
-import { NautilusService } from '../../src'
+import { NautilusService } from '../../src/Nautilus'
 import { NautilusDDO } from '../../src/Nautilus/Asset/NautilusDDO'
 import { algorithmMetadata, datasetMetadata } from '../fixtures/AssetConfig'
 import { metadataFixture } from '../fixtures/DDOData'
 import oceanDDOFixture from '../fixtures/OceanDDO.json'
 import { expectThrowsAsync } from '../utils.test'
-import { randomUUID } from 'crypto'
 
 const oceanDDO: DDO = oceanDDOFixture as DDO
 const oceanServiceMock = { ...oceanDDO.services[0] }

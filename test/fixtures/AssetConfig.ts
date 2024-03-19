@@ -1,4 +1,4 @@
-import { PricingConfigWithoutOwner } from '../../src'
+import { PricingConfigWithoutOwner } from '../../src/Nautilus'
 import {
   MetadataConfig,
   PricingConfig,
