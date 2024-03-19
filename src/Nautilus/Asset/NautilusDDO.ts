@@ -1,30 +1,30 @@
 import {
-  Asset,
-  Credentials,
-  DDO,
-  Service,
+  type Asset,
+  type Credentials,
+  type DDO,
+  type Service,
   generateDid
 } from '@oceanprotocol/lib'
-import { MetadataConfig } from '../../@types'
+import type { MetadataConfig } from '../../@types'
 import {
+  combineArraysAndReplaceItems,
   dateToStringNoMS,
   getAllPromisesOnArray,
-  combineArraysAndReplaceItems,
   removeDuplicatesFromArray
 } from '../../utils'
-import {
+import { transformAquariusAssetToDDO } from '../../utils/aquarius'
+import type {
   FileTypes,
   NautilusService,
   ServiceTypes
 } from './Service/NautilusService'
-import { transformAquariusAssetToDDO } from '../../utils/aquarius'
 
 export class NautilusDDO {
   id: string
   context: string[] = ['https://w3id.org/did/v1']
   nftAddress: string
   chainId: number
-  version: string = '4.1.0'
+  version = '4.1.0'
   metadata: Partial<MetadataConfig> = {}
   services: NautilusService<ServiceTypes, FileTypes>[] = []
   removeServices: string[] = []
@@ -38,7 +38,7 @@ export class NautilusDDO {
   static createFromAquariusAsset(aquariusAsset: Asset): NautilusDDO {
     const ddo = transformAquariusAssetToDDO(aquariusAsset)
 
-    return this.createFromDDO(ddo)
+    return NautilusDDO.createFromDDO(ddo)
   }
 
   static createFromDDO(ddo: DDO): NautilusDDO {

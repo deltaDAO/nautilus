@@ -1,9 +1,14 @@
-import { Asset, LogLevel, LoggerInstance, getHash } from '@oceanprotocol/lib'
+import {
+  type Asset,
+  LogLevel,
+  LoggerInstance,
+  getHash
+} from '@oceanprotocol/lib'
+import { expect } from 'chai'
+import type sinon from 'sinon'
 import { ServiceBuilder } from '../../src/Nautilus'
 import { resolvePublisherTrustedAlgorithms } from '../../src/utils/helpers/trusted-algorithms'
 import * as AquariusAsset from '../fixtures/AquariusAsset.json'
-import { expect } from 'chai'
-import sinon from 'sinon'
 import { mockAquarius } from '../mocks/aquarius'
 import { mockProvider } from '../mocks/provider'
 

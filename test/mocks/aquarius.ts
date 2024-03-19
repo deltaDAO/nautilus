@@ -1,6 +1,6 @@
+import sinon from 'sinon'
 import * as aquarius from '../../src/utils/aquarius'
 import * as AquariusAsset from '../fixtures/AquariusAsset.json'
-import sinon from 'sinon'
 
 const RETURNED_ASSET = AquariusAsset
 const RETURNED_ASSET_ARRAY = [AquariusAsset, AquariusAsset]

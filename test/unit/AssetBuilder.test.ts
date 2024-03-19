@@ -1,3 +1,4 @@
+import type { Asset } from '@oceanprotocol/lib'
 import { expect } from 'chai'
 import { AssetBuilder } from '../../src/Nautilus'
 import {
@@ -5,10 +6,9 @@ import {
   ServiceBuilder,
   ServiceTypes
 } from '../../src/Nautilus/Asset/Service'
+import * as AquariusAsset from '../fixtures/AquariusAsset.json'
 import { algorithmMetadata, fixedPricing } from '../fixtures/AssetConfig'
 import { nftParams } from '../fixtures/NftCreateData'
-import * as AquariusAsset from '../fixtures/AquariusAsset.json'
-import { Asset } from '@oceanprotocol/lib'
 
 describe('AssetBuilder', () => {
   it('builds asset.metadata correctly', async () => {

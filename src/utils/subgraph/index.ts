@@ -1,15 +1,16 @@
 import { LoggerInstance } from '@oceanprotocol/lib'
 import { refocusExchange } from '@urql/exchange-refocus'
 import {
-  Client,
+  type Client,
+  type OperationContext,
+  type OperationResult,
+  type TypedDocumentNode,
   createClient,
   dedupExchange,
-  fetchExchange,
-  OperationContext,
-  TypedDocumentNode
+  fetchExchange
 } from 'urql'
-import { AccessDetails } from '../../@types/Compute'
-import { ITokenPriceQuery } from './TokenPriceQuery.gql.generated'
+import type { AccessDetails } from '../../@types/Compute'
+import type { ITokenPriceQuery } from './TokenPriceQuery.gql.generated'
 
 let client: Client
 
@@ -38,9 +39,10 @@ export function geturqlClient(subgraphUri) {
 export async function fetchData(
   subgraphUri: string,
   query: TypedDocumentNode,
+  // biome-ignore lint/suspicious/noExplicitAny: client.query variables has an any type
   variables: any,
   context: OperationContext
-): Promise<any> {
+): Promise<OperationResult> {
   try {
     const client = geturqlClient(subgraphUri)
 

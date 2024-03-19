@@ -1,5 +1,6 @@
+import assert from 'node:assert'
 import { Aquarius } from '@oceanprotocol/lib'
-import assert from 'assert'
+import { expect } from 'chai'
 import { AssetBuilder, LogLevel, Nautilus } from '../../src/Nautilus'
 import {
   FileTypes,
@@ -12,9 +13,8 @@ import {
   getPricing
 } from '../fixtures/AssetConfig'
 import { getTestConfig } from '../fixtures/Config'
-import { nftParams } from '../fixtures/NftCreateData'
 import { MUMBAI_NODE_URI, getSigner } from '../fixtures/Ethers'
-import { expect } from 'chai'
+import { nftParams } from '../fixtures/NftCreateData'
 
 describe('Access Flow Integration', function () {
   let downloadAssetDid: string

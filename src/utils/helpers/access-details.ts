@@ -1,13 +1,13 @@
-import { OperationResult } from 'urql'
-import { AccessDetails } from '../../@types'
+import { LoggerInstance } from '@oceanprotocol/lib'
+import type { OperationResult } from 'urql'
+import type { AccessDetails } from '../../@types'
 import {
   fetchData,
   getAccessDetailsFromTokenPrice,
   getQueryContext
 } from '../subgraph'
-import { ITokenPriceQuery } from '../subgraph/TokenPriceQuery.gql.generated'
 import { tokenPriceQuery } from '../subgraph/TokenPriceQuery.gql'
-import { LoggerInstance } from '@oceanprotocol/lib'
+import type { ITokenPriceQuery } from '../subgraph/TokenPriceQuery.gql.generated'
 
 export async function getAccessDetails(
   subgraphUri: string,

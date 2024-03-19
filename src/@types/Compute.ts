@@ -1,16 +1,20 @@
-import { Asset, Config, ProviderFees } from '@oceanprotocol/lib'
-import { Signer } from 'ethers'
+import type { Asset, Config, ProviderFees } from '@oceanprotocol/lib'
+import type { Signer } from 'ethers'
 
 export interface ComputeAsset {
   did: string
   serviceId?: string
   userdata?: {
+    // TODO: add correct userdata types
+    // biome-ignore lint/suspicious/noExplicitAny: <explanation>
     [key: string]: any
   }
 }
 
 export interface ComputeAlgorithm extends ComputeAsset {
   algocustomdata?: {
+    // TODO: add correct userdata types
+    // biome-ignore lint/suspicious/noExplicitAny: <explanation>
     [key: string]: any
   }
 }

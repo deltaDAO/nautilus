@@ -28,8 +28,8 @@ export default class DocsPlugin extends Plugin {
     const earlyPreview = version.includes('beta')
       ? 'beta'
       : version.includes('alpha')
-      ? 'alpha'
-      : false
+        ? 'alpha'
+        : false
     if (earlyPreview) {
       this.isEarlyPreview = true
       // remove preview specific versioning

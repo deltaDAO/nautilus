@@ -1,5 +1,7 @@
-import assert from 'assert'
-import { Signer } from 'ethers'
+import assert from 'node:assert'
+import { Aquarius, type Config, type DDO } from '@oceanprotocol/lib'
+import type { Signer } from 'ethers'
+import { CredentialListTypes, LifecycleStates } from '../../src/@types'
 import {
   AssetBuilder,
   ConsumerParameterBuilder,
@@ -14,10 +16,8 @@ import {
   datasetService,
   getPricing
 } from '../fixtures/AssetConfig'
-import { MUMBAI_NODE_URI, getSigner } from '../fixtures/Ethers'
-import { Aquarius, Config, DDO } from '@oceanprotocol/lib'
 import { getTestConfig } from '../fixtures/Config'
-import { CredentialListTypes, LifecycleStates } from '../../src/@types'
+import { MUMBAI_NODE_URI, getSigner } from '../fixtures/Ethers'
 
 const nodeUri = MUMBAI_NODE_URI
 
@@ -136,7 +136,7 @@ describe('Edit Integration tests', function () {
     const asset = assetBuilder
       .setAuthor('Company Name')
       .setDescription(
-        `# Nautilus-Example Description \n\nThis asset has been published using the [nautilus-examples](https://github.com/deltaDAO/nautilus-examples) repository.`
+        '# Nautilus-Example Description \n\nThis asset has been published using the [nautilus-examples](https://github.com/deltaDAO/nautilus-examples) repository.'
       )
       .setLicense('Edited License')
       .setName('Nautilus edit Example: New name')

@@ -1,16 +1,16 @@
 import {
-  Asset,
-  ComputeAsset,
-  ComputeEnvironment,
-  ComputeOutput,
-  Config,
+  type Asset,
+  type ComputeAsset,
+  type ComputeEnvironment,
+  type ComputeOutput,
+  type Config,
   LoggerInstance,
-  ProviderComputeInitialize,
-  ProviderComputeInitializeResults,
+  type ProviderComputeInitialize,
+  type ProviderComputeInitializeResults,
   ProviderInstance
 } from '@oceanprotocol/lib'
-import { Signer } from 'ethers'
-import {
+import type { Signer } from 'ethers'
+import type {
   AssetWithAccessDetails,
   ComputeConfig,
   ComputeResultConfig,
@@ -64,9 +64,7 @@ export async function compute(computeConfig: ComputeConfig) {
   )
 
   const assetIdentifiers = [datasetConfig, algorithmConfig]
-  additionalDatasetsConfig?.forEach((dataset) => {
-    assetIdentifiers.push(dataset)
-  })
+  for (const dataset of additionalDatasetsConfig) assetIdentifiers.push(dataset)
 
   try {
     // 1. Get all assets and access details from DIDs
@@ -78,7 +76,9 @@ export async function compute(computeConfig: ComputeConfig) {
 
     const dataset = assets.find((asset) => asset.id === datasetDid)
     const algo = assets.find((asset) => asset.id === algorithmDid)
-    const additionalDatasets = additionalDatasetsConfig // TODO remove? never used
+
+    // TODO add functionality for additional datasets
+    const _additionalDatasets = additionalDatasetsConfig
       ? assets.filter((asset) =>
           additionalDatasetsConfig
             .map((dataset) => dataset.did)
@@ -132,7 +132,7 @@ export async function compute(computeConfig: ComputeConfig) {
       throw new Error('Error setting algorithm price and fees!')
 
     // TODO remove? never used. maybe missing feature to check if datatoken already in wallet?
-    const algoDatatokenBalance = await getDatatokenBalance(
+    const _algoDatatokenBalance = await getDatatokenBalance(
       signer,
       algo.services[0].datatokenAddress
     )
@@ -150,7 +150,7 @@ export async function compute(computeConfig: ComputeConfig) {
     if (!algorithmOrderTx) throw new Error('Failed to order algorithm.')
 
     // TODO remove? never used. maybe missing feature to check if datatoken already in wallet?
-    const datasetDatatokenBalance = await getDatatokenBalance(
+    const _datasetDatatokenBalance = await getDatatokenBalance(
       signer,
       algo.services[0].datatokenAddress
     )
@@ -298,7 +298,7 @@ export async function retrieveResult(computeResultConfig: ComputeResultConfig) {
     return
   }
 
-  LoggerInstance.debug(`[compute] Build result url...`)
+  LoggerInstance.debug('[compute] Build result url...')
   return await ProviderInstance.getComputeResultUrl(
     providerUri,
     signer,

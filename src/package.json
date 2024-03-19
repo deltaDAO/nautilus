@@ -34,9 +34,7 @@
     "documents": "./src/**/*.gql.ts",
     "generates": {
       "./src/@types/subgraph/api.ts": {
-        "plugins": [
-          "typescript"
-        ]
+        "plugins": ["typescript"]
       },
       "./src/": {
         "preset": "near-operation-file",
@@ -44,9 +42,7 @@
           "baseTypesPath": "@types/subgraph/api.ts",
           "extension": ".generated.ts"
         },
-        "plugins": [
-          "typescript-operations"
-        ],
+        "plugins": ["typescript-operations"],
         "config": {
           "omitOperationSuffix": true,
           "typesPrefix": "I"
