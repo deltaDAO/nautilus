@@ -38,7 +38,6 @@ export const sidebar = {
       text: 'API',
       collapsed: true,
       items: [
-        { text: 'Overview', link: '/docs/api/overview' },
         {
           text: 'Builders',
           collapsed: true,
