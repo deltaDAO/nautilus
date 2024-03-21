@@ -12,13 +12,27 @@ export const sidebar = {
     },
     {
       text: 'Guides',
-      items: [
-        { text: 'Migration Guide', link: '/docs/migration-guide' },
-        { text: 'TypeScript', link: '/docs/typescript' },
-        { text: 'Publishing', link: '/docs/guides/publish' },
-        { text: 'Downloads', link: '/docs/guides/download' },
-        { text: 'Compute to Data', link: '/docs/guides/compute' }
-      ]
+      items: [{ text: 'Custom configuration', link: '/docs/guides/config' }]
+    },
+    {
+      text: 'Publish',
+      collapsed: true,
+      items: [{ text: 'Overview', link: '/docs/guides/publish' }]
+    },
+    {
+      text: 'Edit',
+      collapsed: true,
+      items: [{ text: 'Overview', link: '/docs/guides/edit' }]
+    },
+    {
+      text: 'Compute',
+      collapsed: true,
+      items: [{ text: 'Overview', link: '/docs/guides/compute' }]
+    },
+    {
+      text: 'Download',
+      collapsed: true,
+      items: [{ text: 'Overview', link: '/docs/guides/download' }]
     },
     {
       text: 'API',

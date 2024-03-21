@@ -180,6 +180,7 @@ The compute job resulting from this start request can be used in future interact
 
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'
+import { ComputeJob } from '@oceanprotocol/lib'
 import { Wallet } from 'ethers'
 const signer = new Wallet('')
 const nautilus = await Nautilus.create(signer)
@@ -195,12 +196,9 @@ const algorithm = {
 const computeJob = await nautilus.compute({
   dataset,
   algorithm
-})
+}) as ComputeJob
 // ---cut---
-// make sure we have a single job reference
-const job = Array.isArray(computeJob) ? computeJob[0] : computeJob
-
-const { jobId } = job // [!code focus]
+const { jobId } = computeJob // [!code focus]
 ```
 
 ### Get a compute job status
@@ -238,7 +236,8 @@ const computeResultUrl = await nautilus.getComputeResult({
   jobId, // use your previously saved jobId
   providerUri // use the provider as described above
 })
-const result = await fetch(computeResultUrl)
+
+const data = computeResultUrl && await fetch(computeResultUrl)
 ```
 For a deep-dive into everything possible with the compute APIs, head over to the [Compute-to-Data documentation](/docs/guides/compute).
 
