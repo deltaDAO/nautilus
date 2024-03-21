@@ -76,7 +76,7 @@ const serviceBuilder = new ServiceBuilder({ // [!code focus]
     fileType: FileTypes.URL // [!code focus]
 }) // [!code focus]
 ```
-> **_NOTE:_** There are multiple supported [ServiceTypes](/docs/api/ServiceTypes) and [FileTypes](/docs/api/FileTypes)
+> **_NOTE:_** There are multiple supported [ServiceTypes](/docs/api/ServiceBuilder#servicetypes) and [FileTypes](/docs/api/ServiceBuilder#filetypes)
 
 Next, we declare the "file" we want to publish. This can follow multiple protocols, here we'll use a HTTPS GET request:
 ```ts twoslash
@@ -142,13 +142,12 @@ const asset = assetBuilder.addService(service).build() // [!code focus]
 const result = await nautilus.publish(asset) // [!code focus]
 ```
 
-If you want to learn more about the supported configuration during publish, you can head over to the [PublishConfig documentation](/docs/api/PublishConfig).
-For a more complete overview of the publishing process, please navigate to the dedicated [Publish documentation](/docs/guides/publishing).
+For a more complete overview of the publishing process, please navigate to the dedicated [Publish documentation](/docs/guides/publish).
 
 ## Editing
 {/* TODO */}
 
-For a more detailed overview of all configurations provided for the edit API, head over to the [Edit documentation](/docs/guides/editing).
+For a more detailed overview of all configurations provided for the edit API, head over to the [Edit documentation](/docs/guides/edit).
 
 ## Compute to Data
 
@@ -241,7 +240,7 @@ const computeResultUrl = await nautilus.getComputeResult({
 })
 const result = await fetch(computeResultUrl)
 ```
-For a deep-dive into everything possible with the compute APIs, head over to the [Compute-to-Data documentation](/docs/guides/compute-to-data).
+For a deep-dive into everything possible with the compute APIs, head over to the [Compute-to-Data documentation](/docs/guides/compute).
 
 ## Download
 

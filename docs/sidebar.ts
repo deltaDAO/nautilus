@@ -19,6 +19,25 @@ export const sidebar = {
         { text: 'Downloads', link: '/docs/guides/download' },
         { text: 'Compute to Data', link: '/docs/guides/compute' }
       ]
+    },
+    {
+      text: 'API',
+      collapsed: true,
+      items: [
+        { text: 'Overview', link: '/docs/api/overview' },
+        {
+          text: 'Builders',
+          collapsed: true,
+          items: [
+            { text: 'AssetBuilder', link: '/docs/api/AssetBuilder' },
+            { text: 'ServiceBuilder', link: '/docs/api/ServiceBuilder' },
+            {
+              text: 'ConsumerParameterBuilder',
+              link: '/docs/api/ConsumerParameterBuilder'
+            }
+          ]
+        }
+      ]
     }
   ]
 } as const satisfies Sidebar
