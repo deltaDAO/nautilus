@@ -7,13 +7,66 @@ export const sidebar = {
       items: [
         { text: 'Why Nautilus', link: '/docs/introduction' },
         { text: 'Getting Started', link: '/docs/getting-started' },
-        { text: 'The Nautilus Instance', link: '/docs/api/Nautilus' },
         { text: 'FAQ', link: '/docs/faq' }
       ]
     },
     {
-      text: 'Guides',
-      items: [{ text: 'Custom configuration', link: '/docs/guides/config' }]
+      text: 'The Nautilus Instance',
+      items: [
+        { text: 'Overview', link: '/docs/api/Nautilus' },
+        {
+          text: 'Static',
+          items: [
+            { text: 'create', link: '/docs/api/nautilus/create' },
+            { text: 'setLogLevel', link: '/docs/api/nautilus/setLogLevel' }
+          ]
+        },
+        {
+          text: 'Instanced',
+          items: [
+            { text: 'access', link: '/docs/api/nautilus/access' },
+            {
+              text: 'compute',
+              link: '/docs/api/nautilus/compute',
+              items: [
+                {
+                  text: 'getComputeStatus',
+                  link: '/docs/api/nautilus/getComputeStatus'
+                },
+                {
+                  text: 'getComputeResult',
+                  link: '/docs/api/nautilus/getComputeResult'
+                },
+                { text: 'stopCompute', link: '/docs/api/nautilus/stopCompute' }
+              ]
+            },
+            {
+              text: 'edit',
+              link: '/docs/api/nautilus/edit',
+              items: [
+                {
+                  text: 'setAssetLifecycleState',
+                  link: '/docs/api/nautilus/setAssetLifecycleState'
+                }
+              ]
+            },
+            { text: 'publish', link: '/docs/api/nautilus/publish' },
+            {
+              text: 'Helpers',
+              items: [
+                {
+                  text: 'getAquariusAsset',
+                  link: '/docs/api/nautilus/getAquariusAsset'
+                },
+                {
+                  text: 'getAquariusAssets',
+                  link: '/docs/api/nautilus/getAquariusAsset'
+                }
+              ]
+            }
+          ]
+        }
+      ]
     },
     {
       text: 'Publish',
@@ -48,6 +101,10 @@ export const sidebar = {
       text: 'Download',
       collapsed: true,
       items: [{ text: 'Overview', link: '/docs/guides/download' }]
+    },
+    {
+      text: 'Advanced',
+      items: [{ text: 'Custom configuration', link: '/docs/guides/config' }]
     }
   ]
 } as const satisfies Sidebar
