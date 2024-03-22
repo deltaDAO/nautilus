@@ -11,9 +11,43 @@ export const sidebar = {
       ]
     },
     {
-      text: 'The Nautilus Instance',
+      text: 'Download',
+      collapsed: true,
+      items: [{ text: 'Overview', link: '/docs/guides/download' }]
+    },
+    {
+      text: 'Publish',
+      collapsed: true,
       items: [
-        { text: 'Overview', link: '/docs/api/Nautilus' },
+        { text: 'Overview', link: '/docs/guides/publish' },
+        { text: 'Configuration', link: '/docs/api/PublishConfig' },
+        {
+          text: 'Builders',
+          items: [
+            { text: 'AssetBuilder', link: '/docs/api/AssetBuilder' },
+            { text: 'ServiceBuilder', link: '/docs/api/ServiceBuilder' },
+            {
+              text: 'ConsumerParameterBuilder',
+              link: '/docs/api/ConsumerParameterBuilder'
+            }
+          ]
+        }
+      ]
+    },
+    {
+      text: 'Edit',
+      collapsed: true,
+      items: [{ text: 'Overview', link: '/docs/guides/edit' }]
+    },
+    {
+      text: 'Compute',
+      collapsed: true,
+      items: [{ text: 'Overview', link: '/docs/guides/compute' }]
+    },
+    {
+      text: 'The Nautilus API',
+      collapsed: true,
+      items: [
         {
           text: 'Static',
           items: [
@@ -67,40 +101,6 @@ export const sidebar = {
           ]
         }
       ]
-    },
-    {
-      text: 'Publish',
-      collapsed: true,
-      items: [
-        { text: 'Overview', link: '/docs/guides/publish' },
-        { text: 'Configuration', link: '/docs/api/PublishConfig' },
-        {
-          text: 'Builders',
-          items: [
-            { text: 'AssetBuilder', link: '/docs/api/AssetBuilder' },
-            { text: 'ServiceBuilder', link: '/docs/api/ServiceBuilder' },
-            {
-              text: 'ConsumerParameterBuilder',
-              link: '/docs/api/ConsumerParameterBuilder'
-            }
-          ]
-        }
-      ]
-    },
-    {
-      text: 'Edit',
-      collapsed: true,
-      items: [{ text: 'Overview', link: '/docs/guides/edit' }]
-    },
-    {
-      text: 'Compute',
-      collapsed: true,
-      items: [{ text: 'Overview', link: '/docs/guides/compute' }]
-    },
-    {
-      text: 'Download',
-      collapsed: true,
-      items: [{ text: 'Overview', link: '/docs/guides/download' }]
     },
     {
       text: 'Advanced',
