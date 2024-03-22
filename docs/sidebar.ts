@@ -7,6 +7,7 @@ export const sidebar = {
       items: [
         { text: 'Why Nautilus', link: '/docs/introduction' },
         { text: 'Getting Started', link: '/docs/getting-started' },
+        { text: 'The Nautilus Instance', link: '/docs/api/Nautilus' },
         { text: 'FAQ', link: '/docs/faq' }
       ]
     },
@@ -17,7 +18,21 @@ export const sidebar = {
     {
       text: 'Publish',
       collapsed: true,
-      items: [{ text: 'Overview', link: '/docs/guides/publish' }]
+      items: [
+        { text: 'Overview', link: '/docs/guides/publish' },
+        { text: 'Configuration', link: '/docs/api/PublishConfig' },
+        {
+          text: 'Builders',
+          items: [
+            { text: 'AssetBuilder', link: '/docs/api/AssetBuilder' },
+            { text: 'ServiceBuilder', link: '/docs/api/ServiceBuilder' },
+            {
+              text: 'ConsumerParameterBuilder',
+              link: '/docs/api/ConsumerParameterBuilder'
+            }
+          ]
+        }
+      ]
     },
     {
       text: 'Edit',
@@ -33,24 +48,6 @@ export const sidebar = {
       text: 'Download',
       collapsed: true,
       items: [{ text: 'Overview', link: '/docs/guides/download' }]
-    },
-    {
-      text: 'API',
-      collapsed: true,
-      items: [
-        {
-          text: 'Builders',
-          collapsed: true,
-          items: [
-            { text: 'AssetBuilder', link: '/docs/api/AssetBuilder' },
-            { text: 'ServiceBuilder', link: '/docs/api/ServiceBuilder' },
-            {
-              text: 'ConsumerParameterBuilder',
-              link: '/docs/api/ConsumerParameterBuilder'
-            }
-          ]
-        }
-      ]
     }
   ]
 } as const satisfies Sidebar
