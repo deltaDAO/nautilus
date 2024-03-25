@@ -1,0 +1,28 @@
+# UserCustomParameters
+
+Interface thats used when handling publisher specific userdata.
+
+## Usage
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('1234'))
+// ---cut---
+await nautilus.access({
+    assetDid: 'did:op:1234...',
+    userdata:{ // [!code focus]
+        text: 'value', // [!code focus]
+        number: 123, // [!code focus]
+        option: 'selected', // [!code focus]
+        boolean: true // [!code focus]
+    } // [!code focus]
+})
+```
+
+## Interface
+
+```ts twoslash
+interface UserCustomParameters {
+    [key: string]: any
+}
+```

@@ -1,51 +1,93 @@
 # create
 
-Creates a new nautilus instance.
+Access a specific asset by its decentralized identifier.
 
 ## Usage
 
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'
 import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const accessUrl = await nautilus.access({ // [!code focus]
+    assetDid: 'did:op:1234abcd...' // [!code focus]
+}) // [!code focus]
 
-const nautilus = await Nautilus.create( // [!code focus]
-    new Wallet('0x1234') // [!code focus]
-) // [!code focus]
+// fetch the actual data
+const data = await fetch(accessUrl)
 ```
 
 ## Returns
 
-`Nautilus` {/*link to type in docs if possible*/}
+`string`
 
-The nautilus instance using the provided ethers signer.
+A one-time accessible url to download the raw data of the requested asset.
 
 ## Parameters
 
-### signer
-- Type: `Signer` ([ethers.js documentation](https://docs.ethers.org/v5/api/signer/)){/*link to type in docs if possible*/}
+### assetDid
+- Type: `string`
 
-The signer to use with this nautilus instance. This will be used to handle all required payments and transactions.
+The decentralized identifier of the asset to access.
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'
-// ---cut---
 import { Wallet } from 'ethers'
-
-const nautilus = Nautilus.create(
-    new Wallet('0x1234') // [!code focus]
-)
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const accessUrl = await nautilus.access({
+    assetDid: 'did:op:1234abcd...' // [!code focus]
+})
 ```
 
-### config (optional)
-- Type: `Partial<Config>` ([ocean.js Config class](https://github.com/oceanprotocol/ocean.js/blob/main/src/config/Config.ts)) {/*link to type in docs if possible*/}
+### serviceId (optional)
+- Type: `string`
 
-Optional custom configuration overwrites to use for the created nautilus instance.
+Optionally specify a service to access. Defaults to the first service of the asset's metadata.
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'
-// ---cut---
 import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const accessUrl = await nautilus.access({ 
+    assetDid: 'did:op:1234abcd...', 
+    serviceId: 'specific-service-id' // [!code focus]
+})
+```
 
-const nautilus = Nautilus.create(
-    new Wallet('0x1234'),
-    { providerUri: 'https://provider.dev.pontus-x.eu' } // [!code focus]
-)
+### fileIndex (optional)
+- Type: `number`
+
+Optionally specify a file of the service to access. Defaults to the first file of the service (`0`).
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const accessUrl = await nautilus.access({ 
+    assetDid: 'did:op:1234abcd...', 
+    serviceId: 'specific-service-id', 
+    fileIndex: 0 // [!code focus]
+})
+```
+
+### userdata (optional)
+- Type: [`UserCustomParameters`](/docs/api/UserCustomParameters)
+
+If the asset requires or allows for custom user parameters, these can be configured here.
+
+Learn more about how to use custom userdata with assets in our [Consumer Parameters Guide](/docs/guide/consumer-parameters).
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const accessUrl = await nautilus.access({ 
+    assetDid: 'did:op:1234abcd...', 
+    serviceId: 'specific-service-id', 
+    fileIndex: 0,
+    userdata: { // [!code focus]
+        parameter: 'value', // [!code focus]
+        number: 123, // [!code focus]
+    } // [!code focus]
+})
 ```
