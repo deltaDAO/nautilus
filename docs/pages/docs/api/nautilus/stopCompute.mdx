@@ -1,6 +1,6 @@
-# create
+# stopCompute
 
-Creates a new nautilus instance.
+Send a stop request for a given compute job hosted by a specific provider.
 
 ## Usage
 
@@ -8,44 +8,77 @@ Creates a new nautilus instance.
 import { Nautilus } from '@deltadao/nautilus'
 import { Wallet } from 'ethers'
 
-const nautilus = await Nautilus.create( // [!code focus]
-    new Wallet('0x1234') // [!code focus]
-) // [!code focus]
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+
+await nautilus.stopCompute({ // [!code focus]
+    did: 'did:op:1234abcd...', // [!code focus]
+    jobId: 'abcd1234', // [!code focus]
+    providerUri: 'https://provider.dev.pontus-x.eu' // [!code focus]
+}) // [!code focus]
 ```
 
 ## Returns
 
-`Nautilus` {/*link to type in docs if possible*/}
+[`ComputeJob | ComputeJob[]`](https://github.com/oceanprotocol/ocean.js/blob/main/src/%40types/Compute.ts#L34-L47) {/*link to type in docs if possible*/}
 
-The nautilus instance using the provided ethers signer.
+The compute job object containing information about the job status.
 
-## Parameters
+## Parameters 
 
-### signer
-- Type: `Signer` ([ethers.js documentation](https://docs.ethers.org/v5/api/signer/)){/*link to type in docs if possible*/}
+### config
+- Type: `ComputeStopConfig`
 
-The signer to use with this nautilus instance. This will be used to handle all required payments and transactions.
+The configuration object to request the stop of a compute job.
+
+#### Properties
+
+##### did
+- Type: `string`
+
+The decentralized identifier of the input asset of the compute job.
+
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'
-// ---cut---
 import { Wallet } from 'ethers'
-
-const nautilus = Nautilus.create(
-    new Wallet('0x1234') // [!code focus]
-)
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+await nautilus.stopCompute({ 
+    did: 'did:op:1234abcd...', // [!code focus] 
+    jobId: 'abcd1234', 
+    providerUri: 'https://provider.dev.pontus-x.eu' 
+}) 
 ```
 
-### config (optional)
-- Type: `Partial<Config>` ([ocean.js Config class](https://github.com/oceanprotocol/ocean.js/blob/main/src/config/Config.ts)) {/*link to type in docs if possible*/}
+##### jobId
+- Type: `string`
 
-Optional custom configuration overwrites to use for the created nautilus instance.
+The jobId of the compute job to send a  stop request for.
+
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'
-// ---cut---
 import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+await nautilus.stopCompute({ 
+    did: 'did:op:1234abcd...', 
+    jobId: 'abcd1234', // [!code focus] 
+    providerUri: 'https://provider.dev.pontus-x.eu' 
+}) 
+```
 
-const nautilus = Nautilus.create(
-    new Wallet('0x1234'),
-    { providerUri: 'https://provider.dev.pontus-x.eu' } // [!code focus]
-)
+##### providerUri
+- Type: `string`
+
+The uri of the provider that hosts the compute job to be stopped.
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+await nautilus.stopCompute({ 
+    did: 'did:op:1234abcd...', 
+    jobId: 'abcd1234', 
+    providerUri: 'https://provider.dev.pontus-x.eu' // [!code focus] 
+}) 
 ```

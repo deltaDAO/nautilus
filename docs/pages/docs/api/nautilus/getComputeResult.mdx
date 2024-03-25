@@ -1,51 +1,72 @@
-# create
+# getComputeResult
 
-Creates a new nautilus instance.
+Request a specific result file of a finished compute job.
 
 ## Usage
 
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'
 import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
 
-const nautilus = await Nautilus.create( // [!code focus]
-    new Wallet('0x1234') // [!code focus]
-) // [!code focus]
+const resultFileUri = await nautilus.getComputeResult({ // [!code focus]
+    jobId: 'abcd1234',  // [!code focus]
+    providerUri: 'https://provider.dev.pontus-x.eu' // [!code focus]
+})
+
+const file = await fetch(resultFileUri)
 ```
+
 
 ## Returns
 
-`Nautilus` {/*link to type in docs if possible*/}
+`string`
 
-The nautilus instance using the provided ethers signer.
+A one time accessible url to fetch the compute result file.
 
-## Parameters
+### Unfinished jobs
+The compute job has to have completed in order to access result files.
+If no results can be accessed an error will be logged and the return value is `undefined`.
 
-### signer
-- Type: `Signer` ([ethers.js documentation](https://docs.ethers.org/v5/api/signer/)){/*link to type in docs if possible*/}
-
-The signer to use with this nautilus instance. This will be used to handle all required payments and transactions.
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'
-// ---cut---
 import { Wallet } from 'ethers'
-
-const nautilus = Nautilus.create(
-    new Wallet('0x1234') // [!code focus]
-)
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+await nautilus.getComputeResult({ 
+    jobId: 'unfinished-job',  
+    providerUri: 'https://provider.dev.pontus-x.eu' 
+})
+// @error: [compute] Retrieve results: could not find results for the job.
 ```
 
-### config (optional)
-- Type: `Partial<Config>` ([ocean.js Config class](https://github.com/oceanprotocol/ocean.js/blob/main/src/config/Config.ts)) {/*link to type in docs if possible*/}
+To learn more about how to check the status of an ongoing compute job, read the [`getComputeStatus` documentation](/docs/api/nautilus/getComputeStatus).
 
-Optional custom configuration overwrites to use for the created nautilus instance.
+## Parameters 
+
+### config
+- Type: `ComputeResultConfig`
+
+The configuration object to request the compute result.
+This inherits the properties of the [`ComputeStatusConfig`](/docs/api/nautilus/getComputeStatus#config)
+
+Additionally the following properties are supported.
+
+#### Properties
+
+##### resultIndex (optional)
+- Type: `number`
+
+The index of the result file that should be accessed. Defaults to `0`.
+
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'
-// ---cut---
 import { Wallet } from 'ethers'
-
-const nautilus = Nautilus.create(
-    new Wallet('0x1234'),
-    { providerUri: 'https://provider.dev.pontus-x.eu' } // [!code focus]
-)
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+await nautilus.getComputeResult({
+    jobId: 'abcd1234', 
+    providerUri: 'https://provider.dev.pontus-x.eu',
+    resultIndex: 1 // [!code focus]
+})
 ```

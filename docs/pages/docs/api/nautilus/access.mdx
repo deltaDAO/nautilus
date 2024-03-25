@@ -25,7 +25,14 @@ A one-time accessible url to download the raw data of the requested asset.
 
 ## Parameters
 
-### assetDid
+### config
+- Type: `AccessConfig`
+
+The configuration object for the access request.
+
+#### Properties
+
+##### assetDid
 - Type: `string`
 
 The decentralized identifier of the asset to access.
@@ -39,7 +46,7 @@ const accessUrl = await nautilus.access({
 })
 ```
 
-### serviceId (optional)
+##### serviceId (optional)
 - Type: `string`
 
 Optionally specify a service to access. Defaults to the first service of the asset's metadata.
@@ -54,7 +61,7 @@ const accessUrl = await nautilus.access({
 })
 ```
 
-### fileIndex (optional)
+##### fileIndex (optional)
 - Type: `number`
 
 Optionally specify a file of the service to access. Defaults to the first file of the service (`0`).
@@ -65,12 +72,11 @@ const nautilus = await Nautilus.create(new Wallet('0x1234'))
 // ---cut---
 const accessUrl = await nautilus.access({ 
     assetDid: 'did:op:1234abcd...', 
-    serviceId: 'specific-service-id', 
     fileIndex: 0 // [!code focus]
 })
 ```
 
-### userdata (optional)
+##### userdata (optional)
 - Type: [`UserCustomParameters`](/docs/api/UserCustomParameters)
 
 If the asset requires or allows for custom user parameters, these can be configured here.
@@ -83,8 +89,6 @@ const nautilus = await Nautilus.create(new Wallet('0x1234'))
 // ---cut---
 const accessUrl = await nautilus.access({ 
     assetDid: 'did:op:1234abcd...', 
-    serviceId: 'specific-service-id', 
-    fileIndex: 0,
     userdata: { // [!code focus]
         parameter: 'value', // [!code focus]
         number: 123, // [!code focus]
