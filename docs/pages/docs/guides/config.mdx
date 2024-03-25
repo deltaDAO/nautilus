@@ -1,2 +1,36 @@
 # Custom Configuration
-{/* TODO: create */}
+
+If want to use a custom configuration of your nautilus instance, you can set an additional `config` parameter in the [`Nautilus.create()`](/docs/api/Nautilus/create) call. 
+For the most common use-cases we provide examples below, but if you need a full picture on what configurations are available we recommend the [Ocean Library Docs](https://docs.oceanprotocol.com/building-with-ocean/using-ocean-libraries/configuration#create-a-configuration-file).
+
+The custom configuration provided will overwrite the default network config that is accessible in the [ocean.js repository](https://github.com/oceanprotocol/ocean.js/blob/be52ec26c2bc5a542795bfa2b028fcf2318005de/src/config/ConfigHelper.ts#L26).
+
+## Custom Metadata Cache
+
+```ts twoslash
+import type { Config } from '@oceanprotocol/lib'
+// ---cut---
+const customConfig: Partial<Config> = {
+  metadataCacheUri: 'https://aquarius.dev.pontus-x.eu'
+}
+```
+
+## Custom Provider
+
+```ts twoslash
+import type { Config } from '@oceanprotocol/lib'
+// ---cut---
+const customConfig: Partial<Config> = {
+  providerUri: 'https://provider.dev.pontus-x.eu'
+}
+```
+
+## Custom RPC Endpoint
+
+```ts twoslash
+import type { Config } from '@oceanprotocol/lib'
+// ---cut---
+const customConfig: Partial<Config> = {
+  nodeUri: 'https://rpc.dev.pontus-x.eu'
+}
+```
