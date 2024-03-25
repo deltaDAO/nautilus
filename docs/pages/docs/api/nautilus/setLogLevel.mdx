@@ -1,51 +1,32 @@
 # create
 
-Creates a new nautilus instance.
+Set the level for logs of all nautilus instances.
 
 ## Usage
 
 ```ts twoslash
-import { Nautilus } from '@deltadao/nautilus'
-import { Wallet } from 'ethers'
+import { LogLevel, Nautilus } from '@deltadao/nautilus'
 
-const nautilus = await Nautilus.create( // [!code focus]
-    new Wallet('0x1234') // [!code focus]
-) // [!code focus]
+const nautilus = await Nautilus.setLogLevel(LogLevel.Verbose) // [!code focus]
 ```
 
 ## Returns
 
-`Nautilus` {/*link to type in docs if possible*/}
-
-The nautilus instance using the provided ethers signer.
+`void` {/*link to type in docs if possible*/}
 
 ## Parameters
 
-### signer
-- Type: `Signer` ([ethers.js documentation](https://docs.ethers.org/v5/api/signer/)){/*link to type in docs if possible*/}
+### level
+- Type: `LogLevel`
 
-The signer to use with this nautilus instance. This will be used to handle all required payments and transactions.
-```ts twoslash
-import { Nautilus } from '@deltadao/nautilus'
-// ---cut---
-import { Wallet } from 'ethers'
+The log level to set the internal `LoggerInstance` to.
 
-const nautilus = Nautilus.create(
-    new Wallet('0x1234') // [!code focus]
-)
-```
+Possible values:
 
-### config (optional)
-- Type: `Partial<Config>` ([ocean.js Config class](https://github.com/oceanprotocol/ocean.js/blob/main/src/config/Config.ts)) {/*link to type in docs if possible*/}
-
-Optional custom configuration overwrites to use for the created nautilus instance.
-```ts twoslash
-import { Nautilus } from '@deltadao/nautilus'
-// ---cut---
-import { Wallet } from 'ethers'
-
-const nautilus = Nautilus.create(
-    new Wallet('0x1234'),
-    { providerUri: 'https://provider.dev.pontus-x.eu' } // [!code focus]
-)
-```
+|Level|Description|
+|-----|-----------|
+|None| |
+|Eror| |
+|Warn| |
+|Log| |
+|Verbose| |
