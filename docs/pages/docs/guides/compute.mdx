@@ -5,7 +5,7 @@ This includes all potentially necessary orders for required datatokens as well a
 
 ## Starting a new job
 
-Starting a new compute job can be very quick to achieve. The most basic configuration needs only the identifiers of both the dataset and algorithm. You can use a [`ComputeConfig`](/docs/api/ComputeConfig) to configure this call.
+Starting a new compute job can be very quick to achieve. The most basic configuration needs only the identifiers of both the dataset and algorithm.
 
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'
@@ -113,7 +113,7 @@ const data = computeResultUrl && await fetch(computeResultUrl)
 ## Deep Dive
 
 For a detailed look into everything possible with the compute APIs, follow the links below:
-- [`ComputeConfig`](/docs/api/ComputeConfig) - A look at how to configure compute calls
-- [`ComputeStatusConfig`](/docs/api/ComputeStatusConfig) - Explainers for compute status configurations
-- [`ComputeResultConfig`](/docs/api/ComputeResultConfig) - How to request compute results
+- [`nautilus.compute()`](/docs/api/nautilus/compute) - Full API documentation of the `compute()` function
+- [`nautilus.getComputeStatus()`](/docs/api/nautilus/getComputeStatus) - Full API documentation of the `getComputeStatus()` function
+- [`nautilus.getComputeResult()`](/docs/api/nautilus/getComputeResult) - Full API documentation of the `getComputeResult()` function
 - [Compute Examples](https://github.com/deltaDAO/nautilus-examples/blob/main/compute.ts) - Code examples for compute flows using nautilus
