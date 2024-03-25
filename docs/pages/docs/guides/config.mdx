@@ -1,36 +1,68 @@
 # Custom Configuration
 
 If want to use a custom configuration of your nautilus instance, you can set an additional `config` parameter in the [`Nautilus.create()`](/docs/api/nautilus/create) call. 
-For the most common use-cases we provide examples below, but if you need a full picture on what configurations are available we recommend the [Ocean Library Docs](https://docs.oceanprotocol.com/building-with-ocean/using-ocean-libraries/configuration#create-a-configuration-file).
 
 The custom configuration provided will overwrite the default network config that is accessible in the [ocean.js repository](https://github.com/oceanprotocol/ocean.js/blob/be52ec26c2bc5a542795bfa2b028fcf2318005de/src/config/ConfigHelper.ts#L26).
 
-## Custom Metadata Cache
+## Example
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+
+const nautilus = await Nautilus.create(
+  new Wallet('0x1234'), 
+  { // [!code focus]
+    nodeUri: 'https://rpc.dev.pontus-x.eu', // [!code focus]
+    metadataCacheUri: 'https://aquarius.dev.pontus-x.eu' // [!code focus]
+  } // [!code focus]
+) 
+```
+
+For the most common use-cases we provide examples below, but if you need a full picture on what configurations are available we recommend the [Ocean Library Docs](https://docs.oceanprotocol.com/building-with-ocean/using-ocean-libraries/configuration#create-a-configuration-file).
+
+### Custom Metadata Cache
 
 ```ts twoslash
 import type { Config } from '@oceanprotocol/lib'
 // ---cut---
 const customConfig: Partial<Config> = {
-  metadataCacheUri: 'https://aquarius.dev.pontus-x.eu'
+  metadataCacheUri: 'https://aquarius.dev.pontus-x.eu' // [!code focus]
 }
 ```
 
-## Custom Provider
+### Custom Provider
 
 ```ts twoslash
 import type { Config } from '@oceanprotocol/lib'
 // ---cut---
 const customConfig: Partial<Config> = {
-  providerUri: 'https://provider.dev.pontus-x.eu'
+  providerUri: 'https://provider.dev.pontus-x.eu' // [!code focus]
 }
 ```
 
-## Custom RPC Endpoint
+### Custom RPC Endpoint
 
 ```ts twoslash
 import type { Config } from '@oceanprotocol/lib'
 // ---cut---
 const customConfig: Partial<Config> = {
-  nodeUri: 'https://rpc.dev.pontus-x.eu'
+  nodeUri: 'https://rpc.dev.pontus-x.eu' // [!code focus]
+}
+```
+
+### Custom Network
+
+If your network is not yet supported by the official ocean.js repository, you can still interact with it by providing all necessary configurations.
+{/* TODO: add complete example */}
+
+```ts twoslash
+import type { Config } from '@oceanprotocol/lib'
+// ---cut---
+// @errors: 2740
+const customConfig: Config = {
+  chainId: 123456,
+  network: 'somechain-testnet',
+  nodeUri: 'https://rpc.test.somechain.dev'
 }
 ```
