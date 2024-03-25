@@ -3,7 +3,10 @@
 Interface thats used when handling publisher specific userdata.
 
 ## Usage
-```ts twoslash
+
+:::code-group
+
+```ts twoslash [access]
 import { Nautilus } from '@deltadao/nautilus'
 import { Wallet } from 'ethers'
 const nautilus = await Nautilus.create(new Wallet('1234'))
@@ -19,10 +22,92 @@ await nautilus.access({
 })
 ```
 
-## Interface
+```ts twoslash [compute]
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('1234'))
+// ---cut---
+await nautilus.compute({
+    dataset: {
+        did: 'did:op:1234...',
+        userdata:{ // [!code focus]
+            text: 'value' // [!code focus]
+        } // [!code focus]
+    },
+    algorithm: {
+        did: 'did:op:abcd...',
+        userdata: { // [!code focus]
+            number: 123 // [!code focus]
+        }, // [!code focus]
+        algocustomdata: { // [!code focus]
+            boolean: true, // [!code focus]
+            select: 'option' // [!code focus]
+        } // [!code focus]
+    }
+    
+})
+```
+  :::
+
+## Properties
+
+The interface is defined as follows:
 
 ```ts twoslash
 interface UserCustomParameters {
     [key: string]: any
 }
 ```
+
+This means any data that is needed for the requested asset to work is supported.
+The keys will be defined by the publisher of the respective asset and can be found in the metadata.
+
+If you want to learn more about how you can specify these custom parameters for your assets, you can find more information on the [`ConsumerParameterBuilder` documentation](/docs/pi/ConsumerParameterBuilder).
+
+However, there are a few most common scenarios (e.g. supported by marketplace and portal frontends).
+
+### Text Parameter
+- Type: `string`
+
+```ts twoslash [compute]
+import type { UserCustomParameters } from '@oceanprotocol/lib'
+// ---cut---
+const userdata = {
+    textParameter: 'value' // [!code focus]
+} satisfies UserCustomParameters
+```
+
+
+### Number Parameter
+- Type: `number`
+
+```ts twoslash [compute]
+import type { UserCustomParameters } from '@oceanprotocol/lib'
+// ---cut---
+const userdata = {
+    numberParameter: 1234 // [!code focus]
+} satisfies UserCustomParameters
+```
+
+### Boolean Parameter
+- Type: `boolean`
+
+```ts twoslash [compute]
+import type { UserCustomParameters } from '@oceanprotocol/lib'
+// ---cut---
+const userdata = {
+    booleanParameter: false // [!code focus]
+} satisfies UserCustomParameters
+```
+
+### Select Parameter
+- Type: `string`
+
+```ts twoslash [compute]
+import type { UserCustomParameters } from '@oceanprotocol/lib'
+// ---cut---
+const userdata = {
+    selectParameter: 'option' // [!code focus]
+} satisfies UserCustomParameters
+```
+In the select case, you have to pass over one of the options defined in the metadata of the requested asset.

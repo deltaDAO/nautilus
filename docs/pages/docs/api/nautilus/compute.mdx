@@ -1,6 +1,6 @@
-# create
+# compute
 
-Creates a new nautilus instance.
+Triggers a new [Compute Job](/docs/guides/compute) on a given dataset using a specified algorithm.
 
 ## Usage
 
@@ -8,44 +8,92 @@ Creates a new nautilus instance.
 import { Nautilus } from '@deltadao/nautilus'
 import { Wallet } from 'ethers'
 
-const nautilus = await Nautilus.create( // [!code focus]
-    new Wallet('0x1234') // [!code focus]
-) // [!code focus]
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+
+await nautilus.compute({ // [!code focus]
+    dataset: { // [!code focus]
+        did: 'did:op:dataset...' // [!code focus]
+    }, // [!code focus]
+    algorithm: { // [!code focus]
+        did: 'did:op:algorithm...' // [!code focus]
+    } // [!code focus]
+}) // [!code focus]
 ```
 
 ## Returns
 
-`Nautilus` {/*link to type in docs if possible*/}
+[`ComputeJob | ComputeJob[]`](https://github.com/oceanprotocol/ocean.js/blob/main/src/%40types/Compute.ts#L34-L47) {/*link to type in docs if possible*/}
 
-The nautilus instance using the provided ethers signer.
+The compute job object that was created when starting the new job.
 
-## Parameters
+## Parameters 
 
-### signer
-- Type: `Signer` ([ethers.js documentation](https://docs.ethers.org/v5/api/signer/)){/*link to type in docs if possible*/}
+### config
+- Type: `ComputeConfig`
 
-The signer to use with this nautilus instance. This will be used to handle all required payments and transactions.
+The configuration object for the compute job to start.
+
+#### Properties
+
+##### dataset
+- Type: [`ComputeAsset`](/docs/api/ComputeAsset)
+
+The dataset to compute on.
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'
-// ---cut---
 import { Wallet } from 'ethers'
-
-const nautilus = Nautilus.create(
-    new Wallet('0x1234') // [!code focus]
-)
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+await nautilus.compute({ 
+    dataset: { // [!code focus]
+        did: 'did:op:dataset...' // [!code focus]
+    }, // [!code focus]
+    algorithm: { 
+        did: 'did:op:algorithm...' 
+    } 
+})
 ```
 
-### config (optional)
-- Type: `Partial<Config>` ([ocean.js Config class](https://github.com/oceanprotocol/ocean.js/blob/main/src/config/Config.ts)) {/*link to type in docs if possible*/}
+##### algorithm
+- Type: [`ComputeAlgorithm`](/docs/api/ComputeAlgorithm)
 
-Optional custom configuration overwrites to use for the created nautilus instance.
+The algorithm to compute with.
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'
-// ---cut---
 import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+await nautilus.compute({ 
+    dataset: { 
+        did: 'did:op:dataset...' 
+    }, 
+    algorithm: { // [!code focus]
+        did: 'did:op:algorithm...' // [!code focus]
+    } // [!code focus]
+})
+```
 
-const nautilus = Nautilus.create(
-    new Wallet('0x1234'),
-    { providerUri: 'https://provider.dev.pontus-x.eu' } // [!code focus]
-)
+##### additionalDatasets (optional)
+- Type: [`ComputeAsset[]`](/docs/api/ComputeAsset)
+
+A list of additional datasets to use for computation.
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+await nautilus.compute({ 
+    dataset: {
+        did: 'did:op:dataset...'
+    },
+    algorithm: { 
+        did: 'did:op:algorithm...' 
+    },
+    additionalDatasets: [ // [!code focus]
+        { // [!code focus]
+            did: 'did:op:dataset...' // [!code focus]
+        } // [!code focus]
+    ] // [!code focus]
+})
 ```

@@ -1,0 +1,78 @@
+# ComputeAsset
+
+Used to describe datasets when initializing new compute jobs via [`nautilus.compute()`](/docs/api/nautilus/compute)
+
+## Usage
+This type is used for either the `dataset` or the `additionalDatasets` properties when starting compute jobs.
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+await nautilus.compute({
+    dataset: { // [!code focus]
+        did: 'did:op:1234abcd...', // [!code focus]
+        userdata: { // [!code focus]
+            parameter: 'value' // [!code focus] 
+        }, // [!code focus]
+    }, // [!code focus]
+    algorithm: {
+        did: 'did:op:5678wxyz...'
+    },
+    additionalDatasets: [
+        { // [!code focus]
+            did: 'did:op:1234abcd...', // [!code focus]
+            serviceId: 'custom-service-id', // [!code focus]
+        } // [!code focus]
+    ]
+})
+```
+
+## Properties
+
+### did
+- Type: `string`
+
+The decentralized identifier of the asset to compute on.
+```ts twoslash
+import { ComputeAsset } from '@deltadao/nautilus'
+// ---cut---
+const dataset = {
+    did: 'did:op:1234abcd...' // [!code focus]
+} satisfies ComputeAsset
+```
+
+### serviceId (optional)
+- Type: `string`
+
+Optionally specify a service to use for computation. Defaults to the first compute service of the asset's metadata.
+```ts twoslash
+import { ComputeAsset } from '@deltadao/nautilus'
+// ---cut---
+const dataset = {
+    did: 'did:op:1234abcd...', 
+    serviceId: 'specific-service-id', // [!code focus]
+} satisfies ComputeAsset
+```
+
+### userdata (optional)
+- Type: [`UserCustomParameters`](/docs/api/UserCustomParameters)
+
+If the asset requires or allows for custom user parameter input, this can be configured here.
+
+Learn more about how to use custom userdata with your assets in our [Consumer Parameters Guide](/docs/guide/consumer-parameters).
+```ts twoslash
+import { ComputeAsset } from '@deltadao/nautilus'
+// ---cut---
+const dataset = {
+    did: 'did:op:1234abcd...', 
+    serviceId: 'specific-service-id',
+    userdata: { // [!code focus]
+        parameter: 'value', // [!code focus]
+        number: 123, // [!code focus]
+        boolean: true, // [!code focus]
+        select: 'option', // [!code focus]
+    } // [!code focus]
+} satisfies ComputeAsset
+```
