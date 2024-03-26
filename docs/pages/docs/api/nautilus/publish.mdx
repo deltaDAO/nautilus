@@ -1,51 +1,61 @@
-# create
+# publish
 
-Creates a new nautilus instance.
+Publishes a new asset as defined by customizeable metadata.
+
+If you want to learn more about how to build your metadata using nautilus' builder classes, the [`AssetBuilder` documentation](/docs/api/AssetBuilder) is a good place to start.
 
 ## Usage
 
-```ts twoslash
+:::code-group
+```ts twoslash [publish.ts]
+// @filename: asset.ts
+import { AssetBuilder, ServiceBuilder } from '@deltadao/nautilus'
+export const asset = new AssetBuilder().build()
+
+// @filename: publish.ts
+// ---cut---
 import { Nautilus } from '@deltadao/nautilus'
 import { Wallet } from 'ethers'
+import { asset } from './asset'
 
-const nautilus = await Nautilus.create( // [!code focus]
-    new Wallet('0x1234') // [!code focus]
-) // [!code focus]
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+
+await nautilus.publish(asset) // [!code focus]
 ```
+
+```ts twoslash [asset.ts]
+import { AssetBuilder, ServiceBuilder, ServiceTypes, FileTypes } from '@deltadao/nautilus'
+
+const service = new ServiceBuilder({ serviceType: ServiceTypes.ACCESS, fileType: FileTypes.URL })
+    .addFile({
+        type: 'url',
+        method: 'GET',
+        url: 'https://some.url.to/my-file'
+    })
+    .build()
+
+const builder = new AssetBuilder()
+    builder
+    .setType('dataset')
+    .setName('My Dataset')
+    .setDescription('A unique dataset description')
+    .setLicense('MIT')
+    .setAuthor('My Company')
+    .addService(service)
+
+export const asset = builder.build() // [!code focus]
+```
+:::
 
 ## Returns
 
-`Nautilus` {/*link to type in docs if possible*/}
+[`PublishResponse`](/docs/api/PublishResponse) {/*link to type in docs if possible*/}
 
-The nautilus instance using the provided ethers signer.
+An object containing all relevant information that was created during the publish process.
 
-## Parameters
+## Parameters 
 
-### signer
-- Type: `Signer` ([ethers.js documentation](https://docs.ethers.org/v5/api/signer/)){/*link to type in docs if possible*/}
+### asset
+- Type: [`NautilusAsset`](/docs/api/NautilusAsset)
 
-The signer to use with this nautilus instance. This will be used to handle all required payments and transactions.
-```ts twoslash
-import { Nautilus } from '@deltadao/nautilus'
-// ---cut---
-import { Wallet } from 'ethers'
-
-const nautilus = Nautilus.create(
-    new Wallet('0x1234') // [!code focus]
-)
-```
-
-### config (optional)
-- Type: `Partial<Config>` ([ocean.js Config class](https://github.com/oceanprotocol/ocean.js/blob/main/src/config/Config.ts)) {/*link to type in docs if possible*/}
-
-Optional custom configuration overwrites to use for the created nautilus instance.
-```ts twoslash
-import { Nautilus } from '@deltadao/nautilus'
-// ---cut---
-import { Wallet } from 'ethers'
-
-const nautilus = Nautilus.create(
-    new Wallet('0x1234'),
-    { providerUri: 'https://provider.dev.pontus-x.eu' } // [!code focus]
-)
-```
+The asset that should be published.
