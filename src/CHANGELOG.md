@@ -1,5 +1,11 @@
 # @deltadao/nautilus
 
+## 1.0.0-next.4
+
+### Patch Changes
+
+- [#106](https://github.com/deltaDAO/nautilus/pull/106) [`399cd55`](https://github.com/deltaDAO/nautilus/commit/399cd55ead131534f0165ef01f698553cb26290d) Thanks [@moritzkirstein](https://github.com/moritzkirstein)! - bump ocean.js
+
 ## 1.0.0-next.3
 
 ### Patch Changes
