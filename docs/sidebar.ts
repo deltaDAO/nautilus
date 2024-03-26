@@ -103,6 +103,58 @@ export const sidebar = {
       ]
     },
     {
+      text: 'Builder APIs',
+      collapsed: true,
+      items: [
+        {
+          text: 'Global',
+          items: [
+            { text: 'build', link: '/docs/api/assetbuilder/build' },
+            { text: 'reset', link: '/docs/api/assetbuilder/reset' }
+          ]
+        },
+        {
+          text: 'AssetBuilder',
+          items: [
+            {
+              text: 'addAdditionalInformation',
+              link: '/docs/api/assetbuilder/addAdditionalInformation'
+            },
+            {
+              text: 'addCategories',
+              link: '/docs/api/assetbuilder/addCategories'
+            },
+            { text: 'addLinks', link: '/docs/api/assetbuilder/addLinks' },
+            { text: 'addService', link: '/docs/api/assetbuilder/addService' },
+            {
+              text: 'setAlgorithm',
+              link: '/docs/api/assetbuilder/setAlgorithm'
+            },
+            { text: 'setAuthor', link: '/docs/api/assetbuilder/setAuthor' },
+            // {
+            //   text: 'setContentLanguage',
+            //   link: '/docs/api/assetbuilder/setContentLanguage'
+            // },
+            // {
+            //   text: 'setCopyrightHolder',
+            //   link: '/docs/api/assetbuilder/setCopyrightHolder'
+            // },
+            {
+              text: 'setDescription',
+              link: '/docs/api/assetbuilder/setDescription'
+            },
+            { text: 'setLicense', link: '/docs/api/assetbuilder/setLicense' },
+            { text: 'setName', link: '/docs/api/assetbuilder/setName' },
+            { text: 'setType', link: '/docs/api/assetbuilder/setType' }
+          ]
+        },
+        {
+          text: 'ServiceBuilder',
+          items: []
+        }
+      ]
+    },
+    {
       text: 'Advanced',
       items: [{ text: 'Custom configuration', link: '/docs/guides/config' }]
     }

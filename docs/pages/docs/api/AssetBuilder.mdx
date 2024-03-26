@@ -1,2 +1,30 @@
 # AssetBuilder
-{/* TODO: create api reference */}
+
+```ts twoslash
+export interface IAssetBuilder extends IBuilder<NautilusAsset> {
+  setType: (type: Metadata['type']) => IAssetBuilder
+  setName: (name: Metadata['name']) => IAssetBuilder
+  setDescription: (description: Metadata['description']) => IAssetBuilder
+  setLicense: (license: Metadata['license']) => IAssetBuilder
+  setAuthor: (author: Metadata['author']) => IAssetBuilder
+  addService: (
+    service: NautilusService<ServiceTypes, FileTypes>
+  ) => IAssetBuilder
+  setNftData: (nftCreateData: NftCreateDataWithoutOwner) => IAssetBuilder
+  setAlgorithm: (algorithm: Metadata['algorithm']) => IAssetBuilder
+  setOwner: (owner: string) => IAssetBuilder
+  addAdditionalInformation: (additionalInformation: {
+    // biome-ignore lint/suspicious/noExplicitAny: can be any user info
+    [key: string]: any
+  }) => IAssetBuilder
+  setCopyrightHolder: (copyrightHolder: string) => IAssetBuilder
+  addTags: (tags: string[]) => IAssetBuilder
+  addLinks: (links: string[]) => IAssetBuilder
+  setContentLanguage: (language: string) => IAssetBuilder
+  addCategories: (categories: string[]) => IAssetBuilder
+  addCredentialAddresses: (
+    list: CredentialListTypes,
+    addresses: string[]
+  ) => IAssetBuilder
+}
+```
