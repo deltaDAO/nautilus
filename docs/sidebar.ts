@@ -6,8 +6,8 @@ export const sidebar = {
       text: 'Introduction',
       items: [
         { text: 'Why Nautilus', link: '/docs/introduction' },
-        { text: 'Getting Started', link: '/docs/getting-started' },
-        { text: 'FAQ', link: '/docs/faq' }
+        { text: 'Getting Started', link: '/docs/getting-started' }
+        // { text: 'FAQ', link: '/docs/faq' }
       ]
     },
     {
@@ -131,7 +131,7 @@ export const sidebar = {
         },
         {
           text: 'AssetBuilder',
-          link: 'docs/api/AssetBuilder',
+          link: '/docs/api/AssetBuilder',
           items: [
             {
               text: 'addAdditionalInformation',

@@ -59,10 +59,18 @@ If your network is not yet supported by the official ocean.js repository, you ca
 ```ts twoslash
 import type { Config } from '@oceanprotocol/lib'
 // ---cut---
-// @errors: 2740
-const customConfig: Config = {
-  chainId: 123456,
-  network: 'somechain-testnet',
-  nodeUri: 'https://rpc.test.somechain.dev'
-}
+const customConfig = {
+  chainId: 32456,
+  network: 'pontusx',
+  metadataCacheUri: 'https://aquarius.dev.pontus-x.eu',
+  nodeUri: 'https://rpc.dev.pontus-x.eu',
+  providerUri: 'https://provider.dev.pontus-x.eu',
+  subgraphUri: 'https://subgraph.dev.pontus-x.eu',
+  oceanTokenAddress: '0xdF171F74a8d3f4e2A789A566Dce9Fa4945196112',
+  oceanTokenSymbol: 'OCEAN',
+  fixedRateExchangeAddress: '0x8372715D834d286c9aECE1AcD51Da5755B32D505',
+  dispenserAddress: '0x5461b629E01f72E0A468931A36e039Eea394f9eA',
+  nftFactoryAddress: '0xFdC4a5DEaCDfc6D82F66e894539461a269900E13',
+  providerAddress: '0x68C24FA5b2319C81b34f248d1f928601D2E5246B'
+} satisfies Partial<Config>
 ```

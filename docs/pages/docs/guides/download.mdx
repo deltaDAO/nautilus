@@ -5,7 +5,7 @@ Downloading data is one of the most straightforward use-cases in a data economy.
 ## Access
 
 To access assets or more specifically their respective services, we can again make use of a dedicated function provided by the nautilus interface.
-In the most basic version, nothing else than the did of the asset to be accessed is needed. You can configure the call using the [`AccessConfig`](/docs/api/AccessConfig).
+In the most basic version, nothing else than the did of the asset to be accessed is needed. You can find more detailed information at the [`nautilus.access()`](/docs/api/nautilus/access) docs.
 
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'
@@ -43,5 +43,5 @@ const data = await fetch(accessUrl) // [!code focus]
 
 ## Deep Dive
 You can find an extended overview of the access API, by heading over to the following links:
-- [`AccessConfig`](/docs/api/AccessConfig) - How to configure your access calls
-- [Download Examples](https://github.com/deltaDAO/nautilus-examples/blob/main/download.ts) - Code examples for access flows utilizing nautilus
+- [`nautilus.access()`](/docs/api/nautilus/access) - API documentation of the access function
+- [Download Examples](https://github.com/deltaDAO/nautilus-examples/blob/main/access.ts) - Code examples for access flows utilizing nautilus
