@@ -12,14 +12,15 @@ The `AssetBuilder` takes the `aquariusAsset` as parameter to prepare the editing
 ```ts twoslash
 
 import { Wallet, providers } from 'ethers'
-import { Nautilus } from '@deltadao/nautilus'
-import { AssetBuilder } from '@deltadao/nautilus' // [!code focus]
+import { AssetBuilder, Nautilus } from '@deltadao/nautilus'
 
 const provider = new providers.JsonRpcProvider('https://rpc.dev.pontus-x.eu')
 const signer = new Wallet('0x...', provider)
 const nautilus = await Nautilus.create(signer)
 
-const aquariusAsset = await nautilus.getAquariusAsset('did:op:926098d069b017dcf3736370f3c3d77e6046ca6622af111229accf5f9c83e308') // [!code focus]
+const aquariusAsset = await nautilus.getAquariusAsset( // [!code focus]
+    'did:op:926098d069b017dcf3736370f3c3d77e6046ca6622af111229accf5f9c83e308' // [!code focus]
+) // [!code focus]
 
 const assetBuilder = new AssetBuilder(aquariusAsset) // [!code focus]
 ```
@@ -31,15 +32,11 @@ When updating an existing asset you only have to set fields you want to change (
 import { Wallet, providers } from 'ethers'
 import { Nautilus } from '@deltadao/nautilus'
 import { AssetBuilder } from '@deltadao/nautilus'
-
 const provider = new providers.JsonRpcProvider('https://rpc.dev.pontus-x.eu')
 const signer = new Wallet('0x...', provider)
 const nautilus = await Nautilus.create(signer)
-
 const aquariusAsset = await nautilus.getAquariusAsset('did:op:926098d069b017dcf3736370f3c3d77e6046ca6622af111229accf5f9c83e308')
-
 const assetBuilder = new AssetBuilder(aquariusAsset)
-
 // ---cut---
 const asset = assetBuilder
       .setName('Nautilus edit Example: New name')
@@ -47,15 +44,6 @@ const asset = assetBuilder
       .setDescription(
         '# Asset Description - Markdown supported'
       )
-      .setLicense('MIT')
-      .setCopyrightHolder('TheHolder')
-      .addLinks(['https://docs.oceanprotocol.com/'])
-      .setContentLanguage('EN')
-      .addTags(['edit', 'test'])
-      .addCategories(['test'])
-      .addAdditionalInformation({
-        yourKey: 'yourValue',
-      })
       .build()
 ```
 
@@ -95,6 +83,8 @@ const asset = assetBuilder
 const result = await nautilus.edit(asset)
 ```
 
+For a detailed look at the builder class, please refer to the [`AssetBuilder` documentation](/docs/api/AssetBuilder).
+
 ## Editing asset access control (credentials)
 Editing access control settings ins possible via editing the allow and deny lists. The process is similar to updating any other metadata.
 
@@ -122,51 +112,10 @@ const asset = assetBuilder  // [!code focus]
 
 const result = await nautilus.edit(asset)
 ```
-
-**Example: add address to deny list**
-```ts 
-const asset = assetBuilder
-    .addCredentialAddresses(CredentialListTypes.DENY, [ 
-    '0x0000000000000000000000000000000000000000'
-    ])
-    .build()
-```
-
-**Example: remove address from allow/deny list**
-```ts 
-const asset = assetBuilder
-    .removeCredentialAddresses(CredentialListTypes.ALLOW, [ // same for CredentialListTypes.DENY
-    '0x0000000000000000000000000000000000000000'
-    ])
-    .build()
-```
+Refer to the [`addCredentialAddresses()`](/docs/api/assetbuilder/addCredentialAddresses) and [`removeCredentialAddresses`](/docs/api/assetbuilder/removeCredentialAddresses) api documentations for more information.
 
 ## Edit asset lifecycle state
 You can change the lifecycle state of you asset. This is especially important if you want to revoke a service offering.
-There are multiple states you can choose from:
-
-| State | Description | Discoverable in Pontus-X portals | Ordering allowed |
-|-------|-------------|------------------------------|------------------|
-| 0     | Active (default after publishing) | Yes | Yes |
-| 1     | End-of-life | Yes | No |
-| 2     | Deprecated (by another asset) | No | No |
-| 3     | Revoked by publisher | No | No |
-| 4     | Ordering is temporary disabled | Yes | No |
-| 5     | Asset unlisted | No | Yes |
-
-### States details:
-
-- **Active**: Assets in the "Active" state are fully functional and available for discovery in Ocean Market, and other components. Users can search for, view, and interact with these assets. Ordering is allowed, which means users can place orders to purchase or access the asset's services.
-
-- **End-of-life**: Assets in the "End-of-life" state remain discoverable but cannot be ordered. This state indicates that the assets are usually deprecated or outdated, and they are no longer actively promoted or maintained.
-
-- **Deprecated (by another asset)**: This state indicates that another asset has deprecated the current asset. Deprecated assets are not discoverable, and ordering is not allowed. Similar to the "End-of-life" state, deprecated assets are not listed under the owner's profile.
-
-- **Revoked by publisher**: When an asset is revoked by its publisher, it means that the publisher has explicitly revoked access or ownership rights to the asset. Revoked assets are not discoverable, and ordering is not allowed.
-
-- **Ordering is temporarily disabled**: Assets in this state are still discoverable, but ordering functionality is temporarily disabled. Users can view the asset and gather information, but they cannot place orders at that moment. However, these assets are still listed under the owner's profile.
-
-- **Asset unlisted**: Assets in the "Asset unlisted" state are not discoverable. However, users can still place orders for these assets, making them accessible. Unlisted assets are listed under the owner's profile, allowing users to view and access them.
 
 **Example:**
 ```ts twoslash
@@ -191,12 +140,12 @@ LifecycleStates.REVOKED_BY_PUBLISHER
 )
 ```
 
-## Edit service price
-Changing the price of a service offering is straight forward. You have to query the aquarius asset via `did:op` and select the service via `serviceId`. You have to format the new price as `string`. 
+To learn more about all available lifecycle states, refer to the [`nautilus.setAssetLifecycleState()` API documentation](/docs/api/nautilus/setAssetLifecycleState).
 
-<Callout type="tip">
-  Assets can have multiple services attached (default is 1 service per asset)
-</Callout>
+
+## Edit service price
+Changing the price of a service offering is straight forward. You have to query the aquarius asset via `did:op` and select the service via `serviceId`. You have to format the new price as `string`.
+
 <Callout type="danger">
   Due to technical limitations it's currently not possible to set a price for a free service or changing a service with price to a free service. This requires a new publishing of the service.
 </Callout>
@@ -225,6 +174,7 @@ const txReceipt = await nautilus.setServicePrice(
     newPrice
 )
 ```
+Refer to the [`nautilus.setServicePrice()` API documentation](/docs/api/nautilus/setServicePrice) for further information.
 
 ## Editing services
 Assets can have multiple services attached. This could useful if you want to offer different versions of a data product or want to have options for different access durations with different pricings.
@@ -327,49 +277,9 @@ const service = serviceBuilder
 ```
 
 ### Editing `consumerParameter`
-Consumer parameters are key/value pairs which can be provided during service consumption. You can find more information in the official [Ocean Protocol docs](https://docs.oceanprotocol.com/developers/compute-to-data/compute-options#consumer-parameters).
 
-You use the `ConsumerParameterBuilder` to build each parameter and attach it to a service via `addConsumerParameter`.
-```ts twoslash
-import { Wallet, providers } from 'ethers'
-import { Nautilus } from '@deltadao/nautilus'
+You use the [`ConsumerParameterBuilder`](/docs/api/ConsumerParameterBuilder) to build each parameter and attach it to a service via `addConsumerParameter`.
 
-const provider = new providers.JsonRpcProvider('https://rpc.dev.pontus-x.eu')
-const signer = new Wallet('0x...', provider)
-const nautilus = await Nautilus.create(signer)
-
-// ---cut---
-import { AssetBuilder, ConsumerParameterBuilder, ServiceBuilder } from '@deltadao/nautilus'  // [!code focus]
-
-const aquariusAsset = await nautilus.getAquariusAsset(
-    'did:op:926098d069b017dcf3736370f3c3d77e6046ca6622af111229accf5f9c83e308'
-)
-const assetBuilder = new AssetBuilder(aquariusAsset)
-
-const serviceBuilderConfig = {
-    aquariusAsset, 
-    serviceId: aquariusAsset?.services?.[0]?.id // '41b4f7004149620d9ffbc47e85cca980dda033dd824e0ddf7f9249e02284673b'
-} 
-
-const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
-
-const consumerParameterBuilder = new ConsumerParameterBuilder() // [!code focus]
-const numberParameter = consumerParameterBuilder // [!code focus]
-    .setType('number') // [!code focus]
-    .setName('numberEntries') // [!code focus]
-    .setLabel('Number of Entries') // [!code focus]
-    .setDescription('Set the number of entries used for computation.') // [!code focus]
-    .setDefault('12') // [!code focus]
-    .setRequired(false) // [!code focus]
-    .build() // [!code focus]
-
-
-const service = serviceBuilder.addConsumerParameter(numberParameter).build() // [!code focus]
-
-const asset = assetBuilder.addService(service).build()
-
-const result = await nautilus.edit(asset)
-```
 
 ### Editing trusted publishers (for compute assets)
 To protect your data it's possible to only allow algorithms from trusted publishers to perform computations on your data.
