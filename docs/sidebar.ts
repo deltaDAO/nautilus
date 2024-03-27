@@ -79,6 +79,10 @@ export const sidebar = {
               link: '/docs/api/nautilus/edit',
               items: [
                 {
+                  text: 'setServicePrice',
+                  link: '/docs/api/nautilus/setServicePrice'
+                },
+                {
                   text: 'setAssetLifecycleState',
                   link: '/docs/api/nautilus/setAssetLifecycleState'
                 }
@@ -115,6 +119,7 @@ export const sidebar = {
         },
         {
           text: 'AssetBuilder',
+          link: 'docs/api/AssetBuilder',
           items: [
             {
               text: 'addAdditionalInformation',
@@ -124,8 +129,16 @@ export const sidebar = {
               text: 'addCategories',
               link: '/docs/api/assetbuilder/addCategories'
             },
+            {
+              text: 'addCredentialAddresses',
+              link: '/docs/api/assetbuilder/addCredentialAddresses'
+            },
             { text: 'addLinks', link: '/docs/api/assetbuilder/addLinks' },
             { text: 'addService', link: '/docs/api/assetbuilder/addService' },
+            {
+              text: 'removeCredentialAddresses',
+              link: '/docs/api/assetbuilder/removeCredentialAddresses'
+            },
             {
               text: 'setAlgorithm',
               link: '/docs/api/assetbuilder/setAlgorithm'
@@ -150,6 +163,7 @@ export const sidebar = {
         },
         {
           text: 'ServiceBuilder',
+          link: 'docs/api/ServiceBuilder',
           items: []
         }
       ]
