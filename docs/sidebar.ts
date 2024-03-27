@@ -183,6 +183,13 @@ export const sidebar = {
     {
       text: 'Advanced',
       items: [{ text: 'Custom configuration', link: '/docs/guides/config' }]
+    },
+    {
+      text: 'Legal',
+      items: [
+        { text: 'Privacy', link: 'https://delta-dao.com/privacy' },
+        { text: 'Imprint', link: 'https://delta-dao.com/imprint' }
+      ]
     }
   ]
 } as const satisfies Sidebar
