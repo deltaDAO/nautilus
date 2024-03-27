@@ -1,0 +1,74 @@
+# addAdditionalInformation
+
+Add any additional information you might need to describe your asset.
+
+Official OceanProtocol documentation: [DDO Specification](https://docs.oceanprotocol.com/developers/ddo-specification)
+
+## Usage
+
+
+```ts twoslash
+import { AssetBuilder, Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+
+const assetBuilder = new AssetBuilder()
+
+assetBuilder.addAdditionalInformation({ // [!code focus]
+    display: 'test', // [!code focus]
+    ecosystemMetadata: { // [!code focus]
+        termsAndConditions: { // [!code focus]
+            hash: 'sha256:abc123', // [!code focus]
+            signature: '0x12345' // [!code focus]
+        } // [!code focus]
+    } // [!code focus]
+}) // [!code focus]
+const asset = assetBuilder.build() // [!code focus]
+
+await nautilus.publish(asset) // [!code focus]
+// @log: ddo.metadata: 
+// @log: { 
+// @log:    additionalInformation: {
+// @log:        display: 'test', 
+// @log:        ecosystemMetadata: { 
+// @log:            termsAndConditions: { 
+// @log:                hash: 'sha256:abc123', 
+// @log:                signature: '0x12345' 
+// @log:            } 
+// @log:        } 
+// @log:    }
+// @log: }
+```
+
+## Returns
+
+- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
+
+The asset builder instance to chain building calls with.
+
+## Parameter
+
+### additionalInformation
+
+- Type: `{ [key: string]: any }`
+
+The additional information object you want to add. This is an object with custom _unique_ keys and any data format to enable your use-case.
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+assetBuilder.addAdditionalInformation(
+    { // [!code focus]
+        display: 'test', // [!code focus]
+        ecosystemMetadata: { // [!code focus]
+            termsAndConditions: { // [!code focus]
+                hash: 'sha256:abc123', // [!code focus]
+                signature: '0x12345' // [!code focus]
+            } // [!code focus]
+        } // [!code focus]
+    } // [!code focus]
+) 
+```

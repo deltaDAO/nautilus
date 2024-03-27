@@ -1,0 +1,65 @@
+# getComputeStatus
+
+Request the status of a previously started compute job.
+
+## Usage
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+
+await nautilus.getComputeStatus({ // [!code focus]
+    jobId: 'abcd1234', // [!code focus]
+    providerUri: 'https://provider.dev.pontus-x.eu' // [!code focus]
+}) // [!code focus]
+```
+
+## Returns
+
+[`ComputeJob | ComputeJob[]`](https://github.com/oceanprotocol/ocean.js/blob/main/src/%40types/Compute.ts#L34-L47) {/*link to type in docs if possible*/}
+
+A compute job object containing information abot the job status.
+
+## Parameters 
+
+### config
+- Type: `ComputeStatusConfig`
+
+The configuration object to request the compute job status.
+
+#### Properties
+
+##### jobId
+- Type: `string`
+
+The jobId of the compute job to request a status for.
+
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+await nautilus.getComputeStatus({
+    jobId: 'abcd1234', // [!code focus]
+    providerUri: 'https://provider.dev.pontus-x.eu' 
+})
+```
+
+##### providerUri
+- Type: `string`
+
+The uri of the provider that hosts the compute job to request a status for.
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+await nautilus.getComputeStatus({
+    jobId: 'abcd1234', 
+    providerUri: 'https://provider.dev.pontus-x.eu' // [!code focus]
+})
+```
