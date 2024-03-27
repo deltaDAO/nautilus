@@ -1,0 +1,105 @@
+# setAssetLifecycleState
+
+You can change the lifecycle state of your asset. This is especially important if you want to revoke a service offering.
+
+## Usage
+```ts twoslash
+import { Wallet, providers } from 'ethers'
+import { Nautilus } from '@deltadao/nautilus'
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const provider = new providers.JsonRpcProvider('https://rpc.dev.pontus-x.eu')
+const signer = new Wallet('0x...', provider)
+const nautilus = await Nautilus.create(signer)
+
+// ---cut---
+import { LifecycleStates } from '@deltadao/nautilus'
+
+const aquariusAsset = await nautilus.getAquariusAsset(
+      'did:op:926098d069b017dcf3736370f3c3d77e6046ca6622af111229accf5f9c83e308'
+    )
+
+const tx = await nautilus.setAssetLifecycleState(
+aquariusAsset,
+LifecycleStates.REVOKED_BY_PUBLISHER
+)
+```
+
+## Returns
+
+- Type: [`TransactionReceipt` (ethers.js)](https://docs.ethers.org/v5/api/providers/types/#providers-TransactionReceipt)
+
+The receipt for the setAssetLifecycle transaction that was issued.
+
+## Parameters
+
+### aquariusAsset
+- Type: `Asset`
+
+The asset to set the lifecycle state for.
+
+```ts twoslash
+import { Wallet } from 'ethers'
+import { Nautilus } from '@deltadao/nautilus'
+import { AssetBuilder } from '@deltadao/nautilus'
+const signer = new Wallet('0x...')
+const nautilus = await Nautilus.create(signer)
+import { LifecycleStates } from '@deltadao/nautilus'
+// ---cut---
+const aquariusAsset = await nautilus.getAquariusAsset( // [!code focus]
+    'did:op:926098d069b017dcf3736370f3c3d77e6046ca6622af111229accf5f9c83e308' // [!code focus]
+) // [!code focus]
+
+const tx = await nautilus.setAssetLifecycleState(
+    aquariusAsset, // [!code focus]
+    LifecycleStates.REVOKED_BY_PUBLISHER
+)
+```
+
+### state
+- Type: `LifecycleStates`
+
+You can change the lifecycle state of you asset. This is especially important if you want to revoke a service offering.
+
+```ts twoslash
+import { Wallet } from 'ethers'
+import { Nautilus } from '@deltadao/nautilus'
+import { AssetBuilder } from '@deltadao/nautilus'
+const signer = new Wallet('0x...')
+const nautilus = await Nautilus.create(signer)
+const aquariusAsset = await nautilus.getAquariusAsset(
+    'did:op:926098d069b017dcf3736370f3c3d77e6046ca6622af111229accf5f9c83e308'
+)
+// ---cut---
+import { LifecycleStates } from '@deltadao/nautilus' // [!code focus]
+
+const tx = await nautilus.setAssetLifecycleState(
+    aquariusAsset,
+    LifecycleStates.REVOKED_BY_PUBLISHER // [!code focus]
+)
+```
+
+There are multiple states you can choose from:
+
+| State | Discoverable in Pontus-X Portals | Ordering allowed |
+|-------|----------------------------------|------------------|
+| `ACTIVE` | Yes | Yes |
+| `END_OF_LIFE` |  Yes | No |
+| `DEPRECATED` |  No | No |
+| `REVOKED_BY_PUBLISHER` | No | No |
+| `ORDERING_DISABLED_TEMPORARILY` |  Yes | No |
+| `ASSET_UNLISTED` | No | Yes |
+
+### State details:
+
+- **Active**: Assets in the "Active" state are fully functional and available for discovery in Ocean Market, and other components. Users can search for, view, and interact with these assets. Ordering is allowed, which means users can place orders to purchase or access the asset's services.
+
+- **End-of-life**: Assets in the "End-of-life" state remain discoverable but cannot be ordered. This state indicates that the assets are usually deprecated or outdated, and they are no longer actively promoted or maintained.
+
+- **Deprecated (by another asset)**: This state indicates that another asset has deprecated the current asset. Deprecated assets are not discoverable, and ordering is not allowed. Similar to the "End-of-life" state, deprecated assets are not listed under the owner's profile.
+
+- **Revoked by publisher**: When an asset is revoked by its publisher, it means that the publisher has explicitly revoked access or ownership rights to the asset. Revoked assets are not discoverable, and ordering is not allowed.
+
+- **Ordering is temporarily disabled**: Assets in this state are still discoverable, but ordering functionality is temporarily disabled. Users can view the asset and gather information, but they cannot place orders at that moment. However, these assets are still listed under the owner's profile.
+
+- **Asset unlisted**: Assets in the "Asset unlisted" state are not discoverable. However, users can still place orders for these assets, making them accessible. Unlisted assets are listed under the owner's profile, allowing users to view and access them.

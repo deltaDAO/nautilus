@@ -1,0 +1,50 @@
+# ComputeAsset
+
+Used to describe algorithms when initializing new compute jobs via [`nautilus.compute()`](/docs/api/nautilus/compute)
+
+## Usage
+This type is used for the `algorithm` properties when starting compute jobs.
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+await nautilus.compute({
+    dataset: { 
+        did: 'did:op:1234abcd...',
+    }, 
+    algorithm: { // [!code focus]
+        did: 'did:op:5678wxyz...' // [!code focus]
+    } // [!code focus]
+})
+```
+
+## Properties
+
+This interface inherits the same properties provided by [`ComputeAsset`](/docs/api/ComputeAsset).
+
+In addition, it provides the following properties.
+
+### algocustomdata (optional)
+- Type: [`UserCustomParameters`](/docs/api/UserCustomParameters)
+
+Custom parameters that will be passed to the algorithm at runtime. This is defined by the algorithm publisher and can be found in the algorithms metadata.
+
+```ts twoslash
+import { ComputeAlgorithm } from '@deltadao/nautilus'
+// ---cut---
+const algorithm = {
+    did: 'did:op:1234abcd...', 
+    serviceId: 'specific-service-id',
+    userdata: { 
+        parameter: 'value',
+    }, 
+    algocustomdata: { // [!code focus]
+        parameter: 'value', // [!code focus]
+        number: 123, // [!code focus]
+        boolean: true, // [!code focus]
+        select: 'option', // [!code focus]
+    } // [!code focus]
+} satisfies ComputeAlgorithm
+```

@@ -1,0 +1,27 @@
+# build
+
+Builds the `NautilusAsset` that was configured using this builder instance.
+
+## Usage
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+
+assetBuilder.setName('Test') // [!code focus]
+assetBuilder.setDescription('My description') // [!code focus]
+assetBuilder.build() // [!code focus]
+// @log: ddo.metadata: 
+// @log: { 
+// @log:    name: 'Test',
+// @log:    description: 'My description'
+// @log: }
+```
+
+## Returns
+
+- `NautilusAsset`
+
+The built asset with all data that was set using the builder functions.
+This can then be used in [`publish()`](/docs/api/nautilus/publish) or [`edit()`](/docs/api/nautilus/edit) calls respectively.

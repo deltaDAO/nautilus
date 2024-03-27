@@ -72,12 +72,12 @@ export default defineConfig({
     {
       text: pkg.version,
       items: [
-        {
-          text: `Migrating to ${toPatchVersionRange(pkg.version)}`,
-          link: `/docs/migration-guide#_${toPatchVersionRange(
-            pkg.version
-          ).replace(/\./g, '-')}-breaking-changes`
-        },
+        // {
+        //   text: `Migrating to ${toPatchVersionRange(pkg.version)}`,
+        //   link: `/docs/migration-guide#_${toPatchVersionRange(
+        //     pkg.version
+        //   ).replace(/\./g, '-')}-breaking-changes`
+        // },
         {
           text: 'Changelog',
           link: 'https://github.com/deltaDAO/nautilus/blob/main/src/CHANGELOG.md'
