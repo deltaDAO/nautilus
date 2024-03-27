@@ -3,6 +3,12 @@ import { defineConfig } from 'vocs'
 import pkg from '../src/package.json'
 import { sidebar } from './sidebar'
 
+// biome-ignore lint/correctness/noUnusedVariables: <explanation>
+function toPatchVersionRange(version: string) {
+  const [major, minor] = version.split('.').slice(0, 2)
+  return `${major}.${minor}.x`
+}
+
 export default defineConfig({
   baseUrl: 'https://nautilus.delta-dao.com',
   title: 'Nautilus',
@@ -90,8 +96,3 @@ export default defineConfig({
     }
   ]
 })
-
-function toPatchVersionRange(version: string) {
-  const [major, minor] = version.split('.').slice(0, 2)
-  return `${major}.${minor}.x`
-}
