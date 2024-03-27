@@ -1,0 +1,88 @@
+# setType
+
+Set the type of the asset. This might affect what kind of other metadata is expected for the asset to be valid.
+See a usage example below for both supported cases: `'dataset'` and `'algorithm'`.
+
+Official OceanProtocol documentation: [DDO Specification](https://docs.oceanprotocol.com/developers/ddo-specification)
+
+## Usage
+
+When defining `algorithm` type assets, additional metadata is necessary to be set. Feel free to toggle between the examples below or refer to the [`setAlgorithm() documentation`](/docs/api/assetbuilder/setAlgorithm) for further information.
+
+:::code-group
+```ts twoslash [dataset]
+import { AssetBuilder, Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+
+const assetBuilder = new AssetBuilder()
+assetBuilder.setType('dataset') // [!code focus]
+const asset = assetBuilder.build() // [!code focus]
+
+await nautilus.publish(asset) // [!code focus]
+// @log: ddo.metadata: 
+// @log: { 
+// @log:    type: 'dataset'
+// @log: }
+```
+
+```ts twoslash [algorithm]
+import { AssetBuilder, Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+
+const assetBuilder = new AssetBuilder()
+assetBuilder.setType('algorithm') // [!code focus]
+assetBuilder.setAlgorithm({ // [!code focus]
+    container: { // [!code focus]
+        entrypoint: 'node $ALGO', // [!code focus]
+        image: 'node', // [!code focus]
+        tag: 'lts', // [!code focus]
+        checksum: 'sha256:a6faa1aa0ae1981b70c075dd6ea0a1725a1d05a4cab85536460ae4e4710e8331' // [!code focus]
+    }, // [!code focus]
+}) // [!code focus]
+const asset = assetBuilder.build() // [!code focus]
+
+await nautilus.publish(asset) // [!code focus]
+// @log: ddo.metadata: 
+// @log: { 
+// @log:    type: 'algorithm'
+// @log:    algorithm: {
+// @log:        container: {
+// @log:            entrypoint: 'node $ALGO',
+// @log:            image: 'node',
+// @log:            tag: 'lts',
+// @log:            checksum: 'sha256:a6faa1aa0ae1981b70c075dd6ea0a1725a1d05a4cab85536460ae4e4710e8331'
+// @log:        }
+// @log:    }
+// @log: }
+```
+:::
+
+## Returns
+
+- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
+
+The asset builder instance to chain building calls with.
+
+## Parameter
+
+### name
+
+- Type: `'dataset' | 'algorithm'`
+
+The type to use for the asset's metadata.
+
+Refer to the [`setAlgorithm() documentation`](/docs/api/assetbuilder/setAlgorithm) to learn more about required metadata when publishing algorithm assets.
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+assetBuilder.setType(
+    'dataset' // [!code focus]
+)
+```

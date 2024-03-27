@@ -1,0 +1,64 @@
+# ServiceBuilder
+
+## Usage
+:::code-group
+```ts twoslash [create]
+import { UrlFile, FileTypes, ServiceTypes, ServiceBuilder } from '@deltadao/nautilus'
+
+const urlFile = { 
+  type: 'url', 
+  url: 'https://link.to/my/asset', 
+  method: 'GET' 
+} satisfies UrlFile
+
+const serviceBuilder = new ServiceBuilder({ // [!code focus]
+    serviceType: ServiceTypes.ACCESS, // [!code focus]
+    fileType: FileTypes.URL // [!code focus]
+}) // [!code focus]
+
+const service = serviceBuilder // [!code focus]
+    .setServiceEndpoint('https://provider.dev.pontus-x.eu') // [!code focus]
+    .setTimeout(0) // [!code focus]
+    .addFile(urlFile) // [!code focus]
+    .setPricing({ // [!code focus]
+        type: 'free' // [!code focus]
+    }) // [!code focus]
+    .build() // [!code focus]
+```
+
+```ts twoslash [update]
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet} from 'ethers'
+const signer = new Wallet('0x...')
+const nautilus = await Nautilus.create(signer)
+// ---cut---
+import { ServiceBuilder } from '@deltadao/nautilus'
+
+const aquariusAsset = await nautilus.getAquariusAsset( // [!code focus]
+    'did:op:926098d069b017dcf3736370f3c3d77e6046ca6622af111229accf5f9c83e308' // [!code focus]
+) // [!code focus]
+
+// create a ServiceBuilder instance, prepared with service metadata from the specified assets service
+const serviceBuilder = new ServiceBuilder({ // [!code focus]
+    aquariusAsset, // [!code focus]
+    serviceId: aquariusAsset?.services?.[0]?.id // '41b4f7004149620d9ffbc47e85cca980dda033dd824e0ddf7f9249e02284673b' // [!code focus]
+}) // [!code focus]
+
+const service = serviceBuilder // [!code focus]
+    .setName('Updated Service Name') // [!code focus]
+    .build() // [!code focus]
+```
+:::
+
+## ServiceTypes
+{/* TODO: create api reference */}
+- `ACCESS`
+- `COMPUTE`
+
+## FileTypes
+{/* TODO: create api reference */}
+- `URL`
+- `IPFS`
+- `GRAPHQL` 
+- `ARWEAVE`
+- `SMARTCONTRACT`

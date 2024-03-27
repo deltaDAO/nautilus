@@ -1,0 +1,91 @@
+# addService
+
+Adds a pre-defined service to the description of your asset.
+
+To learn more about building services, please refer to the [`ServiceBuilder` documentation](/docs/api/ServiceBuilder).
+
+Official OceanProtocol documentation: [DDO Specification](https://docs.oceanprotocol.com/developers/ddo-specification)
+
+## Usage
+
+:::code-group
+```ts twoslash [asset.ts]
+// @filename: service.ts
+import { ServiceBuilder, ServiceTypes, FileTypes } from '@deltadao/nautilus'
+const builder = new ServiceBuilder({ serviceType: ServiceTypes.ACCESS, fileType: FileTypes.URL })
+export const service = builder.build()
+
+// @filename: asset.ts
+// ---cut---
+import { AssetBuilder, Nautilus, NautilusService } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+import { service } from './service'
+
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+
+const assetBuilder = new AssetBuilder()
+
+assetBuilder.addService(service) // [!code focus]
+const asset = assetBuilder.build() // [!code focus]
+
+await nautilus.publish(asset) // [!code focus]
+// @log: ddo.services: 
+// @log: [ 
+// @log:    {
+// @log:        id: '6a0faa655f70198dd6457450eab66ae29a493ea861cfc666d563c897c65a0d26',
+// @log:        datatokenAddress: '0x99358d0F9A92420C44138802ebd6e95De54801e4',
+// @log:        type: 'access',
+// @log:        serviceEndpoint: 'https://provider.dev.pontus-x.eu',
+// @log:        timeout: 0,
+// @log:        files: '0x046e589d49...'
+// @log:    }
+// @log: ]
+```
+
+```ts twoslash [service.ts]
+import { ServiceBuilder, ServiceTypes, FileTypes } from '@deltadao/nautilus'
+const builder = new ServiceBuilder({ serviceType: ServiceTypes.ACCESS, fileType: FileTypes.URL })
+
+builder // [!code focus]
+    .addFile({ // [!code focus]
+        type: 'url', // [!code focus]
+        method: 'GET', // [!code focus]
+        url: 'https://delta-dao.com' // [!code focus]
+    }) // [!code focus]
+    .setServiceEndpoint('https://provider.dev.pontus-x.eu') // [!code focus]
+    .setTimeout(0) // [!code focus]
+
+export const service = builder.build() // [!code focus]
+```
+:::
+
+## Returns
+
+- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
+
+The asset builder instance to chain building calls with.
+
+## Parameter
+
+### service
+
+- Type: `NautilusService`
+
+The service to be added to the asset.
+To learn more about building services, please refer to the [`ServiceBuilder` documentation](/docs/api/ServiceBuilder).
+
+```ts twoslash
+// @filename: service.ts
+import { ServiceBuilder, ServiceTypes, FileTypes } from '@deltadao/nautilus'
+const builder = new ServiceBuilder({ serviceType: ServiceTypes.ACCESS, fileType: FileTypes.URL })
+export const service = builder.build()
+// @filename: asset.ts
+import { AssetBuilder } from '@deltadao/nautilus'
+import { service } from './service'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+assetBuilder.addService(
+    service // [!code focus]
+) 
+```

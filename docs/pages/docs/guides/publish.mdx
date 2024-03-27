@@ -1,229 +1,143 @@
-# Publication of service offerings
+# Publishing [Entering the world of a decentralized data economy]
 
-The following example shows the publication process for 2 datasets(one for access and one for compute) and one algorithm for the purpose of computation. 
+Without publishing data, applications and services a data economy could not exist.
+This process usually is about describing your asset in a standardized way, so that it can be displayed by catalogues or even be offered on marketplaces and sold to others.
 
-```ts
-import * as dotenv from 'dotenv'
-import {
-  LogLevel,
-  Nautilus,
-  AssetBuilder,
-  FileTypes,
-  ServiceTypes,
-  ServiceBuilder,
-  UrlFile,
-  ConsumerParameterBuilder,
-} from '@deltadao/nautilus'
-import { Wallet, providers } from 'ethers'
-dotenv.config()
+Constructing a so called [DDO (a DID document)](https://docs.oceanprotocol.com/developers/ddo-specification) can be challenging and time consuming, especially if you are just starting out.
+nautilus aims to significantly streamline this process by exposing two main builder classes that provide typed APIs to help you with this process.
 
-const networkConfig = {
-  chainId: 80001,
-  network: 'mumbai',
-  metadataCacheUri: 'https://v4.aquarius.oceanprotocol.com',
-  nodeUri: 'https://rpc-mumbai.maticvigil.com',
-  providerUri: 'https://v4.provider.oceanprotocol.com',
-  subgraphUri: 'https://v4.subgraph.mumbai.oceanprotocol.com',
-  explorerUri: 'https://mumbai.polygonscan.com',
-  oceanTokenAddress: '0xd8992Ed72C445c35Cb4A2be468568Ed1079357c8',
-  oceanTokenSymbol: 'OCEAN',
-  fixedRateExchangeAddress: '0x25e1926E3d57eC0651e89C654AB0FA182C6D5CF7',
-  dispenserAddress: '0x21bc18b92F7551e715B490E2C2875E8532317F8d',
-  startBlock: 26354458,
-  transactionBlockTimeout: 50,
-  transactionConfirmationBlocks: 1,
-  transactionPollingTimeout: 750,
-  gasFeeMultiplier: 1.1,
-  nftFactoryAddress: '0x7d46d74023507D30ccc2d3868129fbE4e400e40B',
-  opfCommunityFeeCollector: '0xd8839c98ca8CE07dDa4e460a71B634A4A82f8BD6',
-  veAllocate: '0x3fa1d5AC45ab1Ff9CFAe227c5583Ec0484b54Ef9',
-  veOCEAN: '0x061955B6980A34fce74b235f90DBe20d76f087b1',
-  veDelegation: '0x96E3aE4247a01C3d40a261df1F8ead70E32E7C0c',
-  veFeeDistributor: '0x35F1e6765750E874EB9d0675393A1A394A4749b4',
-  veDelegationProxy: '0x51B1b14b8bfb43a2fB0b49843787Ca440200F6b7',
-  DFRewards: '0x4259c164eedA7483dda2b4b622D761A88674D31f',
-  DFStrategyV1: '0x1be9C72500B41c286C797D4FE727747Ae9C4E195',
-  veFeeEstimate: '0xCFeF55c6ae4d250586e293f29832967a04A9087d'
-}
-const pricingConfig = {
-  FREE: {
-    type: 'free'
-  } as PricingConfigWithoutOwner,
-  FIXED_OCEAN: {
-    type: 'fixed',
-    freCreationParams: {
-      fixedRateAddress: '0x25e1926E3d57eC0651e89C654AB0FA182C6D5CF7',
-      baseTokenAddress: '0xd8992Ed72C445c35Cb4A2be468568Ed1079357c8',
-      baseTokenDecimals: 18,
-      datatokenDecimals: 18,
-      fixedRate: '1',
-      marketFee: '0',
-      marketFeeCollector: '0x0000000000000000000000000000000000000000'
-    }
-  } as PricingConfigWithoutOwner,
-  FIXED_EUROE: {
-    type: 'fixed',
-    freCreationParams: {
-      fixedRateAddress: '0x25e1926E3d57eC0651e89C654AB0FA182C6D5CF7',
-      baseTokenAddress: '0xA089a21902914C3f3325dBE2334E9B466071E5f1',
-      baseTokenDecimals: 6,
-      datatokenDecimals: 18,
-      fixedRate: '1',
-      marketFee: '0',
-      marketFeeCollector: '0x0000000000000000000000000000000000000000'
-    }
-  } as PricingConfigWithoutOwner
-}
+The `AssetBuilder` is the main class responsible for constructing the asset metadata and the `ServiceBuilder` class uses the same pattern allowing to configure the services used within the asset's metadata.
 
-const privateKey = process.env.PRIVATE_KEY as string
-const provider = new providers.JsonRpcProvider(networkConfig.nodeUri)
-const wallet = new Wallet(privateKey, provider)
 
-async function main() {
-  Nautilus.setLogLevel(LogLevel.Verbose) // optional to show more nautilus internal logs
-  const nautilus = await Nautilus.create(wallet, networkConfig)
+## AssetBuilder
+Creating the builder is easy:
 
-  // PUBLISH FUNCTIONS
-  await publishAccessDataset(nautilus)
-  await publishComputeDataset(nautilus)
-  await publishComputeAlgorithm(nautilus)
-}
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
 
-async function publishAccessDataset(nautilus: Nautilus) {
-  const owner = await wallet.getAddress()
-  console.log(`Your address is ${owner}`)
-
-  const serviceBuilder = new ServiceBuilder(ServiceTypes.ACCESS, FileTypes.URL) // access type dataset with URL data source
-
-  const urlFile: UrlFile = {
-    type: 'url', // there are multiple supported data source types, see https://docs.oceanprotocol.com/developers/storage
-    url: 'https://www.delta-dao.com/.well-known/did.json', // link to your file or api
-    method: 'GET', // HTTP request method
-    // headers: {
-    //     Authorization: 'Basic XXX' // optional headers field e.g. for basic access control
-    // }
-  }
-
-  const service = serviceBuilder
-    .setServiceEndpoint(networkConfig.providerUri)
-    .setTimeout(86400)
-    .addFile(urlFile)
-    .setPricing(pricingConfig.FREE)
-    .setDatatokenNameAndSymbol('My Datatoken Name', 'SYMBOL') // important for following access token transactions in the explorer
-    .build()
-
-  const assetBuilder = new AssetBuilder()
-  const asset = assetBuilder
-    .setType('dataset')
-    .setName('Access Dataset Name')
-    .setDescription('Access Dataset Description (supports Markdown)')
-    .setAuthor('Company Name')
-    .setLicense('MIT')
-    .addService(service)
-    .setOwner(owner)
-    .build()
-
-  const result = await nautilus.publish(asset)
-  console.log(result)
-}
-
-async function publishComputeDataset(nautilus: Nautilus) {
-  const owner = await wallet.getAddress()
-  console.log(`Your address is ${owner}`)
-
-  const consumerParameterBuilder = new ConsumerParameterBuilder() // optional
-
-  const cunsumerParameter = consumerParameterBuilder // optional
-    .setType('number')
-    .setName('myNumberParam')
-    .setLabel('My Param Label')
-    .setDescription('A description of my param for the enduser.')
-    .setDefault('5')
-    .setRequired(false)
-    .build()
-
-  const serviceBuilder = new ServiceBuilder(ServiceTypes.COMPUTE, FileTypes.URL) // compute type dataset with URL data source
-
-  const urlFile: UrlFile = {
-    type: 'url',
-    url: 'https://www.delta-dao.com/.well-known/did.json', // link to your file or api
-    method: 'GET',
-    // headers: {
-    //     Authorization: 'Basic XXX' // optional headers field e.g. for basic access control
-    // }
-  }
-
-  const service = serviceBuilder
-    .setServiceEndpoint(networkConfig.providerUri)
-    .setTimeout(86400)
-    .addFile(urlFile)
-    .setPricing(pricingConfig.FREE)
-    .setDatatokenNameAndSymbol('My Datatoken Name', 'SYMBOL') // important for following access token transactions in the explorer
-    .addConsumerParameter(cunsumerParameter) // optional
-    .build()
-
-  const assetBuilder = new AssetBuilder()
-  const asset = assetBuilder
-    .setType('dataset')
-    .setName('Compute Dataset Name')
-    .setDescription('Compute Dataset Description (supports Markdown)')
-    .setAuthor('Company Name')
-    .setLicense('MIT')
-    .addService(service)
-    .setOwner(owner)
-    .build()
-
-  const result = await nautilus.publish(asset)
-  console.log(result)
-}
-
-async function publishComputeAlgorithm(nautilus: Nautilus) {
-  const owner = await wallet.getAddress()
-  console.log(`Your address is ${owner}`)
-
-  const serviceBuilder = new ServiceBuilder(ServiceTypes.COMPUTE, FileTypes.URL)
-
-  const urlFile: UrlFile = {
-    type: 'url',
-    url: 'https://raw.githubusercontent.com/deltaDAO/files/main/demo.js', // link to your algorithm logic, will be run using the defined conatainer
-    method: 'GET',
-  }
-
-  const service = serviceBuilder
-    .setServiceEndpoint(networkConfig.providerUri)
-    .setTimeout(86400)
-    .addFile(urlFile)
-    .setPricing(pricingConfig.FIXED_OCEAN)
-    .setDatatokenNameAndSymbol('My Datatoken Name', 'SYMBOL')
-    .build()
-
-  const algoMetadata = {
-    language: 'Node.js',
-    version: '1.0.0',
-    container: {
-      // https://hub.docker.com/layers/library/node/18.17.1/images/sha256-91e37377b960d0b15d3c15d15321084163bc8d950e14f77bbc84ab23cf3d6da7?context=explore
-      entrypoint: 'node $ALGO',
-      image: 'node',
-      tag: '18.17.1',
-      checksum:
-        'sha256:91e37377b960d0b15d3c15d15321084163bc8d950e14f77bbc84ab23cf3d6da7',
-    },
-  }
-
-  const assetBuilder = new AssetBuilder()
-
-  const asset = assetBuilder
-    .setType('algorithm')
-    .setName('Compute Algorithm Name')
-    .setDescription('Compute Algorithm description (supports Markdown)') // supports markdown
-    .setAuthor('Your Company Name')
-    .setLicense('MIT')
-    .setAlgorithm(algoMetadata)
-    .addService(service)
-    .setOwner(owner)
-    .build()
-
-  const result = await nautilus.publish(asset)
-  console.log(result)
-}
+const assetBuilder = new AssetBuilder() // [!code focus]
 ```
+
+With this we can now continue to setup the metadata information for the asset:
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+
+assetBuilder // [!code focus]
+  .setType('dataset') // [!code focus]
+  .setName('My New Asset') // [!code focus]
+  .setDescription('This is a publish asset building test using Nautilus') // [!code focus]
+  .setAuthor('Company Ltd.') // [!code focus]
+```
+
+The last step is to simply `build()` the asset. This will return a correctly configured asset, ready to be published.
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+
+assetBuilder
+  .setType('dataset')
+  .setName('My New Asset')
+  .setDescription('This is a publish asset building test using Nautilus')
+  .setAuthor('Company Ltd.')
+
+const asset = assetBuilder.build() // [!code focus]
+```
+
+Note, that if required, there is a lot more that can be customized. To learn more about the API head over to the detailed [`AssetBuilder` documentation](/docs/api/AssetBuilder).
+
+## ServiceBuilder
+
+Now, the asset above has some nice metadata setup, but we will not be able to really interact with it, unless we define the services it should expose.
+
+This is where the `ServiceBuilder` class comes in handy to specify the necessary information, such as the method used to access our data or application we want to publish.
+
+We start by setting up the `ServiceBuilder` we want to use:
+
+```ts twoslash
+import { UrlFile, FileTypes, ServiceTypes, ServiceBuilder } from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder({ // [!code focus]
+    serviceType: ServiceTypes.ACCESS, // [!code focus]
+    fileType: FileTypes.URL // [!code focus]
+}) // [!code focus]
+```
+> **_NOTE:_** There are multiple supported [ServiceTypes](/docs/api/ServiceBuilder#servicetypes) and [FileTypes](/docs/api/ServiceBuilder#filetypes)
+
+Next, we declare the "file" we want to publish. This can follow multiple protocols, here we'll use a HTTP GET request:
+```ts twoslash
+import { UrlFile, FileTypes, ServiceTypes, ServiceBuilder } from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder({
+    serviceType: ServiceTypes.ACCESS,
+    fileType: FileTypes.URL
+})
+
+const urlFile = {  // [!code focus]
+  type: 'url',  // [!code focus]
+  url: 'https://link.to/my/asset',  // [!code focus]
+  method: 'GET'  // [!code focus]
+}  // [!code focus]
+```
+
+Finally, we add the required metadata and the file we created utilizing the builder pattern to then build the service:
+```ts twoslash
+import { UrlFile, FileTypes, ServiceTypes, ServiceBuilder } from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder({
+    serviceType: ServiceTypes.ACCESS,
+    fileType: FileTypes.URL
+})
+
+const urlFile = { 
+  type: 'url', 
+  url: 'https://link.to/my/asset', 
+  method: 'GET' 
+} satisfies UrlFile
+
+const service = serviceBuilder // [!code focus]
+    .setServiceEndpoint('https://provider.dev.pontus-x.eu') // [!code focus]
+    .setTimeout(0) // [!code focus]
+    .addFile(urlFile) // [!code focus]
+    .setPricing({ // [!code focus]
+        type: 'free' // [!code focus]
+    }) // [!code focus]
+    .build() // [!code focus]
+```
+
+> **_NOTE:_** The serviceEndpoint specified should point to the provider instance you want to be able to access your published data. [Learn more](https://docs.oceanprotocol.com/developers/provider).
+
+If you want to learn more about the API and everything you can configure, head over to the detailed [`ServiceBuilder` documentation](/docs/api/ServiceBuilder).
+
+## Publishing the Asset
+
+Bringing everything together, in the last step we will now anchor the asset on a network of your choice using the publish function provided by nautilus:
+
+```ts twoslash
+import { Nautilus, AssetBuilder, FileTypes, ServiceBuilder, ServiceTypes } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+
+const signer = new Wallet('')
+const nautilus = await Nautilus.create(signer)
+
+const assetBuilder = new AssetBuilder()
+const service = new ServiceBuilder({ serviceType: ServiceTypes.ACCESS, fileType: FileTypes.URL}).build()
+
+// ---cut---
+const asset = assetBuilder.addService(service).build() // [!code focus]
+const result = await nautilus.publish(asset) // [!code focus]
+```
+
+## Diving Deeper
+
+To learn about the different APIs and supported configurations follow the links below for in-detail documentations:
+
+- [`AssetBuilder`](/docs/api/AssetBuilder) - API overview for building asset metadata
+- [`ServiceBuilder`](/docs/api/ServiceBuilder) - To build service MediaMetadata, you have access to a dedicated API
+- [`ConsumerParameterBuilder`](/docs/api/ConsumerParameterBuilder) - Your service requires custom userdata to work? Head here for additional info.
+- [`nautilus.publish()`](/docs/api/nautilus/publish) - API documentation for the `nautilus.publish()` call
+- [Publish Examples](https://github.com/deltaDAO/nautilus-examples/blob/main/publish.ts) - Code examples for advanced publishing processes.

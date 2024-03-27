@@ -3,6 +3,12 @@ import { defineConfig } from 'vocs'
 import pkg from '../src/package.json'
 import { sidebar } from './sidebar'
 
+// biome-ignore lint/correctness/noUnusedVariables: <explanation>
+function toPatchVersionRange(version: string) {
+  const [major, minor] = version.split('.').slice(0, 2)
+  return `${major}.${minor}.x`
+}
+
 export default defineConfig({
   baseUrl: 'https://nautilus.delta-dao.com',
   title: 'Nautilus',
@@ -72,12 +78,12 @@ export default defineConfig({
     {
       text: pkg.version,
       items: [
-        {
-          text: `Migrating to ${toPatchVersionRange(pkg.version)}`,
-          link: `/docs/migration-guide#_${toPatchVersionRange(
-            pkg.version
-          ).replace(/\./g, '-')}-breaking-changes`
-        },
+        // {
+        //   text: `Migrating to ${toPatchVersionRange(pkg.version)}`,
+        //   link: `/docs/migration-guide#_${toPatchVersionRange(
+        //     pkg.version
+        //   ).replace(/\./g, '-')}-breaking-changes`
+        // },
         {
           text: 'Changelog',
           link: 'https://github.com/deltaDAO/nautilus/blob/main/src/CHANGELOG.md'
@@ -90,8 +96,3 @@ export default defineConfig({
     }
   ]
 })
-
-function toPatchVersionRange(version: string) {
-  const [major, minor] = version.split('.').slice(0, 2)
-  return `${major}.${minor}.x`
-}

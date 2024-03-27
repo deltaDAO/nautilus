@@ -1,0 +1,99 @@
+# compute
+
+Triggers a new [Compute Job](/docs/guides/compute) on a given dataset using a specified algorithm.
+
+## Usage
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+
+await nautilus.compute({ // [!code focus]
+    dataset: { // [!code focus]
+        did: 'did:op:dataset...' // [!code focus]
+    }, // [!code focus]
+    algorithm: { // [!code focus]
+        did: 'did:op:algorithm...' // [!code focus]
+    } // [!code focus]
+}) // [!code focus]
+```
+
+## Returns
+
+[`ComputeJob | ComputeJob[]`](https://github.com/oceanprotocol/ocean.js/blob/main/src/%40types/Compute.ts#L34-L47) {/*link to type in docs if possible*/}
+
+The compute job object that was created when starting the new job.
+
+## Parameters 
+
+### config
+- Type: `ComputeConfig`
+
+The configuration object for the compute job to start.
+
+#### Properties
+
+##### dataset
+- Type: [`ComputeAsset`](/docs/api/ComputeAsset)
+
+The dataset to compute on.
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+await nautilus.compute({ 
+    dataset: { // [!code focus]
+        did: 'did:op:dataset...' // [!code focus]
+    }, // [!code focus]
+    algorithm: { 
+        did: 'did:op:algorithm...' 
+    } 
+})
+```
+
+##### algorithm
+- Type: [`ComputeAlgorithm`](/docs/api/ComputeAlgorithm)
+
+The algorithm to compute with.
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+await nautilus.compute({ 
+    dataset: { 
+        did: 'did:op:dataset...' 
+    }, 
+    algorithm: { // [!code focus]
+        did: 'did:op:algorithm...' // [!code focus]
+    } // [!code focus]
+})
+```
+
+##### additionalDatasets (optional)
+- Type: [`ComputeAsset[]`](/docs/api/ComputeAsset)
+
+A list of additional datasets to use for computation.
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+await nautilus.compute({ 
+    dataset: {
+        did: 'did:op:dataset...'
+    },
+    algorithm: { 
+        did: 'did:op:algorithm...' 
+    },
+    additionalDatasets: [ // [!code focus]
+        { // [!code focus]
+            did: 'did:op:dataset...' // [!code focus]
+        } // [!code focus]
+    ] // [!code focus]
+})
+```
