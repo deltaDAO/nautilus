@@ -64,7 +64,11 @@ export async function compute(computeConfig: ComputeConfig) {
   )
 
   const assetIdentifiers = [datasetConfig, algorithmConfig]
-  for (const dataset of additionalDatasetsConfig) assetIdentifiers.push(dataset)
+
+  // add additional datasets to identifiers, if they are set
+  if (additionalDatasetsConfig)
+    for (const dataset of additionalDatasetsConfig)
+      assetIdentifiers.push(dataset)
 
   try {
     // 1. Get all assets and access details from DIDs
