@@ -16,11 +16,15 @@ export const sidebar = {
       items: [{ text: 'Overview', link: '/docs/guides/download' }]
     },
     {
+      text: 'Compute',
+      collapsed: true,
+      items: [{ text: 'Overview', link: '/docs/guides/compute' }]
+    },
+    {
       text: 'Publish',
       collapsed: true,
       items: [
         { text: 'Overview', link: '/docs/guides/publish' },
-        { text: 'Configuration', link: '/docs/api/PublishConfig' },
         {
           text: 'Builders',
           items: [
@@ -37,12 +41,20 @@ export const sidebar = {
     {
       text: 'Edit',
       collapsed: true,
-      items: [{ text: 'Overview', link: '/docs/guides/edit' }]
-    },
-    {
-      text: 'Compute',
-      collapsed: true,
-      items: [{ text: 'Overview', link: '/docs/guides/compute' }]
+      items: [
+        { text: 'Overview', link: '/docs/guides/edit' },
+        {
+          text: 'Builders',
+          items: [
+            { text: 'AssetBuilder', link: '/docs/api/AssetBuilder' },
+            { text: 'ServiceBuilder', link: '/docs/api/ServiceBuilder' },
+            {
+              text: 'ConsumerParameterBuilder',
+              link: '/docs/api/ConsumerParameterBuilder'
+            }
+          ]
+        }
+      ]
     },
     {
       text: 'The Nautilus API',
@@ -88,20 +100,20 @@ export const sidebar = {
                 }
               ]
             },
-            { text: 'publish', link: '/docs/api/nautilus/publish' },
-            {
-              text: 'Helpers',
-              items: [
-                {
-                  text: 'getAquariusAsset',
-                  link: '/docs/api/nautilus/getAquariusAsset'
-                },
-                {
-                  text: 'getAquariusAssets',
-                  link: '/docs/api/nautilus/getAquariusAsset'
-                }
-              ]
-            }
+            { text: 'publish', link: '/docs/api/nautilus/publish' }
+            // {
+            //   text: 'Helpers',
+            //   items: [
+            //     {
+            //       text: 'getAquariusAsset',
+            //       link: '/docs/api/nautilus/getAquariusAsset'
+            //     },
+            //     {
+            //       text: 'getAquariusAssets',
+            //       link: '/docs/api/nautilus/getAquariusAsset'
+            //     }
+            //   ]
+            // }
           ]
         }
       ]
@@ -163,7 +175,7 @@ export const sidebar = {
         },
         {
           text: 'ServiceBuilder',
-          link: 'docs/api/ServiceBuilder',
+          link: '/docs/api/ServiceBuilder',
           items: []
         }
       ]
