@@ -1,0 +1,48 @@
+# setAuthor
+
+Set the author name of the asset. This should be the name of the company responsible for publishing and maintaining this asset.
+
+Official OceanProtocol documentation: [DDO Specification](https://docs.oceanprotocol.com/developers/ddo-specification)
+
+## Usage
+
+```ts twoslash
+import { AssetBuilder, Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+
+const assetBuilder = new AssetBuilder()
+assetBuilder.setAuthor('deltaDAO AG') // [!code focus]
+const asset = assetBuilder.build() // [!code focus]
+
+await nautilus.publish(asset) // [!code focus]
+// @log: ddo.metadata: 
+// @log: { 
+// @log:    author: 'deltaDAO AG'
+// @log: }
+```
+
+## Returns
+
+- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
+
+The asset builder instance to chain building calls with.
+
+## Parameter
+
+### author
+
+- Type: `string`
+
+The author you want to set to the asset's metadata to be built.
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+assetBuilder.setAuthor(
+    'Company Name' // [!code focus]
+)
+```

@@ -1,0 +1,65 @@
+# setDescription
+
+Set the description of the asset. This supports the [markdown syntax](https://en.wikipedia.org/wiki/Markdown).
+
+Official OceanProtocol documentation: [DDO Specification](https://docs.oceanprotocol.com/developers/ddo-specification)
+
+## Usage
+
+:::code-group
+```ts twoslash [asset.ts]
+// @filename: ambient.d.ts
+declare module '*.md' {
+    export default string
+}
+// @filename: asset.ts
+// ---cut---
+import { AssetBuilder, Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+import Description from './description.md'
+
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+
+const assetBuilder = new AssetBuilder()
+assetBuilder.setDescription(Description) // [!code focus]
+const asset = assetBuilder.build() // [!code focus]
+
+await nautilus.publish(asset) // [!code focus]
+// @log: ddo.metadata: 
+// @log: { 
+// @log:    description: '# Asset Title\n\nA detailed description of my asset and what it offers.\n\nThis supports markdown, such as **highlights** or [links](https://link.to/my-external-resource) to other resources.'
+// @log: }
+```
+
+```markdown [description.md]
+# Asset Title
+
+A detailed description of my asset and what it offers.
+
+This supports markdown, such as **highlights** or [links](https://link.to/my-external-resource) to other resources.
+```
+:::
+
+## Returns
+
+- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
+
+The asset builder instance to chain building calls with.
+
+## Parameter
+
+### description
+
+- Type: `string`
+
+The description you want to set to the asset's metadata to be built. Can contain markdown syntax.
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+assetBuilder.setDescription(
+    '# Title for my asset\n\nA **detailed** description of my asset.' // [!code focus]
+)
+```

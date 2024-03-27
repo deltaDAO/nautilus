@@ -1,0 +1,29 @@
+# reset
+
+Resets the state of the builder.
+
+## Usage
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+
+assetBuilder.setName('Test') // [!code focus]
+assetBuilder.setDescription('My description') // [!code focus]
+assetBuilder.build() // [!code focus]
+// @log: ddo.metadata: 
+// @log: { 
+// @log:    name: 'Test',
+// @log:    description: 'My description'
+// @log: }
+
+assetBuilder.reset() // [!code focus]
+// @log: All asset data is reset and a new asset can be built with this instance.
+```
+
+## Returns
+
+- `void`
+
+No return value. The asset builder instance will be reset after this call.

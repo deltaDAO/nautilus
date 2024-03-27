@@ -1,0 +1,78 @@
+# setType
+
+Set the algorithm metadata of an `'algorithm'` type asset.
+
+To learn how to classify your asset as type `'algorithm'`, please refer to the [`setType()`documentation](/docs/api/assetbuilder/setType).
+
+Official OceanProtocol documentation: [DDO Specification](https://docs.oceanprotocol.com/developers/ddo-specification)
+
+## Usage
+
+When defining `algorithm` type assets, additional metadata is necessary to be set.
+
+```ts twoslash
+import { AssetBuilder, Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+
+const assetBuilder = new AssetBuilder()
+assetBuilder.setAlgorithm({ // [!code focus]
+    container: { // [!code focus]
+        entrypoint: 'node $ALGO', // [!code focus]
+        image: 'node', // [!code focus]
+        tag: 'lts', // [!code focus]
+        checksum: 'sha256:a6faa1aa0ae1981b70c075dd6ea0a1725a1d05a4cab85536460ae4e4710e8331' // [!code focus]
+    }, // [!code focus]
+}) // [!code focus]
+const asset = assetBuilder.build() // [!code focus]
+
+await nautilus.publish(asset) // [!code focus]
+// @log: ddo.metadata: 
+// @log: {
+// @log:    algorithm: {
+// @log:        container: {
+// @log:            entrypoint: 'node $ALGO',
+// @log:            image: 'node',
+// @log:            tag: 'lts',
+// @log:            checksum: 'sha256:a6faa1aa0ae1981b70c075dd6ea0a1725a1d05a4cab85536460ae4e4710e8331'
+// @log:        }
+// @log:    }
+// @log: }
+```
+
+## Returns
+
+- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
+
+The asset builder instance to chain building calls with.
+
+## Parameter
+
+### algorithm
+
+- Type: `MetadataAlgorithm`
+
+The algorithms metadata to be specified.
+```ts twoslash
+import { AssetBuilder, Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+const assetBuilder = new AssetBuilder()
+// ---cut---
+assetBuilder.setAlgorithm(
+    { // [!code focus]
+        container: { // [!code focus]
+            entrypoint: 'node $ALGO', // [!code focus]
+            image: 'node', // [!code focus]
+            tag: 'lts', // [!code focus]
+            checksum: 'sha256:a6faa1aa0ae1981b70c075dd6ea0a1725a1d05a4cab85536460ae4e4710e8331' // [!code focus]
+        }, // [!code focus]
+    } // [!code focus]
+) 
+```
+
+#### Properties
+
+For a full overview of algorithm metadata, please refer to the [Algorithm Metadata documentation](https://docs.oceanprotocol.com/developers/compute-to-data/compute-to-data-algorithms#algorithm-metadata) provided by OceanProtocol.
