@@ -1,5 +1,13 @@
 # @deltadao/nautilus
 
+## 1.0.0-next.5
+
+### Patch Changes
+
+- [#108](https://github.com/deltaDAO/nautilus/pull/108) [`3e8b148`](https://github.com/deltaDAO/nautilus/commit/3e8b1484fa5656a0a46fc818ca118dfda32786fc) Thanks [@moritzkirstein](https://github.com/moritzkirstein)! - Fix error in next build
+  - Fixes an error with starting compute jobs
+  - Fixes `tslib` dependency issues
+
 ## 1.0.0-next.4
 
 ### Patch Changes
