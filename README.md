@@ -35,7 +35,7 @@
 </p>
 
 
-A typescript library helping to navigate the OCEAN. It enables configurable automated publishing and consumption of assets in any [Ocean Protocol](https://oceanprotocol.com) ecosystem.
+A TypeScript library enabling you to explore the Data Economy. It is built on top of [ocean.js](https://github.com/oceanprotocol/ocean.js) and offers feature complete, automated interactions with any [Ocean Protocol](https://oceanprotocol.com) ecosystem.
 
 ## Overview
 nautilus addresses many common pain points faced by developers interacting with the data economy by offering a range of features enhancing productivity and efficiency.

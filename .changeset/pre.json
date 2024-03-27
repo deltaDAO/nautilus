@@ -1,10 +1,15 @@
 {
   "mode": "pre",
-  "tag": "beta",
+  "tag": "next",
   "initialVersions": {
-    "@deltadao/nautilus": "1.0.0-beta.1",
-    "docs": "0.0.0",
+    "docs": "0.1.0",
+    "@deltadao/nautilus": "1.0.0-beta.2",
     "test": "0.0.0"
   },
-  "changesets": ["small-tigers-repeat"]
+  "changesets": [
+    "eleven-pans-look",
+    "famous-pots-deny",
+    "lucky-drinks-occur",
+    "small-tigers-repeat"
+  ]
 }
