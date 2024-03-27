@@ -97,14 +97,11 @@ In this example we construct a one-time `accessUrl` and can then use it to fetch
 
 ## Next Steps
 
-For a more complete look at the nautilus interface, you can head to the [`Nautilus` Instance](https://nautilus.delta-dao.com/docs/api/Nautilus) documentation.
-
 Find dedicated feature documentation by following one of the links below:
 - [Download](https://nautilus.delta-dao.com/docs/guides/download)
 - [Compute to Data](https://nautilus.delta-dao.com/docs/guides/compute)
 - [Publishing](https://nautilus.delta-dao.com/docs/guides/publish)
 - [Editing](https://nautilus.delta-dao.com/docs/guides/edit)
-
 
 If you want to jump straight into code, feel free to take a look at some of our code examples in the [nautilus-examples repository](https://github.com/deltaDAO/nautilus-examples).
 
