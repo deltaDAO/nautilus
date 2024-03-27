@@ -16,11 +16,8 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
 
-      # - name: Lint code
-      #   run: npm format && npm lint:fix
-
       - name: Lint code
-        run: npm run lint
+        run: npm run format && npm run lint:fix
 
   build:
     name: Build

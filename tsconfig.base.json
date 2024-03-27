@@ -17,7 +17,7 @@
     // Incremental builds
     // NOTE: Enabling incremental builds speeds up `tsc`.
     // Keep in mind though that it does not reliably bust the cache when the `tsconfig.json` file changes.
-    "incremental": true,
+    // "incremental": true,
 
     // Type checking
     // TODO: strict is preferred. Needs some code refactoring.
@@ -42,7 +42,7 @@
     // "allowSyntheticDefaultImports": false,
     "forceConsistentCasingInFileNames": true,
     // "verbatimModuleSyntax": true, // TODO: should be enabled, but requires some refactoring.
-    "importHelpers": true, // This is only used for build validation. Since we do not have `tslib` installed, this will fail if we accidentally make use of anything that'd require injection of helpers.
+    // "importHelpers": true , // TODO: this can be turned on for build validation. Since we do not have `tslib` installed, this will fail if we accidentally make use of anything that'd require injection of helpers.
 
     // Language and environment
     // "moduleResolution": "NodeNext",
