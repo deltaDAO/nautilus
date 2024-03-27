@@ -1,7 +1,7 @@
 name: Release (Canary)
 on:
   push:
-    branches: [main, rc]
+    branches: [main, development]
   workflow_dispatch:
 
 jobs:
