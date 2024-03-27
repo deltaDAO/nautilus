@@ -1,5 +1,11 @@
 # @deltadao/nautilus
 
+## 1.0.1
+
+### Patch Changes
+
+- [`c8b4d4d`](https://github.com/deltaDAO/nautilus/commit/c8b4d4d5978a4a48c7a5ab198f82042440d4b9c5) Thanks [@moritzkirstein](https://github.com/moritzkirstein)! - Version Bump
+
 ## 1.0.0
 
 ### Patch Changes
