@@ -56,8 +56,8 @@ Firstly, create the signer you want to use with your nautilus instance. nautilus
 import { Wallet, providers } from 'ethers'
 import { Nautilus } from '@deltadao/nautilus'
 
-const provider = new providers.JsonRpcProvider('https://rpc.dev.pontus-x.eu') // [!code focus]
-const signer = new Wallet('0x...', provider) // [!code focus]
+const provider = new providers.JsonRpcProvider('https://rpc.dev.pontus-x.eu') 
+const signer = new Wallet('0x...', provider) 
 ```
 
 In this example we create an ethers `Wallet` from a given private key and connect to a RPC provider of our choice.
@@ -72,7 +72,7 @@ import { Nautilus } from '@deltadao/nautilus'
 const provider = new providers.JsonRpcProvider('https://rpc.dev.pontus-x.eu')
 const signer = new Wallet('0x...', provider)
 
-const nautilus = await Nautilus.create(signer) // [!code focus]
+const nautilus = await Nautilus.create(signer) 
 ```
 
 Note, that we use the previously created Wallet and pass it to Nautilus to create the instance with this signer.
@@ -89,8 +89,8 @@ const signer = new Wallet('0x...', provider)
 
 const nautilus = await Nautilus.create(signer)
 
-const accessUrl = await nautilus.access({ assetDid: 'did:op:12345'}) // [!code focus]
-const data = await fetch(accessUrl) // [!code focus]
+const accessUrl = await nautilus.access({ assetDid: 'did:op:12345'}) 
+const data = await fetch(accessUrl) 
 ```
 
 In this example we construct a one-time `accessUrl` and can then use it to fetch the data associated with the respective data service.
