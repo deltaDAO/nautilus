@@ -1,7 +1,8 @@
-import {
+import type {
   Config,
-  DatatokenCreateParams,
+  ConsumerParameter,
   DDO,
+  DatatokenCreateParams,
   Files,
   FreCreationParams,
   Metadata,
@@ -9,29 +10,17 @@ import {
   NftCreateData,
   Service
 } from '@oceanprotocol/lib'
-import { Signer, providers } from 'ethers'
-import {
+import type { Signer, providers } from 'ethers'
+import type {
   FileTypes,
   NautilusAsset,
   NautilusService,
   PricingConfigWithoutOwner,
   ServiceTypes
 } from '../Nautilus'
-import { NautilusConsumerParameter } from '../Nautilus/Asset/ConsumerParameters'
-
-export type ConsumerParameterType = 'text' | 'number' | 'boolean' | 'select'
 
 export type ConsumerParameterSelectOption = {
   [value: string]: string
-}
-export interface ConsumerParameter {
-  name: string
-  type: ConsumerParameterType
-  label: string
-  required: boolean
-  description: string
-  default: string
-  options?: ConsumerParameterSelectOption[]
 }
 
 export type MetadataConfig = Omit<
@@ -39,7 +28,7 @@ export type MetadataConfig = Omit<
   'created' | 'updated' | 'algorithm'
 > & {
   algorithm?: MetadataAlgorithm & {
-    consumerParameters?: NautilusConsumerParameter[]
+    consumerParameters?: ConsumerParameter[]
   }
 }
 

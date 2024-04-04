@@ -1,11 +1,11 @@
 import {
-  Config,
+  type Config,
   LoggerInstance,
-  ProviderFees,
+  type ProviderFees,
   UserCustomParameters
 } from '@oceanprotocol/lib'
-import { Signer } from 'ethers'
-import {
+import type { Signer } from 'ethers'
+import type {
   AssetWithAccessDetails,
   AssetWithAccessDetailsAndPrice,
   ComputeAsset
@@ -63,8 +63,7 @@ export async function getAssetWithPrice(
   asset: AssetWithAccessDetails,
   signer: Signer,
   config: Config,
-  providerFees: ProviderFees,
-  userCustomParameters?: UserCustomParameters
+  providerFees: ProviderFees
 ): Promise<AssetWithAccessDetailsAndPrice> {
   return {
     ...asset,
@@ -72,8 +71,7 @@ export async function getAssetWithPrice(
       asset,
       signer,
       config,
-      providerFees,
-      userCustomParameters
+      providerFees
     )
   }
 }

@@ -1,15 +1,15 @@
 import { LoggerInstance } from '@oceanprotocol/lib'
-import { refocusExchange } from '@urql/exchange-refocus'
 import {
-  Client,
+  type Client,
+  type OperationContext,
+  type OperationResult,
+  type TypedDocumentNode,
   createClient,
   dedupExchange,
-  fetchExchange,
-  OperationContext,
-  TypedDocumentNode
+  fetchExchange
 } from 'urql'
-import { AccessDetails } from '../../@types/Compute'
-import { ITokenPriceQuery } from './TokenPriceQuery.gql.generated'
+import type { AccessDetails } from '../../@types/Compute'
+import type { ITokenPriceQuery } from './TokenPriceQuery.gql.generated'
 
 let client: Client
 
@@ -29,22 +29,25 @@ export function geturqlClient(subgraphUri) {
   if (!client)
     client = createClient({
       url: `${subgraphUri}/subgraphs/name/oceanprotocol/ocean-subgraph`,
-      exchanges: [dedupExchange, refocusExchange(), fetchExchange]
+      exchanges: [dedupExchange, fetchExchange]
     })
 
   return client
 }
 
-export async function fetchData(
+export async function fetchData<T, V>(
   subgraphUri: string,
   query: TypedDocumentNode,
+  // biome-ignore lint/suspicious/noExplicitAny: client.query variables has an any type
   variables: any,
   context: OperationContext
-): Promise<any> {
+): Promise<OperationResult<T, V>> {
   try {
     const client = geturqlClient(subgraphUri)
 
-    const response = await client.query(query, variables, context).toPromise()
+    const response = await client
+      .query<T, V>(query, variables, context)
+      .toPromise()
     return response
   } catch (error) {
     LoggerInstance.error('Error fetchData: ', error.message)

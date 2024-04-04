@@ -1,0 +1,166 @@
+---
+title: Nautilus · Typescript data economy toolkit
+content:
+  width: 100%
+layout: landing
+logo: false
+---
+import { HomePage } from 'vocs/components'
+
+{/* HEADER */}
+
+<div className="absolute max-w-[1120px] mx-auto w-full top-20 bottom-0 bg-[url('/colosseum-light.svg')] dark:bg-[url('/colosseum.svg')] bg-no-repeat max-sm:w-[200%] max-sm:-left-[200px] max-sm:hidden" />
+<div className="max-w-[1120px] mx-auto vp-doc relative px-[24px] mb-[96px] mt-[32px] md:px-0 md:mb-[64px]">
+  <div className="pt-[48px] max-sm:pt-0">
+    <div className="max-sm:px-0 flex justify-between z-0 max-md:justify-center">
+      <div className="space-y-8 max-w-[400px] flex flex-col items-start max-md:items-center">
+        <img className="h-[72px] dark:invert-[1] max-sm:h-[60px]" src="/logo-light.svg" alt="nautilus logo" />
+        <div className="font-regular text-[21px] max-sm:text-[18px] text-[#919193] max-md:text-center">Typescript <span className="text-black dark:text-white">data economy toolkit</span> - build accessible decentralized data pipelines.</div>
+        <div className="flex justify-center space-x-2">
+          <HomePage.Button href="/docs/getting-started" variant="accent">Get started</HomePage.Button>
+          <HomePage.Button href="/docs/introduction">Why Nautilus?</HomePage.Button>
+          <HomePage.Button href="https://github.com/deltaDAO/nautilus">GitHub</HomePage.Button>
+        </div>
+      </div>
+      <div className="flex flex-col justify-between w-[440px] space-y-10 max-lg:w-[370px] max-md:hidden">
+        
+        <div id="home-install" className="h-full">
+
+  :::code-group
+
+  ```bash [npm]
+  npm i @deltadao/nautilus
+  ```
+
+  ```bash [pnpm]
+  pnpm i @deltadao/nautilus
+  ```
+
+  ```bash [bun]
+  bun i @deltadao/nautilus
+  ```
+
+  :::
+
+        </div>
+    
+    <div className="flex justify-between space-x-4">
+    <a href="https://github.com/deltaDAO/nautilus/blob/main/LICENSE" className="cursor-pointer h-[36px] flex-1 relative rounded-lg overflow-hidden border border-black/10 dark:border-white/20" style={{ color: 'inherit' }} rel="noreferrer noopener" target="_blank">
+      <div className="absolute flex z-[1] p-[6px] h-full w-full">
+        <div className="flex-1 bg-white/60 dark:bg-black/40 flex items-center w-full h-full rounded-md">
+          <span className="font-medium text-[15px] leading-none opacity-80 w-full text-center">license</span>
+        </div>
+        <div className="flex items-center h-full px-2">
+          <span className="font-medium text-[15px] leading-none text-center w-full text-black dark:text-white">Apache-2.0</span>
+        </div>
+      </div>
+      
+      <div className="absolute left-0 right-0 top-0 bottom-0 bg-black/5 dark:bg-white/5 z-[0]" />
+      <div className="absolute left-0 right-0 top-0 bottom-0 backdrop-blur-[2px] backdrop-filter z-[0]" />
+    </a>
+    <a href="https://npmjs.com/package/@deltadao/nautilus" className="cursor-pointer h-[36px] flex-1 relative rounded-lg overflow-hidden border border-green-400/50" style={{ color: 'inherit' }} rel="noreferrer noopener" target="_blank">
+      <div className="absolute flex z-[1] p-[6px] h-full w-full">
+        <div className="flex-1 bg-white/60 dark:bg-black/40 flex items-center w-full h-full rounded-md">
+          <span className="font-medium text-[15px] leading-none opacity-80 w-full text-center">version</span>
+        </div>
+        <div className="flex items-center h-full px-2">
+          <span className="font-medium text-[15px] leading-none text-center w-full text-lime-400">1.0.1</span>
+        </div>
+      </div>
+      <div className="absolute left-0 right-0 top-0 bottom-0 bg-lime-400 opacity-10 z-[0]" />
+      <div className="absolute left-0 right-0 top-0 bottom-0 backdrop-blur-[2px] backdrop-filter z-[0]" />
+    </a>
+    </div>
+    </div>
+    </div>
+    <div className="flex justify-between flex-wrap mt-16 max-sm:hidden">
+      <div className="pr-2 w-1/3 max-lg:pb-3 max-sm:px-0 max-lg:w-1/2 max-sm:w-full z-0">
+        <div className="relative w-full h-[168px] max-lg:h-[142px] overflow-hidden">
+          <div className="border-black dark:border-white border border-solid border-opacity-10 dark:border-opacity-10 rounded-lg h-full px-5 py-6 absolute z-10 flex flex-col justify-between w-full">
+            <div className="text-xl font-medium text-black dark:text-white">Easy to start</div>
+            <div className="text-[17px] text-[#919193]">The abstraction layer allows for more intuitive interactions with underlying DLT and decentralized infrastructure.</div>
+          </div>
+          <div className="absolute left-0 right-0 top-0 bottom-0 dark:bg-[#313136] opacity-20 z-0" />
+          <div className="absolute left-0 right-0 top-0 bottom-0 backdrop-filter backdrop-blur-[2px] z-0" />
+        </div>
+      </div>
+      <div className="pl-2 pr-2 max-sm:px-0 max-lg:pb-3 max-lg:pr-0 w-1/3 max-lg:w-1/2 max-sm:w-full z-0">
+        <div className="relative w-full h-[168px] max-lg:h-[142px]">
+          <div className="border-black dark:border-white border border-solid border-opacity-10 dark:border-opacity-10 rounded-lg h-full px-5 py-6 absolute z-10 flex flex-col justify-between w-full">
+            <div className="text-xl font-medium text-black dark:text-white">Documented</div>
+            <div>
+            <div className="text-[17px] text-[#919193]">An ever growing documentation aiming to enable both newcomers and advanced data economists alike.</div>
+            </div>
+          </div>
+          <div className="absolute left-0 right-0 top-0 bottom-0 dark:bg-[#313136] opacity-20 z-0" />
+          <div className="absolute left-0 right-0 top-0 bottom-0 backdrop-filter backdrop-blur-[2px] z-0" />
+        </div>
+      </div>
+      <div className="pl-2 w-1/3 max-lg:px-0 max-lg:w-full z-0">
+        <div className="relative w-full h-[168px] max-lg:h-[142px]">
+          <div className="border-black dark:border-white border border-solid border-opacity-10 dark:border-opacity-10 rounded-lg h-full px-5 py-6 absolute z-10 flex flex-col justify-between w-full">
+            <div className="text-xl font-medium text-black dark:text-white">Typed APIs</div>
+            <div className="text-[17px] text-[#919193]">A focus on flexible APIs, following well established patterns, that provide extensive TypeScript typings.</div>
+          </div>
+          <div className="absolute left-0 right-0 top-0 bottom-0 dark:bg-[#313136] opacity-20 z-0" />
+          <div className="absolute left-0 right-0 top-0 bottom-0 backdrop-filter backdrop-blur-[2px] z-0" />
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<article className="vocs_Content max-w-4xl mt-[-80px] mx-auto">
+
+#
+# Overview
+
+```ts twoslash
+// 1. Import modules.
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet, providers } from 'ethers'
+
+// 2. Set up your client.
+const provider = new providers.JsonRpcProvider('https://rpc.dev.pontus-x.eu')
+const signer = new Wallet('0x...', provider)
+const nautilus = await Nautilus.create(signer)
+
+// 3. Consume a service offering!
+const did = 'did:op:3cccb2963b99120426249b11f7b911526533237509cfad8e9671813a7adb2cec'
+const sharedData = await nautilus.access({ assetDid: did })
+```
+
+# Features
+
+nautilus supports all these features out-of-the-box:
+
+- [Publishing](/docs/guides/publish) of datasets, API endpoints and algorithms
+- Feature complete [editing](/docs/guides/edit) for any of your assets
+- [Download](/docs/guides/download) of any available access type assets
+- Triggering of [compute jobs](/docs/guides/compute), as well as full support for compute status and result requests
+- [Custom configurations](/docs/guides/config) to connect to additional networks and components of your choice 
+- Abstraction layer of the [ocean.js API](https://docs.oceanprotocol.com/developers/ocean.js) to make your life easier
+- Native support of all [available networks](https://docs.oceanprotocol.com/discover/networks) OceanProtocol is deployed on
+
+# Community
+
+Check out the following places for more data-economy related content:
+
+- Subscribe to the [Pontus-X newsletter](https://newsletter.pontus-x.eu) for regular ecosystem updates
+- Follow [deltaDAO AG](https://linkedin.com/company/deltadao) on LinkedIn for data-economy related news
+- Experience the data economy first hand at the [Pontus-X portal](https://pontus-x.eu)
+- Join the [discussions on GitHub](https://github.com/deltaDAO/nautilus/issues)
+
+# Support
+
+We are committed to nautilus as an open-source project. Reach out if you are able to support the efforts or want to collaborate with us!
+
+- [deltaDAO contact](mailto:contact@delta-dao.com)
+
+</article>
+
+<center>
+  <a href="https://delta-dao.com/privacy">Privacy</a>
+  <span className="mx-2">|</span>
+  <a href="https://delta-dao.com/imprint">Imprint</a>
+</center>

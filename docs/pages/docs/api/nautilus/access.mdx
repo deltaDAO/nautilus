@@ -1,0 +1,97 @@
+# access
+
+Access a specific asset by its decentralized identifier.
+
+## Usage
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const accessUrl = await nautilus.access({ // [!code focus]
+    assetDid: 'did:op:1234abcd...' // [!code focus]
+}) // [!code focus]
+
+// fetch the actual data
+const data = await fetch(accessUrl)
+```
+
+## Returns
+
+`string`
+
+A one-time accessible url to download the raw data of the requested asset.
+
+## Parameters
+
+### config
+- Type: `AccessConfig`
+
+The configuration object for the access request.
+
+#### Properties
+
+##### assetDid
+- Type: `string`
+
+The decentralized identifier of the asset to access.
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const accessUrl = await nautilus.access({
+    assetDid: 'did:op:1234abcd...' // [!code focus]
+})
+```
+
+##### serviceId (optional)
+- Type: `string`
+
+Optionally specify a service to access. Defaults to the first service of the asset's metadata.
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const accessUrl = await nautilus.access({ 
+    assetDid: 'did:op:1234abcd...', 
+    serviceId: 'specific-service-id' // [!code focus]
+})
+```
+
+##### fileIndex (optional)
+- Type: `number`
+
+Optionally specify a file of the service to access. Defaults to the first file of the service (`0`).
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const accessUrl = await nautilus.access({ 
+    assetDid: 'did:op:1234abcd...', 
+    fileIndex: 0 // [!code focus]
+})
+```
+
+##### userdata (optional)
+- Type: [`UserCustomParameters`](/docs/api/UserCustomParameters)
+
+If the asset requires or allows for custom user parameters, these can be configured here.
+
+Learn more about how to use custom userdata with assets in our [Consumer Parameters Guide](/docs/api/ConsumerParameterBuilder).
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const accessUrl = await nautilus.access({ 
+    assetDid: 'did:op:1234abcd...', 
+    userdata: { // [!code focus]
+        parameter: 'value', // [!code focus]
+        number: 123, // [!code focus]
+    } // [!code focus]
+})
+```

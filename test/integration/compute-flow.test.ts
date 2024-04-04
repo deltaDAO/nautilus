@@ -1,5 +1,6 @@
-import { Aquarius, ComputeJob, LoggerInstance } from '@oceanprotocol/lib'
-import assert from 'assert'
+import { Aquarius, type ComputeJob, LoggerInstance } from '@oceanprotocol/lib'
+import { expect } from 'chai'
+import type { Signer } from 'ethers'
 import {
   AssetBuilder,
   FileTypes,
@@ -7,7 +8,7 @@ import {
   Nautilus,
   ServiceBuilder,
   ServiceTypes
-} from '../../src'
+} from '../../src/Nautilus'
 import {
   algorithmMetadata,
   algorithmService,
@@ -15,10 +16,8 @@ import {
   getPricing
 } from '../fixtures/AssetConfig'
 import { getTestConfig } from '../fixtures/Config'
+import { MUMBAI_NODE_URI, getSigner } from '../fixtures/Ethers'
 import { nftParams } from '../fixtures/NftCreateData'
-import { getSigner, MUMBAI_NODE_URI } from '../fixtures/Ethers'
-import { Signer } from 'ethers'
-import { expect } from 'chai'
 
 describe('Compute Flow Integration', async function () {
   this.timeout(90000)
@@ -200,7 +199,7 @@ async function waitUntilJobFinishes(
   nautilus: Nautilus,
   jobId: string
 ): Promise<ComputeJob> {
-  LoggerInstance.log(`Waiting until compute job finishes...`)
+  LoggerInstance.log('Waiting until compute job finishes...')
   return new Promise((resolve) => {
     const interval = setInterval(async () => {
       const status = await getStatusHelper(nautilus, jobId)

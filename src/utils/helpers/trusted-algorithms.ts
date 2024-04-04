@@ -1,12 +1,13 @@
 import {
-  Asset,
+  type Asset,
   FileInfo,
   ProviderInstance,
-  PublisherTrustedAlgorithm,
+  type PublisherTrustedAlgorithm,
   getHash
 } from '@oceanprotocol/lib'
+import type { FileTypes, NautilusService, ServiceTypes } from '../../Nautilus'
 import { getAsset } from '../aquarius'
-import { FileTypes, NautilusService, ServiceTypes } from '../../Nautilus'
+import { checkDidFiles } from '../provider'
 
 // TODO replace hardcoded service index 0 with service id once supported by the stack
 async function getPublisherTrustedAlgorithms(
@@ -30,7 +31,7 @@ async function getPublisherTrustedAlgorithms(
       throw new Error(`Asset ${asset.id} is not of type algorithm`)
     if (!asset.services?.[0]) throw new Error(`No service in ${asset.id}`)
 
-    const filesChecksum = await getFileDidInfo(
+    const filesChecksum = await checkDidFiles(
       asset?.id,
       asset?.services?.[0]?.id,
       asset?.services?.[0]?.serviceEndpoint
@@ -53,30 +54,12 @@ async function getPublisherTrustedAlgorithms(
   return trustedAlgorithms
 }
 
-async function getFileDidInfo(
-  did: string,
-  serviceId: string,
-  providerUrl: string
-): Promise<FileInfo[]> {
-  try {
-    const response = await ProviderInstance.checkDidFiles(
-      did,
-      serviceId,
-      providerUrl,
-      true
-    )
-    return response
-  } catch (error) {
-    throw new Error(`[Initialize check file did] Error:' ${error}`)
-  }
-}
-
 export async function resolvePublisherTrustedAlgorithms(
   nautilusDDOServices: NautilusService<ServiceTypes, FileTypes>[],
   metadataCacheUri: string
 ) {
   for (const service of nautilusDDOServices) {
-    if (service.addedPublisherTrustedAlgorithms?.length) continue
+    if (service.addedPublisherTrustedAlgorithms?.length < 1) continue
 
     const dids = service.addedPublisherTrustedAlgorithms.map(
       (asset) => asset.did
@@ -88,10 +71,10 @@ export async function resolvePublisherTrustedAlgorithms(
 
     if (service.compute?.publisherTrustedAlgorithms?.length === 0) {
       service.compute.publisherTrustedAlgorithms = newPublisherTrustedAlgorithms
-      return
+      continue
     }
 
-    newPublisherTrustedAlgorithms.forEach((algorithm) => {
+    for (const algorithm of newPublisherTrustedAlgorithms) {
       const index = service.compute.publisherTrustedAlgorithms.findIndex(
         (existingAlgorithm) => existingAlgorithm.did === algorithm.did
       )
@@ -110,6 +93,6 @@ export async function resolvePublisherTrustedAlgorithms(
           service.compute.publisherTrustedAlgorithms[index] = algorithm
         }
       }
-    })
+    }
   }
 }

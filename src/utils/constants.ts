@@ -1,4 +1,4 @@
-import { Asset, DDO } from '@oceanprotocol/lib'
+import type { Asset, DDO } from '@oceanprotocol/lib'
 
 // TODO look into more advanced type solutions
 export type AssetSpecificProps = Exclude<keyof Asset, keyof DDO>

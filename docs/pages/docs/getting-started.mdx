@@ -1,0 +1,83 @@
+# Getting Started [Get started with nautilus in just a few lines of code]
+
+## Overview
+nautilus addresses many common pain points faced by developers interacting with the data economy by offering a range of features enhancing productivity and efficiency.
+You will find a quick introduction on this page to get you setup with the **Data Economy TypeScript Toolkit**.
+
+Looking for dedicated feature documentations? Follow the links below:
+- [Download](/docs/guides/download)
+- [Compute to Data](/docs/guides/compute)
+- [Publishing](/docs/guides/publish)
+- [Editing](/docs/guides/edit)
+
+
+## Installation
+
+:::code-group
+
+  ```bash [npm]
+  npm i @deltadao/nautilus
+  ```
+
+  ```bash [pnpm]
+  pnpm i @deltadao/nautilus
+  ```
+
+  ```bash [bun]
+  bun i @deltadao/nautilus
+  ```
+
+:::
+
+## Quick Start
+### 1. Setup your Signer
+Firstly, create the signer you want to use with your nautilus instance. nautilus uses the ethers.js `Signer`. You can read more about possible configurations in the [official documentation](https://docs.ethers.org/v5/api/signer/).
+
+```ts twoslash
+import { Wallet, providers } from 'ethers'
+import { Nautilus } from '@deltadao/nautilus'
+
+const provider = new providers.JsonRpcProvider('https://rpc.dev.pontus-x.eu') // [!code focus]
+const signer = new Wallet('0x...', provider) // [!code focus]
+```
+
+In this example we create an ethers `Wallet` from a given private key and connect to a RPC provider of our choice.
+
+### 2. Setup the nautilus instance
+Now that you have a Signer set up, you can use it to bootstrap your nautilus client instance.
+
+``` ts twoslash
+import { Wallet, providers } from 'ethers'
+import { Nautilus } from '@deltadao/nautilus'
+
+const provider = new providers.JsonRpcProvider('https://rpc.dev.pontus-x.eu')
+const signer = new Wallet('0x...', provider)
+
+const nautilus = await Nautilus.create(signer) // [!code focus]
+```
+
+Note, that we use the previously created Wallet and pass it to Nautilus to create the instance with this signer.
+
+### 3. Interact with the data economy
+With the client instance bootstrapped you can now trigger any transactions or access calls supported by OceanProtocol.
+
+``` ts twoslash
+import { Wallet, providers } from 'ethers'
+import { Nautilus } from '@deltadao/nautilus'
+
+const provider = new providers.JsonRpcProvider('https://rpc.dev.pontus-x.eu')
+const signer = new Wallet('0x...', provider)
+
+const nautilus = await Nautilus.create(signer)
+
+const accessUrl = await nautilus.access({ assetDid: 'did:op:12345'}) // [!code focus]
+const data = await fetch(accessUrl) // [!code focus]
+```
+
+In this example we construct a one-time `accessUrl` and can then use it to fetch the data associated with the respective data service.
+
+## Next Steps
+
+For a more complete look at the nautilus interface, you can head to the [`Nautilus` Instance](/docs/api/Nautilus) documentation.
+
+If you want to jump straight into code, feel free to take a look at some of our code examples in the [nautilus-examples repository](https://github.com/deltaDAO/nautilus-examples).

@@ -1,4 +1,4 @@
-import { MetadataConfig } from '../../src/@types'
+import type { MetadataConfig } from '../../src/@types'
 
 export const metadataFixture: MetadataConfig = {
   name: 'Name for DDO Testing',

@@ -1,22 +1,22 @@
 import {
-  Asset,
-  ComputeAlgorithm,
-  Config,
+  type Asset,
+  type ComputeAlgorithm,
+  type Config,
   Datatoken,
   Dispenser,
   FixedRateExchange,
-  FreOrderParams,
+  type FreOrderParams,
   LoggerInstance,
-  OrderParams,
-  ProviderFees,
-  Service,
+  type OrderParams,
+  type ProviderFees,
+  type Service,
   ZERO_ADDRESS,
   amountToUnits,
   approve
 } from '@oceanprotocol/lib'
+import type { Signer, providers } from 'ethers'
 import { getServiceById } from '.'
-import { Signer, providers } from 'ethers'
-import { AssetWithAccessDetails, OrderPriceAndFees } from '../@types'
+import type { AssetWithAccessDetails, OrderPriceAndFees } from '../@types'
 
 export async function isOrderable(
   asset: Asset,

@@ -1,7 +1,7 @@
-import { Config, ConfigHelper } from '@oceanprotocol/lib'
-import { Signer } from 'ethers'
-import fs from 'fs'
-import { homedir } from 'os'
+import fs from 'node:fs'
+import { homedir } from 'node:os'
+import { type Config, ConfigHelper } from '@oceanprotocol/lib'
+import type { Signer } from 'ethers'
 
 // Get Config and Addresses for barge test environment
 

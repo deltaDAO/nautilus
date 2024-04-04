@@ -1,4 +1,4 @@
-import { DatatokenCreateParams, ZERO_ADDRESS } from '@oceanprotocol/lib'
+import { type DatatokenCreateParams, ZERO_ADDRESS } from '@oceanprotocol/lib'
 
 // datatoken parameters: name, symbol, templateIndex, etc.
 export const datatokenParams: Omit<

@@ -1,25 +1,26 @@
 import {
-  approveWei,
-  Arweave,
-  ComputeAlgorithm,
-  ComputeAsset,
-  ComputeEnvironment,
-  ComputeJob,
-  ComputeOutput,
-  FileInfo,
-  GraphqlQuery,
-  Ipfs,
+  type Arweave,
+  type ComputeAlgorithm,
+  type ComputeAsset,
+  type ComputeEnvironment,
+  type ComputeJob,
+  type ComputeOutput,
+  type FileInfo,
+  type GraphqlQuery,
+  type Ipfs,
   LoggerInstance,
-  ProviderComputeInitializeResults,
+  type ProviderComputeInitializeResults,
   ProviderInstance,
-  Service,
-  Smartcontract,
-  UrlFile,
-  UserCustomParameters
+  type ReceiptOrEstimate,
+  type Service,
+  type Smartcontract,
+  type UrlFile,
+  type UserCustomParameters,
+  approveWei
 } from '@oceanprotocol/lib'
-import { Signer } from 'ethers'
+import type { Signer } from 'ethers'
 import { getOceanConfig } from '.'
-import { AssetWithAccessDetails } from '../@types/Compute'
+import type { AssetWithAccessDetails } from '../@types/Compute'
 
 export async function isValidProvider(providerUrl: string): Promise<boolean> {
   try {
@@ -27,12 +28,13 @@ export async function isValidProvider(providerUrl: string): Promise<boolean> {
     const response = await ProviderInstance.isValidProvider(providerUrl)
     return response
   } catch (error) {
-    LoggerInstance.error('Error verifying provider instance: ' + error.message)
+    LoggerInstance.error(`Error verifying provider instance: ${error.message}`)
     return false
   }
 }
 
 export async function getEncryptedFiles(
+  // biome-ignore lint/suspicious/noExplicitAny: ProviderInstance.encrypt data is type any
   files: any,
   chainId: number,
   providerUrl: string
@@ -44,7 +46,25 @@ export async function getEncryptedFiles(
     const response = await ProviderInstance.encrypt(files, chainId, providerUrl)
     return response
   } catch (error) {
-    LoggerInstance.error('Error parsing json: ' + error.message)
+    LoggerInstance.error(`Error parsing json: ${error.message}`)
+  }
+}
+
+export async function checkDidFiles(
+  did: string,
+  serviceId: string,
+  providerUrl: string
+): Promise<FileInfo[]> {
+  try {
+    const response = await ProviderInstance.checkDidFiles(
+      did,
+      serviceId,
+      providerUrl,
+      true
+    )
+    return response
+  } catch (error) {
+    throw new Error(`[Initialize check file did] Error:' ${error}`)
   }
 }
 
@@ -66,7 +86,7 @@ export async function initializeProvider(
       consumerParameters
     )
   } catch (error) {
-    LoggerInstance.error(`Error initializing provider for access!`)
+    LoggerInstance.error('Error initializing provider for access!')
     LoggerInstance.error(error)
     return null
   }
@@ -105,7 +125,9 @@ export async function initializeProviderForCompute(
       accountId
     )
   } catch (error) {
-    LoggerInstance.error(`Error initializing provider for the compute job!`)
+    LoggerInstance.error(
+      `Error initializing provider for the compute job! ${error.message}`
+    )
     return null
   }
 }
@@ -135,6 +157,26 @@ export async function startComputeJob(
   }
 }
 
+export async function stopComputeJob(
+  providerUri: string,
+  did: string,
+  jobId: string,
+  signer: Signer
+): Promise<ComputeJob | ComputeJob[]> {
+  try {
+    return await ProviderInstance.computeStop(
+      did,
+      await signer.getAddress(),
+      jobId,
+      providerUri,
+      signer
+    )
+  } catch (error) {
+    LoggerInstance.error('Error stopping compute job!')
+    LoggerInstance.error(error)
+  }
+}
+
 export function getValidUntilTime(
   computeEnvMaxJobDuration: number,
   datasetTimeout?: number,
@@ -156,7 +198,7 @@ export async function approveProviderFee(
   accountId: string,
   signer: Signer,
   providerFeeAmount: string
-): Promise<any> {
+): Promise<ReceiptOrEstimate> {
   const config = getOceanConfig(asset.chainId)
   const baseToken =
     asset?.accessDetails?.type === 'free'

@@ -1,22 +1,22 @@
 import {
   LoggerInstance,
   ProviderInstance,
-  Service,
-  UserCustomParameters
+  type Service,
+  type UserCustomParameters
 } from '@oceanprotocol/lib'
-import { AccessConfig } from '../@types/Access'
-import {
+import { type Signer, providers } from 'ethers'
+import type { AccessConfig } from '../@types/Access'
+import type {
   AccessDetails,
   AssetWithAccessDetails,
   AssetWithAccessDetailsAndPrice
 } from '../@types/Compute'
+import { getServiceById, getServiceByName } from '../utils'
 import { getAsset } from '../utils/aquarius'
 import { getAccessDetails } from '../utils/helpers/access-details'
 import { getAssetWithPrice } from '../utils/helpers/assets'
 import { order } from '../utils/order'
 import { initializeProvider } from '../utils/provider'
-import { getServiceById, getServiceByName } from '../utils'
-import { Signer, providers } from 'ethers'
 
 /**
  * @param {AccessConfig} accessConfig Configuration of the access request
@@ -66,8 +66,7 @@ export async function access(accessConfig: AccessConfig) {
     assetWithAccessDetails,
     signer,
     config,
-    initializeData.providerFee,
-    userdata
+    initializeData.providerFee
   )
 
   LoggerInstance.debug(

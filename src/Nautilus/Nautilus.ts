@@ -1,35 +1,36 @@
+import type { TransactionReceipt } from '@ethersproject/abstract-provider'
 import {
-  Asset,
-  Config,
+  type Asset,
+  type Config,
   ConfigHelper,
-  LogLevel,
+  type LogLevel,
   LoggerInstance,
   Nft
 } from '@oceanprotocol/lib'
-import { Signer, utils as ethersUtils } from 'ethers'
+import { type Signer, utils as ethersUtils } from 'ethers'
 import {
-  AccessConfig,
-  ComputeConfig,
-  ComputeResultConfig,
-  ComputeStatusConfig,
-  CreateAssetConfig,
+  type AccessConfig,
+  type ComputeConfig,
+  type ComputeResultConfig,
+  type ComputeStatusConfig,
+  type CreateAssetConfig,
   LifecycleStates,
-  PublishResponse
+  type PublishResponse,
+  type StopComputeConfig
 } from '../@types'
+import { access } from '../access'
+import { compute, getStatus, retrieveResult, stopCompute } from '../compute'
 import {
   createAsset,
   createServiceWithDatatokenAndPricing,
   publishDDO
 } from '../publish'
 import { getAllPromisesOnArray } from '../utils'
-import { NautilusAsset } from './Asset/NautilusAsset'
-import { access } from '../access'
-import { compute, getStatus, retrieveResult } from '../compute'
-import { FileTypes, NautilusService, ServiceTypes } from './Asset'
-import { TransactionReceipt } from '@ethersproject/abstract-provider'
-import { resolvePublisherTrustedAlgorithms } from '../utils/helpers/trusted-algorithms'
 import { getAsset, getAssets } from '../utils/aquarius'
 import { editPrice } from '../utils/contracts'
+import { resolvePublisherTrustedAlgorithms } from '../utils/helpers/trusted-algorithms'
+import type { FileTypes, NautilusService, ServiceTypes } from './Asset'
+import type { NautilusAsset } from './Asset/NautilusAsset'
 
 export { LogLevel } from '@oceanprotocol/lib'
 
@@ -256,7 +257,10 @@ export class Nautilus {
     serviceId: string,
     newPrice: string
   ): Promise<TransactionReceipt> {
-    if (typeof newPrice !== 'string' || isNaN(parseFloat(newPrice))) {
+    if (
+      typeof newPrice !== 'string' ||
+      Number.isNaN(Number.parseFloat(newPrice))
+    ) {
       throw new Error('newPrice must be a numeric string')
     }
 
@@ -342,6 +346,13 @@ export class Nautilus {
   ) {
     return await retrieveResult({
       ...computeResultConfig,
+      signer: this.signer
+    })
+  }
+
+  async stopCompute(stopComputeConfig: Omit<StopComputeConfig, 'signer'>) {
+    return await stopCompute({
+      ...stopComputeConfig,
       signer: this.signer
     })
   }

@@ -1,18 +1,21 @@
-import { Asset } from '@oceanprotocol/lib'
-import {
+import type { Asset } from '@oceanprotocol/lib'
+import type {
   CredentialListTypes,
   IAssetBuilder,
   LifecycleStates
 } from '../../@types/Nautilus'
-import { MetadataConfig, NftCreateDataWithoutOwner } from '../../@types/Publish'
+import type {
+  MetadataConfig,
+  NftCreateDataWithoutOwner
+} from '../../@types/Publish'
 import { combineArrays } from '../../utils'
 import { NautilusAsset } from './NautilusAsset'
-import {
+import { NautilusDDO } from './NautilusDDO'
+import type {
   FileTypes,
   NautilusService,
   ServiceTypes
 } from './Service/NautilusService'
-import { NautilusDDO } from './NautilusDDO'
 
 export class AssetBuilder implements IAssetBuilder {
   private asset: NautilusAsset
@@ -98,6 +101,7 @@ export class AssetBuilder implements IAssetBuilder {
     return this
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: can be any user info
   addAdditionalInformation(additionalInformation: { [key: string]: any }) {
     this.asset.ddo.metadata.additionalInformation = {
       ...this.asset.ddo.metadata.additionalInformation,

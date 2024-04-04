@@ -1,0 +1,118 @@
+# Compute to Data [Generate value on data that stays private]
+
+The `Nautilus` instance we created in the setup step provides access to a `compute()` function that we can use to start new compute jobs.
+This includes all potentially necessary orders for required datatokens as well as the signed request towards Ocean Provider to start the compute job itself.
+
+## Starting a new job
+
+Starting a new compute job can be very quick to achieve. The most basic configuration needs only the identifiers of both the dataset and algorithm.
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { providers, Wallet } from 'ethers'
+
+const provider = new providers.JsonRpcProvider('https://rpc.dev.pontux-x.eu')
+const signer = new Wallet('0x...', provider)
+
+// create the nautilus instance
+const nautilus = await Nautilus.create(signer)
+
+const dataset = { // [!code focus]
+    did: 'did:op:123abc...' // [!code focus]
+} // [!code focus]
+const algorithm = { // [!code focus]
+    did: 'did:op:123abc...' // [!code focus]
+} // [!code focus]
+
+const computeJob = await nautilus.compute({ // [!code focus]
+    dataset, // [!code focus]
+    algorithm // [!code focus]
+}) // [!code focus]
+```
+The compute job resulting from this start request can be used in future interactions, for example you can store the specific `jobId` to reference it later:
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { ComputeJob } from '@oceanprotocol/lib'
+import { Wallet } from 'ethers'
+const signer = new Wallet('')
+const nautilus = await Nautilus.create(signer)
+
+const dataset = {
+  did: 'did:op:123abc...'
+}
+
+const algorithm = {
+  did: 'did:op:123abc...'
+}
+
+const computeJob = await nautilus.compute({
+  dataset,
+  algorithm
+}) as ComputeJob
+// ---cut---
+const { jobId } = computeJob // [!code focus]
+```
+
+## Get a compute job status
+
+Now that you have a reference to any job you started, it is straight forward to monitor the status (see [`getComputeStatus`](/docs/api/nautilus/getComputeStatus)):
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const signer = new Wallet('')
+const nautilus = await Nautilus.create(signer)
+const jobId = ''
+// ---cut---
+const computeJobStatus = await nautilus.getComputeStatus({
+  jobId, // using our extracted jobId
+  providerUri: 'https://v4.provider.oceanprotocol.com/'
+})
+```
+> **NOTE:** The `providerUri` should be the service endpoint of the datasets service that was computed on. This is where compute jobs are managed and retrieved.
+
+## Get compute job results
+
+Once a compute job has finished and you want to access the results (see [`getComputeResult`](/docs/api/nautilus/getComputeResult)), this is again very straight forward:
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const signer = new Wallet('')
+const nautilus = await Nautilus.create(signer)
+const jobId = ''
+const providerUri = 'https://v4.provider.oceanprotocol.com/'
+
+// ---cut---
+const computeResultUrl = await nautilus.getComputeResult({
+  jobId, // use your previously saved jobId
+  providerUri // use the provider as described above
+})
+```
+
+Same as with [`access()`](/docs/guides/download) requests, this will generate a one-time accessible url to retrieve the compute job results. We can use this to then fetch the data itself:
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const signer = new Wallet('')
+const nautilus = await Nautilus.create(signer)
+const jobId = ''
+const providerUri = 'https://v4.provider.oceanprotocol.com/'
+
+const computeResultUrl = await nautilus.getComputeResult({
+  jobId, // use your previously saved jobId
+  providerUri // use the provider as described above
+})
+// ---cut---
+const data = computeResultUrl && await fetch(computeResultUrl)
+```
+
+
+## Deep Dive
+
+For a detailed look into everything possible with the compute APIs, follow the links below:
+- [`nautilus.compute()`](/docs/api/nautilus/compute) - Full API documentation of the `compute()` function
+- [`nautilus.getComputeStatus()`](/docs/api/nautilus/getComputeStatus) - Full API documentation of the `getComputeStatus()` function
+- [`nautilus.getComputeResult()`](/docs/api/nautilus/getComputeResult) - Full API documentation of the `getComputeResult()` function
+- [Compute Examples](https://github.com/deltaDAO/nautilus-examples/blob/main/compute.ts) - Code examples for compute flows using nautilus

@@ -1,0 +1,47 @@
+# Download [Access data, applications and other services]
+
+Downloading data is one of the most straightforward use-cases in a data economy. This requires an access request to be made to the controlling provider and usually also includes paying for the requested data service.
+
+## Access
+
+To access assets or more specifically their respective services, we can again make use of a dedicated function provided by the nautilus interface.
+In the most basic version, nothing else than the did of the asset to be accessed is needed. You can find more detailed information at the [`nautilus.access()`](/docs/api/nautilus/access) docs.
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { providers, Wallet } from 'ethers'
+
+const provider = new providers.JsonRpcProvider('https://rpc.dev.pontux-x.eu')
+const signer = new Wallet('0x...', provider)
+
+// create the nautilus instance
+const nautilus = await Nautilus.create(signer)
+
+const accessUrl = await nautilus.access({ // [!code focus]
+  assetDid: 'did:op:123abc' // [!code focus]
+}) // [!code focus]
+```
+
+Now, if payments and access rules have been processed successfull, the controlling provider of the data to be accessed will generate a one-time url that we can use to request the data itself:
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { providers, Wallet } from 'ethers'
+
+const provider = new providers.JsonRpcProvider('https://rpc.dev.pontux-x.eu')
+const signer = new Wallet('0x...', provider)
+
+// create the nautilus instance
+const nautilus = await Nautilus.create(signer)
+
+const accessUrl = await nautilus.access({
+  assetDid: 'did:op:123abc'
+})
+// ---cut---
+const data = await fetch(accessUrl) // [!code focus]
+```
+
+## Deep Dive
+You can find an extended overview of the access API, by heading over to the following links:
+- [`nautilus.access()`](/docs/api/nautilus/access) - API documentation of the access function
+- [Download Examples](https://github.com/deltaDAO/nautilus-examples/blob/main/access.ts) - Code examples for access flows utilizing nautilus

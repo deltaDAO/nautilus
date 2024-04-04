@@ -1,22 +1,22 @@
+import type { TransactionReceipt } from '@ethersproject/abstract-provider'
 import {
   Aquarius,
-  Config,
+  type Config,
   Datatoken,
-  DispenserParams,
+  type DispenserParams,
   LoggerInstance,
   Nft,
   NftFactory,
   ProviderInstance
 } from '@oceanprotocol/lib'
-import {
+import { type Signer, utils as ethersUtils, type providers } from 'ethers'
+import { LifecycleStates } from '../@types'
+import type {
   CreateAssetConfig,
   CreateDatatokenConfig,
   PublishDDOConfig
 } from '../@types/Publish'
-import { Signer, utils as ethersUtils, providers } from 'ethers'
-import { TransactionReceipt } from '@ethersproject/abstract-provider'
-import { LifecycleStates } from '../@types'
-import { FileTypes, NautilusService, ServiceTypes } from '../Nautilus'
+import type { FileTypes, NautilusService, ServiceTypes } from '../Nautilus'
 
 export async function createAsset(assetConfig: CreateAssetConfig) {
   LoggerInstance.debug('[publish] Publishing new asset NFT...')
@@ -176,7 +176,7 @@ export async function publishDDO(config: PublishDDOConfig) {
 
   const tx = await transactionReceipt.wait()
 
-  LoggerInstance.debug(`[publish] Published metadata on NFT.`, {
+  LoggerInstance.debug('[publish] Published metadata on NFT.', {
     ddo,
     tx
   })

@@ -1,16 +1,16 @@
-import assert from 'assert'
-import { Signer } from 'ethers'
+import assert from 'node:assert'
+import type { ConsumerParameter } from '@oceanprotocol/lib'
+import type { Signer } from 'ethers'
+import { CredentialListTypes } from '../../src/@types'
 import {
   AssetBuilder,
   ConsumerParameterBuilder,
-  CredentialListTypes,
   FileTypes,
   LogLevel,
   Nautilus,
-  NautilusConsumerParameter,
   ServiceBuilder,
   ServiceTypes
-} from '../../src'
+} from '../../src/Nautilus'
 import {
   algorithmMetadata,
   algorithmService,
@@ -202,10 +202,10 @@ describe('Publish Integration tests', function () {
       .setAlgorithm({
         ...algorithmMetadata.algorithm,
         consumerParameters: [
-          textParameter.getConfig(),
-          numberParameter.getConfig(),
-          booleanParameter.getConfig(),
-          selectParameter.getConfig()
+          textParameter,
+          numberParameter,
+          booleanParameter,
+          selectParameter
         ]
       })
       .build()
@@ -250,7 +250,7 @@ describe('Publish Integration tests', function () {
   })
 })
 
-function getConsumerParameters(): { [key: string]: NautilusConsumerParameter } {
+function getConsumerParameters(): { [key: string]: ConsumerParameter } {
   const customParamBuilder = new ConsumerParameterBuilder()
   const numberParameter = customParamBuilder
     .setType('number')

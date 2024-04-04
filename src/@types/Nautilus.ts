@@ -1,13 +1,17 @@
-import { Asset, Metadata, PublisherTrustedAlgorithm } from '@oceanprotocol/lib'
-import { NautilusConsumerParameter } from '../Nautilus/Asset/ConsumerParameters'
-import { NautilusAsset } from '../Nautilus/Asset/NautilusAsset'
-import {
+import type {
+  Asset,
+  ConsumerParameter,
+  Metadata,
+  PublisherTrustedAlgorithm
+} from '@oceanprotocol/lib'
+import type { NautilusAsset } from '../Nautilus/Asset/NautilusAsset'
+import type {
   FileTypes,
   NautilusService,
   ServiceFileType,
   ServiceTypes
 } from '../Nautilus/Asset/Service/NautilusService'
-import {
+import type {
   DatatokenCreateParamsWithoutOwner,
   NftCreateDataWithoutOwner,
   PricingConfig
@@ -59,6 +63,7 @@ export interface IAssetBuilder extends IBuilder<NautilusAsset> {
   setAlgorithm: (algorithm: Metadata['algorithm']) => IAssetBuilder
   setOwner: (owner: string) => IAssetBuilder
   addAdditionalInformation: (additionalInformation: {
+    // biome-ignore lint/suspicious/noExplicitAny: can be any user info
     [key: string]: any
   }) => IAssetBuilder
   setCopyrightHolder: (copyrightHolder: string) => IAssetBuilder
@@ -79,9 +84,7 @@ export interface IServiceBuilder<S extends ServiceTypes, F extends FileTypes>
   setDescription: (description: string) => IServiceBuilder<S, F>
   setServiceEndpoint: (endpoint: string) => IServiceBuilder<S, F>
   addFile: (file: ServiceFileType<F>) => IServiceBuilder<S, F>
-  addConsumerParameter: (
-    parameter: NautilusConsumerParameter
-  ) => IServiceBuilder<S, F>
+  addConsumerParameter: (parameter: ConsumerParameter) => IServiceBuilder<S, F>
   addTrustedAlgorithmPublisher: (publisher: string) => IServiceBuilder<S, F>
   addTrustedAlgorithms: (
     algorithms: PublisherTrustedAlgorithm[]

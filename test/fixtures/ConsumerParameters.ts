@@ -1,4 +1,4 @@
-import { ConsumerParameterBuilder } from '../../src'
+import { ConsumerParameterBuilder } from '../../src/Nautilus'
 
 export function getConsumerParameters() {
   const customParamBuilder = new ConsumerParameterBuilder()

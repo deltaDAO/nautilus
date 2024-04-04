@@ -1,26 +1,19 @@
-import {
-  ConsumerParameter,
-  ConsumerParameterSelectOption,
-  ConsumerParameterType
-} from '../../../@types/Publish'
+import type { ConsumerParameter } from '@oceanprotocol/lib'
+import type { ConsumerParameterSelectOption } from '../../../@types/Publish'
 
 /**
  * @internal
  */
 export class NautilusConsumerParameter implements ConsumerParameter {
   name: string
-  type: ConsumerParameterType
+  type: ConsumerParameter['type']
   label: string
-  required: boolean = false
+  required = false
   description: string
   default: string
+  _options?: ConsumerParameterSelectOption[] = []
 
-  options?: ConsumerParameterSelectOption[]
-
-  getConfig() {
-    return {
-      ...this,
-      options: this.options ? JSON.stringify(this.options) : undefined
-    }
+  get options(): string {
+    return this._options.length > 0 ? JSON.stringify(this._options) : undefined
   }
 }

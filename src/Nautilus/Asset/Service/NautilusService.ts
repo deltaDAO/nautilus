@@ -1,14 +1,15 @@
 import {
-  Arweave,
-  GraphqlQuery,
-  Ipfs,
-  Service,
-  ServiceComputeOptions,
-  Smartcontract,
-  UrlFile,
+  type Arweave,
+  type ConsumerParameter,
+  type GraphqlQuery,
+  type Ipfs,
+  type Service,
+  type ServiceComputeOptions,
+  type Smartcontract,
+  type UrlFile,
   getHash
 } from '@oceanprotocol/lib'
-import {
+import type {
   DatatokenCreateParamsWithoutOwner,
   TrustedAlgorithmAsset
 } from '../../../@types/Publish'
@@ -17,8 +18,7 @@ import {
   getFileInfo,
   isValidProvider
 } from '../../../utils/provider'
-import { NautilusConsumerParameter } from '../ConsumerParameters'
-import { PricingConfigWithoutOwner } from '../NautilusAsset'
+import type { PricingConfigWithoutOwner } from '../NautilusAsset'
 import { params as DatatokenConstantParams } from '../constants/datatoken.constants'
 
 export {
@@ -46,12 +46,12 @@ export type ServiceFileType<FileType extends FileTypes> =
   FileType extends FileTypes.GRAPHQL
     ? GraphqlQuery
     : FileType extends FileTypes.ARWEAVE
-    ? Arweave
-    : FileType extends FileTypes.SMARTCONTRACT
-    ? Smartcontract
-    : FileType extends FileTypes.IPFS
-    ? Ipfs
-    : UrlFile
+      ? Arweave
+      : FileType extends FileTypes.SMARTCONTRACT
+        ? Smartcontract
+        : FileType extends FileTypes.IPFS
+          ? Ipfs
+          : UrlFile
 
 /**
  * @internal
@@ -85,7 +85,8 @@ export class NautilusService<
 
   addedPublisherTrustedAlgorithms: TrustedAlgorithmAsset[] = []
 
-  consumerParameters?: NautilusConsumerParameter[] = []
+  consumerParameters?: ConsumerParameter[] = []
+  // biome-ignore lint/suspicious/noExplicitAny: can be any user defined information
   additionalInformation?: { [key: string]: any }
 
   id?: string
@@ -119,7 +120,7 @@ export class NautilusService<
 
     let encryptedFiles: string
 
-    if (isFilesObjectChanged) {
+    if (isFilesObjectChanged || !this.existingEncryptedFiles) {
       if (this.files.length < 1) {
         throw new Error('Can not encrypt files. No files defined!')
       }
@@ -135,6 +136,8 @@ export class NautilusService<
         chainId,
         this.serviceEndpoint
       )
+    } else {
+      encryptedFiles = this.existingEncryptedFiles
     }
 
     // required attributes
@@ -144,7 +147,7 @@ export class NautilusService<
       type: this.type,
       serviceEndpoint: this.serviceEndpoint,
       timeout: this.timeout,
-      files: isFilesObjectChanged ? encryptedFiles : this.existingEncryptedFiles
+      files: encryptedFiles
     }
 
     // add optional attributes if they are defined
@@ -154,11 +157,7 @@ export class NautilusService<
       oceanService.additionalInformation = this.additionalInformation
 
     if (this.consumerParameters.length > 0)
-      // TODO: remove ignore once we use updated ocean.js with correct types
-      // @ts-ignore
-      oceanService.consumerParameters = this.consumerParameters.map(
-        (parameter) => parameter.getConfig()
-      )
+      oceanService.consumerParameters = this.consumerParameters
 
     // we only add the compute attribute for `compute` type services
     if (this.type === ServiceTypes.COMPUTE) oceanService.compute = this.compute

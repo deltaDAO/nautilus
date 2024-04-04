@@ -1,0 +1,143 @@
+# Publishing [Entering the world of a decentralized data economy]
+
+Without publishing data, applications and services a data economy could not exist.
+This process usually is about describing your asset in a standardized way, so that it can be displayed by catalogues or even be offered on marketplaces and sold to others.
+
+Constructing a so called [DDO (a DID document)](https://docs.oceanprotocol.com/developers/ddo-specification) can be challenging and time consuming, especially if you are just starting out.
+nautilus aims to significantly streamline this process by exposing two main builder classes that provide typed APIs to help you with this process.
+
+The `AssetBuilder` is the main class responsible for constructing the asset metadata and the `ServiceBuilder` class uses the same pattern allowing to configure the services used within the asset's metadata.
+
+
+## AssetBuilder
+Creating the builder is easy:
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder() // [!code focus]
+```
+
+With this we can now continue to setup the metadata information for the asset:
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+
+assetBuilder // [!code focus]
+  .setType('dataset') // [!code focus]
+  .setName('My New Asset') // [!code focus]
+  .setDescription('This is a publish asset building test using Nautilus') // [!code focus]
+  .setAuthor('Company Ltd.') // [!code focus]
+```
+
+The last step is to simply `build()` the asset. This will return a correctly configured asset, ready to be published.
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+
+assetBuilder
+  .setType('dataset')
+  .setName('My New Asset')
+  .setDescription('This is a publish asset building test using Nautilus')
+  .setAuthor('Company Ltd.')
+
+const asset = assetBuilder.build() // [!code focus]
+```
+
+Note, that if required, there is a lot more that can be customized. To learn more about the API head over to the detailed [`AssetBuilder` documentation](/docs/api/AssetBuilder).
+
+## ServiceBuilder
+
+Now, the asset above has some nice metadata setup, but we will not be able to really interact with it, unless we define the services it should expose.
+
+This is where the `ServiceBuilder` class comes in handy to specify the necessary information, such as the method used to access our data or application we want to publish.
+
+We start by setting up the `ServiceBuilder` we want to use:
+
+```ts twoslash
+import { UrlFile, FileTypes, ServiceTypes, ServiceBuilder } from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder({ // [!code focus]
+    serviceType: ServiceTypes.ACCESS, // [!code focus]
+    fileType: FileTypes.URL // [!code focus]
+}) // [!code focus]
+```
+> **_NOTE:_** There are multiple supported [ServiceTypes](/docs/api/ServiceBuilder#servicetypes) and [FileTypes](/docs/api/ServiceBuilder#filetypes)
+
+Next, we declare the "file" we want to publish. This can follow multiple protocols, here we'll use a HTTP GET request:
+```ts twoslash
+import { UrlFile, FileTypes, ServiceTypes, ServiceBuilder } from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder({
+    serviceType: ServiceTypes.ACCESS,
+    fileType: FileTypes.URL
+})
+
+const urlFile = {  // [!code focus]
+  type: 'url',  // [!code focus]
+  url: 'https://link.to/my/asset',  // [!code focus]
+  method: 'GET'  // [!code focus]
+}  // [!code focus]
+```
+
+Finally, we add the required metadata and the file we created utilizing the builder pattern to then build the service:
+```ts twoslash
+import { UrlFile, FileTypes, ServiceTypes, ServiceBuilder } from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder({
+    serviceType: ServiceTypes.ACCESS,
+    fileType: FileTypes.URL
+})
+
+const urlFile = { 
+  type: 'url', 
+  url: 'https://link.to/my/asset', 
+  method: 'GET' 
+} satisfies UrlFile
+
+const service = serviceBuilder // [!code focus]
+    .setServiceEndpoint('https://provider.dev.pontus-x.eu') // [!code focus]
+    .setTimeout(0) // [!code focus]
+    .addFile(urlFile) // [!code focus]
+    .setPricing({ // [!code focus]
+        type: 'free' // [!code focus]
+    }) // [!code focus]
+    .build() // [!code focus]
+```
+
+> **_NOTE:_** The serviceEndpoint specified should point to the provider instance you want to be able to access your published data. [Learn more](https://docs.oceanprotocol.com/developers/provider).
+
+If you want to learn more about the API and everything you can configure, head over to the detailed [`ServiceBuilder` documentation](/docs/api/ServiceBuilder).
+
+## Publishing the Asset
+
+Bringing everything together, in the last step we will now anchor the asset on a network of your choice using the publish function provided by nautilus:
+
+```ts twoslash
+import { Nautilus, AssetBuilder, FileTypes, ServiceBuilder, ServiceTypes } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+
+const signer = new Wallet('')
+const nautilus = await Nautilus.create(signer)
+
+const assetBuilder = new AssetBuilder()
+const service = new ServiceBuilder({ serviceType: ServiceTypes.ACCESS, fileType: FileTypes.URL}).build()
+
+// ---cut---
+const asset = assetBuilder.addService(service).build() // [!code focus]
+const result = await nautilus.publish(asset) // [!code focus]
+```
+
+## Diving Deeper
+
+To learn about the different APIs and supported configurations follow the links below for in-detail documentations:
+
+- [`AssetBuilder`](/docs/api/AssetBuilder) - API overview for building asset metadata
+- [`ServiceBuilder`](/docs/api/ServiceBuilder) - To build service MediaMetadata, you have access to a dedicated API
+- [`ConsumerParameterBuilder`](/docs/api/ConsumerParameterBuilder) - Your service requires custom userdata to work? Head here for additional info.
+- [`nautilus.publish()`](/docs/api/nautilus/publish) - API documentation for the `nautilus.publish()` call
+- [Publish Examples](https://github.com/deltaDAO/nautilus-examples/blob/main/publish.ts) - Code examples for advanced publishing processes.
