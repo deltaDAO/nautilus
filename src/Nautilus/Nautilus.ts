@@ -25,7 +25,6 @@ import {
   createServiceWithDatatokenAndPricing,
   publishDDO
 } from '../publish'
-import { getAllPromisesOnArray } from '../utils'
 import { getAsset, getAssets } from '../utils/aquarius'
 import { editPrice } from '../utils/contracts'
 import { resolvePublisherTrustedAlgorithms } from '../utils/helpers/trusted-algorithms'
@@ -158,18 +157,18 @@ export class Nautilus {
     // --------------------------------------------------
     // 3. Create Datatokens and Pricing for new Services
     // --------------------------------------------------
-    const services = await getAllPromisesOnArray(
-      asset.ddo.services,
-      async (service) => {
-        return createServiceWithDatatokenAndPricing(
+    const services = []
+    for (const service of asset.ddo.services) {
+      const serviceWithDatatokenAndPricing =
+        await createServiceWithDatatokenAndPricing(
           service,
           signer,
           chainConfig,
           nftAddress,
           asset.owner
         )
-      }
-    )
+      services.push(serviceWithDatatokenAndPricing)
+    }
 
     // --------------------------------------------------
     // 4. Create the DDO and publish it on NFT
@@ -199,11 +198,11 @@ export class Nautilus {
     const { signer, chainConfig } = this.getChainConfig()
     const { nftAddress, services: nautilusDDOServices } = asset.ddo
 
-    let services: {
+    const services: {
       service: NautilusService<ServiceTypes, FileTypes>
       datatokenAddress: string
       tx: TransactionReceipt
-    }[]
+    }[] = []
 
     await resolvePublisherTrustedAlgorithms(
       nautilusDDOServices,
@@ -216,19 +215,16 @@ export class Nautilus {
     )
 
     // TODO check if service prices can be changed via datatoken replacement (currently buggy could be a caching problem)
-    if (changedPriceServices.length > 0) {
-      services = await getAllPromisesOnArray(
-        changedPriceServices,
-        async (service) => {
-          return createServiceWithDatatokenAndPricing(
-            service,
-            signer,
-            chainConfig,
-            nftAddress,
-            asset.owner
-          )
-        }
-      )
+    for (const service of changedPriceServices) {
+      const serviceWithDatatokenAndPricing =
+        await createServiceWithDatatokenAndPricing(
+          service,
+          signer,
+          chainConfig,
+          nftAddress,
+          asset.owner
+        )
+      services.push(serviceWithDatatokenAndPricing)
     }
 
     const ddo = await asset.ddo.getDDO({
