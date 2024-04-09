@@ -89,6 +89,9 @@ describe('Edit Integration tests', function () {
 
     const result = await nautilus.publish(asset)
     fixedPricedAlgoWithCredentials = result?.ddo
+    console.log(
+      `asset published (${fixedPricedAlgoWithCredentials?.id}), waiting for aquarius indexing...`
+    )
     await aquarius.waitForAqua(fixedPricedAlgoWithCredentials?.id)
 
     assert(result)
@@ -143,7 +146,10 @@ describe('Edit Integration tests', function () {
 
     const result = await nautilus.publish(asset)
     fixedPriceComputeDataset = result?.ddo
-    await aquarius.waitForAqua(fixedPricedAlgoWithCredentials?.id)
+    console.log(
+      `asset published (${fixedPriceComputeDataset?.id}), waiting for aquarius indexing...`
+    )
+    await aquarius.waitForAqua(fixedPriceComputeDataset?.id)
 
     assert(result)
   })
