@@ -187,7 +187,7 @@ export const sidebar = {
     {
       text: 'Legal',
       items: [
-        { text: 'Privacy', link: 'https://delta-dao.com/privacy' },
+        { text: 'Privacy', link: 'https://docs.pontus-x.eu/privacy' },
         { text: 'Imprint', link: 'https://delta-dao.com/imprint' }
       ]
     }
