@@ -2,7 +2,7 @@ import dotenv from 'dotenv'
 import { type Signer, Wallet, providers } from 'ethers'
 dotenv.config()
 
-export const MUMBAI_NODE_URI = 'https://rpc-mumbai.maticvigil.com'
+export const MUMBAI_NODE_URI = 'https://polygon-mumbai-bor-rpc.publicnode.com'
 
 export function getSigner(key: 1 | 2 = 1, nodeUri?: string): Signer {
   const providerUrl = nodeUri || MUMBAI_NODE_URI

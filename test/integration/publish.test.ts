@@ -1,5 +1,9 @@
 import assert from 'node:assert'
-import type { ConsumerParameter } from '@oceanprotocol/lib'
+import {
+  Aquarius,
+  type Config,
+  type ConsumerParameter
+} from '@oceanprotocol/lib'
 import type { Signer } from 'ethers'
 import { CredentialListTypes } from '../../src/@types'
 import {
@@ -17,14 +21,17 @@ import {
   datasetService,
   getPricing
 } from '../fixtures/AssetConfig'
+import { getTestConfig } from '../fixtures/Config'
 import { MUMBAI_NODE_URI, getSigner } from '../fixtures/Ethers'
 
 const nodeUri = MUMBAI_NODE_URI
 
 describe('Publish Integration tests', function () {
   // set timeout for this describe block considering tsx will happen
-  this.timeout(50000)
+  this.timeout(100000)
 
+  let aquarius: Aquarius
+  let config: Config
   let signer: Signer
   let signerAddress: string
   let nautilus: Nautilus
@@ -34,6 +41,7 @@ describe('Publish Integration tests', function () {
     Nautilus.setLogLevel(LogLevel.Verbose)
     signer = getSigner(1, nodeUri)
     signerAddress = await signer.getAddress()
+    config = await getTestConfig(signer)
 
     console.log('Testing with signer:', signerAddress)
 
@@ -45,6 +53,10 @@ describe('Publish Integration tests', function () {
       process.env.PROVIDER_URI_TEST || nautilus.getOceanConfig().providerUri
 
     console.log('Testing with signer:', signerAddress)
+
+    aquarius = new Aquarius(
+      process.env.METADATA_CACHE_URI_TEST || config?.metadataCacheUri
+    )
   })
 
   it('publishes a free access asset', async () => {
@@ -99,6 +111,63 @@ describe('Publish Integration tests', function () {
       .build()
 
     const result = await nautilus.publish(asset)
+
+    assert(result)
+  })
+
+  it('publishes a multi service compute type dataset', async () => {
+    const assetBuilder = new AssetBuilder()
+
+    const pricing = await getPricing(signer, 'fixed')
+    const services = [
+      {
+        name: 'test service 1',
+        serviceEndpoint: providerUri,
+        timeout: datasetService.timeout,
+        pricing,
+        file: datasetService.files[0]
+      },
+      {
+        name: 'test service 2',
+        serviceEndpoint: providerUri,
+        timeout: datasetService.timeout,
+        pricing,
+        file: datasetService.files[0]
+      }
+    ]
+
+    for (const service of services) {
+      const serviceBuilder = new ServiceBuilder({
+        serviceType: ServiceTypes.COMPUTE,
+        fileType: FileTypes.URL
+      })
+
+      const builtService = serviceBuilder
+        .setName(service.name)
+        .setServiceEndpoint(service.serviceEndpoint)
+        .setTimeout(service.timeout)
+        .setPricing(pricing)
+        .addFile(service.file)
+        .build()
+
+      assetBuilder.addService(builtService)
+    }
+
+    const asset = assetBuilder
+      .setAuthor('testAuthor')
+      .setDescription('A dataset publishing test')
+      .setLicense('MIT')
+      .setName('Test Publish Dataset Fixed')
+      .setOwner(signerAddress)
+      .setType('dataset')
+      .build()
+
+    const result = await nautilus.publish(asset)
+    const fixedPriceComputeDataset = result?.ddo
+    console.log(
+      `asset published (${fixedPriceComputeDataset?.id}), waiting for aquarius indexing...`
+    )
+    await aquarius.waitForAqua(fixedPriceComputeDataset?.id)
 
     assert(result)
   })
