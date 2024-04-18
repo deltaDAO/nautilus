@@ -1,5 +1,11 @@
 # @deltadao/nautilus
 
+## 1.0.2
+
+### Patch Changes
+
+- [#134](https://github.com/deltaDAO/nautilus/pull/134) [`f7cc0a3`](https://github.com/deltaDAO/nautilus/commit/f7cc0a34d5c84ce270d2773a7721c5b4fcf8b7b5) Thanks [@Abrom8](https://github.com/Abrom8)! - Fix publishing/editing of multi-service assets
+
 ## 1.0.1
 
 ### Patch Changes
