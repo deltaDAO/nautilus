@@ -96,13 +96,23 @@ export async function initializeProviderForCompute(
   dataset: AssetWithAccessDetails,
   algorithm: AssetWithAccessDetails,
   accountId: string,
-  computeEnv: ComputeEnvironment = null
+  computeEnv: ComputeEnvironment = null,
+  additionalDatasets?: AssetWithAccessDetails[]
 ): Promise<ProviderComputeInitializeResults> {
   const computeAsset: ComputeAsset = {
     documentId: dataset.id,
     serviceId: dataset.services[0].id,
     transferTxId: dataset.accessDetails.validOrderTx
   }
+
+  const additionalComputeAssets: ComputeAsset[] = additionalDatasets.map(
+    (dataset) => ({
+      documentId: dataset.id,
+      serviceId: dataset.services[0].id,
+      transferTxId: dataset.accessDetails.validOrderTx
+    })
+  )
+
   const computeAlgo: ComputeAlgorithm = {
     documentId: algorithm.id,
     serviceId: algorithm.services[0].id,
@@ -117,7 +127,7 @@ export async function initializeProviderForCompute(
 
   try {
     return await ProviderInstance.initializeCompute(
-      [computeAsset],
+      [computeAsset, ...additionalComputeAssets],
       computeAlgo,
       computeEnv?.id,
       validUntil,
@@ -138,7 +148,8 @@ export async function startComputeJob(
   algorithm: ComputeAlgorithm,
   signer: Signer,
   computeEnv: ComputeEnvironment,
-  output: ComputeOutput
+  output: ComputeOutput,
+  additionalDatasets?: ComputeAsset[]
 ): Promise<ComputeJob | ComputeJob[]> {
   try {
     return await ProviderInstance.computeStart(
@@ -148,7 +159,7 @@ export async function startComputeJob(
       dataset,
       algorithm,
       null,
-      null,
+      additionalDatasets,
       output
     )
   } catch (error) {
