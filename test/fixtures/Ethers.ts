@@ -2,10 +2,11 @@ import dotenv from 'dotenv'
 import { type Signer, Wallet, providers } from 'ethers'
 dotenv.config()
 
-export const MUMBAI_NODE_URI = 'https://polygon-mumbai-bor-rpc.publicnode.com'
+const PONTUSX_DEVNET_NODE_URI = 'https://rpc.dev.pontus-x.eu' as const
+export const TESTING_NODE_URI = PONTUSX_DEVNET_NODE_URI
 
 export function getSigner(key: 1 | 2 = 1, nodeUri?: string): Signer {
-  const providerUrl = nodeUri || MUMBAI_NODE_URI
+  const providerUrl = nodeUri || PONTUSX_DEVNET_NODE_URI
 
   console.log(`Using test key ${key} on ${providerUrl} to create wallet.`)
 

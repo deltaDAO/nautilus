@@ -16,7 +16,7 @@ import {
   getPricing
 } from '../fixtures/AssetConfig'
 import { getTestConfig } from '../fixtures/Config'
-import { MUMBAI_NODE_URI, getSigner } from '../fixtures/Ethers'
+import { TESTING_NODE_URI, getSigner } from '../fixtures/Ethers'
 import { nftParams } from '../fixtures/NftCreateData'
 
 describe('Compute Flow Integration', async function () {
@@ -41,7 +41,7 @@ describe('Compute Flow Integration', async function () {
     Nautilus.setLogLevel(LogLevel.Verbose)
 
     // PRIVATE_KEY_TESTS_1 (algorithm publisher)
-    algoPublisherSigner = getSigner(1, MUMBAI_NODE_URI)
+    algoPublisherSigner = getSigner(1, TESTING_NODE_URI)
     algoPublisherAddress = await algoPublisherSigner.getAddress()
 
     nautilusAlgoPublisher = await Nautilus.create(
@@ -50,7 +50,7 @@ describe('Compute Flow Integration', async function () {
     )
 
     // PRIVATE_KEY_TESTS_2 (dataset publisher)
-    datasetPublisherSigner = getSigner(2, MUMBAI_NODE_URI)
+    datasetPublisherSigner = getSigner(2, TESTING_NODE_URI)
     datasetPublisherAddress = await datasetPublisherSigner.getAddress()
 
     nautilusDatasetPublisher = await Nautilus.create(
@@ -142,8 +142,8 @@ describe('Compute Flow Integration', async function () {
     console.log(
       `Waiting for aquarius at ${aquarius.aquariusURL} to cache algo and dataset...`
     )
-    await aquarius.waitForAqua(computeAlgorithmDid)
-    await aquarius.waitForAqua(computeDatasetDid)
+    await aquarius.waitForIndexer(computeAlgorithmDid)
+    await aquarius.waitForIndexer(computeDatasetDid)
 
     const startedJob = await nautilusDatasetPublisher.compute({
       dataset: {

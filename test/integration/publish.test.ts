@@ -22,9 +22,9 @@ import {
   getPricing
 } from '../fixtures/AssetConfig'
 import { getTestConfig } from '../fixtures/Config'
-import { MUMBAI_NODE_URI, getSigner } from '../fixtures/Ethers'
+import { TESTING_NODE_URI, getSigner } from '../fixtures/Ethers'
 
-const nodeUri = MUMBAI_NODE_URI
+const nodeUri = TESTING_NODE_URI
 
 describe('Publish Integration tests', function () {
   // set timeout for this describe block considering tsx will happen
@@ -167,7 +167,7 @@ describe('Publish Integration tests', function () {
     console.log(
       `asset published (${fixedPriceComputeDataset?.id}), waiting for aquarius indexing...`
     )
-    await aquarius.waitForAqua(fixedPriceComputeDataset?.id)
+    await aquarius.waitForIndexer(fixedPriceComputeDataset?.id)
 
     assert(result)
   })
