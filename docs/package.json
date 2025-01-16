@@ -9,6 +9,7 @@
     "preview": "vocs preview"
   },
   "devDependencies": {
+    "@deltadao/nautilus": "workspace:*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "vocs": "^1.0.0-alpha.62"
