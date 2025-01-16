@@ -194,7 +194,7 @@ export async function compute(computeConfig: ComputeConfig) {
         chainConfig,
         computeEnv.consumerAddress
       )
-      if (!datasetOrderTx)
+      if (!orderTx)
         throw new Error(
           `Failed to order additional dataset with id ${additionalDatasetWithPrice.id}.`
         )
