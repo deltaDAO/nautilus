@@ -143,14 +143,17 @@ export async function compute(computeConfig: ComputeConfig) {
       throw new Error('Error setting algorithm price and fees!')
 
     const additionalDatasetsWithPrice: AssetWithAccessDetailsAndPrice[] = []
-    for (const dataset of additionalDatasets) {
-      const datasetWithPrice = await getAssetWithPrice(
-        dataset,
+    for (const additionalDataset of additionalDatasets) {
+      const additionalDatasetWithPrice = await getAssetWithPrice(
+        additionalDataset,
         signer,
         chainConfig,
-        providerInitializeResults.datasets[0].providerFee
+        getProviderInitResultsForDataset(
+          providerInitializeResults.datasets,
+          additionalDataset
+        ).providerFee
       )
-      additionalDatasetsWithPrice.push(datasetWithPrice)
+      additionalDatasetsWithPrice.push(additionalDatasetWithPrice)
     }
 
     // TODO ==== Extract asset ordering start ====
@@ -170,7 +173,10 @@ export async function compute(computeConfig: ComputeConfig) {
       dataset,
       datasetWithPrice?.orderPriceAndFees,
       signerAddress,
-      providerInitializeResults.datasets[0],
+      getProviderInitResultsForDataset(
+        providerInitializeResults.datasets,
+        dataset
+      ),
       chainConfig,
       computeEnv.consumerAddress
     )
@@ -186,10 +192,9 @@ export async function compute(computeConfig: ComputeConfig) {
         additionalDatasetWithPrice,
         additionalDatasetWithPrice?.orderPriceAndFees,
         signerAddress,
-        providerInitializeResults.datasets.find((d) =>
-          additionalDatasetWithPrice.datatokens
-            .map((dt) => dt.address)
-            .includes(d.datatoken)
+        getProviderInitResultsForDataset(
+          providerInitializeResults.datasets,
+          additionalDatasetWithPrice
         ),
         chainConfig,
         computeEnv.consumerAddress
@@ -284,13 +289,11 @@ async function getComputeAssetPrices(
 ) {
   LoggerInstance.debug('Initializing provider for compute')
 
-  // get fees for dataset from providerInitializeResults.datasets array
-  const datatokenAddresses = dataset.datatokens.map((dt) => dt.address)
-
-  const datasetInitializeResult = providerInitializeResults.datasets.find(
-    (initializeResult) =>
-      datatokenAddresses.includes(initializeResult.datatoken)
+  const datasetInitializeResult = getProviderInitResultsForDataset(
+    providerInitializeResults.datasets,
+    dataset
   )
+
   const datasetWithPrice = await getAssetWithPrice(
     dataset,
     signer,
@@ -480,4 +483,13 @@ export async function stopCompute(stopComputeConfig: StopComputeConfig) {
   const { did, jobId, providerUri, signer } = stopComputeConfig
 
   return await stopComputeJob(providerUri, did, jobId, signer)
+}
+
+function getProviderInitResultsForDataset(
+  providerInitResultDatasets: ProviderComputeInitializeResults['datasets'],
+  dataset: AssetWithAccessDetails
+): ProviderComputeInitialize {
+  return providerInitResultDatasets.find((initResult) =>
+    dataset.datatokens.map((dt) => dt.address).includes(initResult.datatoken)
+  )
 }
