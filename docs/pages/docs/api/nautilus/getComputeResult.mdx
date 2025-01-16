@@ -15,7 +15,7 @@ const resultFileUri = await nautilus.getComputeResult({ // [!code focus]
 })
 
 if(resultFileUri)
-    let file = await fetch(resultFileUri)
+    await fetch(resultFileUri)
 ```
 
 
