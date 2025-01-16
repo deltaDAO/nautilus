@@ -1,9 +1,5 @@
 {
-  "workspaces": [
-    "docs",
-    "src",
-    "test"
-  ],
+  "workspaces": ["docs", "src", "test"],
   "type": "module",
   "private": true,
   "scripts": {
@@ -39,13 +35,13 @@
     "@graphql-codegen/near-operation-file-preset": "^2.5.0",
     "@graphql-codegen/typescript": "^4.0.1",
     "@graphql-codegen/typescript-operations": "^4.0.1",
-    "@types/chai": "^4.3.5",
-    "@types/mocha": "^10.0.1",
+    "@types/chai": "^4.3.20",
+    "@types/mocha": "^10.0.10",
     "@types/node": "^18.19.71",
     "@types/sinon": "^10.0.16",
-    "chai": "^4.3.7",
+    "chai": "^4.5.0",
     "dotenv": "^16.0.3",
-    "mocha": "^10.2.0",
+    "mocha": "^10.8.2",
     "rimraf": "^5.0.5",
     "sinon": "^15.2.0",
     "ts-node": "^9.1.1",
@@ -56,9 +52,7 @@
     "documents": "./src/**/*.gql.ts",
     "generates": {
       "./src/@types/subgraph/api.ts": {
-        "plugins": [
-          "typescript"
-        ]
+        "plugins": ["typescript"]
       },
       "./src/": {
         "preset": "near-operation-file",
@@ -66,9 +60,7 @@
           "baseTypesPath": "@types/subgraph/api.ts",
           "extension": ".generated.ts"
         },
-        "plugins": [
-          "typescript-operations"
-        ],
+        "plugins": ["typescript-operations"],
         "config": {
           "omitOperationSuffix": true,
           "typesPrefix": "I"
