@@ -1,5 +1,9 @@
 {
-  "workspaces": ["docs", "src", "test"],
+  "workspaces": [
+    "docs",
+    "src",
+    "test"
+  ],
   "type": "module",
   "private": true,
   "scripts": {
@@ -28,31 +32,33 @@
     "typecheck": "tsc --noEmit && cd test && tsc --noEmit"
   },
   "devDependencies": {
-    "@biomejs/biome": "^1.6.1",
+    "@biomejs/biome": "^1.9.4",
     "@changesets/changelog-github": "^0.5.0",
     "@changesets/cli": "^2.27.1",
-    "@graphql-codegen/cli": "^5.0.0",
+    "@graphql-codegen/cli": "^5.0.3",
     "@graphql-codegen/near-operation-file-preset": "^2.5.0",
-    "@graphql-codegen/typescript": "^4.0.1",
-    "@graphql-codegen/typescript-operations": "^4.0.1",
-    "@types/chai": "^4.3.5",
-    "@types/mocha": "^10.0.1",
-    "@types/node": "^18.15.11",
+    "@graphql-codegen/typescript": "^4.1.2",
+    "@graphql-codegen/typescript-operations": "^4.4.0",
+    "@types/chai": "^4.3.20",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^18.19.71",
     "@types/sinon": "^10.0.16",
-    "chai": "^4.3.7",
-    "dotenv": "^16.0.3",
-    "mocha": "^10.2.0",
-    "rimraf": "^5.0.5",
+    "chai": "^4.5.0",
+    "dotenv": "^16.4.7",
+    "mocha": "^10.8.2",
+    "rimraf": "^5.0.10",
     "sinon": "^15.2.0",
     "ts-node": "^9.1.1",
-    "typescript": "^5.4.2"
+    "typescript": "^5.7.3"
   },
   "codegen": {
     "schema": "https://v4.subgraph.goerli.oceanprotocol.com/subgraphs/name/oceanprotocol/ocean-subgraph",
     "documents": "./src/**/*.gql.ts",
     "generates": {
       "./src/@types/subgraph/api.ts": {
-        "plugins": ["typescript"]
+        "plugins": [
+          "typescript"
+        ]
       },
       "./src/": {
         "preset": "near-operation-file",
@@ -60,7 +66,9 @@
           "baseTypesPath": "@types/subgraph/api.ts",
           "extension": ".generated.ts"
         },
-        "plugins": ["typescript-operations"],
+        "plugins": [
+          "typescript-operations"
+        ],
         "config": {
           "omitOperationSuffix": true,
           "typesPrefix": "I"

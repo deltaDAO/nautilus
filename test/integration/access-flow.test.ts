@@ -13,7 +13,7 @@ import {
   getPricing
 } from '../fixtures/AssetConfig'
 import { getTestConfig } from '../fixtures/Config'
-import { MUMBAI_NODE_URI, getSigner } from '../fixtures/Ethers'
+import { TESTING_NODE_URI, getSigner } from '../fixtures/Ethers'
 import { nftParams } from '../fixtures/NftCreateData'
 
 describe('Access Flow Integration', function () {
@@ -29,7 +29,7 @@ describe('Access Flow Integration', function () {
   // 1. Publish Download Asset -> store did
   it('publishes a download asset', async () => {
     // Setup Nautilus instance for publisher (PRIVATE_KEY_TESTS_1)
-    const signer = getSigner(1, MUMBAI_NODE_URI)
+    const signer = getSigner(1, TESTING_NODE_URI)
     const nautilus = await Nautilus.create(signer, await getTestConfig(signer))
 
     const { providerUri } = nautilus.getOceanConfig()
@@ -69,7 +69,7 @@ describe('Access Flow Integration', function () {
   // 2. Access the Download Asset (1.)
   it('accesses a download asset', async () => {
     // Setup Nautilus instance for consumer (PRIVATE_KEY_TESTS_2)
-    const signer = getSigner(2, MUMBAI_NODE_URI)
+    const signer = getSigner(2, TESTING_NODE_URI)
     const nautilus = await Nautilus.create(signer, await getTestConfig(signer))
 
     // wait until ddo is found in metadata cache
@@ -77,7 +77,7 @@ describe('Access Flow Integration', function () {
     console.log(
       `Waiting for aquarius at ${aquarius.aquariusURL} to access ${downloadAssetDid}`
     )
-    await aquarius.waitForAqua(downloadAssetDid)
+    await aquarius.waitForIndexer(downloadAssetDid)
 
     const accessUrl = await nautilus.access({
       assetDid: downloadAssetDid

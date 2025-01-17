@@ -14,7 +14,8 @@ const resultFileUri = await nautilus.getComputeResult({ // [!code focus]
     providerUri: 'https://provider.dev.pontus-x.eu' // [!code focus]
 })
 
-const file = await fetch(resultFileUri)
+if(resultFileUri)
+    await fetch(resultFileUri)
 ```
 
 
