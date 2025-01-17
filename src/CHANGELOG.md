@@ -1,5 +1,11 @@
 # @deltadao/nautilus
 
+## 1.0.3
+
+### Patch Changes
+
+- [#151](https://github.com/deltaDAO/nautilus/pull/151) [`034fd2d`](https://github.com/deltaDAO/nautilus/commit/034fd2d063db109a5ebee62e424e1f2ec276d465) Thanks [@moritzkirstein](https://github.com/moritzkirstein)! - Bump dependencies
+
 ## 1.0.2
 
 ### Patch Changes

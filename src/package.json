@@ -1,7 +1,7 @@
 {
   "name": "@deltadao/nautilus",
   "description": "A typescript library enabling automated publish & consume in Ocean Protocol ecosystems",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "type": "module",
   "main": "./_cjs/index.js",
   "module": "./_esm/index.js",
@@ -33,7 +33,9 @@
     "documents": "./src/**/*.gql.ts",
     "generates": {
       "./src/@types/subgraph/api.ts": {
-        "plugins": ["typescript"]
+        "plugins": [
+          "typescript"
+        ]
       },
       "./src/": {
         "preset": "near-operation-file",
@@ -41,7 +43,9 @@
           "baseTypesPath": "@types/subgraph/api.ts",
           "extension": ".generated.ts"
         },
-        "plugins": ["typescript-operations"],
+        "plugins": [
+          "typescript-operations"
+        ],
         "config": {
           "omitOperationSuffix": true,
           "typesPrefix": "I"
