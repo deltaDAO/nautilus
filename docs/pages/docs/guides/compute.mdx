@@ -53,6 +53,44 @@ const computeJob = await nautilus.compute({
 const { jobId } = computeJob // [!code focus]
 ```
 
+### Computation with multiple datasets
+
+A compute job allows configuration to be run on mutliple datasets. This can be achieved by providing an array of `additionalDatasets` (see [ComputeAsset](/docs/api/ComputeAsset)) to the `compute()` function.
+
+<Callout type='tip'>
+Note, that the datasets to be used in addition to the base dataset of the compute job need to be accessible by the compute service provider.
+</Callout>
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { ComputeJob } from '@oceanprotocol/lib'
+import { Wallet } from 'ethers'
+const signer = new Wallet('')
+const nautilus = await Nautilus.create(signer)
+// ---cut---
+const dataset = {
+  did: 'did:op:123abc...'
+}
+const algorithm = {
+  did: 'did:op:123abc...'
+}
+
+const additionalDatasets = [ // [!code focus]
+  { // [!code focus]
+    did: 'did:op:additionalDid1...' // [!code focus]
+  }, // [!code focus]
+  { // [!code focus]
+    did: 'did:op:additionalDid2...' // [!code focus]
+  } // [!code focus]
+] // [!code focus]
+
+const computeJob = await nautilus.compute({
+  dataset,
+  algorithm,
+  additionalDatasets // [!code focus]
+}) as ComputeJob
+```
+
 ## Get a compute job status
 
 Now that you have a reference to any job you started, it is straight forward to monitor the status (see [`getComputeStatus`](/docs/api/nautilus/getComputeStatus)):
