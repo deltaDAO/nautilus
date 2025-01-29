@@ -59,8 +59,8 @@ const { jobId } = computeJob // [!code focus]
 
 A compute job allows configuration to be run on mutliple datasets. This can be achieved by providing an array of `additionalDatasets` (see [ComputeAsset](/docs/api/ComputeAsset)) to the `compute()` function.
 
-<Callout type='tip'>
-Note, that the datasets to be used in addition to the base dataset of the compute job need to be accessible by the compute service provider.
+<Callout type='warning'>
+Note, that currently the additional datasets to be used in the compute job need to be encrypted by the same compute service provider as the base dataset.
 </Callout>
 
 ```ts twoslash
