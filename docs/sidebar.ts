@@ -170,6 +170,11 @@ export const sidebar = {
             },
             { text: 'setLicense', link: '/docs/api/assetbuilder/setLicense' },
             { text: 'setName', link: '/docs/api/assetbuilder/setName' },
+            { text: 'setNftTokenName', link: '/docs/api/assetbuilder/setNftTokenName' },
+            { text: 'setNftTokenSymbol', link: '/docs/api/assetbuilder/setNftTokenSymbol' },
+            { text: 'setNftTokenTemplate', link: '/docs/api/assetbuilder/setNftTokenTemplate' },
+            { text: 'setNftTokenTransferable', link: '/docs/api/assetbuilder/setNftTokenTransferable' },
+            { text: 'setNftTokenUri', link: '/docs/api/assetbuilder/setNftTokenUri' },
             { text: 'setType', link: '/docs/api/assetbuilder/setType' }
           ]
         },
