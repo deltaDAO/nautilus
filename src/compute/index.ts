@@ -12,6 +12,7 @@ import {
 import type { Signer } from 'ethers'
 import type {
   AssetWithAccessDetails,
+  AssetWithAccessDetailsAndPrice,
   ComputeConfig,
   ComputeResultConfig,
   ComputeStatusConfig,
@@ -81,8 +82,7 @@ export async function compute(computeConfig: ComputeConfig) {
     const dataset = assets.find((asset) => asset.id === datasetDid)
     const algo = assets.find((asset) => asset.id === algorithmDid)
 
-    // TODO add functionality for additional datasets
-    const _additionalDatasets = additionalDatasetsConfig
+    const additionalDatasets = additionalDatasetsConfig
       ? assets.filter((asset) =>
           additionalDatasetsConfig
             .map((dataset) => dataset.did)
@@ -92,22 +92,28 @@ export async function compute(computeConfig: ComputeConfig) {
 
     // 2. Check if the asset is orderable
     // TODO: consider to do this first before loading all other assets
-    const computeService = getServiceByName(dataset, 'compute')
-    const allowed = await isOrderable(
-      // TODO consider isAllowed or similar for boolean
-      dataset,
-      computeService.id,
-      {
-        documentId: algo.id,
-        serviceId: algo.services[0].id
-      },
-      algo
-    )
-    LoggerInstance.debug('[compute] Is dataset orderable?', allowed)
-    if (!allowed)
+    const isDatasetOrderable = isComputeAssetOrderable(dataset, algo)
+    LoggerInstance.debug('[compute] Is dataset orderable?', isDatasetOrderable)
+
+    if (!isDatasetOrderable)
       throw new Error(
         'Dataset is not orderable in combination with given algorithm.'
       )
+
+    for (const dataset of additionalDatasets) {
+      const isAdditionalDatasetOrderable = isComputeAssetOrderable(
+        dataset,
+        algo
+      )
+      LoggerInstance.debug(
+        '[compute] Is additional dataset orderable?',
+        isAdditionalDatasetOrderable
+      )
+      if (!isAdditionalDatasetOrderable)
+        throw new Error(
+          'Additional dataset is not orderable in combination with given algorithm.'
+        )
+    }
 
     // 3. Initialize the provider
     const computeEnv = await getComputeEnviroment(dataset)
@@ -117,7 +123,8 @@ export async function compute(computeConfig: ComputeConfig) {
       dataset,
       algo,
       signerAddress,
-      computeEnv
+      computeEnv,
+      additionalDatasets
     )
 
     // 4. Get prices and fees for the assets
@@ -135,11 +142,19 @@ export async function compute(computeConfig: ComputeConfig) {
     if (!algorithmWithPrice?.orderPriceAndFees)
       throw new Error('Error setting algorithm price and fees!')
 
-    // TODO remove? never used. maybe missing feature to check if datatoken already in wallet?
-    const _algoDatatokenBalance = await getDatatokenBalance(
-      signer,
-      algo.services[0].datatokenAddress
-    )
+    const additionalDatasetsWithPrice: AssetWithAccessDetailsAndPrice[] = []
+    for (const additionalDataset of additionalDatasets) {
+      const additionalDatasetWithPrice = await getAssetWithPrice(
+        additionalDataset,
+        signer,
+        chainConfig,
+        getProviderInitResultsForDataset(
+          providerInitializeResults.datasets,
+          additionalDataset
+        ).providerFee
+      )
+      additionalDatasetsWithPrice.push(additionalDatasetWithPrice)
+    }
 
     // TODO ==== Extract asset ordering start ====
     const algorithmOrderTx = await handleComputeOrder(
@@ -153,22 +168,46 @@ export async function compute(computeConfig: ComputeConfig) {
     )
     if (!algorithmOrderTx) throw new Error('Failed to order algorithm.')
 
-    // TODO remove? never used. maybe missing feature to check if datatoken already in wallet?
-    const _datasetDatatokenBalance = await getDatatokenBalance(
-      signer,
-      algo.services[0].datatokenAddress
-    )
-
     const datasetOrderTx = await handleComputeOrder(
       signer,
       dataset,
       datasetWithPrice?.orderPriceAndFees,
       signerAddress,
-      providerInitializeResults.datasets[0],
+      getProviderInitResultsForDataset(
+        providerInitializeResults.datasets,
+        dataset
+      ),
       chainConfig,
       computeEnv.consumerAddress
     )
     if (!datasetOrderTx) throw new Error('Failed to order dataset.')
+
+    const additionalDatasetOrderTxs: {
+      documentId: string
+      orderTx: string
+    }[] = []
+    for (const additionalDatasetWithPrice of additionalDatasetsWithPrice) {
+      const orderTx = await handleComputeOrder(
+        signer,
+        additionalDatasetWithPrice,
+        additionalDatasetWithPrice?.orderPriceAndFees,
+        signerAddress,
+        getProviderInitResultsForDataset(
+          providerInitializeResults.datasets,
+          additionalDatasetWithPrice
+        ),
+        chainConfig,
+        computeEnv.consumerAddress
+      )
+      if (!orderTx)
+        throw new Error(
+          `Failed to order additional dataset with id ${additionalDatasetWithPrice.id}.`
+        )
+      additionalDatasetOrderTxs.push({
+        documentId: additionalDatasetWithPrice.id,
+        orderTx
+      })
+    }
 
     // ==== Extract asset ordering end ====
 
@@ -186,6 +225,19 @@ export async function compute(computeConfig: ComputeConfig) {
       publishOutput: true // TODO should be configuarable
     }
 
+    const additionalComputeAssets: ComputeAsset[] = []
+    for (const additionalDataset of additionalDatasets) {
+      const additionalComputeAsset: ComputeAsset = {
+        documentId: additionalDataset.id,
+        serviceId: additionalDataset.services[0].id,
+        transferTxId: additionalDatasetOrderTxs.find(
+          (order) => order.documentId === additionalDataset.id
+        ).orderTx,
+        ...additionalDataset
+      }
+      additionalComputeAssets.push(additionalComputeAsset)
+    }
+
     const response = await startComputeJob(
       dataset.services[0].serviceEndpoint,
       computeAsset,
@@ -197,7 +249,8 @@ export async function compute(computeConfig: ComputeConfig) {
       },
       signer,
       computeEnv,
-      output
+      output,
+      additionalComputeAssets
     )
 
     // ==== Extract compute job execution end ====
@@ -209,6 +262,24 @@ export async function compute(computeConfig: ComputeConfig) {
   }
 }
 
+async function isComputeAssetOrderable(
+  asset: AssetWithAccessDetails,
+  algorithm: AssetWithAccessDetails
+) {
+  const computeService = getServiceByName(asset, 'compute')
+  const isAllowed = await isOrderable(
+    asset,
+    computeService.id,
+    {
+      documentId: algorithm.id,
+      serviceId: algorithm.services[0].id
+    },
+    algorithm
+  )
+  LoggerInstance.debug('[compute] Is dataset orderable?', isAllowed)
+  return isAllowed
+}
+
 async function getComputeAssetPrices(
   algo: AssetWithAccessDetails,
   dataset: AssetWithAccessDetails,
@@ -218,13 +289,11 @@ async function getComputeAssetPrices(
 ) {
   LoggerInstance.debug('Initializing provider for compute')
 
-  // get fees for dataset from providerInitializeResults.datasets array
-  const datatokenAddresses = dataset.datatokens.map((dt) => dt.address)
-
-  const datasetInitializeResult = providerInitializeResults.datasets.find(
-    (initializeResult) =>
-      datatokenAddresses.includes(initializeResult.datatoken)
+  const datasetInitializeResult = getProviderInitResultsForDataset(
+    providerInitializeResults.datasets,
+    dataset
   )
+
   const datasetWithPrice = await getAssetWithPrice(
     dataset,
     signer,
@@ -414,4 +483,13 @@ export async function stopCompute(stopComputeConfig: StopComputeConfig) {
   const { did, jobId, providerUri, signer } = stopComputeConfig
 
   return await stopComputeJob(providerUri, did, jobId, signer)
+}
+
+function getProviderInitResultsForDataset(
+  providerInitResultDatasets: ProviderComputeInitializeResults['datasets'],
+  dataset: AssetWithAccessDetails
+): ProviderComputeInitialize {
+  return providerInitResultDatasets.find((initResult) =>
+    dataset.datatokens.map((dt) => dt.address).includes(initResult.datatoken)
+  )
 }

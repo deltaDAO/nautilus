@@ -1,0 +1,48 @@
+# setNftTokenTransferable
+
+Enable/disable the ability to transfer the NFT token to another address.
+
+The default value of `transferable` is `false` if `setNftTokenTransferable` is not called.
+
+Official OceanProtocol documentation: [DDO Specification](https://docs.oceanprotocol.com/developers/ddo-specification)
+
+## Usage
+
+```ts twoslash
+import { AssetBuilder, Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+
+const assetBuilder = new AssetBuilder()
+assetBuilder.setNftTokenTransferable(false) // [!code focus]
+const asset = assetBuilder.build() // [!code focus]
+
+await nautilus.publish(asset) // [!code focus]
+```
+
+## Returns
+
+- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
+
+The asset builder instance to chain building calls with.
+
+## Parameter
+
+### transferable
+
+- Type: `boolean`
+
+* `false` - NFT is not transferable.
+* `true` - NFT is transferable.
+* `undefined` - defaults to `true` (NFT is transferable)
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+assetBuilder.setNftTokenTransferable(
+    true // [!code focus]
+)
+```

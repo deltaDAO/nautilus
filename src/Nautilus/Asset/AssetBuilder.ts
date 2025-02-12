@@ -89,6 +89,36 @@ export class AssetBuilder implements IAssetBuilder {
     return this
   }
 
+  setNftTokenName(name: string) {
+    this.asset.nftCreateData.name = name
+
+    return this
+  }
+
+  setNftTokenSymbol(symbol: string) {
+    this.asset.nftCreateData.symbol = symbol
+
+    return this
+  }
+
+  setNftTokenUri(uri: string) {
+    this.asset.nftCreateData.tokenURI = uri
+
+    return this
+  }
+
+  setNftTokenTransferable(transferable = true) {
+    this.asset.nftCreateData.transferable = transferable
+
+    return this
+  }
+
+  setNftTokenTemplate(template: number) {
+    this.asset.nftCreateData.templateIndex = template
+
+    return this
+  }
+
   setLifecycleState(state: LifecycleStates) {
     this.asset.lifecycleState = state
 
