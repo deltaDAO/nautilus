@@ -1,7 +1,7 @@
 import type { Asset } from '@oceanprotocol/lib'
 import type {
   CredentialListTypes,
-  IAssetBuilder,
+  IBuilder,
   LifecycleStates
 } from '../../@types/Nautilus'
 import type {
@@ -17,7 +17,7 @@ import type {
   ServiceTypes
 } from './Service/NautilusService'
 
-export class AssetBuilder implements IAssetBuilder {
+export class AssetBuilder implements IBuilder<NautilusAsset> {
   private asset: NautilusAsset
 
   constructor(aquariusAsset?: Asset) {

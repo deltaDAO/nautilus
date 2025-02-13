@@ -1,14 +1,9 @@
 import type { ConsumerParameter, Service } from '@oceanprotocol/lib'
+import type { IBuilder, ServiceBuilderConfig } from '../../../@types/Nautilus'
 import type {
-  IServiceBuilder,
-  ServiceBuilderConfig
-} from '../../../@types/Nautilus'
-import {
-  ConsumerParameterSelectOption,
-  type DatatokenCreateParamsWithoutOwner,
-  type TrustedAlgorithmAsset
+  DatatokenCreateParamsWithoutOwner,
+  TrustedAlgorithmAsset
 } from '../../../@types/Publish'
-import { ConsumerParameterBuilder } from '../ConsumerParameters'
 import type { PricingConfigWithoutOwner } from '../NautilusAsset'
 import {
   type FileTypes,
@@ -20,7 +15,7 @@ import {
 export class ServiceBuilder<
   ServiceType extends ServiceTypes,
   FileType extends FileTypes
-> implements IServiceBuilder<ServiceType, FileType>
+> implements IBuilder<NautilusService<ServiceType, FileType>>
 {
   private service = new NautilusService<ServiceType, FileType>()
 
