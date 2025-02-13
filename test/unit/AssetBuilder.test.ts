@@ -120,4 +120,71 @@ describe('AssetBuilder', () => {
     // assert.ok(typeof datatokenCreateParams.name === 'undefined')
     // assert.ok(typeof datatokenCreateParams.symbol === 'undefined')
   })
+
+  it('builds with custom nft name', async () => {
+    const builder = new AssetBuilder()
+
+    const nftName = 'Some Custom NFT Name'
+
+    builder.setNftTokenName(nftName)
+
+    const asset = builder.build()
+
+    const { nftCreateData } = asset
+
+    expect(nftCreateData.name).to.equal(nftName)
+  })
+
+  it('builds with custom nft symbol', async () => {
+    const builder = new AssetBuilder()
+
+    const nftSymbol = 'CUSTOM-NFT'
+
+    builder.setNftTokenSymbol(nftSymbol)
+
+    const asset = builder.build()
+
+    const { nftCreateData } = asset
+
+    expect(nftCreateData.symbol).to.equal(nftSymbol)
+  })
+
+  it('builds with custom nft token uri', async () => {
+    const builder = new AssetBuilder()
+
+    const tokenUri = 'https://delta-dao.com'
+
+    builder.setNftTokenUri(tokenUri)
+
+    const asset = builder.build()
+
+    const { nftCreateData } = asset
+
+    expect(nftCreateData.tokenURI).to.equal(tokenUri)
+  })
+
+  it('builds with nft transferable disabled by default', async () => {
+    const builder = new AssetBuilder()
+
+    const asset = builder.build()
+
+    const { nftCreateData } = asset
+
+    expect(nftCreateData.transferable).to.be.false
+  })
+
+  it('builds with custom nft transferable value', async () => {
+    const builder = new AssetBuilder()
+
+    builder.setNftTokenTransferable()
+    let asset = builder.build()
+
+    expect(asset.nftCreateData.transferable).to.be.true
+
+    builder.reset()
+    builder.setNftTokenTransferable(false)
+    asset = builder.build()
+
+    expect(asset.nftCreateData.transferable).to.be.false
+  })
 })
