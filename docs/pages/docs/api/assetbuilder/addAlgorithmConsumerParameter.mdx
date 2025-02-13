@@ -1,0 +1,69 @@
+# addAlgotithmConsumerParameter
+
+Adds a ConsumerParameter to the algorithm metadata, allowing utilization of the [ConsumerParameterBuilder](/docs/api/ConsumerParameterBuilder).
+
+## Usage
+
+```ts twoslash
+import { AssetBuilder, Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+
+const assetBuilder = new AssetBuilder()
+assetBuilder.setAlgorithm({
+    container: { 
+        entrypoint: 'node $ALGO', 
+        image: 'node', 
+        tag: 'lts', 
+        checksum: 'sha256:a6faa1aa0ae1981b70c075dd6ea0a1725a1d05a4cab85536460ae4e4710e8331' 
+    }, 
+})
+
+const consumerParameterBuilder = new ConsumerParameterBuilder() // [!code focus]
+const consumerParameter = consumerParameterBuilder // [!code focus]
+    .setType('text') // [!code focus]
+    .setName('MyParameter') // [!code focus]
+    .setLabel('Parameter Label') // [!code focus]
+    .setDescription('Some parameter description') // [!code focus]
+    .setDefault('default-value') // [!code focus]
+    .setRequired(false) // [!code focus]
+    .build() // [!code focus]
+
+assetBuilder.addAlgotithmConsumerParameter({ // [!code focus]
+    container: { // [!code focus]
+        entrypoint: 'node $ALGO', // [!code focus]
+        image: 'node', // [!code focus]
+        tag: 'lts', // [!code focus]
+        checksum: 'sha256:a6faa1aa0ae1981b70c075dd6ea0a1725a1d05a4cab85536460ae4e4710e8331' // [!code focus]
+    }, // [!code focus]
+}) // [!code focus]
+const asset = assetBuilder.build() // [!code focus]
+
+await nautilus.publish(asset) // [!code focus]
+// @log: ddo.metadata.algorithm.consumerParameters: 
+// @log: [ 
+// @log:    {
+// @log:        type: 'text', 
+// @log:        name: 'MyParameter',
+// @log:        label: 'Parameter Label',
+// @log:        description: 'Some parameter description',
+// @log:        default: 'default-value',
+// @log:        required: false 
+// @log:    }
+// @log: ]
+```
+
+## Returns
+
+- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
+
+The asset builder instance to chain building calls with.
+
+## Parameter
+
+### parameter
+
+- Type: `ConsumerParameter`
+
+The consumer parameter you want to add to the algorithm metadata. Please refer to the [ConsumerParameterBuilder documentation](/docs/api/ConsumerParameterBuilder) for more information.
