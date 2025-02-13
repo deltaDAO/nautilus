@@ -1,4 +1,4 @@
-import type { Asset } from '@oceanprotocol/lib'
+import type { Asset, ConsumerParameter } from '@oceanprotocol/lib'
 import type {
   CredentialListTypes,
   IAssetBuilder,
@@ -65,8 +65,23 @@ export class AssetBuilder implements IAssetBuilder {
     return this
   }
 
+  // TODO: this could be extracted to a dedicated "AlgorithmMetadataBuilder"
   setAlgorithm(algorithm: MetadataConfig['algorithm']) {
     this.asset.ddo.metadata.algorithm = algorithm
+
+    return this
+  }
+
+  addAlgorithmConsumerParameter(parameter: ConsumerParameter) {
+    if (!this.asset.ddo.metadata.algorithm)
+      throw new Error(
+        'Algorithm needs to be set before adding custom parameters'
+      )
+
+    if (!Array.isArray(this.asset.ddo.metadata.algorithm.consumerParameters))
+      this.asset.ddo.metadata.algorithm.consumerParameters = []
+
+    this.asset.ddo.metadata.algorithm.consumerParameters.push(parameter)
 
     return this
   }
