@@ -34,6 +34,7 @@ describe('Compute Flow Integration', async function () {
   let nautilusAlgoPublisher: Nautilus
 
   let computeDatasetDid: string
+  let additionalComputeDatasetDid: string
   let computeAlgorithmDid: string
   let computeJobId: string
 
@@ -182,6 +183,72 @@ describe('Compute Flow Integration', async function () {
     // TODO: either increase timeout or introduce different solution to wait for ctd to finish
     // takes longer on live test networks (e.g. Mumbai ~4 minutes)
     .timeout(120000)
+
+  it('publishes a second compute dataset asset', async () => {
+    // serviceEndpoint to use for the test asset
+    const { providerUri } = nautilusDatasetPublisher.getOceanConfig()
+
+    // Create the "compute" service
+    const serviceBuilder = new ServiceBuilder({
+      serviceType: ServiceTypes.COMPUTE,
+      fileType: FileTypes.URL
+    })
+    const service = serviceBuilder
+      .setServiceEndpoint(providerUri)
+      .setTimeout(datasetService.timeout)
+      .addFile(datasetService.files[0])
+      .setPricing(await getPricing(datasetPublisherSigner, 'free'))
+      .build()
+
+    // configure the asset
+    const assetBuilder = new AssetBuilder()
+    const asset = assetBuilder
+      .setAuthor('testAuthor')
+      .setDescription('A compute dataset publishing test')
+      .setLicense('MIT')
+      .setName('Test Publish Compute Dataset')
+      .setOwner(datasetPublisherAddress)
+      .setType('dataset')
+      .setNftData(nftParams)
+      .addService(service)
+      .build()
+
+    // publish
+    const result = await nautilusDatasetPublisher.publish(asset)
+
+    expect(result).to.have.property('ddo').to.have.property('id')
+
+    additionalComputeDatasetDid = result.ddo.id
+  })
+
+  it('starts a compute job with multiple datasets', async () => {
+    // wait until DDOs are found in metadata cache
+    const aquarius = new Aquarius(
+      nautilusDatasetPublisher.getOceanConfig().metadataCacheUri
+    )
+    console.log(
+      `Waiting for aquarius at ${aquarius.aquariusURL} to cache algo and datasets...`
+    )
+    await aquarius.waitForIndexer(computeAlgorithmDid)
+    await aquarius.waitForIndexer(computeDatasetDid)
+    await aquarius.waitForIndexer(additionalComputeDatasetDid)
+
+    const startedJob = await nautilusDatasetPublisher.compute({
+      dataset: {
+        did: computeDatasetDid
+      },
+      algorithm: {
+        did: computeAlgorithmDid
+      },
+      additionalDatasets: [{ did: additionalComputeDatasetDid }]
+    })
+
+    const computeJob = Array.isArray(startedJob) ? startedJob[0] : startedJob
+
+    expect(computeJob).to.have.property('jobId')
+
+    computeJobId = computeJob.jobId
+  }).timeout(120000)
 })
 
 async function getStatusHelper(nautilus: Nautilus, jobId: string) {
