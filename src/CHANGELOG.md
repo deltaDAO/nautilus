@@ -1,5 +1,15 @@
 # @deltadao/nautilus
 
+## 1.1.0
+
+### Minor Changes
+
+- [#160](https://github.com/deltaDAO/nautilus/pull/160) [`2e7070b`](https://github.com/deltaDAO/nautilus/commit/2e7070b27db19fbd2526ef1ad84ba90030972d9a) Thanks [@moritzkirstein](https://github.com/moritzkirstein)! - Adds functionality to compute on multiple datasets within one compute job
+
+  - Currently only datasets that are encrypted by the same provider are supported
+
+- [#160](https://github.com/deltaDAO/nautilus/pull/160) [`2e7070b`](https://github.com/deltaDAO/nautilus/commit/2e7070b27db19fbd2526ef1ad84ba90030972d9a) Thanks [@moritzkirstein](https://github.com/moritzkirstein)! - Add helper functions to set name, symbol, tokenUri, transferable and templateIndex of data NFTs
+
 ## 1.0.3
 
 ### Patch Changes
