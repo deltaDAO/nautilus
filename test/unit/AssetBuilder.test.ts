@@ -1,6 +1,6 @@
-import type { Asset } from '@oceanprotocol/lib'
+import type { Asset, ConsumerParameter } from '@oceanprotocol/lib'
 import { expect } from 'chai'
-import { AssetBuilder } from '../../src/Nautilus'
+import { AssetBuilder, ConsumerParameterBuilder } from '../../src/Nautilus'
 import {
   FileTypes,
   ServiceBuilder,
@@ -8,6 +8,7 @@ import {
 } from '../../src/Nautilus/Asset/Service'
 import * as AquariusAsset from '../fixtures/AquariusAsset.json'
 import { algorithmMetadata, fixedPricing } from '../fixtures/AssetConfig'
+import { getConsumerParameters } from '../fixtures/ConsumerParameters'
 import { nftParams } from '../fixtures/NftCreateData'
 
 describe('AssetBuilder', () => {
@@ -119,5 +120,36 @@ describe('AssetBuilder', () => {
     // // Datatoken name and symbol are undefined by default
     // assert.ok(typeof datatokenCreateParams.name === 'undefined')
     // assert.ok(typeof datatokenCreateParams.symbol === 'undefined')
+  })
+
+  it('throws if adding custom algo parameter before setting algo', async () => {
+    const builder = new AssetBuilder()
+
+    expect(() => {
+      builder.addAlgorithmConsumerParameter({} as ConsumerParameter)
+    }).to.throw()
+  })
+
+  it('builds with a custom algo parameter', async () => {
+    const builder = new AssetBuilder()
+
+    const { consumerParameters, ...algorithm } = algorithmMetadata.algorithm
+
+    builder.setAlgorithm(algorithm)
+
+    const { textParameter } = getConsumerParameters()
+
+    builder.addAlgorithmConsumerParameter(textParameter)
+
+    const asset = builder.build()
+
+    const {
+      ddo: { metadata }
+    } = asset
+
+    expect(metadata.algorithm.consumerParameters).to.be.a('array')
+    expect(metadata.algorithm.consumerParameters).to.have.lengthOf(1)
+    expect(metadata.algorithm.consumerParameters[0]).to.haveOwnProperty('type')
+    expect(metadata.algorithm.consumerParameters[0].type).to.equal('text')
   })
 })
