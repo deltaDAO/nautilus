@@ -1,10 +1,6 @@
-@layer vocs_preflight {
-    @tailwind base;
-  }
-  
-  @tailwind components;
-  @tailwind utilities;
-  
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
   #home-install .vocs_CodeGroup {
     display: flex;
     height: 100%;
