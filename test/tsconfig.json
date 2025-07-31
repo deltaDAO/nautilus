@@ -3,6 +3,7 @@
     "resolveJsonModule": true,
     "module": "CommonJS",
     "target": "ESNext",
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    "skipLibCheck": true,
   }
 }
