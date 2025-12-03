@@ -64,6 +64,7 @@ export default defineConfig({
     }
   ],
   theme: {
+    colorScheme: 'system',
     accentColor: {
       light: '#007599',
       dark: '#00caff'
