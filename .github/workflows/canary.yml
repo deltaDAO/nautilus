@@ -9,6 +9,9 @@ jobs:
     name: Release canary
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: write
+      id-token: write
 
     steps:
       - name: Clone repository
@@ -16,11 +19,6 @@ jobs:
 
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
-
-      - name: Setup .npmrc file
-        uses: actions/setup-node@v4
-        with:
-          registry-url: 'https://registry.npmjs.org'
 
       - name: Set version
         run: |
@@ -34,5 +32,3 @@ jobs:
 
       - name: Publish to npm
         run: cd src && npm publish --tag $(git branch --show-current | tr -cs '[:alnum:]-' '-' | tr '[:upper:]' '[:lower:]' | sed 's/-$//')
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
