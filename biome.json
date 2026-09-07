@@ -1,13 +1,14 @@
 {
-  "$schema": "https://biomejs.dev/schemas/1.6.1/schema.json",
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
   "files": {
-    "ignore": [
-      "CHANGELOG.md",
-      "LICENSE",
-      "tsconfig.json",
-      "tsconfig.*.json",
-      "src/@types/subgraph/*.ts",
-      "*generated.ts"
+    "includes": [
+      "**",
+      "!**/CHANGELOG.md",
+      "!**/LICENSE",
+      "!**/tsconfig.json",
+      "!**/tsconfig.*.json",
+      "!docs/public",
+      "!docs/dist"
     ]
   },
   "vcs": {
@@ -26,7 +27,7 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "complexity": {
         "noBannedTypes": "off",
         "noUselessSwitchCase": "off"
@@ -38,19 +39,33 @@
         "noDelete": "off"
       },
       "style": {
-        "useShorthandArrayType": "error"
+        "useConsistentArrayType": {
+          "level": "error",
+          "options": {
+            "syntax": "shorthand"
+          }
+        }
       }
     }
   },
   "javascript": {
     "formatter": {
       "enabled": true,
-      "trailingComma": "none",
       "semicolons": "asNeeded",
-      "quoteStyle": "single"
+      "quoteStyle": "single",
+      "trailingCommas": "none"
     }
   },
-  "organizeImports": {
-    "enabled": true
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
   }
 }
