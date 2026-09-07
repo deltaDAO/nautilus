@@ -12,7 +12,7 @@ import { Wallet } from 'ethers'
 const nautilus = await Nautilus.create(new Wallet('1234'))
 // ---cut---
 await nautilus.access({
-    assetDid: 'did:op:1234...',
+    assetDid: 'did:ope:1234...',
     userdata:{ // [!code focus]
         text: 'value', // [!code focus]
         number: 123, // [!code focus]
@@ -29,13 +29,13 @@ const nautilus = await Nautilus.create(new Wallet('1234'))
 // ---cut---
 await nautilus.compute({
     dataset: {
-        did: 'did:op:1234...',
+        did: 'did:ope:1234...',
         userdata:{ // [!code focus]
             text: 'value' // [!code focus]
         } // [!code focus]
     },
     algorithm: {
-        did: 'did:op:abcd...',
+        did: 'did:ope:abcd...',
         userdata: { // [!code focus]
             number: 123 // [!code focus]
         }, // [!code focus]
