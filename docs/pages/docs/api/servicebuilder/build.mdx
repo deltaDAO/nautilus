@@ -1,0 +1,27 @@
+# build
+
+Finish the service.
+
+Validates what cannot be checked later: a new service needs a pricing config, and every service needs a `serviceEndpoint`. The name is defaulted rather than required.
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+// ---cut---
+const service = serviceBuilder.build() // [!code focus]
+```
+
+## Returns
+
+- Type: `NautilusService`
+
+Pass it to [`AssetBuilder.addService`](/docs/api/assetbuilder/addService).

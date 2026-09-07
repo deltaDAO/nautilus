@@ -1,0 +1,27 @@
+# setVcPolicies
+
+Set the checks applied to each presented credential.
+
+The policy server's defaults are `signature`, `not-before` and `revoked-status-list`. Valid names can be enumerated from the walt.id verifier's `/openid4vc/policy-list` endpoint.
+
+## Usage
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+import { CredentialListTypes } from '@deltadao/nautilus'
+
+assetBuilder.setVcPolicies(CredentialListTypes.ALLOW, [ // [!code focus]
+  'signature', // [!code focus]
+  'not-before', // [!code focus]
+  'revoked-status-list' // [!code focus]
+]) // [!code focus]
+```
+
+## Returns
+
+- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
+
+The asset builder instance, to chain further calls with.

@@ -1,0 +1,21 @@
+# setDisplayTitle
+
+Set a presentational title, distinct from the asset's `name`.
+
+New in DDO v5. Like `description`, it is stored as a language-tagged value using the language set by [`setContentLanguage`](/docs/api/assetbuilder/setContentLanguage).
+
+## Usage
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+assetBuilder.setDisplayTitle('Hourly Weather Observations, 2020–2026') // [!code focus]
+```
+
+## Returns
+
+- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
+
+The asset builder instance, to chain further calls with.

@@ -1,0 +1,49 @@
+# addFile
+
+Add a file the service serves.
+
+Files are encrypted by the node before publishing, so their locations and credentials never appear on chain.
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+// ---cut---
+serviceBuilder.addFile({ // [!code focus]
+  type: 'url', // [!code focus]
+  url: 'https://data.example/observations.csv', // [!code focus]
+  method: 'GET' // [!code focus]
+}) // [!code focus]
+```
+
+:::warning
+The supported storage types changed with ocean-node. `graphql` and `smartcontract` are
+**gone**; `s3`, `ftp` and `nodePersistentStorage` are **new**. The object shapes were renamed
+too — `UrlFile` is now `UrlFileObject`, `Ipfs` is `IpfsFileObject` (`{ type, hash }`), and
+`Arweave` is `ArweaveFileObject` (`{ type, transactionId }`).
+:::
+
+| `FileTypes` | Object |
+| --- | --- |
+| `URL` | `{ type: 'url', url, method, headers? }` |
+| `IPFS` | `{ type: 'ipfs', hash }` |
+| `ARWEAVE` | `{ type: 'arweave', transactionId }` |
+| `S3` | `{ type: 's3', s3Access: { endpoint, bucket, objectKey, ... } }` |
+| `FTP` | `{ type: 'ftp', url }` |
+| `NODE_PERSISTENT_STORAGE` | `{ type: 'nodePersistentStorage', bucketId, fileName }` |
+
+The builder's `FileType` generic picks which of these `addFile` accepts.
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.

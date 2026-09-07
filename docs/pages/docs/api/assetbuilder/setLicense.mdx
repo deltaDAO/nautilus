@@ -2,8 +2,6 @@
 
 Set the license for the asset.
 
-Official OceanProtocol documentation: [DDO Specification](https://docs.oceanprotocol.com/developers/ddo-specification)
-
 ## Usage
 
 ```ts twoslash
@@ -19,24 +17,29 @@ const asset = assetBuilder.build() // [!code focus]
 await nautilus.publish(asset) // [!code focus]
 // @log: ddo.metadata: 
 // @log: { 
-// @log:    license: 'Apache-2.0'
+// @log:    license: { name: 'Apache-2.0' }
 // @log: }
 ```
+
+:::warning[Shape changed in DDO v5]
+v5 stores the license as a structured object. A bare string is wrapped into `{ name }` for
+you, so v1-style calls keep working — pass the object form when you need ODRL terms.
+:::
 
 ## Returns
 
 - Type: [`AssetBuilder`](/docs/api/AssetBuilder)
 
-The asset builder instance to chain building calls with.
+The asset builder instance, to chain further calls with.
 
-## Parameter
+## Parameters
 
 ### license
 
-- Type: `string`
+- Type: `string | License`
 
-The license you want to set to the asset's metadata to be built.
-Can be either a public domain or a [SPDX license identifier](https://spdx.org/licenses/).
+A public-domain declaration, an [SPDX identifier](https://spdx.org/licenses/), a URL, or a
+full `License` object for ODRL terms.
 
 ```ts twoslash
 import { AssetBuilder } from '@deltadao/nautilus'

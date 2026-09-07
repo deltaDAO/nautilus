@@ -1,0 +1,27 @@
+# removeTrustedAlgorithm
+
+Stop trusting an algorithm.
+
+Removes it from both the staged and the already-resolved lists.
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.COMPUTE, FileTypes.URL>({
+  serviceType: ServiceTypes.COMPUTE
+})
+// ---cut---
+serviceBuilder.removeTrustedAlgorithm('did:ope:926098d069b017dcf...') // [!code focus]
+```
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.

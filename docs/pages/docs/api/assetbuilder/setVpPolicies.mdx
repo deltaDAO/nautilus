@@ -1,0 +1,27 @@
+# setVpPolicies
+
+Set the checks applied to the presentation as a whole.
+
+Where VC policies check individual credentials, these check the presentation: that the holder is bound to it, that it satisfies the definition, that it carries enough credentials. Parameterised policies take an `args` value.
+
+## Usage
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+import { CredentialListTypes } from '@deltadao/nautilus'
+
+assetBuilder.setVpPolicies(CredentialListTypes.ALLOW, [ // [!code focus]
+  'holder-binding', // [!code focus]
+  'presentation-definition', // [!code focus]
+  { policy: 'minimum-credentials', args: '1' } // [!code focus]
+]) // [!code focus]
+```
+
+## Returns
+
+- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
+
+The asset builder instance, to chain further calls with.

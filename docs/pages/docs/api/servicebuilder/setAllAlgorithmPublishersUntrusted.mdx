@@ -1,0 +1,27 @@
+# setAllAlgorithmPublishersUntrusted
+
+Trust no publisher.
+
+Writes an empty list.
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.COMPUTE, FileTypes.URL>({
+  serviceType: ServiceTypes.COMPUTE
+})
+// ---cut---
+serviceBuilder.setAllAlgorithmPublishersUntrusted() // [!code focus]
+```
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.

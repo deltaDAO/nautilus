@@ -1,0 +1,43 @@
+# setPricing
+
+Set how the service is paid for.
+
+Required for a **new** service, since it needs its own datatoken. Blocked for a published one — a new pricing config mints a new datatoken and so changes the service id; use [`nautilus.setServicePrice`](/docs/api/nautilus/setServicePrice) instead.
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+// ---cut---
+// Free: a dispenser hands out one datatoken on request.
+serviceBuilder.setPricing({ type: 'free' }) // [!code focus]
+
+// Fixed price: a fixed-rate exchange sells datatokens for a base token.
+serviceBuilder.setPricing({ // [!code focus]
+  type: 'fixed', // [!code focus]
+  freCreationParams: { // [!code focus]
+    fixedRateAddress: '0x...', // [!code focus]
+    baseTokenAddress: '0x...', // [!code focus]
+    marketFeeCollector: '0x...', // [!code focus]
+    baseTokenDecimals: 18, // [!code focus]
+    datatokenDecimals: 18, // [!code focus]
+    fixedRate: '2.5', // [!code focus]
+    marketFee: '0', // [!code focus]
+    withMint: true // [!code focus]
+  } // [!code focus]
+}) // [!code focus]
+```
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.

@@ -1,0 +1,27 @@
+# allowRawAlgorithms
+
+Allow consumers to run unpublished algorithms on the data.
+
+Compute services only. Convenient for experimentation, but it means arbitrary code runs against your data — most publishers pin trusted algorithms instead.
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.COMPUTE, FileTypes.URL>({
+  serviceType: ServiceTypes.COMPUTE
+})
+// ---cut---
+serviceBuilder.allowRawAlgorithms(true) // [!code focus]
+```
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.

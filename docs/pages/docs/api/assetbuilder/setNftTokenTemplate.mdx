@@ -2,11 +2,12 @@
 
 Sets NFT token template.
 
-> Don't use this setting unless you know what you are doing.
+:::warning
+Don't use this setting unless you know what you are doing. The template
+determines how the NFT behaves on chain and cannot be changed after creation.
+:::
 
 The default template is `1`.
-
-Official OceanProtocol documentation: [DDO Specification](https://docs.oceanprotocol.com/developers/ddo-specification)
 
 ## Usage
 
@@ -27,9 +28,9 @@ await nautilus.publish(asset) // [!code focus]
 
 - Type: [`AssetBuilder`](/docs/api/AssetBuilder)
 
-The asset builder instance to chain building calls with.
+The asset builder instance, to chain further calls with.
 
-## Parameter
+## Parameters
 
 ### template
 
