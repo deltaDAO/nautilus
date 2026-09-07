@@ -1,712 +1,523 @@
-import assert from 'node:assert'
-import { Aquarius, type Config, type DDO } from '@oceanprotocol/lib'
-import type { Signer } from 'ethers'
-import { CredentialListTypes, LifecycleStates } from '../../src/@types'
+import type { AssetV5 } from '@oceanprotocol/ddo-js'
+import { beforeAll, describe, expect, it } from 'vitest'
+import { LifecycleStates } from '../../src/@types/Nautilus.js'
+import { fromLanguageValue } from '../../src/ddo/language.js'
+import {
+  getCredentials,
+  getLifecycleState,
+  getMetadata,
+  getServices
+} from '../../src/ddo/read.js'
+import { CredentialListTypes } from '../../src/ddo/types.js'
 import {
   AssetBuilder,
-  ConsumerParameterBuilder,
-  FileTypes,
-  LogLevel,
-  Nautilus,
+  type FileTypes,
+  type Nautilus,
   ServiceBuilder,
-  ServiceTypes
-} from '../../src/Nautilus'
+  type ServiceTypes
+} from '../../src/index.js'
+import { datasetFile } from '../fixtures/AssetConfig.js'
+import { getNodeUri } from '../fixtures/Config.js'
+import { getConsumerParameters } from '../fixtures/ConsumerParameters.js'
 import {
-  algorithmMetadata,
-  datasetService,
-  getPricing
-} from '../fixtures/AssetConfig'
-import { getTestConfig } from '../fixtures/Config'
-import { TESTING_NODE_URI, getSigner } from '../fixtures/Ethers'
+  computeService,
+  createPublisher,
+  freeAlgorithm,
+  freeDataset,
+  integrationEnabled,
+  publishAndIndex
+} from './helpers.js'
 
-const nodeUri = TESTING_NODE_URI
+/**
+ * The edit suite is the richest behavioural contract in the repo, and the best regression
+ * net for the migration: every case republishes a real asset and re-resolves it, so a
+ * projection bug shows up as a wrong field rather than a type error.
+ */
+describe('edit', () => {
+  if (!integrationEnabled) {
+    it.skip('needs PRIVATE_KEY_TESTS_1/2 and NODE_URL to run', () => {})
+    return
+  }
 
-describe('Edit Integration tests', function () {
-  // set timeout for this describe block
-  this.timeout(100000)
-
-  let signer: Signer
-  let signerAddress: string
   let nautilus: Nautilus
-  let providerUri: string
-  let aquarius: Aquarius
-  let config: Config
+  let asset: AssetV5
+  let serviceId: string
 
-  // test assets
-  let fixedPricedAlgoWithCredentials: DDO
-  let fixedPriceComputeDataset: DDO
+  /**
+   * Polls until the indexer reports the expected lifecycle state.
+   *
+   * Deliberately not `waitForIndexer(did, txid)`: that waits for
+   * `indexedMetadata.event.txid` to equal the hash, and the indexer only writes
+   * that field for MetadataCreated/Updated. A MetadataState change never
+   * updates it, so passing the hash here waits forever. Without a hash the call
+   * returns the currently-indexed DDO immediately, which is the pre-change one.
+   * So poll the thing we actually care about.
+   */
+  async function settleLifecycleState(
+    did: string,
+    expected: number,
+    attempts = 30,
+    intervalMs = 2000
+  ): Promise<AssetV5> {
+    let latest: AssetV5 | undefined
 
-  before(async () => {
-    Nautilus.setLogLevel(LogLevel.Verbose)
-    signer = getSigner(1, nodeUri)
-    signerAddress = await signer.getAddress()
-    config = await getTestConfig(signer)
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      latest = await nautilus.waitForIndexer(did)
 
-    console.log('Testing with signer:', signerAddress)
+      if (latest && getLifecycleState(latest) === expected) return latest
 
-    nautilus = await Nautilus.create(signer, {
-      metadataCacheUri:
-        process.env.METADATA_CACHE_URI_TEST || config?.metadataCacheUri
-    })
+      await new Promise((resolve) => setTimeout(resolve, intervalMs))
+    }
 
-    providerUri =
-      process.env.PROVIDER_URI_TEST || nautilus.getOceanConfig().providerUri
-
-    console.log('Testing with signer:', signerAddress)
-
-    aquarius = new Aquarius(
-      process.env.METADATA_CACHE_URI_TEST || config?.metadataCacheUri
+    throw new Error(
+      `Indexer never reported lifecycle state ${expected} for ${did} ` +
+        `(last saw ${latest ? getLifecycleState(latest) : 'no asset'}).`
     )
+  }
+
+  /** Republishes and re-resolves, so every assertion reads what the indexer actually has. */
+  async function apply(
+    mutate: (builder: AssetBuilder) => AssetBuilder
+  ): Promise<AssetV5> {
+    const builder = mutate(new AssetBuilder(asset))
+    const result = await nautilus.edit(builder.build())
+
+    const indexed = await nautilus.waitForIndexer(
+      result.ddo.id as string,
+      result.setMetadataTxReceipt.hash
+    )
+
+    asset = indexed || (await nautilus.getAsset(result.ddo.id as string))
+
+    return asset
+  }
+
+  beforeAll(async () => {
+    nautilus = await createPublisher()
+
+    const published = await publishAndIndex(nautilus, freeDataset())
+
+    asset = await nautilus.getAsset(published.ddo.id as string)
+    serviceId = getServices(asset)[0].id
   })
 
-  it('publishes an algorithm with fixed price and credentials', async () => {
-    const serviceBuilder = new ServiceBuilder({
-      serviceType: ServiceTypes.ACCESS,
-      fileType: FileTypes.URL
+  describe('metadata', () => {
+    it('renames the asset without losing the other fields', async () => {
+      const before = getMetadata(asset)
+      const edited = await apply((builder) =>
+        builder.setName('Renamed Dataset')
+      )
+      const after = getMetadata(edited)
+
+      expect(after.name).to.equal('Renamed Dataset')
+      // A shallow top-level merge would have dropped these.
+      expect(after.author).to.equal(before.author)
+      expect(after.providedBy).to.equal(before.providedBy)
+      expect(after.created).to.equal(before.created)
     })
-    const service = serviceBuilder
-      .setServiceEndpoint(providerUri)
-      .setTimeout(datasetService.timeout)
-      .addFile(datasetService.files[0])
-      .setPricing(await getPricing(signer, 'fixed'))
-      .build()
 
-    const assetBuilder = new AssetBuilder()
-    const asset = assetBuilder
-      .setAuthor('testAuthor')
-      .setDescription('A dataset publishing test')
-      .setLicense('MIT')
-      .setName('Test Publish Dataset Fixed')
-      .setOwner(signerAddress)
-      .setType('algorithm')
-      .setAlgorithm({
-        ...algorithmMetadata.algorithm
+    it('bumps updated but keeps created', async () => {
+      const before = getMetadata(asset)
+      const after = getMetadata(
+        await apply((builder) => builder.setName('Renamed Again'))
+      )
+
+      expect(after.created).to.equal(before.created)
+      expect(after.updated).to.not.equal(before.updated)
+    })
+
+    it('edits the language-tagged description', async () => {
+      const edited = await apply((builder) =>
+        builder.setDescription('A new description')
+      )
+
+      expect(fromLanguageValue(getMetadata(edited).description)).to.equal(
+        'A new description'
+      )
+    })
+
+    it('edits the structured license', async () => {
+      const edited = await apply((builder) =>
+        builder.setLicense({ name: 'CC-BY-4.0' })
+      )
+
+      expect(getMetadata(edited).license?.name).to.equal('CC-BY-4.0')
+    })
+
+    it('edits the author and copyright holder', async () => {
+      const edited = await apply((builder) =>
+        builder.setAuthor('Someone Else').setCopyrightHolder('Someone Else Ltd')
+      )
+
+      expect(getMetadata(edited).author).to.equal('Someone Else')
+      expect(getMetadata(edited).copyrightHolder).to.equal('Someone Else Ltd')
+    })
+
+    it('adds tags and categories', async () => {
+      const edited = await apply((builder) =>
+        builder.addTags(['edited']).addCategories(['integration'])
+      )
+
+      expect(getMetadata(edited).tags).to.include('edited')
+      expect(getMetadata(edited).categories).to.include('integration')
+    })
+
+    it('adds links as the v5 map', async () => {
+      const edited = await apply((builder) =>
+        builder.addLinks({ docs: 'https://docs.example' })
+      )
+
+      expect(getMetadata(edited).links).to.deep.include({
+        docs: 'https://docs.example'
       })
-      .addService(service)
-      .addCredentialAddresses(CredentialListTypes.ALLOW, [signerAddress])
-      .addCredentialAddresses(CredentialListTypes.DENY, [signerAddress])
-      .build()
+    })
 
-    const result = await nautilus.publish(asset)
-    fixedPricedAlgoWithCredentials = result?.ddo
-    console.log(
-      `asset published (${fixedPricedAlgoWithCredentials?.id}), waiting for aquarius indexing...`
-    )
-    await aquarius.waitForIndexer(fixedPricedAlgoWithCredentials?.id)
+    it('adds additional information', async () => {
+      const edited = await apply((builder) =>
+        builder.addAdditionalInformation({ termsAccepted: true })
+      )
 
-    assert(result)
+      expect(getMetadata(edited).additionalInformation).to.deep.include({
+        termsAccepted: true
+      })
+    })
+
+    it('sets the display title', async () => {
+      const edited = await apply((builder) =>
+        builder.setDisplayTitle('A nicer title')
+      )
+
+      expect(fromLanguageValue(getMetadata(edited).displayTitle)).to.equal(
+        'A nicer title'
+      )
+    })
   })
 
-  it('publishes a compute type dataset', async () => {
-    const assetBuilder = new AssetBuilder()
+  describe('credentials', () => {
+    const consumer = '0x0000000000000000000000000000000000000001'
 
-    const pricing = await getPricing(signer, 'fixed')
-    const services = [
-      {
-        name: 'test service 1',
-        serviceEndpoint: providerUri,
-        timeout: datasetService.timeout,
-        pricing,
-        file: datasetService.files[0]
-      },
-      {
-        name: 'test service 2',
-        serviceEndpoint: providerUri,
-        timeout: datasetService.timeout,
-        pricing,
-        file: datasetService.files[0]
-      }
-    ]
+    it('adds an allow address', async () => {
+      const edited = await apply((builder) =>
+        builder.addCredentialAddresses(CredentialListTypes.ALLOW, [consumer])
+      )
 
-    for (const service of services) {
-      const serviceBuilder = new ServiceBuilder({
-        serviceType: ServiceTypes.COMPUTE,
-        fileType: FileTypes.URL
+      expect(JSON.stringify(getCredentials(edited).allow)).to.contain(consumer)
+    })
+
+    it('removes an allow address', async () => {
+      const edited = await apply((builder) =>
+        builder.removeCredentialAddresses(CredentialListTypes.ALLOW, [consumer])
+      )
+
+      expect(JSON.stringify(getCredentials(edited).allow)).to.not.contain(
+        consumer
+      )
+    })
+
+    it('adds a deny address', async () => {
+      const edited = await apply((builder) =>
+        builder.addCredentialAddresses(CredentialListTypes.DENY, [consumer])
+      )
+
+      expect(JSON.stringify(getCredentials(edited).deny)).to.contain(consumer)
+    })
+
+    it('removes a deny address', async () => {
+      const edited = await apply((builder) =>
+        builder.removeCredentialAddresses(CredentialListTypes.DENY, [consumer])
+      )
+
+      expect(JSON.stringify(getCredentials(edited).deny)).to.not.contain(
+        consumer
+      )
+    })
+
+    it('adds the SSIpolicy block', async () => {
+      const edited = await apply((builder) =>
+        builder
+          .addRequestCredentials(CredentialListTypes.ALLOW, [
+            { type: 'VerifiableId', format: 'jwt_vc_json' }
+          ])
+          .setVcPolicies(CredentialListTypes.ALLOW, ['signature'])
+      )
+
+      const ssi = getCredentials(edited).allow?.find(
+        (entry) => entry.type === 'SSIpolicy'
+      )
+
+      expect(ssi).to.exist
+      expect(JSON.stringify(ssi)).to.contain('request_credentials')
+    })
+
+    it('sets the match rules', async () => {
+      const edited = await apply((builder) =>
+        builder.setCredentialMatchRules({ match_allow: 'any' })
+      )
+
+      expect(getCredentials(edited).match_allow).to.equal('any')
+    })
+  })
+
+  describe('lifecycle', () => {
+    it('unlists the asset through the builder', async () => {
+      const edited = await apply((builder) =>
+        builder.setLifecycleState(LifecycleStates.ASSET_UNLISTED)
+      )
+
+      expect(getLifecycleState(edited)).to.equal(LifecycleStates.ASSET_UNLISTED)
+    })
+
+    it('reactivates the asset through setAssetLifecycleState', async () => {
+      await nautilus.setAssetLifecycleState(asset, LifecycleStates.ACTIVE)
+
+      asset = await settleLifecycleState(asset.id, LifecycleStates.ACTIVE)
+
+      expect(getLifecycleState(asset)).to.equal(LifecycleStates.ACTIVE)
+    })
+
+    it('is a no-op when the state already matches', async () => {
+      expect(
+        await nautilus.setAssetLifecycleState(asset, LifecycleStates.ACTIVE)
+      ).to.equal(undefined)
+    })
+  })
+
+  describe('services', () => {
+    function editService() {
+      return new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+        asset,
+        serviceId
       })
+    }
 
-      const builtService = serviceBuilder
-        .setName(service.name)
-        .setServiceEndpoint(service.serviceEndpoint)
-        .setTimeout(service.timeout)
-        .setPricing(pricing)
-        .addFile(service.file)
+    it('renames a service', async () => {
+      const edited = await apply((builder) =>
+        builder.addService(editService().setName('Renamed Service').build())
+      )
+
+      expect(getServices(edited)[0].name).to.equal('Renamed Service')
+    })
+
+    it('edits the service description and timeout', async () => {
+      const edited = await apply((builder) =>
+        builder.addService(
+          editService()
+            .setDescription('What it serves')
+            .setTimeout(7200)
+            .build()
+        )
+      )
+
+      const service = getServices(edited)[0]
+
+      expect(service.timeout).to.equal(7200)
+      expect(fromLanguageValue(service.description)).to.equal('What it serves')
+    })
+
+    it('adds a consumer parameter', async () => {
+      const edited = await apply((builder) =>
+        builder.addService(
+          editService().addConsumerParameter(getConsumerParameters()[0]).build()
+        )
+      )
+
+      expect(
+        getServices(edited)[0].consumerParameters?.length
+      ).to.be.greaterThan(0)
+    })
+
+    it('replaces the files object, which changes the service id', async () => {
+      // The service id is the hash of the encrypted file object, so new files necessarily
+      // produce a new id and the old service entry must not survive alongside it.
+      const before = getServices(asset)[0].id
+
+      const edited = await apply((builder) =>
+        builder.addService(editService().addFile(datasetFile).build())
+      )
+
+      expect(getServices(edited)).to.have.length(1)
+      expect(getServices(edited)[0].id).to.not.equal(before)
+
+      serviceId = getServices(edited)[0].id
+    })
+
+    it('adds a second service', async () => {
+      const edited = await apply((builder) =>
+        builder.addService(
+          computeService().setPricing({ type: 'free' }).build()
+        )
+      )
+
+      expect(getServices(edited)).to.have.length(2)
+    })
+
+    it('removes a service again', async () => {
+      const extra = getServices(asset).find(
+        (service) => service.id !== serviceId
+      )
+
+      const edited = await apply((builder) =>
+        builder.removeService(extra?.id as string)
+      )
+
+      expect(getServices(edited)).to.have.length(1)
+      expect(getServices(edited)[0].id).to.equal(serviceId)
+    })
+  })
+
+  describe('compute options', () => {
+    let computeAsset: AssetV5
+    let computeServiceId: string
+    let algorithmDid: string
+
+    async function applyCompute(
+      mutate: (builder: AssetBuilder) => AssetBuilder
+    ): Promise<AssetV5> {
+      const result = await nautilus.edit(
+        mutate(new AssetBuilder(computeAsset)).build()
+      )
+
+      computeAsset =
+        (await nautilus.waitForIndexer(
+          result.ddo.id as string,
+          result.setMetadataTxReceipt.hash
+        )) || (await nautilus.getAsset(result.ddo.id as string))
+
+      return computeAsset
+    }
+
+    function editComputeService() {
+      return new ServiceBuilder<ServiceTypes.COMPUTE, FileTypes.URL>({
+        asset: computeAsset,
+        serviceId: computeServiceId
+      })
+    }
+
+    beforeAll(async () => {
+      const dataset = new AssetBuilder()
+        .setType('dataset')
+        .setName('Nautilus Compute Dataset')
+        .setDescription('For compute-option edits')
+        .setProvidedBy('deltaDAO AG')
+        .addService(
+          computeService(getNodeUri()).setPricing({ type: 'free' }).build()
+        )
         .build()
 
-      assetBuilder.addService(builtService)
-    }
+      const published = await publishAndIndex(nautilus, dataset)
+      computeAsset = await nautilus.getAsset(published.ddo.id as string)
+      computeServiceId = getServices(computeAsset)[0].id
 
-    const asset = assetBuilder
-      .setAuthor('testAuthor')
-      .setDescription('A dataset publishing test')
-      .setLicense('MIT')
-      .setName('Test Publish Dataset Fixed')
-      .setOwner(signerAddress)
-      .setType('dataset')
-      .build()
+      const algorithm = await publishAndIndex(nautilus, freeAlgorithm())
+      algorithmDid = algorithm.ddo.id as string
+    })
 
-    const result = await nautilus.publish(asset)
-    fixedPriceComputeDataset = result?.ddo
-    console.log(
-      `asset published (${fixedPriceComputeDataset?.id}), waiting for aquarius indexing...`
-    )
-    await aquarius.waitForIndexer(fixedPriceComputeDataset?.id)
-
-    assert(result)
-  })
-
-  it('edit asset metadata fields', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPricedAlgoWithCredentials?.id // use algo for algo metadata
-    )
-
-    const assetBuilder = new AssetBuilder(aquariusAsset)
-
-    const asset = assetBuilder
-      .setAuthor('Company Name')
-      .setDescription(
-        '# Nautilus-Example Description \n\nThis asset has been published using the [nautilus-examples](https://github.com/deltaDAO/nautilus-examples) repository.'
+    it('allows raw algorithms', async () => {
+      const edited = await applyCompute((builder) =>
+        builder.addService(
+          editComputeService().allowRawAlgorithms(true).build()
+        )
       )
-      .setLicense('Edited License')
-      .setName('Nautilus edit Example: New name')
-      .setCopyrightHolder('TheHolder')
-      .addLinks(['https://docs.oceanprotocol.com/'])
-      .setContentLanguage('EN')
-      .addTags(['edit', 'test'])
-      .addCategories(['test'])
-      .addAdditionalInformation({
-        toplevel: 'random',
-        nesting: { nested: 'in the deep' }
-      })
-      .setAlgorithm({
-        ...algorithmMetadata.algorithm
-      })
-      .build()
 
-    const result = await nautilus.edit(asset)
+      expect(getServices(edited)[0].compute?.allowRawAlgorithm).to.equal(true)
+    })
 
-    assert(result)
+    it('allows algorithm network access', async () => {
+      const edited = await applyCompute((builder) =>
+        builder.addService(
+          editComputeService().allowAlgorithmNetworkAccess(true).build()
+        )
+      )
+
+      expect(getServices(edited)[0].compute?.allowNetworkAccess).to.equal(true)
+    })
+
+    it('adds a trusted algorithm publisher', async () => {
+      const publisher = await nautilus.getSigner().getAddress()
+
+      const edited = await applyCompute((builder) =>
+        builder.addService(
+          editComputeService().addTrustedAlgorithmPublisher(publisher).build()
+        )
+      )
+
+      expect(
+        getServices(edited)[0].compute?.publisherTrustedAlgorithmPublishers
+      ).to.include(publisher)
+    })
+
+    it('removes a trusted algorithm publisher', async () => {
+      const publisher = await nautilus.getSigner().getAddress()
+
+      const edited = await applyCompute((builder) =>
+        builder.addService(
+          editComputeService()
+            .removeTrustedAlgorithmPublisher(publisher)
+            .build()
+        )
+      )
+
+      expect(
+        getServices(edited)[0].compute?.publisherTrustedAlgorithmPublishers
+      ).to.not.include(publisher)
+    })
+
+    it('trusts an algorithm, pinning it per service', async () => {
+      // v5 requires a serviceId on each trusted algorithm; v4 could only pin services[0].
+      const edited = await applyCompute((builder) =>
+        builder.addService(
+          editComputeService()
+            .addTrustedAlgorithms([{ did: algorithmDid }])
+            .build()
+        )
+      )
+
+      const trusted =
+        getServices(edited)[0].compute?.publisherTrustedAlgorithms || []
+
+      expect(trusted).to.have.length(1)
+      expect(trusted[0].did).to.equal(algorithmDid)
+      expect(trusted[0].serviceId).to.be.a('string').and.not.empty
+      expect(trusted[0].filesChecksum).to.be.a('string').and.not.empty
+      expect(trusted[0].containerSectionChecksum).to.be.a('string').and.not
+        .empty
+    })
+
+    it('untrusts every algorithm', async () => {
+      const edited = await applyCompute((builder) =>
+        builder.addService(
+          editComputeService().setAllAlgorithmsUntrusted().build()
+        )
+      )
+
+      expect(
+        getServices(edited)[0].compute?.publisherTrustedAlgorithms
+      ).to.deep.equal([])
+    })
+
+    it('trusts every algorithm', async () => {
+      const edited = await applyCompute((builder) =>
+        builder.addService(
+          editComputeService().setAllAlgorithmsTrusted().build()
+        )
+      )
+
+      expect(
+        getServices(edited)[0].compute?.publisherTrustedAlgorithms
+      ).to.equal(null)
+    })
   })
 
-  it('edit credentials - add address ALLOW', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPricedAlgoWithCredentials?.id
-    )
-
-    const assetBuilder = new AssetBuilder(aquariusAsset)
-
-    const asset = assetBuilder
-      .addCredentialAddresses(CredentialListTypes.ALLOW, [
-        '0x0000000000000000000000000000000000000000'
-      ])
-      .build()
-
-    const result = await nautilus.edit(asset)
-
-    assert(result)
-  })
-
-  it('edit credentials - add address DENY', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPricedAlgoWithCredentials?.id
-    )
-
-    const assetBuilder = new AssetBuilder(aquariusAsset)
-
-    const asset = assetBuilder
-      .addCredentialAddresses(CredentialListTypes.DENY, [
-        '0x0000000000000000000000000000000000000000'
-      ])
-      .build()
-
-    const result = await nautilus.edit(asset)
-
-    assert(result)
-  })
-
-  it('edit credentials - remove address ALLOW', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPricedAlgoWithCredentials?.id
-    )
-
-    const assetBuilder = new AssetBuilder(aquariusAsset)
-
-    const asset = assetBuilder
-      .removeCredentialAddresses(CredentialListTypes.ALLOW, [signerAddress])
-      .build()
-
-    const result = await nautilus.edit(asset)
-
-    assert(result)
-  })
-
-  it('edit credentials - remove address DENY', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPricedAlgoWithCredentials?.id
-    )
-
-    const assetBuilder = new AssetBuilder(aquariusAsset)
-
-    const asset = assetBuilder
-      .removeCredentialAddresses(CredentialListTypes.DENY, [signerAddress])
-      .build()
-
-    const result = await nautilus.edit(asset)
-
-    assert(result)
-  })
-
-  it('edit lifecycleState static function', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPricedAlgoWithCredentials?.id
-    )
-
-    // TODO decide if we want to support both routes to set lifecycle state
-    // static function is required to reactivate revoked assets where aquarius id providing not enough data to use builder route
-    const tx = await nautilus.setAssetLifecycleState(
-      aquariusAsset,
-      LifecycleStates.ASSET_UNLISTED
-    )
-
-    assert(tx)
-  })
-
-  it('edit lifecycleState AssetBuilder', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPricedAlgoWithCredentials?.id
-    )
-
-    const assetBuilder = new AssetBuilder(aquariusAsset)
-    const asset = assetBuilder.setLifecycleState(LifecycleStates.ACTIVE).build()
-    const result = await nautilus.edit(asset)
-
-    assert(result)
-  })
-
-  // TODO this is experimental, pretty buggy regarding caching, maybe not even possible with this stack
-  it.skip('edit services - change price replacing service', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      'did:op:f92be296bfd36e99f0e7ce7583dcb8a3846f10f0b71a40e5dcac8ab6624a2548'
-    )
-
-    const serviceBuilderConfig = {
-      aquariusAsset,
-      serviceId:
-        '1accb051fdb757cf5fac7c88a724af82e841bbb3c02fc16e53fb91d45e85e09d'
-    }
-
-    const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
-
-    // create new service with new datatoken and replace the old one
-    const service = serviceBuilder
-      .addFile(datasetService.files[0]) // a new datatoken requires a new encrypted files field since it's includes in the encrypted data
-      .setPricing({
-        type: 'fixed',
-        freCreationParams: {
-          fixedRateAddress: '0x25e1926E3d57eC0651e89C654AB0FA182C6D5CF7',
-          baseTokenAddress: '0xd8992Ed72C445c35Cb4A2be468568Ed1079357c8',
-          baseTokenDecimals: 18,
-          datatokenDecimals: 18,
-          fixedRate: '4',
-          marketFee: '0',
-          marketFeeCollector: '0x0000000000000000000000000000000000000000'
-        }
-      })
-      .build()
-
-    const assetBuilder = new AssetBuilder(aquariusAsset)
-
-    const asset = assetBuilder.addService(service).build()
-
-    const result = await nautilus.edit(asset)
-
-    assert(result)
-  })
-
-  it('edit service - editPrice static function', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPricedAlgoWithCredentials?.id
-    )
-
-    const serviceId = fixedPricedAlgoWithCredentials?.services?.[0]?.id
-    const newPrice = '0.1'
-
-    const txReceipt = await nautilus.setServicePrice(
-      aquariusAsset,
-      serviceId,
-      newPrice
-    )
-    console.log(txReceipt)
-
-    assert(txReceipt)
-  })
-
-  it('edit services - name, description, timeout', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPricedAlgoWithCredentials?.id
-    )
-
-    const serviceBuilderConfig = {
-      aquariusAsset,
-      serviceId: fixedPricedAlgoWithCredentials?.services?.[0]?.id
-    }
-
-    const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
-
-    const service = serviceBuilder
-      .setName('TestServiceName')
-      .setDescription('TestServiceDescription')
-      .setTimeout(1000)
-      .build()
-
-    const assetBuilder = new AssetBuilder(aquariusAsset)
-
-    const asset = assetBuilder.addService(service).build()
-
-    const result = await nautilus.edit(asset)
-
-    assert(result)
-  })
-
-  it('edit services - files', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPricedAlgoWithCredentials?.id
-    )
-
-    const serviceBuilderConfig = {
-      aquariusAsset,
-      serviceId: fixedPricedAlgoWithCredentials?.services?.[0]?.id
-    }
-
-    const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
-
-    const service = serviceBuilder
-      .addFile(datasetService.files[0]) // TODO should be named replaceFile() for edit function, future UX improvement
-      .build()
-
-    const assetBuilder = new AssetBuilder(aquariusAsset)
-
-    const asset = assetBuilder.addService(service).build()
-
-    const result = await nautilus.edit(asset)
-
-    assert(result)
-  })
-
-  it('edit services - add consumerParameter', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPricedAlgoWithCredentials?.id
-    )
-
-    const serviceBuilderConfig = {
-      aquariusAsset,
-      serviceId: fixedPricedAlgoWithCredentials?.services?.[0]?.id
-    }
-
-    const consumerParameterBuilder = new ConsumerParameterBuilder()
-    const numberParameter = consumerParameterBuilder
-      .setType('number')
-      .setName('numberParameter2')
-      .setLabel('Number Parameter2')
-      .setDescription('A cool description for a test number parameter')
-      .setDefault('12')
-      .setRequired(false)
-      .build()
-
-    const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
-    const service = serviceBuilder.addConsumerParameter(numberParameter).build()
-
-    const assetBuilder = new AssetBuilder(aquariusAsset)
-    const asset = assetBuilder.addService(service).build()
-
-    const result = await nautilus.edit(asset)
-
-    assert(result)
-  })
-
-  it('edit services - serviceEndpoint', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPricedAlgoWithCredentials?.id
-    )
-
-    const serviceBuilderConfig = {
-      aquariusAsset,
-      serviceId: fixedPricedAlgoWithCredentials?.services?.[0]?.id
-    }
-
-    const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
-    const service = serviceBuilder
-      .setServiceEndpoint('https://v4.provider.oceanprotocol.com/')
-      .addFile(datasetService.files[0]) // we have to add files since serviceEndpoint is in encrypted files
-      .build()
-
-    const assetBuilder = new AssetBuilder(aquariusAsset)
-    const asset = assetBuilder.addService(service).build()
-
-    const result = await nautilus.edit(asset)
-
-    assert(result)
-  })
-
-  it('edit services - compute add trusted publishers', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPriceComputeDataset?.id
-    )
-
-    const serviceBuilderConfig = {
-      aquariusAsset,
-      serviceId: fixedPriceComputeDataset?.services?.[0]?.id
-    }
-
-    const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
-    const service = serviceBuilder
-      .addTrustedAlgorithmPublisher(signerAddress)
-      .build()
-
-    const assetBuilder = new AssetBuilder(aquariusAsset)
-    const asset = assetBuilder.addService(service).build()
-
-    const result = await nautilus.edit(asset)
-
-    assert(result)
-  })
-
-  it('edit services - compute add trusted algos', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPriceComputeDataset?.id
-    )
-
-    const serviceBuilderConfig = {
-      aquariusAsset,
-      serviceId: fixedPriceComputeDataset?.services?.[0]?.id
-    }
-
-    const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
-    const service = serviceBuilder
-      .addTrustedAlgorithms([
-        {
-          did: fixedPricedAlgoWithCredentials?.id
-        },
-        {
-          did: fixedPricedAlgoWithCredentials?.id
-        }
-      ])
-      .build()
-
-    const assetBuilder = new AssetBuilder(aquariusAsset)
-    const asset = assetBuilder.addService(service).build()
-
-    const result = await nautilus.edit(asset)
-
-    assert(result)
-  })
-
-  it('edit services - compute allow algorithm network access', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPriceComputeDataset?.id
-    )
-
-    const serviceBuilderConfig = {
-      aquariusAsset,
-      serviceId: fixedPriceComputeDataset?.services?.[0]?.id
-    }
-
-    const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
-    const service = serviceBuilder.allowAlgorithmNetworkAccess().build()
-
-    const assetBuilder = new AssetBuilder(aquariusAsset)
-    const asset = assetBuilder.addService(service).build()
-
-    const result = await nautilus.edit(asset)
-
-    assert(result)
-  })
-
-  it('edit services - compute allow raw algorithm', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPriceComputeDataset?.id
-    )
-
-    const serviceBuilderConfig = {
-      aquariusAsset,
-      serviceId: fixedPriceComputeDataset?.services?.[0]?.id
-    }
-
-    const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
-    const service = serviceBuilder.allowRawAlgorithms().build()
-
-    const assetBuilder = new AssetBuilder(aquariusAsset)
-    const asset = assetBuilder.addService(service).build()
-
-    const result = await nautilus.edit(asset)
-
-    assert(result)
-  })
-
-  it('edit services - compute trust all publishers and algos', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPriceComputeDataset?.id
-    )
-
-    const serviceBuilderConfig = {
-      aquariusAsset,
-      serviceId: fixedPriceComputeDataset?.services?.[0]?.id
-    }
-
-    const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
-    const service = serviceBuilder
-      .setAllAlgorithmsTrusted()
-      .setAllAlgorithmPublishersTrusted()
-      .build()
-
-    const assetBuilder = new AssetBuilder(aquariusAsset)
-    const asset = assetBuilder.addService(service).build()
-
-    const result = await nautilus.edit(asset)
-
-    assert(result)
-  })
-
-  it('edit services - compute remove publishers and algos', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPriceComputeDataset?.id
-    )
-
-    const serviceBuilderConfig = {
-      aquariusAsset,
-      serviceId: fixedPriceComputeDataset?.services?.[0]?.id
-    }
-
-    const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
-    const service = serviceBuilder
-      .removeTrustedAlgorithm(fixedPricedAlgoWithCredentials?.id)
-      .removeTrustedAlgorithmPublisher(signerAddress)
-      .build()
-
-    const assetBuilder = new AssetBuilder(aquariusAsset)
-    const asset = assetBuilder.addService(service).build()
-
-    const result = await nautilus.edit(asset)
-
-    assert(result)
-  })
-
-  it('edit services - compute untrust publishers and algos', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPriceComputeDataset?.id
-    )
-
-    const serviceBuilderConfig = {
-      aquariusAsset,
-      serviceId: fixedPriceComputeDataset?.services?.[0]?.id
-    }
-
-    const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
-    const service = serviceBuilder
-      .setAllAlgorithmsUntrusted()
-      .setAllAlgorithmPublishersUntrusted()
-      .build()
-
-    const assetBuilder = new AssetBuilder(aquariusAsset)
-    const asset = assetBuilder.addService(service).build()
-
-    const result = await nautilus.edit(asset)
-
-    assert(result)
-  })
-
-  it('edit services - compute do not allow', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPriceComputeDataset?.id
-    )
-
-    const serviceBuilderConfig = {
-      aquariusAsset,
-      serviceId: fixedPriceComputeDataset?.services?.[0]?.id
-    }
-
-    const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
-    const service = serviceBuilder
-      .allowAlgorithmNetworkAccess(false)
-      .allowRawAlgorithms(false)
-      .build()
-
-    const assetBuilder = new AssetBuilder(aquariusAsset)
-    const asset = assetBuilder.addService(service).build()
-
-    const result = await nautilus.edit(asset)
-
-    assert(result)
-  })
-
-  it('edit services - add additionalInfo', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPriceComputeDataset?.id
-    )
-
-    const serviceBuilderConfig = {
-      aquariusAsset,
-      serviceId: fixedPriceComputeDataset?.services?.[0]?.id
-    }
-
-    const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
-    const service = serviceBuilder
-      .addAdditionalInformation({
-        test: 'SuperInf2',
-        number: 6,
-        nested: { name: 'nested2' }
-      })
-      .addAdditionalInformation({
-        additional: undefined,
-        nested: { name: 'overwritten3' }
-      })
-      .build()
-
-    const assetBuilder = new AssetBuilder(aquariusAsset)
-    const asset = assetBuilder.addService(service).build()
-
-    const result = await nautilus.edit(asset)
-
-    assert(result)
-  })
-
-  it('edit services - add another service', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPriceComputeDataset?.id
-    )
-
-    const serviceBuilderConfig = {
-      serviceType: ServiceTypes.COMPUTE,
-      fileType: FileTypes.URL
-    }
-
-    const serviceBuilder = new ServiceBuilder(serviceBuilderConfig)
-    const service = serviceBuilder
-      .setServiceEndpoint('https://v4.provider.oceanprotocol.com/')
-      .addFile(datasetService.files[0])
-      .setTimeout(datasetService.timeout)
-      .setPricing({ type: 'free' })
-      .build()
-
-    const assetBuilder = new AssetBuilder(aquariusAsset)
-    const asset = assetBuilder.addService(service).build()
-
-    const result = await nautilus.edit(asset)
-
-    assert(result)
-  })
-
-  it('edit services - remove service', async () => {
-    const aquariusAsset = await nautilus.getAquariusAsset(
-      fixedPriceComputeDataset?.id
-    )
-
-    const serviceId = fixedPriceComputeDataset?.services?.[1]?.id
-
-    const assetBuilder = new AssetBuilder(aquariusAsset)
-    const asset = assetBuilder.removeService(serviceId).build()
-
-    const result = await nautilus.edit(asset)
-
-    assert(result)
+  describe('errors', () => {
+    it('refuses to edit an asset that was not built from a resolved DDO', async () => {
+      let message = ''
+      try {
+        await nautilus.edit(freeDataset())
+      } catch (error) {
+        message = (error as Error).message
+      }
+
+      expect(message).to.match(/built from a resolved DDO/)
+    })
   })
 })
