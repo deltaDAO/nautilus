@@ -1,47 +1,166 @@
-# Download [Access data, applications and other services]
+# Download
 
-Downloading data is one of the most straightforward use-cases in a data economy. This requires an access request to be made to the controlling provider and usually also includes paying for the requested data service.
+Downloading an asset means ordering one of its services and then fetching the data through a
+one-time URL.
 
-## Access
-
-To access assets or more specifically their respective services, we can again make use of a dedicated function provided by the nautilus interface.
-In the most basic version, nothing else than the did of the asset to be accessed is needed. You can find more detailed information at the [`nautilus.access()`](/docs/api/nautilus/access) docs.
+## The short version
 
 ```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
 import { Nautilus } from '@deltadao/nautilus'
-import { providers, Wallet } from 'ethers'
 
-const provider = new providers.JsonRpcProvider('https://rpc.dev.pontus-x.eu')
-const signer = new Wallet('0x...', provider)
-
-// create the nautilus instance
-const nautilus = await Nautilus.create(signer)
-
-const accessUrl = await nautilus.access({ // [!code focus]
-  assetDid: 'did:op:123abc' // [!code focus]
-}) // [!code focus]
-```
-
-Now, if payments and access rules have been processed successfull, the controlling provider of the data to be accessed will generate a one-time url that we can use to request the data itself:
-
-```ts twoslash
-import { Nautilus } from '@deltadao/nautilus'
-import { providers, Wallet } from 'ethers'
-
-const provider = new providers.JsonRpcProvider('https://rpc.dev.pontus-x.eu')
-const signer = new Wallet('0x...', provider)
-
-// create the nautilus instance
-const nautilus = await Nautilus.create(signer)
-
-const accessUrl = await nautilus.access({
-  assetDid: 'did:op:123abc'
+const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const nautilus = await Nautilus.create(signer, {
+  config: { oceanNodeUri: 'https://ocean-node.dev.pontus-x.eu' }
 })
 // ---cut---
-const data = await fetch(accessUrl) // [!code focus]
+const { url } = await nautilus.access({ assetDid: 'did:ope:1234abcd...' }) // [!code focus]
+
+const response = await fetch(url)
+const data = await response.text()
 ```
 
-## Deep Dive
-You can find an extended overview of the access API, by heading over to the following links:
-- [`nautilus.access()`](/docs/api/nautilus/access) - API documentation of the access function
-- [Download Examples](https://github.com/deltaDAO/nautilus-examples/blob/main/access.ts) - Code examples for access flows utilizing nautilus
+One call covers everything: satisfying any credential policy, asking the node for provider
+fees, reusing or placing an order, and building the URL.
+
+```mermaid
+flowchart TD
+  A["access(assetDid)"] --> B{"service gated?"}
+  B -->|yes| C["resolve credentials first"]
+  B -->|no| D["initialize with the node"]
+  C --> D
+  D --> E{"valid order held?"}
+  E -->|yes| F["reuse it"]
+  E -->|no| G["order the datatoken"]
+  F --> H["one-time download URL"]
+  G --> H
+```
+
+Credentials are resolved before anything is ordered, so a policy you cannot satisfy costs
+nothing.
+
+## What you get back
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const { url, transferTxId, reusedOrder, serviceId } = await nautilus.access({
+  assetDid: 'did:ope:1234abcd...'
+})
+```
+
+`reusedOrder` is worth checking: `true` means no datatoken was bought, because an order from
+a previous access was still inside the service's timeout. That is the difference between a
+free download and a paid one.
+
+:::warning
+v1 returned a bare URL string here. The object form exists so the order backing the download
+is visible to the caller.
+:::
+
+## Choosing a service
+
+An asset can offer several services. By default nautilus takes the first `access` service;
+name one explicitly when there is more than one:
+
+```ts twoslash
+import { Nautilus, getServices } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const asset = await nautilus.getAsset('did:ope:1234abcd...')
+
+const services = getServices(asset) // [!code focus]
+
+const { url } = await nautilus.access({
+  assetDid: asset.id,
+  serviceId: services[0].id // [!code focus]
+})
+```
+
+Read the asset through the exported helpers — `getServices`, `getMetadata` and friends —
+rather than indexing into `credentialSubject`. They go through a version-aware manager, so
+your code survives a future DDO version moving fields.
+
+## Consumer parameters
+
+If a service declares consumer parameters, pass values through `userdata`:
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const { url } = await nautilus.access({
+  assetDid: 'did:ope:1234abcd...',
+  userdata: { // [!code focus]
+    region: 'eu', // [!code focus]
+    limit: 1000 // [!code focus]
+  } // [!code focus]
+})
+```
+
+See the [ConsumerParameterBuilder](/docs/api/ConsumerParameterBuilder) for the publishing
+side.
+
+## Selecting a file
+
+A service can serve several files. `fileIndex` defaults to `0`:
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const { url } = await nautilus.access({
+  assetDid: 'did:ope:1234abcd...',
+  fileIndex: 1 // [!code focus]
+})
+```
+
+## Credential-gated assets
+
+If the service requires a verifiable credential, configure a credential provider on the
+instance and nothing changes here — nautilus resolves the policy **before** ordering, so a
+policy you cannot satisfy costs nothing. See
+[Credential-gated assets](/docs/guides/identity).
+
+## What it costs
+
+Pricing is read from chain rather than from a subgraph, which v1 depended on and the current
+stack no longer runs. To inspect a price before committing:
+
+```ts twoslash
+import {
+  Nautilus,
+  getDatatokenForService,
+  getOrderPrice,
+  getPricingInfo,
+  getServices
+} from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const asset = await nautilus.getAsset('did:ope:1234abcd...')
+const serviceId = getServices(asset)[0].id
+const datatoken = getDatatokenForService(asset, serviceId) as string
+
+const pricing = await getPricingInfo( // [!code focus]
+  nautilus.getSigner(), // [!code focus]
+  datatoken, // [!code focus]
+  nautilus.getOceanConfig() // [!code focus]
+) // [!code focus]
+
+const price = await getOrderPrice(
+  nautilus.getSigner(),
+  pricing,
+  nautilus.getOceanConfig()
+)
+
+console.log(pricing.schema, price.total)
+```
+
+`pricing.schema` is `'fixed'`, `'free'`, or `'none'` when the datatoken has neither a
+fixed-rate exchange nor a dispenser and so cannot be ordered at all.

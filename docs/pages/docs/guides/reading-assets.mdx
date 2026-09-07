@@ -1,0 +1,128 @@
+# Reading assets [Get at a DDO v5 document without hard-coding its shape]
+
+DDO v5 is a W3C Verifiable Credential. Everything that used to sit at the top of the document
+now lives under `credentialSubject`, and the indexer's derived data is kept separate from what
+the publisher signed.
+
+You *can* index into that structure. You should not — a future DDO v6 would break every one of
+those paths. nautilus exports a reader for each field instead, and each one goes through
+ddo-js's `DDOManager`, so a version bump is absorbed in one place.
+
+```ts
+asset.metadata.name        // v1, and now wrong // [!code --]
+getMetadata(asset).name    // v2 // [!code ++]
+```
+
+## The common ones
+
+```ts twoslash
+import { Nautilus, getMetadata, getServices, getOwner } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const asset = await nautilus.getAsset('did:ope:1234abcd...')
+
+const metadata = getMetadata(asset) // [!code focus]
+const services = getServices(asset) // [!code focus]
+const owner = getOwner(asset) // [!code focus]
+
+console.log(metadata.name, services[0].id, owner)
+```
+
+## Every reader
+
+### Identity
+
+| Function | Returns |
+| --- | --- |
+| `getDid(ddo)` | `string` — the asset's `did:ope:…` |
+| `getNftAddress(ddo)` | `string` |
+| `getOwner(ddo)` | `string \| undefined` — from indexed NFT data |
+| `getIssuer` *(via the document)* | the DID or address that signed the credential |
+
+:::warning
+There is a `getChainId(ddo)` in this module, but the package root also exports
+`getChainId(signer)` from utils, and **the signer form wins**. Read the chain id off the
+resolved document or from [`getOceanConfig`](/docs/api/nautilus/getOceanConfig) instead.
+:::
+
+### Content
+
+| Function | Returns |
+| --- | --- |
+| `getMetadata(ddo)` | `MetadataV5` |
+| `getServices(ddo)` | `ServiceV5[]` |
+| `getService(ddo, serviceId)` | `ServiceV5 \| undefined` |
+| `getServiceByType(ddo, type)` | `ServiceV5 \| undefined` — `'access'` or `'compute'` |
+| `getServiceIndex(ddo, serviceId)` | `number` |
+
+### Indexed data
+
+Derived by the indexer, not signed by the publisher.
+
+| Function | Returns |
+| --- | --- |
+| `getIndexedMetadata(ddo)` | `IndexedMetadata \| undefined` |
+| `getNft(ddo)` | the indexed NFT record |
+| `getDatatokens(ddo)` | `AssetDatatoken[]` |
+| `getDatatokenForService(ddo, serviceId)` | `string \| undefined` |
+| `getStatsForService(ddo, serviceId)` | order counts and prices |
+| `getLifecycleState(ddo)` | `number \| undefined` |
+
+### Credentials
+
+| Function | Returns |
+| --- | --- |
+| `getCredentials(ddo)` | `DdoCredentials` — asset-level gating |
+| `getServiceCredentials(service)` | `DdoCredentials` — per-service gating |
+
+### Versioning
+
+| Function | Returns |
+| --- | --- |
+| `getVersion(ddo)` | `string \| undefined` |
+| `isVersionGte(version, minimum)` | `boolean` |
+| `supportsSsi(ddo)` | `boolean` |
+| `asVersioned(ddo)` | a `VersionedDDO` wrapper |
+
+## Picking a service
+
+Most assets have one service and you can take the first. When they have several, select
+deliberately rather than by index.
+
+```ts twoslash
+import { Nautilus, getServiceByType, getServices } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const asset = await nautilus.getAsset('did:ope:1234abcd...')
+
+// By type — what `access()` and `compute()` do when you omit `serviceId`.
+const compute = getServiceByType(asset, 'compute') // [!code focus]
+
+// Or inspect them all.
+for (const service of getServices(asset)) {
+  console.log(service.id, service.type, service.name)
+}
+```
+
+## Price and stats
+
+```ts twoslash
+import { Nautilus, getDatatokenForService, getStatsForService, getServices } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const asset = await nautilus.getAsset('did:ope:1234abcd...')
+const serviceId = getServices(asset)[0].id
+
+const datatoken = getDatatokenForService(asset, serviceId) // [!code focus]
+const stats = getStatsForService(asset, serviceId) // [!code focus]
+```
+
+The datatoken address is what [pricing](/docs/guides/pricing) reads from the chain.
+
+## Searching
+
+To find assets rather than read one, use [`query`](/docs/api/nautilus/query), which sends raw
+Elasticsearch DSL to the node's index.

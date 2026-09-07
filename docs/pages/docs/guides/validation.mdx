@@ -1,0 +1,99 @@
+# Validation [Catch a malformed asset before it costs gas]
+
+DDO validation in v2 is **entirely local**. `@oceanprotocol/ddo-js` runs the document through
+JSON-LD → RDF → SHACL against its bundled schemas, in process, with no network call. So it is
+free, it is fast, and there is no reason not to run it.
+
+v1 had a hand-rolled `hasAllRequiredOceanDDOAttributes()` that returned a boolean. This
+replaces it and tells you *which field* failed.
+
+## Checking a document
+
+```ts twoslash
+import { validate } from '@deltadao/nautilus'
+
+declare const ddo: Record<string, unknown>
+// ---cut---
+const { valid, errors } = await validate(ddo) // [!code focus]
+
+if (!valid) {
+  console.error(errors)
+  // @log: { providedBy: [ 'Less than 1 values' ] }
+}
+```
+
+Errors are keyed by field, with an array of messages each — the shape ddo-js reports.
+
+## Throwing instead
+
+`assertValid` is the same check, but it throws a `DdoValidationError` carrying the field
+errors rather than returning them.
+
+```ts twoslash
+import { assertValid, DdoValidationError } from '@deltadao/nautilus'
+
+declare const ddo: Record<string, unknown>
+// ---cut---
+try {
+  await assertValid(ddo) // [!code focus]
+} catch (error) {
+  if (error instanceof DdoValidationError) {
+    console.error(error.errors) // the same field map
+  }
+}
+```
+
+The error's `message` is already a readable one-liner, because it runs the errors through
+`formatValidationErrors`.
+
+## You get this for free on publish
+
+:::info
+[`publish`](/docs/api/nautilus/publish) and [`edit`](/docs/api/nautilus/edit) call
+`assertValid` themselves, before any transaction. A malformed asset fails locally rather than
+reverting on chain, so you are never charged for a document the indexer would reject.
+:::
+
+Calling `validate` yourself is still worth it when you want to surface field errors in a form
+before the user hits publish.
+
+## Reading the errors
+
+```ts twoslash
+import { validate, formatValidationErrors, getValidationReport } from '@deltadao/nautilus'
+
+declare const ddo: Record<string, unknown>
+// ---cut---
+const { errors } = await validate(ddo)
+
+// A one-line summary, suitable for a log or a toast.
+formatValidationErrors(errors)
+// @log: 'name: Less than 1 values; providedBy: Less than 1 values'
+
+// The raw SHACL report, when you need to know *why* a shape did not conform.
+const report = getValidationReport(errors) // [!code focus]
+```
+
+The full N-Quads report is always attached under a `fullReport` key. It is far too noisy for
+an error message, so `formatValidationErrors` filters it out and `getValidationReport`
+retrieves it deliberately.
+
+## The DID check
+
+:::warning
+nautilus re-runs one check that ddo-js discards. ddo-js computes a DID-derivation check, but
+drops it whenever the SHACL shape conforms — and the v5 shape only constrains the DID's
+prefix and length. So any 72-character `did:ope:…` string passes, **including one that does
+not derive from this asset's `nftAddress` and `chainId`**.
+
+The indexer would then reject the published asset. nautilus recomputes the DID and reports a
+mismatch under the `id` key.
+:::
+
+## Common failures
+
+| Error | Cause |
+| --- | --- |
+| `providedBy: Less than 1 values` | New in DDO v5, no v4 equivalent. Set it with [`setProvidedBy`](/docs/api/assetbuilder/setProvidedBy). |
+| `name: Less than 1 values` | Required. [`setName`](/docs/api/assetbuilder/setName). |
+| `id: did does not derive from…` | The document's `id` does not match its `nftAddress` and `chainId` — see above. |

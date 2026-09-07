@@ -1,143 +1,234 @@
-# Publishing [Entering the world of a decentralized data economy]
+# Publishing
 
-Without publishing data, applications and services a data economy could not exist.
-This process usually is about describing your asset in a standardized way, so that it can be displayed by catalogues or even be offered on marketplaces and sold to others.
+Publishing an asset means creating a data NFT, minting a datatoken for each service, and
+writing the asset's metadata onto the NFT.
 
-Constructing a so called [DDO (a DID document)](https://docs.oceanprotocol.com/developers/ddo-specification) can be challenging and time consuming, especially if you are just starting out.
-nautilus aims to significantly streamline this process by exposing two main builder classes that provide typed APIs to help you with this process.
+## What is different in v2
 
-The `AssetBuilder` is the main class responsible for constructing the asset metadata and the `ServiceBuilder` class uses the same pattern allowing to configure the services used within the asset's metadata.
+Three changes matter when you come from v1:
 
+1. **The DDO is signed and stored off chain.** Only a `{ remote }` pointer goes on chain, so
+   publishing needs a **remote store**. This follows the enterprise-market model and gives
+   the asset a real issuer.
+2. **DDO v5.** Assets are W3C Verifiable Credentials. `providedBy` is now required, and
+   `description` and `license` changed shape — though the builder still takes plain strings.
+3. **One transaction instead of three.** The NFT, the first service's datatoken and that
+   service's pricing are created together.
 
-## AssetBuilder
-Creating the builder is easy:
+::::steps
 
-```ts twoslash
-import { AssetBuilder } from '@deltadao/nautilus'
+### Set up an instance with a remote store
 
-const assetBuilder = new AssetBuilder() // [!code focus]
-```
-
-With this we can now continue to setup the metadata information for the asset:
-
-```ts twoslash
-import { AssetBuilder } from '@deltadao/nautilus'
-
-const assetBuilder = new AssetBuilder()
-
-assetBuilder // [!code focus]
-  .setType('dataset') // [!code focus]
-  .setName('My New Asset') // [!code focus]
-  .setDescription('This is a publish asset building test using Nautilus') // [!code focus]
-  .setAuthor('Company Ltd.') // [!code focus]
-```
-
-The last step is to simply `build()` the asset. This will return a correctly configured asset, ready to be published.
+The remote store needs an ocean-node client, so the instance is built in two steps.
+`NodePersistentRemoteStore` uses the node's own storage, which means no external service:
 
 ```ts twoslash
-import { AssetBuilder } from '@deltadao/nautilus'
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus, NodePersistentRemoteStore } from '@deltadao/nautilus'
 
-const assetBuilder = new AssetBuilder()
+const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const config = { oceanNodeUri: 'https://ocean-node.dev.pontus-x.eu' }
 
-assetBuilder
-  .setType('dataset')
-  .setName('My New Asset')
-  .setDescription('This is a publish asset building test using Nautilus')
-  .setAuthor('Company Ltd.')
+const bootstrap = await Nautilus.create(signer, { config })
 
-const asset = assetBuilder.build() // [!code focus]
-```
-
-Note, that if required, there is a lot more that can be customized. To learn more about the API head over to the detailed [`AssetBuilder` documentation](/docs/api/AssetBuilder).
-
-## ServiceBuilder
-
-Now, the asset above has some nice metadata setup, but we will not be able to really interact with it, unless we define the services it should expose.
-
-This is where the `ServiceBuilder` class comes in handy to specify the necessary information, such as the method used to access our data or application we want to publish.
-
-We start by setting up the `ServiceBuilder` we want to use:
-
-```ts twoslash
-import { UrlFile, FileTypes, ServiceTypes, ServiceBuilder } from '@deltadao/nautilus'
-
-const serviceBuilder = new ServiceBuilder({ // [!code focus]
-    serviceType: ServiceTypes.ACCESS, // [!code focus]
-    fileType: FileTypes.URL // [!code focus]
-}) // [!code focus]
-```
-> **_NOTE:_** There are multiple supported [ServiceTypes](/docs/api/ServiceBuilder#servicetypes) and [FileTypes](/docs/api/ServiceBuilder#filetypes)
-
-Next, we declare the "file" we want to publish. This can follow multiple protocols, here we'll use a HTTP GET request:
-```ts twoslash
-import { UrlFile, FileTypes, ServiceTypes, ServiceBuilder } from '@deltadao/nautilus'
-
-const serviceBuilder = new ServiceBuilder({
-    serviceType: ServiceTypes.ACCESS,
-    fileType: FileTypes.URL
+const nautilus = await Nautilus.create(signer, {
+  config,
+  remoteStore: new NodePersistentRemoteStore(bootstrap.getNodeClient()) // [!code focus]
 })
-
-const urlFile = {  // [!code focus]
-  type: 'url',  // [!code focus]
-  url: 'https://link.to/my/asset',  // [!code focus]
-  method: 'GET'  // [!code focus]
-}  // [!code focus]
 ```
 
-Finally, we add the required metadata and the file we created utilizing the builder pattern to then build the service:
-```ts twoslash
-import { UrlFile, FileTypes, ServiceTypes, ServiceBuilder } from '@deltadao/nautilus'
+Prefer IPFS? Swap in `IpfsRemoteStore` with any upload endpoint — see
+[`create`](/docs/api/nautilus/create#remotestore).
 
-const serviceBuilder = new ServiceBuilder({
-    serviceType: ServiceTypes.ACCESS,
-    fileType: FileTypes.URL
+### Build a service
+
+A service is what consumers actually order. It needs an endpoint, at least one file, and a
+pricing scheme.
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const service = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
 })
-
-const urlFile = { 
-  type: 'url', 
-  url: 'https://link.to/my/asset', 
-  method: 'GET' 
-} satisfies UrlFile
-
-const service = serviceBuilder // [!code focus]
-    .setServiceEndpoint('https://provider.dev.pontus-x.eu') // [!code focus]
-    .setTimeout(0) // [!code focus]
-    .addFile(urlFile) // [!code focus]
-    .setPricing({ // [!code focus]
-        type: 'free' // [!code focus]
-    }) // [!code focus]
-    .build() // [!code focus]
+  .setServiceEndpoint('https://ocean-node.dev.pontus-x.eu')
+  .setName('Access Service')
+  .setTimeout(86400)
+  .addFile({ // [!code focus]
+    type: 'url', // [!code focus]
+    url: 'https://data.example/observations.csv', // [!code focus]
+    method: 'GET' // [!code focus]
+  }) // [!code focus]
+  .setPricing({ type: 'free' })
+  .build()
 ```
 
-> **_NOTE:_** The serviceEndpoint specified should point to the provider instance you want to be able to access your published data. [Learn more](https://docs.oceanprotocol.com/developers/provider).
+Files are encrypted by the node before publishing, so their URLs and any credentials in
+them never appear on chain.
 
-If you want to learn more about the API and everything you can configure, head over to the detailed [`ServiceBuilder` documentation](/docs/api/ServiceBuilder).
+:::warning
+The file types changed with ocean-node. `graphql` and `smartcontract` are **gone**; `s3`,
+`ftp` and `nodePersistentStorage` are **new**. The object types were renamed too —
+`UrlFile` is now `UrlFileObject`. See
+[`addFile`](/docs/api/servicebuilder/addFile).
+:::
 
-## Publishing the Asset
+`timeout` is how long an order stays valid, in seconds — `0` never expires. Within it,
+nautilus reuses an existing order instead of buying another datatoken.
 
-Bringing everything together, in the last step we will now anchor the asset on a network of your choice using the publish function provided by nautilus:
+### Build the asset
 
 ```ts twoslash
-import { Nautilus, AssetBuilder, FileTypes, ServiceBuilder, ServiceTypes } from '@deltadao/nautilus'
-import { Wallet } from 'ethers'
+import {
+  AssetBuilder,
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
 
-const signer = new Wallet('')
-const nautilus = await Nautilus.create(signer)
-
-const assetBuilder = new AssetBuilder()
-const service = new ServiceBuilder({ serviceType: ServiceTypes.ACCESS, fileType: FileTypes.URL}).build()
-
+const service = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+  .setServiceEndpoint('https://ocean-node.dev.pontus-x.eu')
+  .setPricing({ type: 'free' })
+  .addFile({ type: 'url', url: 'https://data.example/x.csv', method: 'GET' })
+  .build()
 // ---cut---
-const asset = assetBuilder.addService(service).build() // [!code focus]
-const result = await nautilus.publish(asset) // [!code focus]
+const asset = new AssetBuilder()
+  .setType('dataset')
+  .setName('Hourly Weather Observations')
+  .setDescription('One row per hour, comma separated')
+  .setAuthor('deltaDAO')
+  .setProvidedBy('deltaDAO AG') // required by DDO v5 // [!code focus]
+  .setLicense('https://market.oceanprotocol.com/terms')
+  .addTags(['weather', 'timeseries'])
+  .setNftTokenName('Weather Data NFT')
+  .setNftTokenSymbol('WEATHER-NFT')
+  .addService(service)
+  .build()
 ```
 
-## Diving Deeper
+`setDescription` takes a plain string and nautilus wraps it into DDO v5's language-tagged
+form. Use [`setContentLanguage`](/docs/api/assetbuilder/setContentLanguage) to change the
+tag from the `en`/`ltr` default.
 
-To learn about the different APIs and supported configurations follow the links below for in-detail documentations:
+### Publish
 
-- [`AssetBuilder`](/docs/api/AssetBuilder) - API overview for building asset metadata
-- [`ServiceBuilder`](/docs/api/ServiceBuilder) - To build service MediaMetadata, you have access to a dedicated API
-- [`ConsumerParameterBuilder`](/docs/api/ConsumerParameterBuilder) - Your service requires custom userdata to work? Head here for additional info.
-- [`nautilus.publish()`](/docs/api/nautilus/publish) - API documentation for the `nautilus.publish()` call
-- [Publish Examples](https://github.com/deltaDAO/nautilus-examples/blob/main/publish.ts) - Code examples for advanced publishing processes.
+```ts twoslash
+import { Nautilus, type NautilusAsset } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+const asset = {} as NautilusAsset
+// ---cut---
+const { ddo, nftAddress, services } = await nautilus.publish(asset, { // [!code focus]
+  waitForIndexer: true // [!code focus]
+}) // [!code focus]
+
+console.log('published', ddo.id)
+```
+
+`waitForIndexer` blocks until ocean-node has indexed the asset, so the DID is immediately
+resolvable. Without it, publish returns as soon as the metadata transaction confirms — which
+is earlier than the indexer has seen it.
+
+:::info
+Before anything is written, nautilus validates the DDO **locally** against the DDO v5 SHACL
+schema. A missing required field fails here, naming the field, having spent no gas. This did
+not exist in v1.
+:::
+
+::::
+
+## Publishing an algorithm
+
+An algorithm is an asset of type `algorithm` carrying container metadata, served by a
+`compute` service:
+
+```ts twoslash
+import {
+  AssetBuilder,
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+// ---cut---
+const service = new ServiceBuilder<ServiceTypes.COMPUTE, FileTypes.URL>({
+  serviceType: ServiceTypes.COMPUTE
+})
+  .setServiceEndpoint('https://ocean-node.dev.pontus-x.eu')
+  .setPricing({ type: 'free' })
+  .addFile({ type: 'url', url: 'https://example.org/algo.js', method: 'GET' })
+  .build()
+
+const algorithm = new AssetBuilder()
+  .setType('algorithm')
+  .setName('Branin Regression')
+  .setDescription('Fits a model to the input data')
+  .setProvidedBy('deltaDAO AG')
+  .setAlgorithm({ // [!code focus]
+    language: 'python', // [!code focus]
+    version: '0.1.0', // [!code focus]
+    container: { // [!code focus]
+      entrypoint: 'python $ALGO', // [!code focus]
+      image: 'oceanprotocol/algo_dockers', // [!code focus]
+      tag: 'python-branin', // [!code focus]
+      checksum: 'sha256:8f36c4b2b7b4b0e6b0d0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0' // [!code focus]
+    } // [!code focus]
+  }) // [!code focus]
+  .addService(service)
+  .build()
+```
+
+## Multiple services on one asset
+
+Useful for offering an open preview alongside a restricted full dataset, or both download
+and compute access to the same data. The first service is bundled with the NFT; each further
+one gets its own datatoken on the same NFT.
+
+```ts twoslash
+import {
+  AssetBuilder,
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const endpoint = 'https://ocean-node.dev.pontus-x.eu'
+const file = { type: 'url' as const, url: 'https://data.example/x.csv', method: 'GET' }
+
+const download = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+  .setServiceEndpoint(endpoint)
+  .setName('Download')
+  .addFile(file)
+  .setPricing({ type: 'free' })
+  .build()
+
+const compute = new ServiceBuilder<ServiceTypes.COMPUTE, FileTypes.URL>({
+  serviceType: ServiceTypes.COMPUTE
+})
+  .setServiceEndpoint(endpoint)
+  .setName('Compute')
+  .addFile(file)
+  .setPricing({ type: 'free' })
+  .build()
+// ---cut---
+const asset = new AssetBuilder()
+  .setType('dataset')
+  .setName('Weather Observations')
+  .setProvidedBy('deltaDAO AG')
+  .addService(download) // [!code focus]
+  .addService(compute) // [!code focus]
+  .build()
+```
+
+## Next steps
+
+- [Editing](/docs/guides/edit) — change a published asset
+- [Download](/docs/guides/download) — consume one
+- [Credential-gated assets](/docs/guides/identity) — require verifiable credentials

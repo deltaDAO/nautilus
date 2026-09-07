@@ -1,0 +1,114 @@
+# Pricing [What a service costs, read from the chain]
+
+v1 read prices from the Ocean subgraph. That is gone — `Config` has no `subgraphUri` at all
+any more, and nautilus no longer depends on `urql` or `graphql`. Prices now come from
+**contract reads**, the same way ocean.js derives them.
+
+For most flows you never need this: [`access`](/docs/api/nautilus/access) orders whatever is
+required. Reach for it when you want to show a price *before* committing to a purchase.
+
+## Two steps
+
+Pricing is read in two calls: what scheme the datatoken uses, then what one order costs.
+
+```ts twoslash
+import { Nautilus, getPricingInfo, getOrderPrice, getDatatokenForService, getServices } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const asset = await nautilus.getAsset('did:ope:1234abcd...')
+const serviceId = getServices(asset)[0].id
+const datatoken = getDatatokenForService(asset, serviceId) as string
+
+const signer = nautilus.getSigner()
+const config = nautilus.getOceanConfig()
+
+const pricing = await getPricingInfo(signer, datatoken, config) // [!code focus]
+const price = await getOrderPrice(signer, pricing, config) // [!code focus]
+
+console.log(price.total)
+```
+
+## `PricingInfo`
+
+| Field | Meaning |
+| --- | --- |
+| `schema` | `'fixed'`, `'free'` or `'none'` |
+| `templateId` | Datatoken template: `1` basic, `2` enterprise, `4` confidential EVM |
+| `datatokenAddress` | The token being priced |
+| `exchangeId` | The fixed-rate exchange id, when `schema` is `'fixed'` |
+| `baseTokenAddress` | What the exchange charges in |
+| `baseTokenDecimals` | Decimals of that token |
+| `publishMarketFee` | The publisher's market fee |
+
+:::info
+`schema: 'none'` is a real outcome, not an error. A datatoken can have neither a fixed-rate
+exchange nor a dispenser, in which case it simply cannot be ordered. `getFixedRates()` and
+`getDispensers()` are the authoritative source.
+:::
+
+## `OrderPrice`
+
+Every field is a decimal string.
+
+| Field | Meaning |
+| --- | --- |
+| `total` | **What to approve and spend** — the sum of everything below |
+| `baseTokenAmount` | What the exchange itself charges |
+| `opcFee` | Ocean Protocol Community fee |
+| `publishMarketFee` | The publishing market's cut |
+| `consumeMarketFee` | Your market's cut, if you charge one |
+
+:::warning
+Free is not zero. A dispenser-priced asset still carries publish- and consume-market fees, so
+`getOrderPrice` returns those rather than short-circuiting to `'0'`. Always spend `total`.
+:::
+
+## Charging a consume-market fee
+
+```ts twoslash
+import { getOrderPrice } from '@deltadao/nautilus'
+import type { PricingInfo } from '@deltadao/nautilus'
+import type { Config } from '@oceanprotocol/lib'
+import type { Signer } from 'ethers'
+
+declare const signer: Signer
+declare const pricing: PricingInfo
+declare const config: Config
+// ---cut---
+const price = await getOrderPrice(signer, pricing, config, '0.1') // [!code focus]
+```
+
+## Do you already hold an order?
+
+`hasReusableOrder` answers from what the node reports, rather than reconstructing it from
+events — the node returns `validOrder` when a previous order is still inside the service's
+timeout.
+
+```ts twoslash
+import { hasReusableOrder } from '@deltadao/nautilus'
+
+declare const initialize: { validOrder?: string }
+// ---cut---
+if (hasReusableOrder(initialize)) {
+  // Already paid, still inside the timeout — no new order needed.
+}
+```
+
+:::danger[Currently always false]
+ocean-node 3.2.21's access `initialize` returns `{ providerFee, datatoken, nonce, computeAddress }`
+and **no `validOrder`**, so this is always `false` and every
+[`access`](/docs/api/nautilus/access) buys a fresh datatoken — even within the timeout. On a
+paid asset that is repeated payment for access you already hold. The v4 Provider returned the
+field; until it comes back, cache the download URL rather than re-calling `access`.
+:::
+
+## Coming from v1
+
+| v1 | v2 |
+| --- | --- |
+| `getAccessDetails()` | `getPricingInfo()` |
+| `AccessDetails` | `PricingInfo` |
+| `OrderPriceAndFees` | `OrderPrice` |
+| `AssetWithAccessDetails` | — read pricing separately from the asset |
+| subgraph queries | contract reads |
