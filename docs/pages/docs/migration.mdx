@@ -1,0 +1,312 @@
+# Migrating from v1 [A call-by-call map from nautilus v1 to v2]
+
+nautilus v2 keeps the builder pattern but sits on a different stack: `@oceanprotocol/lib`
+9.x instead of 3.4.6, ethers v6 instead of v5, ocean-node instead of Aquarius and
+Provider, and DDO v5 instead of v4.1.0.
+
+This is a call-by-call map. If something is not listed, it did not change.
+
+:::tip
+New to nautilus rather than upgrading? Start with
+[Getting Started](/docs/getting-started) instead — this page assumes you know v1.
+:::
+
+## 1. Dependencies
+
+```json
+"@oceanprotocol/lib": "3.4.6", // [!code --]
+"ethers": "^5.7.2" // [!code --]
+"@oceanprotocol/lib": "^9.0.0", // [!code ++]
+"@oceanprotocol/ddo-js": "0.4.1", // [!code ++]
+"ethers": "^6.17.0" // [!code ++]
+```
+
+`@oceanprotocol/lib` re-exports only the **v4** `DDO` type, so DDO v5 types come from
+`@oceanprotocol/ddo-js` directly. Pin it and dedupe: ocean.js itself asks for `^0.3.0`,
+which npm resolves to a *different* copy unless you add an override.
+
+```json
+"overrides": { "@oceanprotocol/ddo-js": "0.4.1" }
+```
+
+## 2. Setting up
+
+ethers v6 removed the `providers` namespace.
+
+```ts
+import { Wallet, providers } from 'ethers' // [!code --]
+const provider = new providers.JsonRpcProvider('https://rpc.dev.pontus-x.eu') // [!code --]
+import { JsonRpcProvider, Wallet } from 'ethers' // [!code ++]
+const provider = new JsonRpcProvider('https://rpc.dev.pontus-x.eu') // [!code ++]
+
+const signer = new Wallet('0x…', provider)
+```
+
+`Nautilus.create` now takes an options object rather than a bare `Partial<Config>`:
+
+```ts
+const nautilus = await Nautilus.create(signer, { providerUri: '…' }) // [!code --]
+const nautilus = await Nautilus.create(signer, { // [!code ++]
+  config: { oceanNodeUri: 'https://node.example.org' } // [!code ++]
+}) // [!code ++]
+```
+
+### Config fields
+
+| v1 | v2 |
+| --- | --- |
+| `metadataCacheUri` | `oceanNodeUri` |
+| `providerUri` | `oceanNodeUri` |
+| `subgraphUri` | *removed* — pricing comes from chain reads |
+| — | `escrow`, `accessListFactory`, `sdk: 'evm' \| 'oasis'` |
+
+`ConfigHelper` ships Pontus-X devnet (chain 32456). For any other deltaDAO network, pass
+the addresses explicitly in `config`.
+
+## 3. Reading assets
+
+```ts
+const asset = await nautilus.getAquariusAsset(did) // [!code --]
+const assets = await nautilus.getAquariusAssets(dids) // [!code --]
+const asset = await nautilus.getAsset(did) // [!code ++]
+const assets = await nautilus.getAssets(dids) // [!code ++]
+```
+
+DDO v5 nests everything under `credentialSubject`, so read through the
+[helpers](/docs/guides/reading-assets) rather than indexing into the document — that way a future DDO v6 does not break your code:
+
+```ts
+asset.metadata.name // [!code --]
+asset.services[0].id // [!code --]
+asset.nft.owner // [!code --]
+asset.nft.state // [!code --]
+import { getMetadata, getServices, getOwner, getLifecycleState } from '@deltadao/nautilus' // [!code ++]
+getMetadata(asset).name // [!code ++]
+getServices(asset)[0].id // [!code ++]
+getOwner(asset) // [!code ++]
+getLifecycleState(asset) // [!code ++]
+```
+
+New: `nautilus.query(searchQuery)` and `nautilus.waitForIndexer(did, txid?)`.
+
+## 4. Publishing
+
+Publishing now signs the DDO as a verifiable credential and stores it off chain, writing
+only a `{remote}` pointer. So it needs a **remote store** — see
+[remote stores](/docs/guides/remote-stores) and [signing](/docs/guides/signing):
+
+```ts
+import { NodePersistentRemoteStore, Nautilus } from '@deltadao/nautilus'
+
+const bootstrap = await Nautilus.create(signer, { config })
+
+const nautilus = await Nautilus.create(signer, {
+  config,
+  // Uses the node's own storage — no external IPFS needed.
+  remoteStore: new NodePersistentRemoteStore(bootstrap.getNodeClient())
+})
+```
+
+Or with IPFS:
+
+```ts
+import { IpfsRemoteStore } from '@deltadao/nautilus'
+
+remoteStore: new IpfsRemoteStore({ uploadUrl: 'http://127.0.0.1:5001/api/v0/add' })
+```
+
+`publish()` gained options and returns a little more:
+
+```ts
+const { nftAddress, services, ddo, setMetadataTxReceipt } = await nautilus.publish(asset) // [!code --]
+const { nftAddress, services, ddo, setMetadataTxReceipt, credential, indexed } = // [!code ++]
+  await nautilus.publish(asset, { waitForIndexer: true }) // [!code ++]
+```
+
+It is also cheaper: the NFT, its first datatoken and that service's pricing are created in
+**one** transaction rather than three.
+
+## 5. `AssetBuilder`
+
+Every v1 method still exists. Three behave differently, and there are new ones.
+
+```ts
+new AssetBuilder(aquariusAsset) // [!code --]
+new AssetBuilder(asset)   // the asset from nautilus.getAsset() // [!code ++]
+```
+
+| v1 | v2 |
+| --- | --- |
+| `setDescription('text')` | same call; wrapped into a language-tagged object |
+| `setLicense('url')` | same call; wrapped into `{ name }`. Also accepts a `License` object |
+| `addLinks(['url'])` | same call; projected into v5's `{ label: url }` map. Also accepts a map |
+| `setContentLanguage('en')` | **repurposed**: no longer a metadata field, it now sets the `@language`/`@direction` tag applied to every language-tagged value |
+
+**Now required**: `setProvidedBy()`. DDO v5's schema requires `providedBy`, and `build()`
+rejects a new asset without it (alongside `name` and `type`).
+
+**New**:
+
+```ts
+builder
+  .setDisplayTitle('A nicer title')
+  .addAttachments([{ name: 'terms', fileType: 'pdf', sha256: '…', mirrors: [] }])
+  .setIssuer('did:web:example.org')
+  .addCredentialAccessList(CredentialListTypes.ALLOW, { chainId: 32456, accessList: '0x…' })
+  .addRequestCredentials(CredentialListTypes.ALLOW, [
+    { type: 'VerifiableId', format: 'jwt_vc_json' }
+  ])
+  .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'not-before'])
+  .setVpPolicies(CredentialListTypes.ALLOW, [{ policy: 'minimum-credentials', args: '1' }])
+  .setCredentialMatchRules({ match_allow: 'all', match_deny: 'any' })
+```
+
+Also fixed: `reset()` now returns to the loaded asset in edit mode rather than emptying the
+builder, and NFT defaults no longer leak between assets built in the same process.
+
+## 6. `ServiceBuilder`
+
+```ts
+new ServiceBuilder({ aquariusAsset, serviceId }) // [!code --]
+new ServiceBuilder({ asset, serviceId }) // [!code ++]
+```
+
+**File types changed**, because ocean-node changed what it can read:
+
+| v1 `FileTypes` | v2 |
+| --- | --- |
+| `URL` | `URL` — but the object is now `UrlFileObject` |
+| `IPFS` | `IPFS` — `{ type, hash }` |
+| `ARWEAVE` | `ARWEAVE` — `{ type, transactionId }` |
+| `GRAPHQL` | **removed** |
+| `SMARTCONTRACT` | **removed** |
+| — | `S3`, `FTP`, `NODE_PERSISTENT_STORAGE` (new) |
+
+`setName()` is effectively required now (v5 requires `Service.name`); `build()` defaults it
+rather than failing.
+
+`addTrustedAlgorithms()` finally honours `serviceIds`, because v5's
+`PublisherTrustedAlgorithms` carries a required `serviceId`:
+
+```ts
+builder.addTrustedAlgorithms([{ did: 'did:ope:…', serviceIds: ['service-a', 'service-b'] }])
+```
+
+**New**: `setState()`, `setDisplayName()`, `setDataSchema()`, `setInputSchema()`,
+`setOutputSchema()`, and per-service gating via `addCredentialAddresses()` /
+`addRequestCredentials()`.
+
+## 7. `ConsumerParameterBuilder`
+
+Two v1 workarounds are gone, because v5 fixed what forced them:
+
+```ts
+builder.setType('select').addOption({ eu: 'Europe' })
+// v4 emitted options as a JSON string // [!code --]
+// v5 emits a structured array // [!code ++]
+
+builder.setDefault(false)
+// v4 coerced this to the string "false" // [!code --]
+// v5 keeps the boolean // [!code ++]
+```
+
+## 8. Access
+
+```ts
+const url: string = await nautilus.access({ assetDid }) // [!code --]
+const { url, transferTxId, reusedOrder } = await nautilus.access({ assetDid }) // [!code ++]
+```
+
+If the service is credential-gated, nautilus resolves the policy before placing any order —
+so a failed presentation costs nothing. See §10.
+
+## 9. Compute
+
+Compute changed the most, because C2D v2 is a different model.
+
+```ts
+const job = await nautilus.compute({ dataset, algorithm, additionalDatasets }) // [!code --]
+const { jobs, environment, orders } = await nautilus.compute({ // [!code ++]
+  dataset, algorithm, additionalDatasets, // [!code ++]
+  computeEnv: env.id,          // pick deliberately; v1 silently used [0] // [!code ++]
+  resources: [{ id: 'cpu', amount: 2 }, { id: 'ram', amount: 2 }], // [!code ++]
+  paymentToken: '0x…', // [!code ++]
+  maxJobDuration: 3600 // [!code ++]
+}) // [!code ++]
+```
+
+- **Environments**: `nautilus.getComputeEnvironments()` lists them with their resources,
+  limits and per-chain fees. `resources` and `paymentToken` default from the environment.
+- **Escrow**: paid jobs lock funds in the `Escrow` contract. nautilus funds and authorises
+  it from what the node quotes.
+- **Free compute**: `nautilus.freeCompute({ dataset, algorithm })` — no order, no escrow, no
+  payment token. Requires an environment exposing `free`.
+- **Output**: `ComputeOutput` is now `{ remoteStorage?, encryption? }`. The old
+  `publishAlgorithmLog` / `publishOutput` flags no longer exist.
+- **Renamed**: `getComputeEnviroment` (sic) → `getComputeEnvironments`.
+- **New**: `nautilus.streamComputeResult()`, `nautilus.getComputeLogs()`.
+
+`stopCompute` and `getComputeStatus` no longer need a `providerUri`; they default to the
+node the instance is configured with.
+
+## 10. Credential-gated assets
+
+New in v2. Configure a credential provider and nautilus handles the whole presentation
+exchange — initiate, fetch the presentation definition, authenticate to the wallet, match
+credentials, present, and carry the resulting session into the download or compute call.
+
+```ts
+import { Nautilus, WaltIdCredentialProvider } from '@deltadao/nautilus'
+
+const bootstrap = await Nautilus.create(signer, { config })
+
+const nautilus = await Nautilus.create(signer, {
+  config,
+  credentials: new WaltIdCredentialProvider(bootstrap.getNodeClient(), {
+    walletApi: 'https://wallet.example.org'
+    // Headless by default: all matching credentials, the wallet's first DID.
+    // Supply onSelectCredentials / onSelectDid to drive a UI instead.
+  })
+})
+
+// Nothing else changes at the call site.
+const { url } = await nautilus.access({ assetDid: 'did:ope:…' })
+```
+
+:::warning[Two deployment behaviours to know about]
+- ocean-node **fails open** when its `POLICY_SERVER_URL` is unset, so an unconfigured node
+  allows everything. `initializePSVerification` returning `null` is the clean signal.
+- Publish-time policy enforcement does not exist yet: the policy server's `newDDO`,
+  `updateDDO`, `validateDDO`, `encrypt` and `decrypt` actions are stubs that always allow.
+:::
+
+See [credential-gated assets](/docs/guides/identity) for the full picture.
+
+## 11. Validation
+
+New in v2, and worth using: DDO validation is entirely local, so it costs nothing and it
+names the failing field.
+
+```ts
+import { validate } from '@deltadao/nautilus'
+
+const { valid, errors } = await validate(ddo)
+// errors: { providedBy: ['Less than 1 values'] }
+```
+
+`publish()` and `edit()` run this automatically before spending gas. See
+[validation](/docs/guides/validation).
+
+## 12. Removed
+
+:::details[The full removal table]
+
+| Removed | Replacement |
+| --- | --- |
+| `utils/aquarius.ts`, `utils/provider.ts` | `OceanNodeClient` |
+| `utils/subgraph/*`, `getAccessDetails` | chain reads — `getPricingInfo`, `getOrderPrice` |
+| `AccessDetails`, `AssetWithAccessDetails`, `OrderPriceAndFees` | `PricingInfo`, `OrderPrice` |
+| local `ComputeAsset` / `ComputeAlgorithm` | `ComputeAssetRef` / `ComputeAlgorithmRef` |
+| `transformAquariusAssetToDDO` | unnecessary — v5 keeps indexed data separate |
+| `getComputeEnviroment` | `getComputeEnvironments` |
+:::
