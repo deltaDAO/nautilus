@@ -121,16 +121,14 @@ import { Nautilus } from '@deltadao/nautilus'
 import { JsonRpcProvider, Wallet } from 'ethers'
 
 // 2. Set up your client. One ocean-node serves metadata, provider services and the indexer.
-const provider = new JsonRpcProvider('https://rpc.dev.pontus-x.eu')
-const signer = new Wallet('0x...', provider)
+const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
 const nautilus = await Nautilus.create(signer, {
   config: { oceanNodeUri: 'https://ocean-node.dev.pontus-x.eu' }
 })
 
 // 3. Consume a service offering!
-const did = 'did:ope:3cccb2963b99120426249b11f7b911526533237509cfad8e9671813a7adb2cec'
-const { url } = await nautilus.access({ assetDid: did })
-const sharedData = await fetch(url)
+const { url } = await nautilus.access({ assetDid: 'did:ope:1234abcd...' })
+const response = await fetch(url)
 ```
 
 # Features
