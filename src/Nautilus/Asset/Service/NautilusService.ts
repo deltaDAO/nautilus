@@ -1,40 +1,48 @@
+import type {
+  Compute,
+  PublisherTrustedAlgorithms,
+  ServiceV5
+} from '@oceanprotocol/ddo-js'
 import {
-  type Arweave,
-  type ConsumerParameter,
-  type GraphqlQuery,
-  type Ipfs,
-  type Service,
-  type ServiceComputeOptions,
-  type Smartcontract,
-  type UrlFile,
-  getHash
+  type ArweaveFileObject,
+  type AssetFiles,
+  FileObjectType,
+  type FtpFileObject,
+  getHash,
+  type IpfsFileObject,
+  type PersistentStorageObject,
+  type S3FileObject,
+  type StorageObject,
+  type UrlFileObject
 } from '@oceanprotocol/lib'
 import type {
   DatatokenCreateParamsWithoutOwner,
+  PricingConfigWithoutOwner,
   TrustedAlgorithmAsset
-} from '../../../@types/Publish'
-import {
-  getEncryptedFiles,
-  getFileInfo,
-  isValidProvider
-} from '../../../utils/provider'
-import type { PricingConfigWithoutOwner } from '../NautilusAsset'
-import { params as DatatokenConstantParams } from '../constants/datatoken.constants'
+} from '../../../@types/Publish.js'
+import { type LanguageOptions, toLanguageValue } from '../../../ddo/language.js'
+import type {
+  ConsumerParameterV5,
+  DdoCredentials,
+  LanguageValue,
+  RemoteObject
+} from '../../../ddo/types.js'
+import type { OceanNodeClient } from '../../../node/OceanNodeClient.js'
+import { params as datatokenDefaults } from '../constants/datatoken.constants.js'
 
-export {
-  Arweave,
-  GraphqlQuery,
-  Ipfs,
-  Smartcontract,
-  UrlFile
-} from '@oceanprotocol/lib'
-
+/**
+ * Storage backends ocean-node can read.
+ *
+ * Two v1 types are gone because ocean-node no longer implements them: `graphql` and
+ * `smartcontract`. Three are new: `s3`, `ftp` and the node's own persistent storage.
+ */
 export enum FileTypes {
   URL = 'url',
-  GRAPHQL = 'graphql',
-  ARWEAVE = 'arweave',
   IPFS = 'ipfs',
-  SMARTCONTRACT = 'smartcontract'
+  ARWEAVE = 'arweave',
+  S3 = 's3',
+  FTP = 'ftp',
+  NODE_PERSISTENT_STORAGE = 'nodePersistentStorage'
 }
 
 export enum ServiceTypes {
@@ -42,147 +50,209 @@ export enum ServiceTypes {
   COMPUTE = 'compute'
 }
 
+/** Maps a `FileTypes` member onto the ocean.js storage object it needs. */
 export type ServiceFileType<FileType extends FileTypes> =
-  FileType extends FileTypes.GRAPHQL
-    ? GraphqlQuery
+  FileType extends FileTypes.IPFS
+    ? IpfsFileObject
     : FileType extends FileTypes.ARWEAVE
-      ? Arweave
-      : FileType extends FileTypes.SMARTCONTRACT
-        ? Smartcontract
-        : FileType extends FileTypes.IPFS
-          ? Ipfs
-          : UrlFile
+      ? ArweaveFileObject
+      : FileType extends FileTypes.S3
+        ? S3FileObject
+        : FileType extends FileTypes.FTP
+          ? FtpFileObject
+          : FileType extends FileTypes.NODE_PERSISTENT_STORAGE
+            ? PersistentStorageObject
+            : UrlFileObject
+
+export type {
+  ArweaveFileObject,
+  FtpFileObject,
+  IpfsFileObject,
+  PersistentStorageObject,
+  S3FileObject,
+  StorageObject,
+  UrlFileObject
+}
+export { FileObjectType }
+
+const EMPTY_COMPUTE: Compute = {
+  allowRawAlgorithm: false,
+  allowNetworkAccess: false,
+  publisherTrustedAlgorithmPublishers: [],
+  publisherTrustedAlgorithms: []
+}
 
 /**
- * @internal
+ * A service under construction.
+ *
+ * @internal Built by `ServiceBuilder`; projected into a DDO v5 `Service` by
+ * {@link NautilusService.getOceanService}.
  */
 export class NautilusService<
   ServiceType extends ServiceTypes,
   FileType extends FileTypes
 > {
-  type: ServiceType
-  serviceEndpoint: string
-  timeout: number
+  type!: ServiceType
+  serviceEndpoint!: string
+  timeout = 0
   files: ServiceFileType<FileType>[] = []
-  existingEncryptedFiles: string
+  existingEncryptedFiles?: string
 
-  pricing: PricingConfigWithoutOwner
-  newPrice: string
+  pricing?: PricingConfigWithoutOwner
   datatokenCreateParams: DatatokenCreateParamsWithoutOwner
-  editExistingService: boolean
-  filesEdited: boolean
-  serviceEndpointEdited: boolean
+  editExistingService = false
+  filesEdited = false
+  serviceEndpointEdited = false
 
+  /** Required by DDO v5, so `ServiceBuilder.build()` enforces it. */
   name?: string
-  description?: string
+  displayName?: string | LanguageValue
+  description?: string | LanguageValue
+  state?: number
 
-  compute: ServiceComputeOptions = {
-    allowNetworkAccess: false,
-    allowRawAlgorithm: false,
-    publisherTrustedAlgorithmPublishers: [],
-    publisherTrustedAlgorithms: []
-  }
+  /** Per-service gating. Merged with the asset-level block by the policy server. */
+  credentials: DdoCredentials = {}
 
+  dataSchema?: RemoteObject
+  inputSchema?: RemoteObject
+  outputSchema?: RemoteObject
+
+  compute: Compute = { ...EMPTY_COMPUTE }
+
+  /** Staged trusted algorithms, resolved to checksums at publish time. */
   addedPublisherTrustedAlgorithms: TrustedAlgorithmAsset[] = []
 
-  consumerParameters?: ConsumerParameter[] = []
-  // biome-ignore lint/suspicious/noExplicitAny: can be any user defined information
-  additionalInformation?: { [key: string]: any }
+  consumerParameters: ConsumerParameterV5[] = []
+  additionalInformation?: Record<string, string | number | boolean>
 
   id?: string
   datatokenAddress?: string
 
   constructor() {
-    this.editExistingService = false
-    this.filesEdited = false
-    this.initDatatokenData()
+    // Spread, do not alias: the defaults are a shared module-level object, and assigning it
+    // by reference let every builder mutate the process-wide default (a v1 bug).
+    this.datatokenCreateParams = { ...datatokenDefaults }
   }
 
-  private initDatatokenData() {
-    this.datatokenCreateParams = DatatokenConstantParams
-  }
-
+  /**
+   * Projects into a DDO v5 service, encrypting the file object if needed.
+   *
+   * @param node the ocean-node client — encryption is node-side and now requires auth
+   * @param chainId unused by the node call but kept for symmetry with the DDO
+   * @param nftAddress bound into the encrypted file object
+   * @param dtAddress the datatoken minted for this service
+   */
   async getOceanService(
-    chainId: number,
+    node: OceanNodeClient,
     nftAddress: string,
-    dtAddress?: string
-  ): Promise<Service> {
-    if (!(await this.hasValidServiceEndpoint()))
-      throw new Error('serviceEndpoint is not a valid Ocean Provider')
-
-    if (!(await this.hasValidFiles()))
-      throw new Error('Some of the provided files could not be validated')
+    dtAddress?: string,
+    language: LanguageOptions = {}
+  ): Promise<ServiceV5> {
+    if (!(await this.hasValidServiceEndpoint(node)))
+      throw new Error(
+        `serviceEndpoint ${this.serviceEndpoint} does not answer as an ocean-node.`
+      )
 
     const datatokenAddress = dtAddress || this.datatokenAddress
-    if (!datatokenAddress) throw new Error('datatokenAddress is required')
+    if (!datatokenAddress)
+      throw new Error('datatokenAddress is required to build a service.')
 
-    const isFilesObjectChanged = this.checkIfFilesObjectChanged()
+    const filesChanged = this.checkIfFilesObjectChanged()
 
     let encryptedFiles: string
+    if (filesChanged || !this.existingEncryptedFiles) {
+      if (!this.files.length)
+        throw new Error(
+          'Cannot encrypt files: no files were added to this service.'
+        )
 
-    if (isFilesObjectChanged || !this.existingEncryptedFiles) {
-      if (this.files.length < 1) {
-        throw new Error('Can not encrypt files. No files defined!')
-      }
+      await this.assertFilesReadable(node)
 
-      const assetURL = {
+      const assetFiles: AssetFiles = {
         datatokenAddress,
         nftAddress,
-        files: this.files
+        files: this.files as unknown as StorageObject[]
       }
 
-      encryptedFiles = await getEncryptedFiles(
-        assetURL,
-        chainId,
-        this.serviceEndpoint
-      )
+      encryptedFiles = await node.encrypt(assetFiles)
     } else {
       encryptedFiles = this.existingEncryptedFiles
     }
 
-    // required attributes
-    const oceanService: Service = {
-      id: this.id && !isFilesObjectChanged ? this.id : getHash(encryptedFiles),
-      datatokenAddress,
+    // The service id is the hash of its encrypted file object, so re-encrypting new files
+    // necessarily yields a new id — which is why an edited files object replaces the
+    // service rather than mutating it.
+    const service: ServiceV5 = {
+      id: this.id && !filesChanged ? this.id : getHash(encryptedFiles),
       type: this.type,
+      name: this.name as string,
+      datatokenAddress,
       serviceEndpoint: this.serviceEndpoint,
+      files: encryptedFiles,
       timeout: this.timeout,
-      files: encryptedFiles
+      state: (this.state ?? 0) as ServiceV5['state'],
+      credentials: this.credentials as unknown as ServiceV5['credentials']
     }
 
-    // add optional attributes if they are defined
-    if (this.name) oceanService.name = this.name
-    if (this.description) oceanService.description = this.description
+    if (this.displayName)
+      service.displayName = toLanguageValue(this.displayName, language)
+
+    if (this.description)
+      service.description = toLanguageValue(this.description, language)
+
     if (this.additionalInformation)
-      oceanService.additionalInformation = this.additionalInformation
+      service.additionalInformation = this.additionalInformation
 
-    if (this.consumerParameters.length > 0)
-      oceanService.consumerParameters = this.consumerParameters
+    if (this.consumerParameters.length)
+      service.consumerParameters = this
+        .consumerParameters as unknown as ServiceV5['consumerParameters']
 
-    // we only add the compute attribute for `compute` type services
-    if (this.type === ServiceTypes.COMPUTE) oceanService.compute = this.compute
+    if (this.dataSchema) service.dataSchema = this.dataSchema
+    if (this.inputSchema) service.inputSchema = this.inputSchema
+    if (this.outputSchema) service.outputSchema = this.outputSchema
 
-    return oceanService
+    if (this.type === ServiceTypes.COMPUTE) service.compute = this.compute
+
+    return service
   }
 
-  async hasValidServiceEndpoint(): Promise<boolean> {
-    return await isValidProvider(this.serviceEndpoint)
+  /** Memoized in the node client, so repeated services on one endpoint cost one probe. */
+  async hasValidServiceEndpoint(node: OceanNodeClient): Promise<boolean> {
+    return node.isValidNode(this.serviceEndpoint)
   }
 
-  async hasValidFiles(): Promise<boolean> {
-    for (const file of this.files) {
-      const fileInfo = await getFileInfo(file, this.serviceEndpoint)
-      if (fileInfo.some((info) => !info.valid)) return false
+  /**
+   * Confirms the node can actually read every file, and says which one it could not.
+   *
+   * v1 returned a bare boolean here, so a typo'd URL surfaced as
+   * "Some of the provided files could not be validated" with no indication which.
+   */
+  async assertFilesReadable(node: OceanNodeClient): Promise<void> {
+    for (const [index, file] of this.files.entries()) {
+      const info = await node.getFileInfo(file as unknown as StorageObject)
+
+      if (!info?.length || info.some((entry) => !entry.valid))
+        throw new Error(
+          `The node could not read file ${index} of service ${this.name || this.id || '(unnamed)'}. Check its URL, credentials and reachability from the node.`
+        )
     }
-
-    return true
   }
 
+  /**
+   * Whether the encrypted file object has to be rebuilt — which also means the service id
+   * changes. A new pricing config forces it because the datatoken address is part of the
+   * encrypted payload.
+   */
   checkIfFilesObjectChanged(): boolean {
     return (
       (this.editExistingService &&
         (this.filesEdited || this.serviceEndpointEdited)) ||
       !!this.pricing
     )
+  }
+
+  /** Trusted algorithms resolved so far, for inspection before publishing. */
+  getTrustedAlgorithms(): PublisherTrustedAlgorithms[] {
+    return this.compute.publisherTrustedAlgorithms || []
   }
 }

@@ -1,2 +1,2 @@
-export * from './Asset'
-export * from './Nautilus'
+export * from './Asset/index.js'
+export * from './Nautilus.js'

@@ -1,58 +1,167 @@
-import type { TransactionReceipt } from '@ethersproject/abstract-provider'
+import { createHash } from 'node:crypto'
+/**
+ * Publishing: NFT and datatoken creation, DDO signing, and writing metadata on chain.
+ *
+ * Two notable changes from v1:
+ *
+ *   - **One transaction per service instead of three.** ocean.js's
+ *     `NftFactory.createNftWithDatatoken{,WithFixedRate,WithDispenser}` bundles NFT,
+ *     datatoken and pricing together. v1 called `createNFT`, then `createDatatoken`, then
+ *     `createFixedRate`/`createDispenser` separately.
+ *   - **The DDO is signed and stored off chain.** Only a `{remote}` pointer goes on chain,
+ *     following the enterprise-market model, so the asset carries a real issuer.
+ */
 import {
-  Aquarius,
   type Config,
   Datatoken,
-  type DispenserParams,
+  type DatatokenCreateParams,
+  type DispenserCreationParams,
+  type FreCreationParams,
+  getEventFromTx,
   LoggerInstance,
   Nft,
+  type NftCreateData,
   NftFactory,
-  ProviderInstance
+  ZERO_ADDRESS
 } from '@oceanprotocol/lib'
-import { type Signer, utils as ethersUtils, type providers } from 'ethers'
-import { LifecycleStates } from '../@types'
+import { type Signer, type TransactionReceipt, toBeHex } from 'ethers'
 import type {
-  CreateAssetConfig,
-  CreateDatatokenConfig,
-  PublishDDOConfig
-} from '../@types/Publish'
-import type { FileTypes, NautilusService, ServiceTypes } from '../Nautilus'
+  FileTypes,
+  NautilusService,
+  ServiceTypes
+} from '../Nautilus/Asset/Service/NautilusService.js'
+import type { OceanNodeClient } from '../node/OceanNodeClient.js'
+import type { RemoteStore } from '../remote/RemoteStore.js'
+import { toRemotePointer } from '../remote/RemoteStore.js'
+import type { DdoSigner } from '../signing/vc.js'
+import { confirmTransaction } from '../utils/order.js'
 
-export async function createAsset(assetConfig: CreateAssetConfig) {
-  LoggerInstance.debug('[publish] Publishing new asset NFT...')
-  // --------------------------------------------------
-  // 1. Create NFT with NftFactory
-  // --------------------------------------------------
-  const { signer, chainConfig, nftParams } = assetConfig
-  const nftFactory = new NftFactory(
-    chainConfig.nftFactoryAddress,
+/** Created NFT plus the datatoken minted for one service. */
+export interface CreatedTokens {
+  nftAddress: string
+  datatokenAddress: string
+  tx: TransactionReceipt
+}
+
+/**
+ * Creates the NFT, its datatoken and its pricing in one transaction.
+ *
+ * Which factory method is used follows the service's pricing config: no fixed rate and no
+ * dispenser means the datatoken cannot be ordered, so `'free'` and `'fixed'` are the only
+ * two supported schemes.
+ */
+export async function createNftWithService(params: {
+  signer: Signer
+  chainConfig: Config
+  nftParams: NftCreateData
+  service: NautilusService<ServiceTypes, FileTypes>
+  owner: string
+}): Promise<CreatedTokens> {
+  const { signer, chainConfig, nftParams, service, owner } = params
+
+  const factory = new NftFactory(
+    chainConfig.nftFactoryAddress as string,
     signer,
-    chainConfig.network,
+    chainConfig.chainId,
     chainConfig
   )
 
-  // TODO  add try catch error handling
-  const nftAddress = await nftFactory.createNFT(nftParams)
+  const datatokenParams: DatatokenCreateParams = {
+    ...service.datatokenCreateParams,
+    minter: owner,
+    paymentCollector: owner
+  }
 
-  LoggerInstance.debug('[publish] NFT published:', nftAddress)
-  return { nftAddress }
+  const pricing = service.pricing
+
+  if (!pricing)
+    throw new Error(
+      `Service ${service.name || service.id} has no pricing config, so no datatoken can be created for it.`
+    )
+
+  let response: unknown
+
+  if (pricing.type === 'fixed') {
+    if (!pricing.freCreationParams)
+      throw new Error(
+        "Fixed pricing needs freCreationParams. Pass them to setPricing({ type: 'fixed', freCreationParams })."
+      )
+
+    const freParams: FreCreationParams = {
+      ...pricing.freCreationParams,
+      owner
+    }
+
+    response = await factory.createNftWithDatatokenWithFixedRate(
+      nftParams,
+      datatokenParams,
+      freParams
+    )
+  } else {
+    const dispenserParams: DispenserCreationParams = {
+      dispenserAddress: chainConfig.dispenserAddress as string,
+      maxTokens: '1',
+      maxBalance: '100000000',
+      withMint: true,
+      allowedSwapper: ZERO_ADDRESS,
+      ...pricing.dispenserParams
+    }
+
+    response = await factory.createNftWithDatatokenWithDispenser(
+      nftParams,
+      datatokenParams,
+      dispenserParams
+    )
+  }
+
+  const tx = await confirmTransaction('createNftWithDatatoken', response)
+
+  const nftCreated = getEventFromTx(tx, 'NFTCreated')
+  const tokenCreated = getEventFromTx(tx, 'TokenCreated')
+
+  const nftAddress = nftCreated?.args?.newTokenAddress
+  const datatokenAddress = tokenCreated?.args?.newTokenAddress
+
+  if (!nftAddress || !datatokenAddress)
+    throw new Error(
+      'The bundle transaction confirmed but emitted no NFTCreated/TokenCreated events. Check that nftFactoryAddress points at a current ERC721Factory.'
+    )
+
+  LoggerInstance.debug('[publish] created NFT and datatoken', {
+    nftAddress,
+    datatokenAddress
+  })
+
+  return { nftAddress, datatokenAddress, tx }
 }
 
-async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
-  // --------------------------------------------------
-  // 1. Create Datatoken
-  // --------------------------------------------------
-  LoggerInstance.debug('[publish] Creating datatoken...')
-  const { chainConfig, signer, nftAddress, datatokenParams, pricing } = config
-  const publisherAccount = await signer?.getAddress()
+/**
+ * Creates a datatoken and its pricing on an NFT that already exists — the path for adding
+ * a second service to a published asset.
+ */
+export async function createDatatokenForService(params: {
+  signer: Signer
+  chainConfig: Config
+  nftAddress: string
+  service: NautilusService<ServiceTypes, FileTypes>
+  owner: string
+}): Promise<{ datatokenAddress: string; tx: TransactionReceipt }> {
+  const { signer, chainConfig, nftAddress, service, owner } = params
+  const pricing = service.pricing
 
-  const nft = new Nft(signer, chainConfig.network, chainConfig)
+  if (!pricing)
+    throw new Error(
+      `Service ${service.name || service.id} has no pricing config, so no datatoken can be created for it.`
+    )
+
+  const nft = new Nft(signer, chainConfig.chainId, chainConfig)
+  const datatokenParams = service.datatokenCreateParams
 
   const datatokenAddress = await nft.createDatatoken(
     nftAddress,
-    publisherAccount,
-    datatokenParams.minter,
-    datatokenParams.paymentCollector,
+    owner,
+    owner,
+    owner,
     datatokenParams.mpFeeAddress,
     datatokenParams.feeToken,
     datatokenParams.feeAmount,
@@ -62,230 +171,182 @@ async function createDatatokenAndPricing(config: CreateDatatokenConfig) {
     datatokenParams.templateIndex
   )
 
-  LoggerInstance.debug('[publish] Datatoken created.', datatokenAddress)
+  if (typeof datatokenAddress !== 'string')
+    throw new Error('createDatatoken did not return a datatoken address.')
 
-  // --------------------------------------------------
-  // 2. Create Pricing
-  // --------------------------------------------------
-  const datatoken = new Datatoken(signer, chainConfig.network, chainConfig)
+  const datatoken = new Datatoken(signer, chainConfig.chainId, chainConfig)
 
-  const dispenserParams: DispenserParams = {
-    maxTokens: ethersUtils.parseEther('1').toString(),
-    maxBalance: ethersUtils.parseEther('1').toString(),
-    withMint: true,
-    allowedSwapper: '0x0000000000000000000000000000000000000000' // TODO needed?
+  let response: unknown
+
+  if (pricing.type === 'fixed') {
+    if (!pricing.freCreationParams)
+      throw new Error('Fixed pricing needs freCreationParams.')
+
+    response = await datatoken.createFixedRate(datatokenAddress, owner, {
+      ...pricing.freCreationParams,
+      owner
+    })
+  } else {
+    response = await datatoken.createDispenser(
+      datatokenAddress,
+      owner,
+      chainConfig.dispenserAddress as string,
+      {
+        maxTokens: '1',
+        maxBalance: '100000000',
+        withMint: true,
+        allowedSwapper: ZERO_ADDRESS,
+        ...pricing.dispenserParams
+      }
+    )
   }
 
-  let pricingTransactionReceipt: providers.TransactionResponse
-  switch (pricing.type) {
-    case 'fixed':
-      LoggerInstance.debug(
-        '[publish] Creating fixed rate exchange for datatoken...',
-        { datatokenAddress, pricing }
-      )
-      pricingTransactionReceipt = await datatoken.createFixedRate(
-        datatokenAddress,
-        publisherAccount,
-        {
-          ...pricing.freCreationParams,
-          fixedRate: ethersUtils
-            .parseEther(pricing.freCreationParams.fixedRate)
-            .toString(),
-          marketFee: ethersUtils
-            .parseEther(pricing.freCreationParams.marketFee)
-            .toString()
-        }
-      )
-      break
-    case 'free':
-      LoggerInstance.debug('[publish] Creating dispenser for datatoken...', {
-        pricing,
-        datatokenAddress,
-        publisherAccount,
-        dispenserAddress: chainConfig.dispenserAddress,
-        dispenserParams
-      })
-      pricingTransactionReceipt = await datatoken.createDispenser(
-        datatokenAddress,
-        publisherAccount,
-        chainConfig.dispenserAddress,
-        dispenserParams
-      )
-      break
-  }
-
-  LoggerInstance.debug(
-    '[publish] Pricing scheme created.',
-    pricingTransactionReceipt
-  )
-
-  const tx = await pricingTransactionReceipt.wait()
+  const tx = await confirmTransaction('createPricing', response)
 
   return { datatokenAddress, tx }
 }
 
-export async function publishDDO(config: PublishDDOConfig) {
-  const { chainConfig, signer, ddo, asset } = config
-  const publisherAccount = await signer?.getAddress()
-
-  // --------------------------------------------------
-  // 1. Validate DDO schema
-  // --------------------------------------------------
-  LoggerInstance.debug(
-    `[publish] Validating DDO via ${chainConfig.metadataCacheUri}`
-  )
-  const aquarius = new Aquarius(chainConfig.metadataCacheUri)
-  const validateResult = await aquarius.validate(ddo)
-
-  if (!validateResult.valid)
-    throw new Error(`Validating Metadata failed: ${validateResult?.errors}`)
-
-  // --------------------------------------------------
-  // 2. Encrypt DDO
-  // --------------------------------------------------
-  LoggerInstance.debug('[publish] Encrypting DDO...')
-  const encryptedDDO = await ProviderInstance.encrypt(
-    ddo,
-    chainConfig.chainId,
-    chainConfig.providerUri
-  )
-  if (!encryptedDDO)
-    throw new Error('No encrypted DDO received. Please try again.')
-
-  // --------------------------------------------------
-  // 3. Write DDO into NFT metadata
-  // --------------------------------------------------
-  const nft = new Nft(signer, chainConfig.network, chainConfig)
-
-  const lifecycleState = asset?.lifecycleState || LifecycleStates.ACTIVE
-  const FLAGS = '0x02' // market sets '0x02' insteadconst validateResult = await aquariusInstance.validate(ddo) of '0x2', theoretically used by aquarius or provider, not implemented yet, will remain hardcoded
-
-  LoggerInstance.debug(`[publish] Asset lifecycleState: ${lifecycleState}`)
-
-  LoggerInstance.debug('[publish] Set Metadata...')
-  const transactionReceipt = await nft.setMetadata(
-    ddo.nftAddress,
-    publisherAccount,
-    lifecycleState,
-    chainConfig.providerUri,
-    '',
-    FLAGS,
-    encryptedDDO,
-    validateResult.hash
-  )
-
-  const tx = await transactionReceipt.wait()
-
-  LoggerInstance.debug('[publish] Published metadata on NFT.', {
-    ddo,
-    tx
-  })
-
-  return tx
+export interface WrittenMetadata {
+  /** The encrypted (or hexlified) pointer written on chain. */
+  metadata: string
+  metadataHash: string
+  flags: number
+  credential: { jwt: string; issuer: string }
+  pointer: ReturnType<typeof toRemotePointer>
 }
 
-export async function createServiceWithDatatokenAndPricing(
-  service: NautilusService<ServiceTypes, FileTypes>,
-  signer: Signer,
-  chainConfig: Config,
-  nftAddress: string,
-  assetOwner: string
-): Promise<{
-  service: NautilusService<ServiceTypes, FileTypes>
-  datatokenAddress: string
-  tx: TransactionReceipt
-}> {
-  const { datatokenAddress, tx } = await createDatatokenAndPricing({
-    signer,
-    chainConfig,
+/**
+ * The claims segment of a compact JWS, decoded to the exact string a consumer
+ * gets when it unwraps the credential. Used for the on-chain metadata hash, so
+ * both sides hash identical bytes.
+ */
+function decodeCredentialClaims(jwt: string): string {
+  const segments = jwt.split('.')
+
+  if (segments.length !== 3)
+    throw new Error(
+      `Expected a compact JWS with 3 segments, got ${segments.length}.`
+    )
+
+  return Buffer.from(segments[1], 'base64url').toString()
+}
+
+/**
+ * Signs the DDO, stores it, and prepares the on-chain pointer.
+ *
+ * The hash is computed over the stored payload client-side. Note the trade-off: the
+ * ocean-cli path writes the whole DDO and takes the hash from the node's own
+ * `Aquarius.validate`, which is node-authoritative. Here the node never sees the document
+ * before it is written, which is exactly why `publish()` runs ddo-js's local SHACL
+ * validation first.
+ */
+export async function prepareMetadata(params: {
+  node: OceanNodeClient
+  ddo: Record<string, unknown>
+  signer: DdoSigner
+  remoteStore: RemoteStore
+  did: string
+  encrypt?: boolean
+}): Promise<WrittenMetadata> {
+  const { node, ddo, signer, remoteStore, did } = params
+  const encrypt = params.encrypt !== false
+
+  const credential = await signer.sign(ddo)
+
+  const stored = await remoteStore.put(credential.jwt, { did })
+  const pointer = toRemotePointer(stored)
+
+  const payload = JSON.stringify(pointer)
+
+  const metadata = encrypt ? await node.encrypt(pointer) : hexlify(payload)
+  const flags = encrypt ? 2 : 0
+
+  /**
+   * The on-chain hash covers the *document*, not the pointer.
+   *
+   * The node resolves the pointer, unwraps the credential and hashes what it
+   * got, then compares that to this value. Hashing `payload` (the pointer)
+   * here instead meant the two could never agree, and every remote publish
+   * failed to index with "Hash check failed".
+   *
+   * So hash exactly the bytes the node ends up with: the decoded JWS claims
+   * segment, which is the DDO document itself.
+   */
+  const metadataHash = `0x${createHash('sha256')
+    .update(decodeCredentialClaims(credential.jwt))
+    .digest('hex')}`
+
+  return { metadata, metadataHash, flags, credential, pointer }
+}
+
+/** Writes the metadata pointer onto the NFT. */
+export async function writeMetadata(params: {
+  signer: Signer
+  chainConfig: Config
+  nftAddress: string
+  nodeUri: string
+  lifecycleState: number
+  prepared: WrittenMetadata
+}): Promise<TransactionReceipt> {
+  const { signer, chainConfig, nftAddress, nodeUri, lifecycleState, prepared } =
+    params
+  const publisher = await signer.getAddress()
+
+  const nft = new Nft(signer, chainConfig.chainId, chainConfig)
+
+  LoggerInstance.debug('[publish] writing metadata', {
     nftAddress,
-    pricing: {
-      ...service.pricing,
-      freCreationParams: {
-        ...service.pricing.freCreationParams,
-        owner: assetOwner
-      }
-    },
-    datatokenParams: {
-      ...service.datatokenCreateParams,
-      minter: assetOwner,
-      paymentCollector: assetOwner
-    }
+    lifecycleState,
+    flags: prepared.flags
   })
 
-  service.datatokenAddress = datatokenAddress
+  const response = await nft.setMetadata(
+    nftAddress,
+    publisher,
+    lifecycleState,
+    nodeUri,
+    '',
+    toBeHex(prepared.flags),
+    prepared.metadata,
+    prepared.metadataHash
+  )
 
-  return { service, datatokenAddress, tx }
+  return confirmTransaction('setMetadata', response)
 }
 
-// TODO evaluate if we need these (1 transaction for multiple actions)
-// async function createTokensAndPricing(
-//   assetConfig: Pick<
-//     PublishAssetConfig,
-//     'web3' | 'tokenParamaters' | 'pricing' | 'chainConfig'
-//   >,
-//   publisherAccount: string,
-//   nftFactory: NftFactory
-// ) {
-//   const { web3, tokenParamaters, pricing, chainConfig } = assetConfig
+/**
+ * Waits for the publisher to hold `updateMetadata` permission on a freshly created NFT.
+ *
+ * The factory grants it in the creation transaction, but on several chains the read lags
+ * the write by a block or two, and `setMetadata` reverts in the gap.
+ */
+export async function waitForMetadataPermission(params: {
+  signer: Signer
+  chainConfig: Config
+  nftAddress: string
+  attempts?: number
+  intervalMs?: number
+}): Promise<void> {
+  const { signer, chainConfig, nftAddress } = params
+  const attempts = params.attempts ?? 30
+  const intervalMs = params.intervalMs ?? 1000
 
-//   // const nftCreateData: NftCreateData = generateNftCreateData(
-//   //   values.metadata.nft,
-//   //   publisherAccount,
-//   //   values.metadata.transferable
-//   // )
-//   // LoggerInstance.log('[publish] Creating NFT with metadata', nftCreateData)
+  const nft = new Nft(signer, chainConfig.chainId, chainConfig)
+  const address = await signer.getAddress()
 
-//   // TODO: cap is hardcoded for now to 1000, this needs to be discussed at some point
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const permissions = await nft.getNftPermissions(nftAddress, address)
 
-//   let erc721Address, datatokenAddress, txHash
+    if (permissions?.updateMetadata) return
 
-//   switch (pricing.type) {
-//     case 'fixed': {
-//       const result = await nftFactory.createNftWithDatatokenWithFixedRate(
-//         publisherAccount,
-//         tokenParamaters.nftParams,
-//         tokenParamaters.datatokenParams,
-//         pricing.freCreationParams
-//       )
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+  }
 
-//       erc721Address = result.events.NFTCreated.returnValues[0]
-//       datatokenAddress = result.events.TokenCreated.returnValues[0]
-//       txHash = result.transactionHash
+  throw new Error(
+    `${address} still has no updateMetadata permission on ${nftAddress} after ${attempts} attempts. The NFT may not have been created by this account.`
+  )
+}
 
-//       break
-//     }
-//     case 'free': {
-//       // maxTokens -  how many tokens cand be dispensed when someone requests . If maxTokens=2 then someone can't request 3 in one tx
-//       // maxBalance - how many dt the user has in it's wallet before the dispenser will not dispense dt
-//       // both will be just 1 for the market
-
-//       const dispenserParams: DispenserCreationParams = {
-//         dispenserAddress: chainConfig.dispenserAddress,
-//         maxTokens: web3.utils.toWei('1'),
-//         maxBalance: web3.utils.toWei('1'),
-//         withMint: true,
-//         allowedSwapper: '0x0000000000000000000000000000000000000000' // TODO needed?
-//       }
-
-//       const result = await nftFactory.createNftWithDatatokenWithDispenser(
-//         publisherAccount,
-//         tokenParamaters.nftParams,
-//         tokenParamaters.datatokenParams,
-//         dispenserParams
-//       )
-//       erc721Address = result.events.NFTCreated.returnValues[0]
-//       datatokenAddress = result.events.TokenCreated.returnValues[0]
-//       txHash = result.transactionHash
-
-//       break
-//     }
-//     default: {
-//       throw new Error(
-//         `Invalid pricing 'type': should be 'fixed' or 'free', is currently: ${pricing.type}`
-//       )
-//     }
-//   }
-
-//   return { erc721Address, datatokenAddress, txHash }
-// }
+function hexlify(value: string): string {
+  return `0x${Buffer.from(value, 'utf8').toString('hex')}`
+}

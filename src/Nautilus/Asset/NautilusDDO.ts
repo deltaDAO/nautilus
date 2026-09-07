@@ -1,243 +1,187 @@
+import type { AssetV5, ServiceV5 } from '@oceanprotocol/ddo-js'
+import type { LanguageOptions } from '../../ddo/language.js'
 import {
-  type Asset,
-  type Credentials,
-  type DDO,
-  type Service,
-  generateDid
-} from '@oceanprotocol/lib'
-import type { MetadataConfig } from '../../@types'
-import {
-  combineArraysAndReplaceItems,
-  dateToStringNoMS,
-  getAllPromisesOnArray,
-  removeDuplicatesFromArray
-} from '../../utils'
-import { transformAquariusAssetToDDO } from '../../utils/aquarius'
+  DDO_VERSION,
+  type DdoState,
+  type MetadataState,
+  mergeServices,
+  project,
+  stripDerivedFields,
+  VC_CONTEXT
+} from '../../ddo/project.js'
+import { getCredentials, getServices } from '../../ddo/read.js'
+import type { DdoCredentials } from '../../ddo/types.js'
+import type { OceanNodeClient } from '../../node/OceanNodeClient.js'
 import type {
   FileTypes,
   NautilusService,
   ServiceTypes
-} from './Service/NautilusService'
+} from './Service/NautilusService.js'
 
+/**
+ * Accumulates the state that becomes a DDO.
+ *
+ * Deliberately thin: it holds builder state and delegates every structural decision to
+ * `src/ddo/project.ts`, which is the only module that knows what a v5 DDO looks like. That
+ * is what keeps a future DDO v6 from reaching into the builders.
+ */
 export class NautilusDDO {
-  id: string
-  context: string[] = ['https://w3id.org/did/v1']
-  nftAddress: string
-  chainId: number
-  version = '4.1.0'
-  metadata: Partial<MetadataConfig> = {}
+  id?: string
+  context: string[] = [...VC_CONTEXT]
+  nftAddress?: string
+  chainId?: number
+  version = DDO_VERSION
+  issuer?: string
+
+  metadata: MetadataState = {}
+  credentials: DdoCredentials = {}
+  language: LanguageOptions = {}
+
   services: NautilusService<ServiceTypes, FileTypes>[] = []
   removeServices: string[] = []
 
-  private ddo: DDO
-  credentials: Credentials = {
-    allow: [],
-    deny: []
-  }
+  /** The previously published DDO, when editing. */
+  private baseline?: Record<string, unknown>
 
-  static createFromAquariusAsset(aquariusAsset: Asset): NautilusDDO {
-    const ddo = transformAquariusAssetToDDO(aquariusAsset)
+  /** Seeds a builder from a resolved asset, for editing. */
+  static createFromAsset(asset: AssetV5): NautilusDDO {
+    const ddo = new NautilusDDO()
 
-    return NautilusDDO.createFromDDO(ddo)
-  }
-
-  static createFromDDO(ddo: DDO): NautilusDDO {
-    const nautilusDDO = new NautilusDDO()
-    nautilusDDO.ddo = ddo
-
-    nautilusDDO.id = ddo.id
-    nautilusDDO.context = ddo['@context']
-    nautilusDDO.nftAddress = ddo.nftAddress
-    nautilusDDO.chainId = ddo.chainId
-    nautilusDDO.version = ddo.version
-
-    if (ddo.credentials?.allow)
-      nautilusDDO.credentials.allow = ddo.credentials.allow
-    if (ddo.credentials?.deny)
-      nautilusDDO.credentials.deny = ddo.credentials.deny
-
-    return nautilusDDO
-  }
-
-  getOriginalDDO() {
-    return this.ddo
-  }
-
-  private async buildDDOServices(): Promise<Service[]> {
-    if (this.services.length < 1)
-      throw new Error('At least one service needs to be defined.')
-
-    // Create valid Ocean services for all this.services
-    const servicesWithEncryptedFiles = await getAllPromisesOnArray(
-      this.services,
-      async (service) => {
-        return await service.getOceanService(this.chainId, this.nftAddress)
-      }
+    // Indexer-derived fields are dropped up front, so they can never be carried into the
+    // republished document.
+    ddo.baseline = stripDerivedFields(
+      asset as unknown as Record<string, unknown>
     )
 
-    return servicesWithEncryptedFiles
+    ddo.id = asset.id
+    ddo.context = (asset['@context'] as string[]) || [...VC_CONTEXT]
+    ddo.version = asset.version || DDO_VERSION
+    ddo.issuer = asset.issuer
+    ddo.chainId = asset.credentialSubject?.chainId
+    ddo.nftAddress = asset.credentialSubject?.nftAddress
+    ddo.credentials = getCredentials(asset)
+
+    return ddo
   }
 
-  private buildDDOMetadata(create: boolean): DDO['metadata'] {
-    // add timestamps to metadata
-    const currentTime = dateToStringNoMS(new Date())
-
-    const newMetadata = {
-      ...this.ddo?.metadata,
-      ...this.metadata,
-      created: create ? currentTime : this.ddo?.metadata.created,
-      updated: currentTime
-    }
-
-    return newMetadata
+  /** The DDO this builder was seeded from, or `undefined` for a fresh asset. */
+  getOriginalDDO(): Record<string, unknown> | undefined {
+    return this.baseline
   }
 
-  private async getDDOServices(): Promise<Service[]> {
-    // take ddo.services
-    const existingServices: Service[] = this.ddo?.services || []
-
-    // remove service from existing services if id changes to prevent old service after edit
-    for (const service of this.services) {
-      const isFilesObjectChanged = service.checkIfFilesObjectChanged()
-
-      if (service.id && isFilesObjectChanged) {
-        this.removeServices.push(service.id)
-      }
-    }
-
-    let newServices: Service[]
-    if (this.services.length > 0) {
-      // build new services if needed
-      newServices = await this.buildDDOServices()
-    }
-
-    this.removeServices = removeDuplicatesFromArray(this.removeServices)
-
-    const reducedExistingServices = existingServices.filter(
-      (service) => !this.removeServices.includes(service.id)
-    )
-
-    // replace all existing services with new ones, based on the servie.id
-    let replacedServices: Service[] | PromiseLike<Service[]>
-    if (this.services.length > 0) {
-      replacedServices = combineArraysAndReplaceItems(
-        reducedExistingServices,
-        newServices,
-        NautilusDDO.replaceServiceBasedOnId
-      )
-    }
-
-    return replacedServices || reducedExistingServices
-  }
-
-  private async buildDDO(create: boolean): Promise<DDO> {
-    // for initial creation we need to set additional info
-    if (create) {
-      if (!this.nftAddress || !this.chainId)
-        throw new Error(
-          'When creating a new DDO, nftAddress and chainId are required.'
-        )
-
-      this.id = generateDid(this.nftAddress, this.chainId)
-    }
-
-    // build new metadata for ddo
-    const newMetadata = this.buildDDOMetadata(create)
-
-    // get all services for ddo
-    const newServices = await this.getDDOServices()
-
-    // update ddo with metadata and services
-    this.ddo = {
-      ...this.ddo,
-      id: this.id,
-      '@context': this.context,
-      nftAddress: this.nftAddress,
-      chainId: this.chainId,
-      version: this.version,
-      metadata: newMetadata,
-      services: newServices,
-      credentials: this.credentials
-    }
-
-    return this.ddo
-  }
-
-  async getDDO(
-    createDDOData: {
-      create: boolean
-      chainId?: number
-      nftAddress?: string
-    } = {
-      create: false
-    }
-  ): Promise<DDO> {
-    const { create, chainId, nftAddress } = createDDOData
-
-    if (chainId) this.chainId = chainId
-    if (nftAddress) this.nftAddress = nftAddress
-
-    // first check that all necessary properties can be built when creating
-    if (create && !this.hasAllRequiredOceanDDOAttributes())
-      throw new Error(
-        'Required attributes are missing to create a valid Ocean DDO'
-      )
-
-    return this.buildDDO(create)
-  }
-
-  hasAllRequiredOceanDDOAttributes() {
-    // if we have a valid ddo baseline, all properties can be derived from there
-    if (this.ddo) return true
-
-    // check required first level DDO properties
-    if (!this.chainId || !this.nftAddress || !this.context || !this.version)
-      return false
-
-    // check required metadata properties
-    if (
-      !this.metadata.name ||
-      !this.metadata.description ||
-      !this.metadata.type ||
-      !this.metadata.author ||
-      !this.metadata.license
-    )
-      return false
-
-    // for algorithms check if algoMetadata is given and complete
-    if (this.metadata.type === 'algorithm')
-      if (
-        !this.metadata.algorithm ||
-        !this.metadata.algorithm.container ||
-        !this.metadata.algorithm.container.entrypoint ||
-        !this.metadata.algorithm.container.image ||
-        !this.metadata.algorithm.container.tag ||
-        !this.metadata.algorithm.container.checksum
-      )
-        return false
-
-    return true
+  /** Services already published on the asset. */
+  getBaselineServices(): ServiceV5[] {
+    return this.baseline ? getServices(this.baseline) : []
   }
 
   /**
-   * Replace a service with a service from potential replacements, based on the service.id
-   * @param service the service to potentially replace
-   * @param potentialReplacements the potential replacements for the base service
-   * @returns the service, if no replacement was found, or the service from potentialReplacements that matches the service.id
+   * Projects the accumulated state into a DDO v5 document.
+   *
+   * @param node used to encrypt each new service's file object
+   * @param options `create` stamps `created` and derives the `did:ope:` id
    */
-  static replaceServiceBasedOnId(
-    service: Service,
-    potentialReplacements: Service[]
-  ): Service {
-    // Check if the potentialReplacements contains a service with the same id as base service
-    const replacementService = potentialReplacements.find(
-      (potentialReplacement) => potentialReplacement.id === service.id
+  async getDDO(
+    node: OceanNodeClient,
+    options: {
+      create: boolean
+      chainId?: number
+      nftAddress?: string
+      /**
+       * Only for building a DDO before anything is on chain — a validation dry
+       * run. Published services take their datatoken from the publish flow; a
+       * service that has neither cannot be built at all, which made the
+       * "validate before you publish" path impossible.
+       */
+      datatokenAddress?: string
+      now?: string
+    }
+  ): Promise<Record<string, unknown>> {
+    const chainId = options.chainId ?? this.chainId
+    const nftAddress = options.nftAddress ?? this.nftAddress
+
+    if (!chainId || !nftAddress)
+      throw new Error(
+        'A DDO needs both a chainId and an nftAddress. Publish the NFT before building it.'
+      )
+
+    this.chainId = chainId
+    this.nftAddress = nftAddress
+
+    const built = await this.buildServices(
+      node,
+      nftAddress,
+      options.datatokenAddress
     )
 
-    // If we did not find a potential replacement, we return the base service
-    if (!replacementService) return service
+    if (options.create && !built.length)
+      throw new Error('An asset needs at least one service. Call addService().')
 
-    // Otherwise we return the replacement
-    return replacementService
+    const services = mergeServices(
+      this.getBaselineServices(),
+      built,
+      this.collectRemovedServiceIds()
+    )
+
+    if (!services.length)
+      throw new Error(
+        'An asset needs at least one service; all of them were removed.'
+      )
+
+    return project(this.toState(), {
+      create: options.create,
+      chainId,
+      nftAddress,
+      services,
+      baseline: this.baseline,
+      now: options.now
+    })
+  }
+
+  private toState(): DdoState {
+    return {
+      chainId: this.chainId,
+      nftAddress: this.nftAddress,
+      issuer: this.issuer,
+      version: this.version,
+      context: this.context,
+      metadata: this.metadata,
+      credentials: this.credentials,
+      language: this.language
+    }
+  }
+
+  /** Encrypts and projects every service the builder holds. */
+  private async buildServices(
+    node: OceanNodeClient,
+    nftAddress: string,
+    datatokenAddress?: string
+  ): Promise<ServiceV5[]> {
+    return Promise.all(
+      this.services.map((service) =>
+        service.getOceanService(
+          node,
+          nftAddress,
+          datatokenAddress,
+          this.language
+        )
+      )
+    )
+  }
+
+  /**
+   * Ids to drop from the published document.
+   *
+   * Includes explicitly removed services, plus any edited service whose file object
+   * changed — because the service id is the hash of that object, the rebuilt service gets a
+   * new id and the old entry would otherwise linger alongside it.
+   */
+  private collectRemovedServiceIds(): string[] {
+    const removed = new Set(this.removeServices)
+
+    for (const service of this.services)
+      if (service.id && service.checkIfFilesObjectChanged())
+        removed.add(service.id)
+
+    return Array.from(removed)
   }
 }
