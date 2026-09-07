@@ -26,10 +26,39 @@ export interface SignedCredential {
 
 export interface DdoSigner {
   /**
+   * The identity this signer issues as — the DID or address written into `issuer`.
+   *
+   * Exposed separately from `sign()` so the publish flow can stamp the effective issuer
+   * onto the document *before* it is validated and returned, rather than discovering it
+   * only in the signed claims.
+   */
+  getIssuer(): Promise<string>
+
+  /**
    * Signs a DDO as a VC.
    * @param ddo the DDO to sign, already stripped of indexer-derived fields
    */
   sign(ddo: Record<string, unknown>): Promise<SignedCredential>
+}
+
+/**
+ * Whether a DDO-declared issuer names the same identity as the signer.
+ *
+ * Ethereum addresses are compared case-insensitively — `getAddress()` returns the
+ * checksummed form, and failing a publish because the caller typed it lowercase would be
+ * pedantry. Everything else (DIDs) is compared exactly, since their method-specific ids
+ * are case-sensitive.
+ */
+function isSameIssuer(declared: string, actual: string): boolean {
+  if (declared === actual) return true
+
+  const isAddress = (value: string) => /^0x[0-9a-fA-F]{40}$/.test(value)
+
+  return (
+    isAddress(declared) &&
+    isAddress(actual) &&
+    declared.toLowerCase() === actual.toLowerCase()
+  )
 }
 
 function base64url(value: string): string {
@@ -44,6 +73,20 @@ function toCredential(
   ddo: Record<string, unknown>,
   issuer: string
 ): Record<string, unknown> {
+  // A declared issuer is an assertion about who signs, not a free-text field: the spread
+  // below would silently overwrite it, so `setIssuer()` would appear to work while the
+  // signed claims said something else entirely. Fail loudly instead.
+  const declared = ddo.issuer
+
+  if (
+    typeof declared === 'string' &&
+    declared &&
+    !isSameIssuer(declared, issuer)
+  )
+    throw new Error(
+      `The DDO declares issuer "${declared}" but it is being signed by "${issuer}". Either remove setIssuer(), or sign with the identity you declared.`
+    )
+
   return {
     ...ddo,
     type: ['VerifiableCredential'],
@@ -74,6 +117,10 @@ export class WaltIdVcSigner implements DdoSigner {
     this.keyId = options.keyId
     this.did = options.did
     this.token = options.token
+  }
+
+  async getIssuer(): Promise<string> {
+    return this.did
   }
 
   async sign(ddo: Record<string, unknown>): Promise<SignedCredential> {
@@ -107,8 +154,12 @@ export class Eip191VcSigner implements DdoSigner {
     this.signer = signer
   }
 
+  async getIssuer(): Promise<string> {
+    return this.signer.getAddress()
+  }
+
   async sign(ddo: Record<string, unknown>): Promise<SignedCredential> {
-    const issuer = await this.signer.getAddress()
+    const issuer = await this.getIssuer()
 
     const header = base64url(JSON.stringify({ alg: 'ETH-EIP191', typ: 'JWT' }))
     const payload = base64url(JSON.stringify(toCredential(ddo, issuer)))
@@ -124,10 +175,13 @@ export class Eip191VcSigner implements DdoSigner {
 
 /** Decodes a signed DDO credential back into its DDO, without verifying the signature. */
 export function decodeCredential(jwt: string): Record<string, unknown> {
-  const [, payload] = jwt.split('.')
+  // Count the segments rather than just reaching for the payload: `header.payload` decodes
+  // perfectly well but carries no signature at all, and accepting it would let an unsigned
+  // document pass for a signed one.
+  const parts = jwt.split('.')
 
-  if (!payload)
+  if (parts.length !== 3 || parts.some((part) => !part))
     throw new Error('Not a compact JWT: expected three dot-separated parts.')
 
-  return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
+  return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'))
 }

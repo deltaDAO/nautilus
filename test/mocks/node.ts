@@ -24,6 +24,10 @@ export interface NodeMock {
     getFileInfo: unknown[]
     checkDidFiles: unknown[]
     resolve: string[]
+    /** The node each `encrypt` call was addressed to — services must use their own. */
+    encryptTargets: string[]
+    /** The node each `getFileInfo` call was addressed to. */
+    fileInfoTargets: string[]
   }
 }
 
@@ -32,7 +36,9 @@ export function createNodeMock(options: NodeMockOptions = {}): NodeMock {
     encrypt: [],
     getFileInfo: [],
     checkDidFiles: [],
-    resolve: []
+    resolve: [],
+    encryptTargets: [],
+    fileInfoTargets: []
   }
 
   const notImplemented = (name: string) => () => {
@@ -49,13 +55,25 @@ export function createNodeMock(options: NodeMockOptions = {}): NodeMock {
       return options.validNode !== false
     },
 
-    async encrypt(data: unknown) {
+    async encrypt(
+      data: unknown,
+      _policyServer?: unknown,
+      _signal?: unknown,
+      nodeUri: string = 'https://node.test.invalid'
+    ) {
       calls.encrypt.push(data)
+      calls.encryptTargets.push(nodeUri)
       return options.encrypted ?? 'encrypted-files-blob'
     },
 
-    async getFileInfo(file: unknown) {
+    async getFileInfo(
+      file: unknown,
+      _withChecksum?: boolean,
+      _signal?: unknown,
+      nodeUri: string = 'https://node.test.invalid'
+    ) {
       calls.getFileInfo.push(file)
+      calls.fileInfoTargets.push(nodeUri)
       return [{ valid: options.fileInfoValid !== false }]
     },
 

@@ -1,4 +1,4 @@
-import type { AssetV5 } from '@oceanprotocol/ddo-js'
+import type { AssetV5, ServiceV5 } from '@oceanprotocol/ddo-js'
 /**
  * Compute-to-Data, on the C2D v2 model.
  *
@@ -37,14 +37,21 @@ import type {
 } from '../@types/Compute.js'
 import { settleOrder } from '../access/index.js'
 import {
+  getCredentials,
   getDatatokenForService,
   getMetadata,
+  getService,
   getServiceByType,
+  getServiceCredentials,
   getServiceIndex,
   supportsSsi
 } from '../ddo/read.js'
 import type { PolicyServerComputePayload } from '../ddo/types.js'
 import type { CredentialProvider } from '../identity/CredentialProvider.js'
+import {
+  assertPolicySatisfied,
+  shouldResolveCredentials
+} from '../identity/policy.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
 
 export interface ComputeContext {
@@ -250,9 +257,11 @@ async function resolveInputs(
     refs.map(async ({ ref, isAlgorithm }) => {
       const asset = await node.resolve(ref.did)
 
+      // An explicit id must still name a *compute* service. Only checking that the asset
+      // has one somewhere let an `access` service through, which the node then rejected
+      // deep inside the job — long after the orders were placed.
       const service = ref.serviceId
-        ? getServiceByType(asset, 'compute') &&
-          findServiceById(asset, ref.serviceId)
+        ? findServiceById(asset, ref.serviceId)
         : getServiceByType(asset, 'compute')
 
       if (!service)
@@ -260,6 +269,11 @@ async function resolveInputs(
           ref.serviceId
             ? `Asset ${ref.did} has no service with id ${ref.serviceId}.`
             : `Asset ${ref.did} has no 'compute' service.`
+        )
+
+      if (service.type !== 'compute')
+        throw new Error(
+          `Service ${ref.serviceId} of ${ref.did} is a '${service.type}' service; compute jobs need a 'compute' service.`
         )
 
       return { ref, asset, serviceId: service.id, isAlgorithm }
@@ -432,25 +446,41 @@ async function resolvePolicies(
   credentials?: CredentialProvider,
   skip?: boolean
 ): Promise<PolicyServerComputePayload[] | undefined> {
-  if (skip || !credentials) return undefined
-
   const payloads: PolicyServerComputePayload[] = []
 
   for (const input of inputs) {
     if (!supportsSsi(input.asset)) continue
 
-    const resolved = await credentials.resolve({
-      asset: input.asset,
-      serviceId: input.serviceId,
-      consumerAddress
-    })
+    const resolved = shouldResolveCredentials(credentials, skip)
+      ? await (credentials as CredentialProvider).resolve({
+          asset: input.asset,
+          serviceId: input.serviceId,
+          consumerAddress
+        })
+      : null
 
-    if (resolved)
+    if (resolved) {
       payloads.push({
         ...resolved,
         documentId: input.asset.id,
         serviceId: input.serviceId
       })
+      continue
+    }
+
+    // A gated input with no session fails the whole job here, before any order or escrow
+    // deposit. A compute job orders every input, so paying for all of them and then being
+    // refused on one is the most expensive version of this mistake.
+    assertPolicySatisfied({
+      did: input.asset.id,
+      serviceId: input.serviceId,
+      assetCredentials: getCredentials(input.asset),
+      serviceCredentials: getServiceCredentials(
+        getService(input.asset, input.serviceId) as ServiceV5
+      ),
+      resolved,
+      skipped: skip
+    })
   }
 
   return payloads.length ? payloads : undefined

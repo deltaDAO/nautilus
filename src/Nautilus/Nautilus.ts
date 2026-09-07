@@ -43,6 +43,11 @@ import { editPrice, setMetadataState } from '../utils/contracts.js'
 import { resolvePublisherTrustedAlgorithms } from '../utils/helpers/trusted-algorithms.js'
 import { getChainId } from '../utils/index.js'
 import type { NautilusAsset } from './Asset/NautilusAsset.js'
+import type {
+  FileTypes,
+  NautilusService,
+  ServiceTypes
+} from './Asset/Service/NautilusService.js'
 
 export { LogLevel } from '@oceanprotocol/lib'
 
@@ -276,9 +281,13 @@ export class Nautilus {
     if (!services.length)
       throw new Error('Cannot publish an asset with no services.')
 
-    // Resolve trusted algorithms first: it hits the network and can fail, and there is no
-    // reason to have created an NFT by then.
+    // Everything that does not need an on-chain address happens first. A missing remote
+    // store, an unreachable serviceEndpoint or a file the node cannot read are all
+    // failures of configuration, and discovering them after the NFT and datatokens had
+    // been created only burned gas and left orphaned tokens behind.
+    const remoteStore = this.requireRemoteStore(options)
     await resolvePublisherTrustedAlgorithms(this.node, services)
+    await this.assertServicesPublishable(services)
 
     const published: PublishedService[] = []
 
@@ -318,7 +327,8 @@ export class Nautilus {
       asset,
       created.nftAddress,
       true,
-      options
+      options,
+      remoteStore
     )
 
     return { ...result, nftAddress: created.nftAddress, services: published }
@@ -345,7 +355,9 @@ export class Nautilus {
     const nftAddress = getNftAddress(baseline)
     const owner = asset.owner || (await this.signer.getAddress())
 
+    const remoteStore = this.requireRemoteStore(options)
     await resolvePublisherTrustedAlgorithms(this.node, asset.ddo.services)
+    await this.assertServicesPublishable(asset.ddo.services)
 
     const published: PublishedService[] = []
 
@@ -364,18 +376,25 @@ export class Nautilus {
       published.push({ service, datatokenAddress, tx })
     }
 
-    const result = await this.writeAsset(asset, nftAddress, false, options)
+    const result = await this.writeAsset(
+      asset,
+      nftAddress,
+      false,
+      options,
+      remoteStore
+    )
 
     return { ...result, nftAddress, services: published }
   }
 
-  /** Builds, validates, signs, stores and writes the DDO. Shared by publish and edit. */
-  private async writeAsset(
-    asset: NautilusAsset,
-    nftAddress: string,
-    create: boolean,
-    options: PublishOptions
-  ): Promise<Omit<PublishResponse, 'nftAddress' | 'services'>> {
+  /**
+   * The remote store this call will use, resolved before any transaction.
+   *
+   * Called from `publish()`/`edit()` rather than from `writeAsset()`: it is pure
+   * configuration, and there is no sense in learning it is missing only after the tokens
+   * have been minted.
+   */
+  private requireRemoteStore(options: PublishOptions): RemoteStore {
     const remoteStore = options.remoteStore || this.options.remoteStore
 
     if (!remoteStore)
@@ -383,6 +402,29 @@ export class Nautilus {
         'Publishing needs a remote store for the signed DDO. Pass `remoteStore` to Nautilus.create() — for example an IpfsRemoteStore, or a NodePersistentRemoteStore to use the node itself.'
       )
 
+    return remoteStore
+  }
+
+  /**
+   * Endpoint and file checks for every service, before the first transaction.
+   *
+   * The results are memoized on each service, so the projection in `writeAsset()` reuses
+   * them instead of repeating the round trips.
+   */
+  private async assertServicesPublishable(
+    services: NautilusService<ServiceTypes, FileTypes>[]
+  ): Promise<void> {
+    for (const service of services) await service.assertPublishable(this.node)
+  }
+
+  /** Builds, validates, signs, stores and writes the DDO. Shared by publish and edit. */
+  private async writeAsset(
+    asset: NautilusAsset,
+    nftAddress: string,
+    create: boolean,
+    options: PublishOptions,
+    remoteStore: RemoteStore
+  ): Promise<Omit<PublishResponse, 'nftAddress' | 'services'>> {
     const ddoSigner =
       options.ddoSigner ||
       this.options.ddoSigner ||
@@ -393,6 +435,16 @@ export class Nautilus {
       chainId: this.config.chainId,
       nftAddress
     })
+
+    /**
+     * The signer is authoritative for `issuer`, so stamp it before validating, signing or
+     * returning the document. Leaving it to the signing envelope meant a builder-supplied
+     * issuer was overwritten there and nowhere else: `setIssuer()` looked like it worked,
+     * SHACL validated a document that was never signed, and `PublishResponse.ddo` reported
+     * an issuer the credential did not carry. A declared issuer that names someone other
+     * than the signer is rejected by `toCredential()` rather than silently replaced.
+     */
+    ddo.issuer = await ddoSigner.getIssuer()
 
     // Local SHACL validation, before anything is signed or written. Cheap, and it names the
     // exact failing field — the node never sees this document, so nothing else would.
@@ -543,14 +595,15 @@ export class Nautilus {
     return this.nodeFor(config.nodeUri).getComputeJob(config.jobId)
   }
 
+  /** `JobFinished` and `JobSettle` — see `getComputeResult` below. */
+  private static readonly TERMINAL_JOB_STATUSES = [70, 71]
+
   /**
    * A download URL for a finished job's result.
    *
-   * Defaults to the first `output` result. Status 70 is "finished" in the node's job model.
+   * Defaults to the first `output` result. Statuses 70 (`JobFinished`) and 71
+   * (`JobSettle`) are both terminal for results — see `TERMINAL_JOB_STATUSES`.
    */
-  /** `JobFinished` and `JobSettle` — see getComputeResult below. */
-  private static readonly TERMINAL_JOB_STATUSES = [70, 71]
-
   async getComputeResult(
     config: ComputeResultConfig
   ): Promise<string | undefined> {

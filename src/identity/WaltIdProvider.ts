@@ -76,6 +76,9 @@ export class CredentialPresentationError extends Error {
 }
 
 export class WaltIdCredentialProvider implements CredentialProvider {
+  /** Runs the full challenge/presentation round trip, which `skipCredentials` bypasses. */
+  readonly interactive = true
+
   private readonly node: OceanNodeClient
   private readonly wallet: WaltIdWallet
   private readonly options: WaltIdCredentialProviderOptions

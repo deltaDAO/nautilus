@@ -78,6 +78,44 @@ Dedupe it explicitly:
 your problem.
 :::
 
+## If `@oceanprotocol/ddo-js` imports resolve to `any`
+
+`@oceanprotocol/ddo-js` 0.4.1 ships declarations and points its top-level `types` field at
+them, but its `exports` map has no `types` condition. Once a package defines `exports`,
+TypeScript ignores the top-level field — so under `nodenext` and `bundler` the declarations
+are unreachable, every `@oceanprotocol/ddo-js` import degrades to `any`, and `strict` builds
+fail with TS7016. nautilus's own declarations reference those types, so this surfaces even
+if you never import the package yourself.
+
+nautilus ships a `postinstall` script that adds the missing condition to the installed copy.
+It is idempotent, fails soft, and does nothing once upstream publishes a fix.
+
+If you install with `--ignore-scripts` — or use pnpm, which blocks lifecycle scripts by
+default — run it yourself:
+
+```sh
+node node_modules/@deltadao/nautilus/scripts/patch-ddo-js-types.mjs
+```
+
+Or patch the manifest directly, which is all the script does:
+
+```json [node_modules/@oceanprotocol/ddo-js/package.json]
+{
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts", // [!code ++]
+      "require": "./dist/ddo.cjs",
+      "import": "./dist/ddo.js"
+    }
+  }
+}
+```
+
+:::tip
+`pnpm` users can allow the script once with
+`pnpm approve-builds`, or apply the same change through `pnpm.patchedDependencies`.
+:::
+
 ## Type-only exports
 
 Most configuration objects are interfaces rather than classes, so import them with

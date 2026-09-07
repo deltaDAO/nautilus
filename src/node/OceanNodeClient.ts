@@ -254,13 +254,19 @@ export class OceanNodeClient {
     OceanNodeClient.validityCache.clear()
   }
 
+  /**
+   * @param nodeUri the node to ask. Defaults to the configured one, but a service must be
+   * checked against the node it advertises — that is the node that has to read the file at
+   * consume time.
+   */
   async getFileInfo(
     file: StorageObject,
     withChecksum = false,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    nodeUri: string = this.nodeUri
   ): Promise<FileInfo[]> {
     return attempt('getFileInfo', () =>
-      ProviderInstance.getFileInfo(file, this.nodeUri, withChecksum, signal)
+      ProviderInstance.getFileInfo(file, nodeUri, withChecksum, signal)
     )
   }
 
@@ -286,16 +292,27 @@ export class OceanNodeClient {
    * Node-side encryption, used for service file objects and for the on-chain metadata.
    * Unlike ocean.js 3.x this requires auth, so the client's signer/token is passed through.
    */
+  /**
+   * @param nodeUri the node that performs the encryption. Defaults to the configured one.
+   *
+   * Node encryption keys are node-local, so a service's file object must be encrypted by
+   * the node in its own `serviceEndpoint` — ciphertext from any other node is one the
+   * advertised node cannot decrypt, and the published service is simply unusable.
+   *
+   * When `auth` is a JWT rather than a Signer it was minted for one node and another will
+   * reject it; pass a Signer if services point at nodes other than the configured one.
+   */
   async encrypt(
     data: unknown,
     policyServer?: PolicyServerArg,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    nodeUri: string = this.nodeUri
   ): Promise<string> {
     const encrypted = await attempt('encrypt', () =>
       ProviderInstance.encrypt(
         data,
         this.chainId,
-        this.nodeUri,
+        nodeUri,
         this.auth,
         policyServer ?? undefined,
         signal

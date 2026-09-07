@@ -175,11 +175,24 @@ function extractExchangeId(row: unknown): string | undefined {
   return undefined
 }
 
+/**
+ * Sums decimal strings without ever going through `Number`.
+ *
+ * Token amounts routinely carry 18 decimals, which is well past the 15 significant digits
+ * a double can hold — converting first silently rounded the operands, so the total came
+ * out low and the approval it sized could be short of the order.
+ */
 function sum(values: string[]): string {
   return values
-    .reduce(
-      (total, value) => total.add(new Decimal(Number(value) || 0)),
-      new Decimal(0)
-    )
+    .reduce((total, value) => total.add(toDecimal(value)), new Decimal(0))
     .toString()
+}
+
+/** `new Decimal()` throws on unparseable input; a missing price is worth zero, not a crash. */
+function toDecimal(value: string): Decimal {
+  try {
+    return new Decimal(value || 0)
+  } catch {
+    return new Decimal(0)
+  }
 }

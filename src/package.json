@@ -10,8 +10,12 @@
   "files": [
     "_esm",
     "_types",
+    "scripts",
     "README.md"
   ],
+  "scripts": {
+    "postinstall": "node scripts/patch-ddo-js-types.mjs"
+  },
   "exports": {
     ".": {
       "types": "./_types/index.d.ts",

@@ -10,13 +10,19 @@ import { LoggerInstance } from '@oceanprotocol/lib'
 import type { Signer } from 'ethers'
 import type { AccessConfig, AccessResult } from '../@types/Access.js'
 import {
+  getCredentials,
   getDatatokenForService,
   getService,
   getServiceByType,
+  getServiceCredentials,
   getServiceIndex,
   supportsSsi
 } from '../ddo/read.js'
 import type { CredentialProvider } from '../identity/CredentialProvider.js'
+import {
+  assertPolicySatisfied,
+  shouldResolveCredentials
+} from '../identity/policy.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
 import { order, reuseOrder } from '../utils/order.js'
 import {
@@ -59,13 +65,26 @@ export async function access(
 
   // 1. Satisfy the policy first — before spending anything.
   const policyServer =
-    config.skipCredentials || !credentials || !supportsSsi(asset)
-      ? null
-      : await credentials.resolve({
+    supportsSsi(asset) &&
+    shouldResolveCredentials(credentials, config.skipCredentials)
+      ? await (credentials as CredentialProvider).resolve({
           asset,
           serviceId: service.id,
           consumerAddress
         })
+      : null
+
+  // ...and refuse to go on without one where the service actually demands it. An
+  // unresolved policy used to be indistinguishable from "no gating applies", so the flow
+  // ordered, paid, and only then found out it could not download.
+  assertPolicySatisfied({
+    did: asset.id,
+    serviceId: service.id,
+    assetCredentials: getCredentials(asset),
+    serviceCredentials: getServiceCredentials(service),
+    resolved: policyServer,
+    skipped: config.skipCredentials
+  })
 
   // 2. Ask the node for provider fees and whether a previous order can be reused.
   const initialized = await node.initialize(asset.id, service.id, {

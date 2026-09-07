@@ -75,11 +75,21 @@ export type {
 }
 export { FileObjectType }
 
-const EMPTY_COMPUTE: Compute = {
-  allowRawAlgorithm: false,
-  allowNetworkAccess: false,
-  publisherTrustedAlgorithmPublishers: [],
-  publisherTrustedAlgorithms: []
+/**
+ * A fresh compute block per service.
+ *
+ * Built by a function rather than spread from a shared constant: a shallow spread copies
+ * the object but not its two arrays, so every service would push its trusted algorithms
+ * and publishers into the same module-level lists and silently widen each other's
+ * execution policy. Same trap as the datatoken defaults — see the constructor.
+ */
+function emptyCompute(): Compute {
+  return {
+    allowRawAlgorithm: false,
+    allowNetworkAccess: false,
+    publisherTrustedAlgorithmPublishers: [],
+    publisherTrustedAlgorithms: []
+  }
 }
 
 /**
@@ -117,7 +127,7 @@ export class NautilusService<
   inputSchema?: RemoteObject
   outputSchema?: RemoteObject
 
-  compute: Compute = { ...EMPTY_COMPUTE }
+  compute: Compute = emptyCompute()
 
   /** Staged trusted algorithms, resolved to checksums at publish time. */
   addedPublisherTrustedAlgorithms: TrustedAlgorithmAsset[] = []
@@ -127,6 +137,9 @@ export class NautilusService<
 
   id?: string
   datatokenAddress?: string
+
+  /** Set once `assertPublishable()` has passed, so it only costs the network once. */
+  private publishableChecked = false
 
   constructor() {
     // Spread, do not alias: the defaults are a shared module-level object, and assigning it
@@ -148,10 +161,9 @@ export class NautilusService<
     dtAddress?: string,
     language: LanguageOptions = {}
   ): Promise<ServiceV5> {
-    if (!(await this.hasValidServiceEndpoint(node)))
-      throw new Error(
-        `serviceEndpoint ${this.serviceEndpoint} does not answer as an ocean-node.`
-      )
+    // Memoized, so running it as a publish preflight does not make this pay for the same
+    // round trips a second time.
+    await this.assertPublishable(node)
 
     const datatokenAddress = dtAddress || this.datatokenAddress
     if (!datatokenAddress)
@@ -160,23 +172,24 @@ export class NautilusService<
     const filesChanged = this.checkIfFilesObjectChanged()
 
     let encryptedFiles: string
-    if (filesChanged || !this.existingEncryptedFiles) {
-      if (!this.files.length)
-        throw new Error(
-          'Cannot encrypt files: no files were added to this service.'
-        )
-
-      await this.assertFilesReadable(node)
-
+    if (this.needsEncryption()) {
       const assetFiles: AssetFiles = {
         datatokenAddress,
         nftAddress,
         files: this.files as unknown as StorageObject[]
       }
 
-      encryptedFiles = await node.encrypt(assetFiles)
+      // Encrypt on the node this service advertises, not on the configured one. The keys
+      // are node-local: ciphertext from a different node is undecryptable by the node
+      // consumers will actually talk to, which makes the published service dead on arrival.
+      encryptedFiles = await node.encrypt(
+        assetFiles,
+        undefined,
+        undefined,
+        this.serviceEndpoint
+      )
     } else {
-      encryptedFiles = this.existingEncryptedFiles
+      encryptedFiles = this.existingEncryptedFiles as string
     }
 
     // The service id is the hash of its encrypted file object, so re-encrypting new files
@@ -229,13 +242,56 @@ export class NautilusService<
    */
   async assertFilesReadable(node: OceanNodeClient): Promise<void> {
     for (const [index, file] of this.files.entries()) {
-      const info = await node.getFileInfo(file as unknown as StorageObject)
+      // Asked of the service's own node: that is the node that has to fetch the file when
+      // someone consumes the service, so it is the only one whose answer means anything.
+      const info = await node.getFileInfo(
+        file as unknown as StorageObject,
+        false,
+        undefined,
+        this.serviceEndpoint
+      )
 
       if (!info?.length || info.some((entry) => !entry.valid))
         throw new Error(
           `The node could not read file ${index} of service ${this.name || this.id || '(unnamed)'}. Check its URL, credentials and reachability from the node.`
         )
     }
+  }
+
+  /**
+   * Everything that can be checked before a datatoken exists: the endpoint answers as an
+   * ocean-node, and that node can read every file.
+   *
+   * Split out of `getOceanService` so `publish()` can run it *before* the first
+   * transaction. These were the failures that previously surfaced only once the NFT and
+   * datatokens had been created and paid for, leaving orphaned tokens behind.
+   *
+   * Memoized on success: the publish preflight and the projection that follows it would
+   * otherwise each pay for the same round trips.
+   */
+  async assertPublishable(node: OceanNodeClient): Promise<void> {
+    if (this.publishableChecked) return
+
+    if (!(await this.hasValidServiceEndpoint(node)))
+      throw new Error(
+        `serviceEndpoint ${this.serviceEndpoint} does not answer as an ocean-node.`
+      )
+
+    if (this.needsEncryption()) {
+      if (!this.files.length)
+        throw new Error(
+          'Cannot encrypt files: no files were added to this service.'
+        )
+
+      await this.assertFilesReadable(node)
+    }
+
+    this.publishableChecked = true
+  }
+
+  /** Whether the next projection has to (re)encrypt the file object. */
+  needsEncryption(): boolean {
+    return this.checkIfFilesObjectChanged() || !this.existingEncryptedFiles
   }
 
   /**

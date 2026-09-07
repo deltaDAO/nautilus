@@ -1,4 +1,4 @@
-import type { AssetV5, ServiceV5 } from '@oceanprotocol/ddo-js'
+import type { AssetV5, MetadataV5, ServiceV5 } from '@oceanprotocol/ddo-js'
 import type { LanguageOptions } from '../../ddo/language.js'
 import {
   DDO_VERSION,
@@ -9,8 +9,8 @@ import {
   stripDerivedFields,
   VC_CONTEXT
 } from '../../ddo/project.js'
-import { getCredentials, getServices } from '../../ddo/read.js'
-import type { DdoCredentials } from '../../ddo/types.js'
+import { getCredentials, getMetadata, getServices } from '../../ddo/read.js'
+import type { DdoCredentials, RemoteObject } from '../../ddo/types.js'
 import type { OceanNodeClient } from '../../node/OceanNodeClient.js'
 import type {
   FileTypes,
@@ -60,6 +60,7 @@ export class NautilusDDO {
     ddo.chainId = asset.credentialSubject?.chainId
     ddo.nftAddress = asset.credentialSubject?.nftAddress
     ddo.credentials = getCredentials(asset)
+    ddo.metadata = seedAdditiveMetadata(asset)
 
     return ddo
   }
@@ -184,4 +185,47 @@ export class NautilusDDO {
 
     return Array.from(removed)
   }
+}
+
+/**
+ * Seeds the *additive* metadata collections from the asset being edited.
+ *
+ * `projectMetadata` assigns these fields wholesale, so whatever the builder holds replaces
+ * the published value rather than extending it. The additive methods — `addTags`,
+ * `addCategories`, `addLinks`, `addAttachments`, `addAdditionalInformation` — each append
+ * to builder state that started empty, so on an edit they would publish only the newly
+ * added entries and drop everything the asset already carried.
+ *
+ * Only these five are seeded. The scalar fields are meant to be replaced when set and to
+ * fall through to the baseline when not, which `projectMetadata` already does; and
+ * `description`, `displayTitle` and `license` are stored language-tagged/structured in the
+ * baseline but held as plain values here, so copying them back would double-wrap them.
+ */
+function seedAdditiveMetadata(asset: AssetV5): MetadataState {
+  const metadata = getMetadata(asset) as Partial<MetadataV5> | undefined
+
+  if (!metadata) return {}
+
+  const seeded: MetadataState = {}
+
+  if (metadata.tags?.length) seeded.tags = [...metadata.tags]
+  if (metadata.categories?.length) seeded.categories = [...metadata.categories]
+  if (metadata.attachments?.length)
+    seeded.attachments = [...(metadata.attachments as RemoteObject[])]
+
+  if (metadata.links && Object.keys(metadata.links).length)
+    seeded.links = { ...(metadata.links as Record<string, string>) }
+
+  if (
+    metadata.additionalInformation &&
+    Object.keys(metadata.additionalInformation).length
+  )
+    seeded.additionalInformation = {
+      ...(metadata.additionalInformation as Record<
+        string,
+        string | number | boolean
+      >)
+    }
+
+  return seeded
 }

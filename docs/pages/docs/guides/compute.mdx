@@ -157,8 +157,10 @@ const job = await nautilus.getComputeStatus({ jobId }) // [!code focus]
 console.log(job?.status, job?.statusText)
 ```
 
-Status `70` means finished. While it runs, you can read the container's logs — useful for
-debugging an algorithm you cannot otherwise observe:
+Status `70` (`JobFinished`) means the algorithm has run; `71` (`JobSettle`) means it has
+run and the node is only waiting on the payment-claim cron. Results are readable at
+either. While the job runs, you can read the container's logs — useful for debugging an
+algorithm you cannot otherwise observe:
 
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'

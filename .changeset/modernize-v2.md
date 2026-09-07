@@ -6,7 +6,7 @@ Modernize nautilus for the current Ocean stack.
 
 nautilus v1 targeted `@oceanprotocol/lib` 3.4.6, ethers v5, Aquarius, Provider and DDO
 v4.1.0 — none of which a current Ocean deployment runs. v2 targets
-`@oceanprotocol/lib` 8.6.x, ethers v6, ocean-node, DDO v5 via `@oceanprotocol/ddo-js`,
+`@oceanprotocol/lib` 9.x, ethers v6, ocean-node, DDO v5 via `@oceanprotocol/ddo-js`,
 and adds first-class support for the policy server and the walt.id identity stack.
 
 The builder pattern is unchanged as the primary API: `AssetBuilder`, `ServiceBuilder` and

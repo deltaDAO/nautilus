@@ -114,10 +114,25 @@ never be signed back in.
 import type { DdoSigner, SignedCredential } from '@deltadao/nautilus'
 // ---cut---
 class MySigner implements DdoSigner {
+  async getIssuer(): Promise<string> { // [!code focus]
+    return 'did:web:example.org'
+  }
+
   async sign(ddo: Record<string, unknown>): Promise<SignedCredential> { // [!code focus]
-    return { jwt: await signSomehow(ddo), issuer: 'did:web:example.org' }
+    return { jwt: await signSomehow(ddo), issuer: await this.getIssuer() }
   }
 }
 
 declare function signSomehow(ddo: Record<string, unknown>): Promise<string>
 ```
+
+`getIssuer()` is asked first, and its answer is written onto the DDO before the document is
+validated, signed and returned — so `PublishResponse.ddo.issuer` always matches the signed
+claims. It must name the same identity `sign()` issues as.
+
+:::warning[`setIssuer()` must match the signer]
+[`AssetBuilder.setIssuer`](/docs/api/AssetBuilder) declares who signs; it does not change
+who signs. Publishing an asset whose declared issuer is not the signing identity is
+rejected rather than silently overwritten — either drop the call, or publish with the
+signer you named.
+:::

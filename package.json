@@ -23,7 +23,7 @@
     "format": "biome format . --write",
     "lint": "biome check .",
     "lint:fix": "biome check . --fix",
-    "postinstall": "node scripts/patch-ddo-js-types.mjs",
+    "postinstall": "node src/scripts/patch-ddo-js-types.mjs",
     "start": "tsc --noEmit --watch",
     "test": "npm run lint && npm run typecheck && npm run test:unit",
     "test:integration": "vitest run --config vitest.integration.config.ts",

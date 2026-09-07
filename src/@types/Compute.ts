@@ -57,6 +57,17 @@ export interface ComputeConfig {
   metadata?: Record<string, string | number | boolean>
   /** Seconds to wait in the queue when resources are unavailable. */
   queueMaxWaitTime?: number
+  /**
+   * Skip the interactive credential presentation even when an input is gated.
+   *
+   * A provider that only replays a session you already hold — `StaticCredentialProvider` —
+   * is still consulted, so this is the flag to set when you minted the session out of band.
+   *
+   * It also waives the pre-order check that every gated input has a session behind it. A
+   * compute job orders *all* of its inputs, so waiving it risks paying for the lot and
+   * being refused on one; only do so when you know the deployment does not enforce the
+   * policy (ocean-node fails open when it has no `POLICY_SERVER_URL`).
+   */
   skipCredentials?: boolean
 }
 

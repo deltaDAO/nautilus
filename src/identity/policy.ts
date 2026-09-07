@@ -185,6 +185,52 @@ export function requiresPresentation(
   )
 }
 
+/**
+ * Whether the configured provider should be consulted for this call.
+ *
+ * `skipCredentials` skips the *presentation*, not the provider: one that simply replays a
+ * session the caller already holds (`StaticCredentialProvider`) has no flow to skip, and
+ * bypassing it threw away the very session the flag exists to reuse.
+ */
+export function shouldResolveCredentials(
+  credentials: { interactive?: boolean } | undefined,
+  skip?: boolean
+): boolean {
+  if (!credentials) return false
+
+  return !(skip && credentials.interactive !== false)
+}
+
+/**
+ * Refuses to go on when a gated service has no verifier session behind it.
+ *
+ * This is what makes "credentials before spend" true rather than aspirational. Without it
+ * a missing session surfaced only when the download URL was requested — after the order
+ * had been placed and paid for — because an unresolved policy is indistinguishable from
+ * "no gating applies" at the point where it is resolved.
+ *
+ * `skipped` is the deliberate escape hatch: ocean-node fails open when it has no
+ * `POLICY_SERVER_URL`, so a DDO can declare policies that the deployment never enforces.
+ * A caller who knows that is the case passes `skipCredentials` and takes the risk.
+ */
+export function assertPolicySatisfied(params: {
+  did: string
+  serviceId: string
+  assetCredentials: DdoCredentials | undefined
+  serviceCredentials: DdoCredentials | undefined
+  resolved: unknown
+  skipped?: boolean
+}): void {
+  if (params.resolved || params.skipped) return
+
+  if (!requiresPresentation(params.assetCredentials, params.serviceCredentials))
+    return
+
+  throw new Error(
+    `Service ${params.serviceId} of ${params.did} requires a verifiable presentation, but no verifier session could be resolved. Pass a CredentialProvider to Nautilus.create() — a WaltIdCredentialProvider to run the presentation, or a StaticCredentialProvider if you already hold a session id. Set skipCredentials to continue anyway (the node will refuse the request unless its policy server is disabled).`
+  )
+}
+
 function dedupe<T>(values: T[]): T[] {
   return Array.from(new Set(values))
 }

@@ -8,8 +8,15 @@ export interface AccessConfig {
   fileIndex?: number
   userdata?: UserCustomParameters
   /**
-   * Skip the credential presentation even when the service is gated. Only useful if you
-   * already hold a valid session and passed it in as a `StaticCredentialProvider`.
+   * Skip the interactive credential presentation even when the service is gated.
+   *
+   * A provider that only replays a session you already hold — `StaticCredentialProvider` —
+   * is still consulted, so this is the flag to set when you minted the session out of band.
+   *
+   * It also waives the pre-order check that a gated service has a session behind it. That
+   * check is what keeps you from paying for an order you cannot use, so only skip it when
+   * you know the deployment does not enforce the policy (ocean-node fails open when it has
+   * no `POLICY_SERVER_URL`).
    */
   skipCredentials?: boolean
 }

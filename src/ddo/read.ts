@@ -149,7 +149,10 @@ export function getStatsForService(
 
   if (!stats?.length) return undefined
 
-  return stats.find((entry) => entry.serviceId === serviceId) || stats[0]
+  // No positional fallback: `stats[0]` belongs to whichever service the indexer listed
+  // first, and handing it back would resolve the wrong datatoken and order the wrong
+  // service. An unmatched id means "unknown", not "probably this one".
+  return stats.find((entry) => entry.serviceId === serviceId)
 }
 
 export function getDatatokenForService(

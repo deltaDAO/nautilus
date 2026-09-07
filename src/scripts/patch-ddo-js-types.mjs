@@ -15,7 +15,15 @@
  * This adds the missing `types` condition to the installed copy. It is idempotent and
  * fails soft, so a missing or already-patched dependency never breaks `npm install`.
  *
- * Remove this script (and its `postinstall` hook) once ddo.js publishes a release whose
+ * It lives inside the published package and is wired to `postinstall` in *both* manifests,
+ * because consumers hit exactly the same failure: nautilus's own declarations reference
+ * `@oceanprotocol/ddo-js` types, so leaving the workaround in the private repo root fixed
+ * the build here and left every downstream project with the TS7016 this exists to prevent.
+ *
+ * Installers run with `--ignore-scripts` (and pnpm, by default) will not run it. See
+ * `docs/pages/docs/typescript.mdx` for the manual equivalent.
+ *
+ * Remove this script (and both `postinstall` hooks) once ddo.js publishes a release whose
  * exports map includes a `types` condition.
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'

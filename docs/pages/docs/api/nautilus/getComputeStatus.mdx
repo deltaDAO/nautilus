@@ -23,8 +23,9 @@ pass `nodeUri` only for a job running on a different node.
 
 - Type: `ComputeJob | undefined`
 
-`undefined` when the node does not know the job. Status `70` means finished — that is when
-[`getComputeResult`](/docs/api/nautilus/getComputeResult) will return a URL.
+`undefined` when the node does not know the job. Status `70` (`JobFinished`) and `71`
+(`JobSettle`) both mean the results are ready — either is enough for
+[`getComputeResult`](/docs/api/nautilus/getComputeResult) to return a URL.
 
 ## Parameters
 

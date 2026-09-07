@@ -20,6 +20,16 @@ export interface CredentialChallenge {
 
 export interface CredentialProvider {
   /**
+   * Whether `resolve()` runs an interactive presentation flow.
+   *
+   * `skipCredentials` exists to skip *that flow*, so it only applies to providers that
+   * have one. A provider which merely replays a session the caller already holds has
+   * nothing to skip and is still consulted — which is what `skipCredentials` always
+   * documented, and what short-circuiting the provider outright used to prevent.
+   */
+  readonly interactive?: boolean
+
+  /**
    * Satisfies the policy for one (asset, service, consumer) triple and returns the payload
    * to hand ocean-node.
    *
@@ -49,6 +59,8 @@ export enum SsiMode {
  * the flows do not need a null check on every call.
  */
 export class NoopCredentialProvider implements CredentialProvider {
+  readonly interactive = false
+
   async resolve(): Promise<null> {
     return null
   }
@@ -59,6 +71,9 @@ export class NoopCredentialProvider implements CredentialProvider {
  * flow, or minted out of band. Skips the wallet round trip entirely.
  */
 export class StaticCredentialProvider implements CredentialProvider {
+  /** Nothing to present — the session already exists. */
+  readonly interactive = false
+
   private readonly sessionId: string
 
   constructor(sessionId: string) {
