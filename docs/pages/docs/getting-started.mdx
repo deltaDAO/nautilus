@@ -1,83 +1,95 @@
-# Getting Started [Get started with nautilus in just a few lines of code]
+import { Card, Cards } from 'vocs'
 
-## Overview
-nautilus addresses many common pain points faced by developers interacting with the data economy by offering a range of features enhancing productivity and efficiency.
-You will find a quick introduction on this page to get you setup with the **Data Economy TypeScript Toolkit**.
-
-Looking for dedicated feature documentations? Follow the links below:
-- [Download](/docs/guides/download)
-- [Compute to Data](/docs/guides/compute)
-- [Publishing](/docs/guides/publish)
-- [Editing](/docs/guides/edit)
-
+# Getting Started
 
 ## Installation
 
 :::code-group
-
-  ```bash [npm]
-  npm i @deltadao/nautilus
-  ```
-
-  ```bash [pnpm]
-  pnpm i @deltadao/nautilus
-  ```
-
-  ```bash [bun]
-  bun i @deltadao/nautilus
-  ```
-
+```bash [npm]
+npm install @deltadao/nautilus ethers
+```
+```bash [pnpm]
+pnpm add @deltadao/nautilus ethers
+```
+```bash [yarn]
+yarn add @deltadao/nautilus ethers
+```
 :::
 
-## Quick Start
-### 1. Setup your Signer
-Firstly, create the signer you want to use with your nautilus instance. nautilus uses the ethers.js `Signer`. You can read more about possible configurations in the [official documentation](https://docs.ethers.org/v5/api/signer/).
+nautilus v2 requires **ethers v6** and Node 22 or later. If you are upgrading from v1, read
+[migration guide](/docs/migration) first — the DDO
+model, the transport and the signer library all changed.
+
+::::steps
+
+### Create a Signer
+
+nautilus uses the ethers `Signer`. In v6, `JsonRpcProvider` is a top-level export; the
+`providers` namespace no longer exists.
 
 ```ts twoslash
-import { Wallet, providers } from 'ethers'
-import { Nautilus } from '@deltadao/nautilus'
+import { JsonRpcProvider, Wallet } from 'ethers'
 
-const provider = new providers.JsonRpcProvider('https://rpc.dev.pontus-x.eu') // [!code focus]
-const signer = new Wallet('0x...', provider) // [!code focus]
+const provider = new JsonRpcProvider('https://rpc.dev.pontus-x.eu')
+const signer = new Wallet('0x...', provider)
 ```
 
-In this example we create an ethers `Wallet` from a given private key and connect to a RPC provider of our choice.
+### Create the nautilus instance
 
-### 2. Setup the nautilus instance
-Now that you have a Signer set up, you can use it to bootstrap your nautilus client instance.
+The chain is read from the signer's provider, so there is no chain argument. What nautilus
+does need is an **ocean-node**: one node now serves metadata, provider services and the
+indexer, replacing v1's separate Aquarius and Provider URLs.
 
-``` ts twoslash
-import { Wallet, providers } from 'ethers'
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
 import { Nautilus } from '@deltadao/nautilus'
 
-const provider = new providers.JsonRpcProvider('https://rpc.dev.pontus-x.eu')
+const provider = new JsonRpcProvider('https://rpc.dev.pontus-x.eu')
 const signer = new Wallet('0x...', provider)
 
-const nautilus = await Nautilus.create(signer) // [!code focus]
+const nautilus = await Nautilus.create(signer, { // [!code focus]
+  config: { oceanNodeUri: 'https://ocean-node.dev.pontus-x.eu' } // [!code focus]
+}) // [!code focus]
 ```
 
-Note, that we use the previously created Wallet and pass it to Nautilus to create the instance with this signer.
+ocean.js ships contract addresses for Pontus-X devnet (chain 32456). On other networks, pass
+them in `config` too — see [Custom Configuration](/docs/guides/config).
 
-### 3. Interact with the data economy
-With the client instance bootstrapped you can now trigger any transactions or access calls supported by OceanProtocol.
+### Download an asset
 
-``` ts twoslash
-import { Wallet, providers } from 'ethers'
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
 import { Nautilus } from '@deltadao/nautilus'
 
-const provider = new providers.JsonRpcProvider('https://rpc.dev.pontus-x.eu')
-const signer = new Wallet('0x...', provider)
+const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const nautilus = await Nautilus.create(signer, {
+  config: { oceanNodeUri: 'https://ocean-node.dev.pontus-x.eu' }
+})
+// ---cut---
+const { url } = await nautilus.access({ assetDid: 'did:ope:1234abcd...' }) // [!code focus]
 
-const nautilus = await Nautilus.create(signer)
-
-const accessUrl = await nautilus.access({ assetDid: 'did:op:12345'}) // [!code focus]
-const data = await fetch(accessUrl) // [!code focus]
+const data = await fetch(url) // [!code focus]
 ```
 
-In this example we construct a one-time `accessUrl` and can then use it to fetch the data associated with the respective data service.
+nautilus orders the service if you do not already hold a valid order, and reuses your
+existing one if you do.
 
-## Next Steps
+:::info
+In v1 `access` returned a bare URL string. It now returns an object, so the order backing the
+download is visible — see [`access`](/docs/api/nautilus/access).
+:::
 
-For a more complete look at the nautilus interface, you can head to the [`Nautilus` Instance](/docs/api/Nautilus) documentation.
+::::
 
-If you want to jump straight into code, feel free to take a look at some of our code examples in the [nautilus-examples repository](https://github.com/deltaDAO/nautilus-examples).
+## Explore
+
+<Cards>
+  <Card title="Publishing" description="Put your own data on chain as a DDO v5 credential." to="/docs/guides/publish" />
+  <Card title="Download" description="Order a service and fetch the data." to="/docs/guides/download" />
+  <Card title="Compute to Data" description="Run algorithms on data you never see." to="/docs/guides/compute" />
+  <Card title="Editing" description="Change a published asset without resupplying it." to="/docs/guides/edit" />
+  <Card title="Credential-gated assets" description="Require verifiable credentials to consume." to="/docs/guides/identity" />
+</Cards>
+
+For runnable code, see the
+[nautilus-examples repository](https://github.com/deltaDAO/nautilus-examples).

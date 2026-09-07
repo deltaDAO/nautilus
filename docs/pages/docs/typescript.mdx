@@ -1,1 +1,119 @@
-**TODO**
+# TypeScript [Module format, type resolution and the gotchas worth knowing]
+
+nautilus is written in TypeScript and ships its own declarations — there is no
+`@types/deltadao__nautilus` to install. This page covers the setup that is not obvious.
+
+## Requirements
+
+| | |
+| --- | --- |
+| Node | **22 or later** (`engines.node: ">=22"`) |
+| Module format | **ESM only** |
+| TypeScript | 5.x, with `moduleResolution` set to `nodenext` or `bundler` |
+| Peers | `@oceanprotocol/lib` ^9, `ethers` ^6 |
+
+## ESM only
+
+v2 dropped the CommonJS build. The package exposes a single entry point:
+
+```json [package.json]
+{
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./_types/index.d.ts",
+      "import": "./_esm/index.js"
+    }
+  }
+}
+```
+
+Two consequences:
+
+- Your own package needs `"type": "module"`, or the files importing nautilus need the `.mts`
+  extension. `require('@deltadao/nautilus')` will not work.
+- There are **no deep import paths**. Everything is imported from the package root; anything
+  not re-exported from the root is not part of the public API.
+
+```ts
+import { Nautilus, AssetBuilder, getMetadata } from '@deltadao/nautilus' // [!code ++]
+import { AssetBuilder } from '@deltadao/nautilus/dist/AssetBuilder' // [!code --]
+```
+
+## tsconfig
+
+```json [tsconfig.json]
+{
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "es2022",
+    "strict": true
+  }
+}
+```
+
+`moduleResolution: "node"` (the TypeScript 4 default) cannot read the `exports` map and will
+report that the module has no declarations.
+
+## Pin `@oceanprotocol/ddo-js`
+
+DDO v5 types come from `@oceanprotocol/ddo-js`, because `@oceanprotocol/lib` re-exports only
+the **v4** `DDO` type. nautilus depends on `^0.4.1` while ocean.js asks for `^0.3.0`, and npm
+happily installs both — at which point `AssetV5` from one copy is not assignable to `AssetV5`
+from the other, and the errors are baffling.
+
+Dedupe it explicitly:
+
+```json [package.json]
+{
+  "overrides": {
+    "@oceanprotocol/ddo-js": "0.4.1"
+  }
+}
+```
+
+:::tip
+`npm ls @oceanprotocol/ddo-js` should print exactly one version. If it prints two, this is
+your problem.
+:::
+
+## Type-only exports
+
+Most configuration objects are interfaces rather than classes, so import them with
+`import type` when you only need the shape:
+
+```ts twoslash
+import type { AccessConfig, ComputeConfig, PublishResponse } from '@deltadao/nautilus'
+```
+
+The enums — `ServiceTypes`, `FileTypes`, `CredentialListTypes`, `LifecycleStates`, `SsiMode`,
+`PolicyServerAction` — are values, so they use a plain `import`.
+
+## Generic builders
+
+`ServiceBuilder` is generic over its service type and file type. The parameters are what make
+`addFile` reject a file object the service cannot carry:
+
+```ts twoslash
+import { ServiceBuilder, ServiceTypes, FileTypes } from '@deltadao/nautilus'
+// ---cut---
+const builder = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({ // [!code focus]
+  serviceType: ServiceTypes.ACCESS // [!code focus]
+}) // [!code focus]
+```
+
+## Two gotchas in the public surface
+
+:::warning[`getChainId` is ambiguous]
+The name is exported twice with different signatures — `getChainId(signer)` returning
+`Promise<number>`, and a DDO reader `getChainId(ddo)` returning `number`. The signer form
+wins at the package root, so the DDO form is effectively unreachable. Read a DDO's chain id
+off the resolved document instead.
+:::
+
+:::warning[`order()` has unnameable parameters]
+`order` and `reuseOrder` are exported, but their `OrderRequest` / `OrderResult` types are
+not, so you cannot annotate a variable holding one. Let inference do it, or prefer
+[`access`](/docs/api/nautilus/access), which wraps ordering for you.
+:::
