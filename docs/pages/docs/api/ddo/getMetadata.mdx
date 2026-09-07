@@ -1,0 +1,35 @@
+# getMetadata
+
+Read an asset's metadata without indexing into the document.
+
+## Usage
+
+```ts twoslash
+import { Nautilus, getMetadata } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const asset = await nautilus.getAsset('did:ope:1234abcd...')
+
+const metadata = getMetadata(asset) // [!code focus]
+
+metadata.name
+metadata.description
+```
+
+:::warning
+In v1 this was `asset.metadata`. DDO v5 nests everything under `credentialSubject`, so that
+path no longer exists — and using the helper means a future DDO v6 does not break your code.
+:::
+
+## Returns
+
+- Type: `MetadataV5`
+
+## Parameters
+
+### ddo
+
+- Type: `unknown`
+
+Any resolved asset.

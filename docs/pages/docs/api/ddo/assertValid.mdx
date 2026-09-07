@@ -1,0 +1,37 @@
+# assertValid
+
+[`validate`](/docs/api/ddo/validate), but throws instead of returning a result.
+
+## Usage
+
+```ts twoslash
+import { assertValid, DdoValidationError } from '@deltadao/nautilus'
+
+declare const ddo: Record<string, unknown>
+// ---cut---
+try {
+  await assertValid(ddo) // [!code focus]
+} catch (error) {
+  if (error instanceof DdoValidationError) {
+    console.error(error.errors)
+  }
+}
+```
+
+## Returns
+
+- Type: `Promise<void>`
+
+Throws `DdoValidationError` when the document does not conform. The error carries the field
+map on `errors`, and its `message` is already a readable one-liner.
+
+:::info
+[`publish`](/docs/api/nautilus/publish) and [`edit`](/docs/api/nautilus/edit) call this
+themselves before any transaction, so a malformed asset never costs gas.
+:::
+
+## Parameters
+
+### ddo
+
+- Type: `unknown`

@@ -1,0 +1,52 @@
+# getOrderPrice
+
+What ordering one datatoken will actually cost, fees included.
+
+## Usage
+
+```ts twoslash
+import { getOrderPrice } from '@deltadao/nautilus'
+import type { PricingInfo } from '@deltadao/nautilus'
+import type { Config } from '@oceanprotocol/lib'
+import type { Signer } from 'ethers'
+
+declare const signer: Signer
+declare const pricing: PricingInfo
+declare const config: Config
+// ---cut---
+const price = await getOrderPrice(signer, pricing, config) // [!code focus]
+
+price.total // approve and spend this
+```
+
+:::warning
+Free is not zero — a dispenser-priced asset still carries publish- and consume-market fees.
+Always spend `total` rather than assuming `'0'`.
+:::
+
+## Returns
+
+- Type: [`OrderPrice`](/docs/api/pricing/OrderPrice)
+
+## Parameters
+
+### signer
+
+- Type: `Signer`
+
+### pricing
+
+- Type: [`PricingInfo`](/docs/api/pricing/PricingInfo)
+
+From [`getPricingInfo`](/docs/api/pricing/getPricingInfo).
+
+### config
+
+- Type: `Config`
+
+### consumeMarketFeeAmount
+
+- Type: `string`
+- Default: `'0'`
+
+Your own market's cut, as a decimal string.

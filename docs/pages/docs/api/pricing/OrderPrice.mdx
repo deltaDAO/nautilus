@@ -1,0 +1,26 @@
+# OrderPrice
+
+What [`getOrderPrice`](/docs/api/pricing/getOrderPrice) returns. Every field is a decimal
+string.
+
+```ts twoslash
+import type { OrderPrice } from '@deltadao/nautilus'
+// ---cut---
+declare const price: OrderPrice
+
+price.total // what to approve and spend
+price.baseTokenAmount
+price.opcFee
+price.publishMarketFee
+price.consumeMarketFee
+```
+
+| Field | Meaning |
+| --- | --- |
+| `total` | **Approve and spend this** — the sum of everything below. |
+| `baseTokenAmount` | What the exchange itself charges. |
+| `opcFee` | Ocean Protocol Community fee. |
+| `publishMarketFee` | The publishing market's cut. |
+| `consumeMarketFee` | Your market's cut, if you charge one. |
+
+Replaces v1's `OrderPriceAndFees`. See [pricing](/docs/guides/pricing).

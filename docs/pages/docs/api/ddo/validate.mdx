@@ -1,0 +1,33 @@
+# validate
+
+Check a DDO against the DDO v5 schema, locally.
+
+## Usage
+
+```ts twoslash
+import { validate } from '@deltadao/nautilus'
+
+declare const ddo: Record<string, unknown>
+// ---cut---
+const { valid, errors } = await validate(ddo) // [!code focus]
+// @log: errors: { providedBy: [ 'Less than 1 values' ] }
+```
+
+## Returns
+
+- Type: `ValidationResult`
+
+`{ valid: boolean, errors: Record<string, string[]> }` — errors keyed by field name.
+
+:::info
+Entirely in-process: JSON-LD → RDF → SHACL against ddo-js's bundled schemas. No network call,
+no gas. See [validation](/docs/guides/validation).
+:::
+
+## Parameters
+
+### ddo
+
+- Type: `unknown`
+
+The document to check.
