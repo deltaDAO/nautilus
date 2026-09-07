@@ -3,15 +3,25 @@ import pkg from '../src/package.json' with { type: 'json' }
 import { sidebar } from './sidebar.js'
 
 /**
- * Vocs bakes `baseUrl` into the client chunk URLs, so a deployment served from any other
- * origin fetches its JS from this one and never hydrates. Vercel preview deployments get
- * their own `*.vercel.app` domain, hence the override — production and local builds keep
- * using the canonical domain.
+ * `baseUrl` becomes a `<base href>` on every page, so every relative request the client
+ * router makes — including the RSC payload it fetches for a link click — resolves against
+ * that origin rather than the one serving the page. An absolute value therefore only works
+ * on the single host it names.
+ *
+ * That is not enough for a preview: Vercel serves each deployment under both its unique
+ * `VERCEL_URL` and a branch alias, so pinning either one breaks navigation on the other,
+ * and `vocs preview` locally breaks on both. Pinning `VERCEL_URL` was the previous attempt
+ * and still failed for exactly this reason.
+ *
+ * So only production — which really is served from the canonical domain — gets an absolute
+ * base. Everywhere else it is omitted, no `<base>` is emitted, and every request resolves
+ * same-origin on whatever host is serving. The only casualty is sitemap/robots generation,
+ * which previews should not have anyway.
  */
 const baseUrl =
-  process.env.VERCEL_URL && process.env.VERCEL_ENV !== 'production'
-    ? `https://${process.env.VERCEL_URL}`
-    : 'https://nautilus.delta-dao.com'
+  process.env.VERCEL_ENV === 'production'
+    ? 'https://nautilus.delta-dao.com'
+    : undefined
 
 export default defineConfig({
   baseUrl,
