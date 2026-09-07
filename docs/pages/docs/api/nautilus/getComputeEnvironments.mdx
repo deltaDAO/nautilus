@@ -1,0 +1,74 @@
+# getComputeEnvironments
+
+List the compute environments a node offers.
+
+## Usage
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const environments = await nautilus.getComputeEnvironments() // [!code focus]
+
+for (const environment of environments) {
+  console.log(environment.id, environment.resources, environment.fees)
+}
+```
+
+Worth calling before [`compute`](/docs/api/nautilus/compute): environments differ in the
+resources they expose, their duration limits, which tokens they price per chain, and
+whether they offer free jobs at all. v1 silently used the first one.
+
+To resolve a single environment — or the node's default — use `getComputeEnvironment`:
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const environment = await nautilus.getComputeEnvironment('env-id') // [!code focus]
+```
+
+An unknown id throws with the list of available ones.
+
+## Returns
+
+- Type: `ComputeEnvironment[]`
+
+#### Notable properties
+
+##### id
+
+- Type: `string`
+
+##### consumerAddress
+
+- Type: `string`
+
+The address that actually reads the data, and so the consumer nautilus names when ordering.
+
+##### resources
+
+- Type: `ComputeResource[]`
+
+`{ id, type, min, max, total, inUse }` per resource. The ids are what `compute`'s
+`resources` refers to.
+
+##### fees
+
+- Type: `ComputeEnvFeesStructure`
+
+Keyed by chain id: `{ '32456': [{ feeToken, prices: [{ id, price }] }] }`. A token absent
+here cannot pay for a job on that chain.
+
+##### free
+
+- Type: `ComputeEnvironmentFreeOptions | undefined`
+
+Present only when the environment offers free jobs. Carries its own access list, resource
+limits and duration cap.
+
+##### maxJobDuration / maxJobs / runningJobs / queuedJobs
+
+Limits and current load.

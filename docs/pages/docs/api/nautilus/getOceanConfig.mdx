@@ -1,0 +1,26 @@
+# getOceanConfig
+
+The resolved chain configuration.
+
+Read this back when you want to see what `Nautilus.create` actually settled on: the config it
+uses is `ConfigHelper`'s entry for the signer's chain, with your `config` overrides merged over
+it.
+
+## Usage
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const config = nautilus.getOceanConfig() // [!code focus]
+
+console.log(config.chainId, config.oceanNodeUri)
+```
+
+## Returns
+
+- Type: `Config`
+
+The merged ocean.js `Config`. See [Custom Configuration](/docs/guides/config) for which
+fields matter and which are required.

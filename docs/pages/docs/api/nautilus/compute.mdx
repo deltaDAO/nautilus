@@ -1,99 +1,179 @@
 # compute
 
-Triggers a new [Compute Job](/docs/guides/compute) on a given dataset using a specified algorithm.
+Start a paid Compute-to-Data job.
 
 ## Usage
 
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'
 import { Wallet } from 'ethers'
-
 const nautilus = await Nautilus.create(new Wallet('0x1234'))
-
-await nautilus.compute({ // [!code focus]
-    dataset: { // [!code focus]
-        did: 'did:op:dataset...' // [!code focus]
-    }, // [!code focus]
-    algorithm: { // [!code focus]
-        did: 'did:op:algorithm...' // [!code focus]
-    } // [!code focus]
+// ---cut---
+const { jobs } = await nautilus.compute({ // [!code focus]
+  dataset: { did: 'did:ope:1234abcd...' }, // [!code focus]
+  algorithm: { did: 'did:ope:5678wxyz...' } // [!code focus]
 }) // [!code focus]
+
+const jobId = jobs[0].jobId
+```
+
+:::warning
+C2D v2 changed the compute model substantially. Resources are now requested explicitly,
+payment runs through an escrow contract, and all datasets travel in one array. See the
+[migration guide](/docs/migration#9-compute).
+:::
+
+What happens in order:
+
+1. Every input is resolved and its compute service selected.
+2. Credentials are satisfied for **all** inputs. A failure here aborts the whole job with
+   nothing spent — the reason this comes first.
+3. `initializeCompute` quotes the job: provider fees, reusable orders and the escrow amount.
+4. Escrow is funded and the environment authorised to draw the quoted amount.
+5. Each input is ordered — reusing an existing order where the node says one is valid.
+6. The job starts.
+
+### Choosing an environment
+
+v1 silently used the node's first environment. Prefer choosing deliberately, since
+resources, duration limits and fees differ:
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const environments = await nautilus.getComputeEnvironments()
+const environment = environments[0]
+
+const { jobs } = await nautilus.compute({
+  dataset: { did: 'did:ope:1234abcd...' },
+  algorithm: { did: 'did:ope:5678wxyz...' },
+  computeEnv: environment.id, // [!code focus]
+  resources: [ // [!code focus]
+    { id: 'cpu', amount: 2 }, // [!code focus]
+    { id: 'ram', amount: 2 } // [!code focus]
+  ] // [!code focus]
+})
 ```
 
 ## Returns
 
-[`ComputeJob | ComputeJob[]`](https://github.com/oceanprotocol/ocean.js/blob/main/src/%40types/Compute.ts#L34-L47) {/*link to type in docs if possible*/}
+- Type: `ComputeResult`
 
-The compute job object that was created when starting the new job.
+#### Properties
 
-## Parameters 
+##### jobs
+
+- Type: `ComputeJob[]`
+
+The started jobs. Poll them with [`getComputeStatus`](/docs/api/nautilus/getComputeStatus).
+
+##### environment
+
+- Type: `ComputeEnvironment`
+
+The environment the job actually runs in, including the one nautilus picked for you.
+
+##### initializeResults
+
+- Type: `ProviderComputeInitializeResults`
+
+What the node quoted: per-input provider fees and reusable orders, plus the escrow payment.
+
+##### orders
+
+- Type: `Record<string, string>`
+
+The order transaction backing each input, keyed by DID.
+
+## Parameters
 
 ### config
-- Type: `ComputeConfig`
 
-The configuration object for the compute job to start.
+- Type: `ComputeConfig`
 
 #### Properties
 
 ##### dataset
-- Type: [`ComputeAsset`](/docs/api/ComputeAsset)
 
-The dataset to compute on.
-```ts twoslash
-import { Nautilus } from '@deltadao/nautilus'
-import { Wallet } from 'ethers'
-const nautilus = await Nautilus.create(new Wallet('0x1234'))
-// ---cut---
-await nautilus.compute({ 
-    dataset: { // [!code focus]
-        did: 'did:op:dataset...' // [!code focus]
-    }, // [!code focus]
-    algorithm: { 
-        did: 'did:op:algorithm...' 
-    } 
-})
-```
+- Type: `ComputeAssetRef`
+
+`{ did, serviceId?, userdata? }`. Defaults to the asset's first `compute` service.
+
+:::info
+This type was renamed from `ComputeAsset` in v1, because ocean.js exports a different type
+under that name. Having both in scope was a standing source of confusion.
+:::
 
 ##### algorithm
-- Type: [`ComputeAlgorithm`](/docs/api/ComputeAlgorithm)
 
-The algorithm to compute with.
-```ts twoslash
-import { Nautilus } from '@deltadao/nautilus'
-import { Wallet } from 'ethers'
-const nautilus = await Nautilus.create(new Wallet('0x1234'))
-// ---cut---
-await nautilus.compute({ 
-    dataset: { 
-        did: 'did:op:dataset...' 
-    }, 
-    algorithm: { // [!code focus]
-        did: 'did:op:algorithm...' // [!code focus]
-    } // [!code focus]
-})
-```
+- Type: `ComputeAlgorithmRef`
+
+`ComputeAssetRef` plus `algocustomdata?` and `envs?` (environment variables for the
+container).
 
 ##### additionalDatasets (optional)
-- Type: [`ComputeAsset[]`](/docs/api/ComputeAsset)
 
-A list of additional datasets to use for computation.
+- Type: `ComputeAssetRef[]`
 
-```ts twoslash
-import { Nautilus } from '@deltadao/nautilus'
-import { Wallet } from 'ethers'
-const nautilus = await Nautilus.create(new Wallet('0x1234'))
-// ---cut---
-await nautilus.compute({ 
-    dataset: {
-        did: 'did:op:dataset...'
-    },
-    algorithm: { 
-        did: 'did:op:algorithm...' 
-    },
-    additionalDatasets: [ // [!code focus]
-        { // [!code focus]
-            did: 'did:op:dataset...' // [!code focus]
-        } // [!code focus]
-    ] // [!code focus]
-})
-```
+Extra inputs. C2D v2 passes every dataset in one array; nautilus assembles that for you.
+
+##### computeEnv (optional)
+
+- Type: `string`
+
+Environment id. Defaults to the node's first, which is logged when it happens.
+
+##### resources (optional)
+
+- Type: `ComputeResourceRequest[]`
+
+`[{ id: 'cpu', amount: 2 }]`. Ids come from `ComputeEnvironment.resources`. Defaults to
+each resource's declared minimum.
+
+##### paymentToken (optional)
+
+- Type: `string`
+
+Must be a token the environment prices for this chain — `fees` is keyed by chain id.
+Defaults to the first accepted token; an unaccepted one fails with the list of accepted ones.
+
+##### maxJobDuration (optional)
+
+- Type: `number`
+
+Seconds. Capped to the environment's `maxJobDuration`, with a warning when it is.
+
+##### output (optional)
+
+- Type: `ComputeOutput`
+
+`{ remoteStorage?, encryption? }`. v1's hardcoded `publishAlgorithmLog` and `publishOutput`
+flags no longer exist.
+
+##### outputBucketId (optional)
+
+- Type: `string`
+
+Store results in an ocean-node bucket instead. Mutually exclusive with `output`.
+
+##### additionalViewers (optional)
+
+- Type: `string[]`
+
+Extra addresses allowed to read the results.
+
+##### metadata (optional)
+
+- Type: `Record<string, string | number | boolean>`
+
+##### queueMaxWaitTime (optional)
+
+- Type: `number`
+
+Seconds to wait in the queue when resources are unavailable.
+
+##### skipCredentials (optional)
+
+- Type: `boolean`

@@ -1,0 +1,28 @@
+# getNodeClient
+
+The underlying [ocean-node](/docs/guides/ocean-node) client, for calls nautilus does not wrap.
+
+:::tip
+You also need this to build a [remote store](/docs/guides/remote-stores) or a credential
+provider, because both take a node client. That is why those are configured with a two-step
+`Nautilus.create` — see [`create`](/docs/api/nautilus/create).
+:::
+
+## Usage
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const node = nautilus.getNodeClient() // [!code focus]
+
+const status = await node.getNodeStatus()
+```
+
+## Returns
+
+- Type: `OceanNodeClient`
+
+The client the instance was configured with, already carrying its auth and chain id. See
+[Ocean Node client](/docs/guides/ocean-node) for what it exposes.

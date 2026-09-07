@@ -1,0 +1,42 @@
+# getComputeEnvironment
+
+Resolve a single compute environment by id, or the node's first one.
+
+This is the same selection [`compute`](/docs/api/nautilus/compute) and
+[`freeCompute`](/docs/api/nautilus/freeCompute) do internally, exposed so you can inspect an
+environment's resources and fees before committing to a job.
+
+## Usage
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+// A specific environment.
+const env = await nautilus.getComputeEnvironment('env-id') // [!code focus]
+
+// Or whichever the node lists first.
+const fallback = await nautilus.getComputeEnvironment() // [!code focus]
+```
+
+:::warning
+Omitting the id picks the node's **first** environment, which is rarely what you want for a
+paid job — it may not have the resources you need, or may price them differently. List them
+with [`getComputeEnvironments`](/docs/api/nautilus/getComputeEnvironments) and choose
+deliberately.
+:::
+
+## Returns
+
+- Type: `ComputeEnvironment`
+
+The environment, including its `resources`, per-resource limits and per-chain `fees`.
+
+## Parameters
+
+### computeEnv
+
+- Type: `string | undefined`
+
+The environment id. Omit to take the node's first environment.

@@ -1,6 +1,6 @@
 # access
 
-Access a specific asset by its decentralized identifier.
+Download an asset: order the service if needed, then get a one-time URL.
 
 ## Usage
 
@@ -9,89 +9,96 @@ import { Nautilus } from '@deltadao/nautilus'
 import { Wallet } from 'ethers'
 const nautilus = await Nautilus.create(new Wallet('0x1234'))
 // ---cut---
-const accessUrl = await nautilus.access({ // [!code focus]
-    assetDid: 'did:op:1234abcd...' // [!code focus]
+const { url } = await nautilus.access({ // [!code focus]
+  assetDid: 'did:ope:1234abcd...' // [!code focus]
 }) // [!code focus]
 
 // fetch the actual data
-const data = await fetch(accessUrl)
+const data = await fetch(url)
 ```
+
+What happens in order:
+
+1. If the service is credential-gated, the configured
+   [credential provider](/docs/guides/identity) satisfies the policy. This happens
+   **before** any spend, so a failed presentation costs nothing.
+2. The node is asked for provider fees and whether a previous order can be reused.
+3. An existing order is reused where possible — extended if a new fee period is due, or
+   used as-is if not. Otherwise a datatoken is bought and a new order placed.
+4. The download URL is built, carrying the verifier session if there was one.
 
 ## Returns
 
-`string`
+- Type: `AccessResult`
 
-A one-time accessible url to download the raw data of the requested asset.
+:::warning
+In v1 this returned a bare URL string. It now returns an object, so that the order backing
+the download is visible to the caller.
+:::
+
+#### Properties
+
+##### url
+
+- Type: `string`
+
+The one-time URL to download the raw data.
+
+##### did / serviceId
+
+- Type: `string`
+
+The asset and the service that were actually accessed — useful when you let nautilus pick
+the service.
+
+##### transferTxId
+
+- Type: `string`
+
+The order authorising this download.
+
+##### reusedOrder
+
+- Type: `boolean`
+
+`true` when an existing order was reused rather than a new one paid for.
 
 ## Parameters
 
 ### config
-- Type: `AccessConfig`
 
-The configuration object for the access request.
+- Type: `AccessConfig`
 
 #### Properties
 
 ##### assetDid
+
 - Type: `string`
 
-The decentralized identifier of the asset to access.
-```ts twoslash
-import { Nautilus } from '@deltadao/nautilus'
-import { Wallet } from 'ethers'
-const nautilus = await Nautilus.create(new Wallet('0x1234'))
-// ---cut---
-const accessUrl = await nautilus.access({
-    assetDid: 'did:op:1234abcd...' // [!code focus]
-})
-```
+The identifier of the asset to access.
 
 ##### serviceId (optional)
+
 - Type: `string`
 
-Optionally specify a service to access. Defaults to the first service of the asset's metadata.
-```ts twoslash
-import { Nautilus } from '@deltadao/nautilus'
-import { Wallet } from 'ethers'
-const nautilus = await Nautilus.create(new Wallet('0x1234'))
-// ---cut---
-const accessUrl = await nautilus.access({ 
-    assetDid: 'did:op:1234abcd...', 
-    serviceId: 'specific-service-id' // [!code focus]
-})
-```
+Which service to download from. Defaults to the asset's first `access` service.
 
 ##### fileIndex (optional)
+
 - Type: `number`
 
-Optionally specify a file of the service to access. Defaults to the first file of the service (`0`).
-```ts twoslash
-import { Nautilus } from '@deltadao/nautilus'
-import { Wallet } from 'ethers'
-const nautilus = await Nautilus.create(new Wallet('0x1234'))
-// ---cut---
-const accessUrl = await nautilus.access({ 
-    assetDid: 'did:op:1234abcd...', 
-    fileIndex: 0 // [!code focus]
-})
-```
+Which file of the service to download. Defaults to `0`.
 
 ##### userdata (optional)
+
 - Type: [`UserCustomParameters`](/docs/api/UserCustomParameters)
 
-If the asset requires or allows for custom user parameters, these can be configured here.
+Values for the service's consumer parameters. See the
+[ConsumerParameterBuilder](/docs/api/ConsumerParameterBuilder).
 
-Learn more about how to use custom userdata with assets in our [Consumer Parameters Guide](/docs/api/ConsumerParameterBuilder).
-```ts twoslash
-import { Nautilus } from '@deltadao/nautilus'
-import { Wallet } from 'ethers'
-const nautilus = await Nautilus.create(new Wallet('0x1234'))
-// ---cut---
-const accessUrl = await nautilus.access({ 
-    assetDid: 'did:op:1234abcd...', 
-    userdata: { // [!code focus]
-        parameter: 'value', // [!code focus]
-        number: 123, // [!code focus]
-    } // [!code focus]
-})
-```
+##### skipCredentials (optional)
+
+- Type: `boolean`
+
+Skip the credential presentation even for a gated service. Only useful when you already
+hold a valid verifier session and supplied it as a `StaticCredentialProvider`.
