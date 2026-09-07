@@ -1,0 +1,27 @@
+# MemorySessionStore
+
+The default cache for verifier sessions, held in process.
+
+## Usage
+
+```ts twoslash
+import { MemorySessionStore, WaltIdCredentialProvider } from '@deltadao/nautilus'
+import type { OceanNodeClient } from '@deltadao/nautilus'
+
+declare const node: OceanNodeClient
+// ---cut---
+const credentials = new WaltIdCredentialProvider(node, {
+  walletApi: 'https://wallet.example.org',
+  sessionStore: new MemorySessionStore() // [!code focus]
+})
+```
+
+Sessions are keyed by `{ did, serviceId, consumerAddress }`, so re-accessing the same gated
+service does not repeat the exchange.
+
+:::info
+Implement `SessionStore` yourself — `get`, `set`, `delete`, `clear` — to share sessions across
+processes or persist them between runs.
+:::
+
+See [credential-gated assets](/docs/guides/identity).
