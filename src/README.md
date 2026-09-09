@@ -51,7 +51,24 @@ Looking for dedicated feature documentations? Follow the links below:
 - [Editing](https://nautilus.delta-dao.com/docs/guides/edit)
 - [Credential-gated assets](https://nautilus.delta-dao.com/docs/guides/identity)
 
-Coming from nautilus v1? See [MIGRATION.md](https://github.com/deltaDAO/nautilus/blob/main/MIGRATION.md) for a call-by-call map.
+Prefer running code to reading it? Every flow above is a command in [`examples/`](https://github.com/deltaDAO/nautilus/tree/main/examples) — see [Examples](#examples) below.
+
+## What's new in 2.0.0
+
+nautilus v1 targeted `@oceanprotocol/lib` 3.4.6, ethers v5, Aquarius, Provider and DDO v4.1.0 — none of which a current Ocean deployment runs. v2 targets `@oceanprotocol/lib` 9.x, ethers v6, ocean-node and DDO v5, and adds first-class support for the policy server and the walt.id identity stack.
+
+The builder pattern is unchanged as the primary API: `AssetBuilder`, `ServiceBuilder` and `ConsumerParameterBuilder` keep their fluent shape, and every v1 capability still has a method. This is a breaking major because the DDO model, the transport and the signer library all changed underneath.
+
+- **ocean-node replaces Aquarius and Provider.** One `OceanNodeClient` wraps both, and `Config.oceanNodeUri` replaces `metadataCacheUri` and `providerUri`.
+- **The subgraph is gone.** Pricing comes from chain reads and the DDO's indexed stats, so `urql`, `graphql` and graphql-codegen are no longer dependencies.
+- **DDO v5.** Assets are W3C Verifiable Credentials: everything moved under `credentialSubject`, DIDs use the `did:ope:` prefix, `description` and `displayTitle` are language-tagged, `license` is structured, and `providedBy` is required.
+- **DDOs are signed and stored off chain.** Only a `{remote}` pointer is written on chain. The remote backend is configurable — IPFS, or ocean-node's own persistent storage.
+- **Credential-gated access.** nautilus resolves policy-server challenges through the walt.id wallet and verifier, headless by default with optional selection callbacks.
+- **Compute is C2D v2.** Explicit resource requests, escrow payment, free compute, streamable logs and results.
+- **Local DDO validation** via ddo-js SHACL, before any gas is spent.
+- **`strict` TypeScript** is enabled, and ethers v6 is required.
+
+Because this is a beta, the surface above can still move. [MIGRATION.md](https://github.com/deltaDAO/nautilus/blob/main/MIGRATION.md) has the call-by-call mapping from v1, and the [changelog](https://github.com/deltaDAO/nautilus/blob/main/src/CHANGELOG.md) tracks what lands in each beta.
 
 ## Quick Start
 
@@ -183,6 +200,50 @@ const nautilus = await Nautilus.create(signer, {
 const { url } = await nautilus.access({ assetDid: 'did:ope:12345' })
 ```
 
+## Examples
+
+Everything above, wired up and runnable, lives in [`examples/`](https://github.com/deltaDAO/nautilus/tree/main/examples) in this repository: a small CLI covering publishing, editing, downloading, Compute-to-Data and credential-gated access.
+
+```sh
+git clone https://github.com/deltaDAO/nautilus.git
+cd nautilus
+npm install && npm run build
+
+cd examples
+npm install
+cp example.env .env
+```
+
+Set `NETWORK` and `PRIVATE_KEY` in `.env`, then check that your ocean-node is reachable before anything else:
+
+```sh
+npm start -- check:node
+```
+
+Every example is a named command, and `help` lists all of them:
+
+```sh
+npm start -- help
+npm start -- publish:access-dataset
+npm start -- access:download did:ope:...
+```
+
+The commands are grouped by prefix: `check:`, `publish:`, `asset:`, `edit:`, `access:`, `compute:` and `ssi:` for the credential-gated flows.
+
+### Local build or published package
+
+The examples ship pointing at the nautilus in the same checkout, so they exercise your working copy by default. Three scripts switch between that and the released package:
+
+```sh
+npm run nautilus:which   # report which is active
+npm run use:local        # build ../src and link it   (the default)
+npm run use:npm          # switch to the published package
+```
+
+`npm run use:npm -- --spec 2.0.0-beta.0` pins a specific version or dist-tag. Switching rewrites `package.json` and `package-lock.json`, so run `use:local` again before committing.
+
+Full details, including the environment variables and the credential-gated setup, are in the [examples README](https://github.com/deltaDAO/nautilus/blob/main/examples/README.md) and on the [Examples](https://nautilus.delta-dao.com/docs/examples) docs page.
+
 ## Next Steps
 
 Find dedicated feature documentation by following one of the links below:
@@ -192,7 +253,7 @@ Find dedicated feature documentation by following one of the links below:
 - [Editing](https://nautilus.delta-dao.com/docs/guides/edit)
 - [Credential-gated assets](https://nautilus.delta-dao.com/docs/guides/identity)
 
-If you want to jump straight into code, feel free to take a look at the runnable [examples](https://github.com/deltaDAO/nautilus/tree/main/examples) in this repository — a small CLI covering publishing, editing, downloading, Compute-to-Data and credential-gated access.
+And if you would rather run code than read it, start with the [examples](#examples).
 
 ## License
 
