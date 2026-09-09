@@ -291,6 +291,32 @@ describe('AssetBuilder in edit mode', () => {
     expect(asset.ddo.removeServices).to.deep.equal([SERVICE_ID])
   })
 
+  it('keeps credential mutations out of the resolved asset', () => {
+    // `getCredentials()` hands back the asset's own object, and the policy helpers mutate
+    // entries in place — seeding by reference wrote builder changes into the caller's asset.
+    const source = getAssetFixture()
+    const before = structuredClone(source.credentialSubject.credentials)
+
+    new AssetBuilder(source).addCredentialAddresses(CredentialListTypes.ALLOW, [
+      '0x2'
+    ])
+
+    expect(source.credentialSubject.credentials).to.deep.equal(before)
+  })
+
+  it('reset() discards credential mutations instead of replaying them', () => {
+    const builder = new AssetBuilder(getAssetFixture())
+
+    builder.addCredentialAddresses(CredentialListTypes.ALLOW, ['0x2'])
+    builder.reset()
+
+    const allow = builder.build().ddo.credentials.allow
+
+    expect(
+      allow?.find((entry) => entry.type === 'address')?.values
+    ).to.deep.equal([{ address: '*' }])
+  })
+
   it('reset() returns to the loaded asset, not to an empty one', () => {
     // v1's reset() discarded the edit-mode state entirely.
     const builder = new AssetBuilder(getAssetFixture())

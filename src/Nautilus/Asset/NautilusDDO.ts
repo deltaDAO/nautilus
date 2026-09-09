@@ -59,7 +59,10 @@ export class NautilusDDO {
     ddo.issuer = asset.issuer
     ddo.chainId = asset.credentialSubject?.chainId
     ddo.nftAddress = asset.credentialSubject?.nftAddress
-    ddo.credentials = getCredentials(asset)
+    // Deep copy, not a reference: `getCredentials()` hands back the resolved asset's own
+    // object, and the policy helpers mutate entries in place — aliasing it would write
+    // builder changes back into the caller's asset, and reset() would replay them.
+    ddo.credentials = structuredClone(getCredentials(asset))
     ddo.metadata = seedAdditiveMetadata(asset)
 
     return ddo

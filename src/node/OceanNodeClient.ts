@@ -36,6 +36,7 @@ import {
   type ComputeResultStream,
   type DownloadResponse,
   type FileInfo,
+  LoggerInstance,
   type NodeStatus,
   type PersistentStorageFileEntry,
   type ProviderComputeInitializeResults,
@@ -109,6 +110,31 @@ export class OceanNodeClient {
     this.auth = options.auth
     this.consumerAddressOverride = options.consumerAddress
     this.aquarius = new Aquarius(options.nodeUri)
+  }
+
+  /**
+   * A client for another node, carrying this one's auth, chain and consumer address.
+   *
+   * Consume flows need this: a service's file object is encrypted with a key local to the
+   * node in its `serviceEndpoint` (see `encrypt`), so `initialize` and the download must be
+   * addressed to that node — the configured one cannot decrypt. Trailing slashes are
+   * normalized, and the same endpoint returns this very client, so per-instance state
+   * (like a minted session token via `setAuth`) is only left behind on an actual switch.
+   *
+   * The JWT caveat from `encrypt` applies here too: a token minted for one node is
+   * rejected by another, so cross-node consume needs Signer auth.
+   */
+  forEndpoint(uri: string): OceanNodeClient {
+    const normalize = (value: string) => value.replace(/\/+$/, '')
+
+    if (normalize(uri) === normalize(this.nodeUri)) return this
+
+    return new OceanNodeClient({
+      nodeUri: normalize(uri),
+      chainId: this.chainId,
+      auth: this.auth,
+      consumerAddress: this.consumerAddressOverride
+    })
   }
 
   /** Swap in a session token after minting one, so later calls skip nonce-and-sign. */
@@ -643,9 +669,11 @@ export class OceanNodeClient {
   /**
    * Starts a policy-server verification for one asset/service.
    *
-   * Returns `null` when the node does not advertise the endpoint — the clean feature-test
-   * for "this deployment has no policy server", which callers should treat as "SSI is
-   * unavailable" rather than as an error.
+   * Returns `null` when the request fails — the feature-test for "this deployment has no
+   * policy server", which callers treat as "SSI is unavailable" rather than as an error.
+   * ocean.js throws on *any* non-ok response, so a node without a policy server is
+   * indistinguishable here from a misconfigured one; the failure is logged as a warning so
+   * the latter stays diagnosable.
    */
   async initializePolicyVerification(
     request: {
@@ -656,14 +684,21 @@ export class OceanNodeClient {
     },
     signal?: AbortSignal
   ): Promise<unknown | null> {
-    return attempt('initializePSVerification', () =>
-      ProviderInstance.initializePSVerification(
+    try {
+      return await ProviderInstance.initializePSVerification(
         this.nodeUri,
         this.auth,
         request,
         signal
       )
-    )
+    } catch (error) {
+      LoggerInstance.warn(
+        '[ocean-node] initializePSVerification failed; treating the node as having no policy server',
+        error instanceof Error ? error.message : String(error)
+      )
+
+      return null
+    }
   }
 
   /** Forwards an action to the policy server through the node. */

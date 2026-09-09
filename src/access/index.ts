@@ -6,7 +6,7 @@
  */
 
 import type { Config } from '@oceanprotocol/lib'
-import { LoggerInstance } from '@oceanprotocol/lib'
+import { allowanceWei, approveWei, LoggerInstance } from '@oceanprotocol/lib'
 import type { Signer } from 'ethers'
 import type { AccessConfig, AccessResult } from '../@types/Access.js'
 import {
@@ -87,7 +87,15 @@ export async function access(
   })
 
   // 2. Ask the node for provider fees and whether a previous order can be reused.
-  const initialized = await node.initialize(asset.id, service.id, {
+  //
+  // Not necessarily the configured node: the file object was encrypted with a key local to
+  // the node in the service's own endpoint, so the quote and the download must come from
+  // there — the configured node would take the payment and then fail to decrypt.
+  const serviceNode = service.serviceEndpoint
+    ? node.forEndpoint(service.serviceEndpoint)
+    : node
+
+  const initialized = await serviceNode.initialize(asset.id, service.id, {
     fileIndex: config.fileIndex,
     consumerAddress,
     userdata: config.userdata
@@ -113,12 +121,18 @@ export async function access(
 
   LoggerInstance.debug('[access] order settled', { transferTxId, reused })
 
-  // 4. Build the download URL, carrying the verifier session when there is one.
-  const url = await node.getDownloadUrl(asset.id, service.id, transferTxId, {
-    fileIndex: config.fileIndex,
-    policyServer,
-    userdata: config.userdata
-  })
+  // 4. Build the download URL — on the service's node, which holds the decryption key —
+  // carrying the verifier session when there is one.
+  const url = await serviceNode.getDownloadUrl(
+    asset.id,
+    service.id,
+    transferTxId,
+    {
+      fileIndex: config.fileIndex,
+      policyServer,
+      userdata: config.userdata
+    }
+  )
 
   return {
     url,
@@ -146,7 +160,7 @@ export async function settleOrder(params: {
     params
 
   const providerFee = initialized.providerFee as
-    | { providerFeeAmount?: string }
+    | { providerFeeAmount?: string; providerFeeToken?: string }
     | undefined
 
   const feeDue = Boolean(
@@ -156,6 +170,18 @@ export async function settleOrder(params: {
   // Nothing to pay and an order already in force: reuse the transaction as it stands.
   if (hasReusableOrder(initialized) && !feeDue)
     return { transferTxId: initialized.validOrder as string, reused: true }
+
+  // Both remaining paths hand the fee to the datatoken, whose `_checkProviderFee` settles
+  // it with `transferFrom` — and neither `startOrder` nor `reuseOrder` approves anything,
+  // so without this any non-zero provider fee reverts on chain.
+  if (feeDue && providerFee?.providerFeeToken)
+    await approveProviderFee({
+      signer,
+      chainConfig,
+      datatokenAddress,
+      providerFeeToken: providerFee.providerFeeToken,
+      providerFeeAmount: providerFee.providerFeeAmount as string
+    })
 
   // An order in force but a new fee period: extend it rather than buying again.
   if (hasReusableOrder(initialized))
@@ -182,4 +208,50 @@ export async function settleOrder(params: {
     consumer: params.consumer,
     payer: params.payer
   })
+}
+
+/**
+ * Approves the datatoken to pull the provider fee before the order that consumes it.
+ *
+ * The amount the node quotes is already in wei, hence `approveWei` rather than `approve`,
+ * which expects human units and would scale the amount by the token's decimals again.
+ */
+async function approveProviderFee(params: {
+  signer: Signer
+  chainConfig: Config
+  datatokenAddress: string
+  providerFeeToken: string
+  providerFeeAmount: string
+}): Promise<void> {
+  const { signer, chainConfig, datatokenAddress } = params
+  const account = await signer.getAddress()
+
+  // A standing allowance that covers the fee needs no transaction.
+  const standing = await allowanceWei(
+    signer,
+    params.providerFeeToken,
+    account,
+    datatokenAddress
+  )
+
+  if (BigInt(standing) >= BigInt(params.providerFeeAmount)) return
+
+  const response = await approveWei(
+    signer,
+    chainConfig,
+    account,
+    params.providerFeeToken,
+    datatokenAddress,
+    params.providerFeeAmount,
+    // Force: the allowance was already checked above, with >= where ocean.js uses a
+    // strict >, so an allowance exactly equal to the fee is not re-approved.
+    true
+  )
+
+  // ocean.js waits for the approval itself but swallows a failed send and returns null;
+  // surface that here rather than letting the order revert on a missing allowance.
+  if (!response)
+    throw new Error(
+      `Could not approve the provider fee of ${params.providerFeeAmount} wei on token ${params.providerFeeToken} for ${datatokenAddress}.`
+    )
 }

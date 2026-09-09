@@ -180,11 +180,12 @@ describe('compute', () => {
 
       expect(result.jobs).to.be.an('array').and.not.empty
       expect(result.environment.id).to.equal(paid.id)
-      // Both inputs had to be ordered, and each order id is recorded by DID.
-      expect(Object.keys(result.orders)).to.have.members([
-        datasetDid,
-        algorithmDid
-      ])
+      // Both inputs had to be ordered, and each order id is recorded per
+      // `<did>#<serviceId>` — the service is part of the key because one DID can back
+      // two inputs (e.g. the algorithm doubling as a dataset).
+      expect(
+        Object.keys(result.orders).map((key) => key.split('#')[0])
+      ).to.have.members([datasetDid, algorithmDid])
 
       jobId = result.jobs[0].jobId
     })

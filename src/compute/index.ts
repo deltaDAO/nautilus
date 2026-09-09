@@ -44,6 +44,7 @@ import {
   getServiceByType,
   getServiceCredentials,
   getServiceIndex,
+  getServices,
   supportsSsi
 } from '../ddo/read.js'
 import type { PolicyServerComputePayload } from '../ddo/types.js'
@@ -157,10 +158,13 @@ export async function compute(
   })
 
   for (const dataset of datasets)
-    dataset.transferTxId = orders[dataset.documentId] || dataset.transferTxId
-  if (algorithm.documentId)
+    dataset.transferTxId =
+      orders[orderKey(dataset.documentId, dataset.serviceId)] ||
+      dataset.transferTxId
+  if (algorithm.documentId && algorithm.serviceId)
     algorithm.transferTxId =
-      orders[algorithm.documentId] || algorithm.transferTxId
+      orders[orderKey(algorithm.documentId, algorithm.serviceId)] ||
+      algorithm.transferTxId
 
   // 5. Start the job.
   const jobs = await node.computeStart({
@@ -257,21 +261,28 @@ async function resolveInputs(
     refs.map(async ({ ref, isAlgorithm }) => {
       const asset = await node.resolve(ref.did)
 
-      // An explicit id must still name a *compute* service. Only checking that the asset
-      // has one somewhere let an `access` service through, which the node then rejected
-      // deep inside the job — long after the orders were placed.
+      // A dataset must name a *compute* service. Only checking that the asset has one
+      // somewhere let an `access` service through, which the node then rejected deep
+      // inside the job — long after the orders were placed. Algorithms are different:
+      // they are routinely published with only an `access` service (v1 ordered
+      // `services[0]` regardless of type, and the node accepts it), so the algorithm
+      // prefers a compute service but falls back to the first one.
       const service = ref.serviceId
         ? findServiceById(asset, ref.serviceId)
-        : getServiceByType(asset, 'compute')
+        : isAlgorithm
+          ? getServiceByType(asset, 'compute') || getServices(asset)[0]
+          : getServiceByType(asset, 'compute')
 
       if (!service)
         throw new Error(
           ref.serviceId
             ? `Asset ${ref.did} has no service with id ${ref.serviceId}.`
-            : `Asset ${ref.did} has no 'compute' service.`
+            : isAlgorithm
+              ? `Asset ${ref.did} has no services.`
+              : `Asset ${ref.did} has no 'compute' service.`
         )
 
-      if (service.type !== 'compute')
+      if (!isAlgorithm && service.type !== 'compute')
         throw new Error(
           `Service ${ref.serviceId} of ${ref.did} is a '${service.type}' service; compute jobs need a 'compute' service.`
         )
@@ -576,10 +587,19 @@ async function placeOrders(params: {
       consumer
     })
 
-    orders[input.asset.id] = transferTxId
+    // Keyed by DID *and* service: one asset can back two inputs (the algorithm doubling
+    // as a dataset, or a DID listed twice with different services), and a DID-only key
+    // made the last order overwrite the first — computeStart then failed on a mismatched
+    // transferTxId even though both orders were paid.
+    orders[orderKey(input.asset.id, input.serviceId)] = transferTxId
   }
 
   return orders
+}
+
+/** The key of one order in `ComputeResult.orders`: a DID URL naming the exact service. */
+function orderKey(did: string, serviceId: string): string {
+  return `${did}#${serviceId}`
 }
 
 /** The node returns results positionally for datasets and separately for the algorithm. */

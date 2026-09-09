@@ -10,7 +10,6 @@
  *     several frames away.
  */
 import {
-  amountToUnits,
   approve,
   type Config,
   Datatoken,
@@ -259,26 +258,25 @@ async function approveSpend(params: {
   account: string
   token: string
   spender: string
+  /** In human units — ocean.js's `approve` converts to token units internally. */
   amount: string
   decimals?: number
 }): Promise<void> {
   if (Number(params.amount) <= 0) return
 
-  const units = await amountToUnits(
-    params.signer,
-    params.token,
-    params.amount,
-    params.decimals
-  )
-
+  // Pass the human-unit amount straight through: `approve` compares it against the
+  // existing allowance (also read in human units) and converts via its own
+  // `amountToUnits`. Pre-converting to wei here double-converted the amount — a
+  // 10^decimals-inflated allowance — and defeated the allowance short-circuit.
   const response = await approve(
     params.signer,
     params.config,
     params.account,
     params.token,
     params.spender,
-    units,
-    false
+    params.amount,
+    false,
+    params.decimals
   )
 
   // `approve` returns a number when the existing allowance already suffices.

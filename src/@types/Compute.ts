@@ -21,6 +21,11 @@ export interface ComputeAssetRef {
 }
 
 export interface ComputeAlgorithmRef extends ComputeAssetRef {
+  /**
+   * Defaults to the asset's `compute` service if it has one, else its first service —
+   * algorithms are routinely published with only an `access` service.
+   */
+  serviceId?: string
   algocustomdata?: Record<string, unknown>
   /** Environment variables passed into the algorithm container. */
   envs?: Record<string, string>
@@ -102,7 +107,13 @@ export interface ComputeResult {
   jobs: ComputeJob[]
   environment: ComputeEnvironment
   initializeResults: ProviderComputeInitializeResults
-  /** Order transactions created or reused, keyed by DID. */
+  /**
+   * Order transactions created or reused, keyed by `<did>#<serviceId>`.
+   *
+   * The service id is part of the key because one asset can back two inputs — an
+   * algorithm doubling as a dataset, or a DID listed twice with different services —
+   * and each service is ordered separately.
+   */
   orders: Record<string, string>
 }
 

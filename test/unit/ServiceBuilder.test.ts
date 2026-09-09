@@ -258,6 +258,85 @@ describe('ServiceBuilder in edit mode', () => {
     expect(service.id).to.equal(SERVICE_ID)
     expect(service.timeout).to.equal(86400)
   })
+
+  // The seeding path must deep-copy: `getService()` hands back the resolved asset's own
+  // objects, and the compute/credential mutators write in place. Aliasing them
+  // contaminated the caller's asset — and survived reset(), which re-seeds from it.
+  describe('does not alias the resolved asset', () => {
+    it('keeps compute mutations out of the source asset', () => {
+      const asset = getComputeAssetFixture()
+      const source = asset.credentialSubject.services[0]
+
+      new ServiceBuilder<ServiceTypes.COMPUTE, FileTypes.URL>({
+        asset,
+        serviceId: SERVICE_ID
+      })
+        .allowRawAlgorithms(true)
+        .addTrustedAlgorithmPublisher('0xAbC')
+
+      expect(source.compute?.allowRawAlgorithm).to.equal(false)
+      expect(source.compute?.publisherTrustedAlgorithmPublishers).to.deep.equal(
+        []
+      )
+    })
+
+    it('keeps credential mutations out of the source service', () => {
+      const asset = getAssetFixture()
+      const source = asset.credentialSubject.services[0]
+      source.credentials = {
+        allow: [{ type: 'address', values: [{ address: '0x1' }] }]
+      } as never
+
+      new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+        asset,
+        serviceId: SERVICE_ID
+      }).addCredentialAddresses(CredentialListTypes.ALLOW, ['0x2'])
+
+      expect(
+        (source.credentials as unknown as { allow: { values: unknown[] }[] })
+          .allow[0].values
+      ).to.deep.equal([{ address: '0x1' }])
+    })
+
+    it('keeps added consumer parameters out of the source service', () => {
+      const asset = getAssetFixture()
+      const source = asset.credentialSubject.services[0] as {
+        consumerParameters?: unknown[]
+      }
+      source.consumerParameters = [
+        { name: 'a', type: 'text', label: 'A', required: false } as never
+      ]
+
+      new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+        asset,
+        serviceId: SERVICE_ID
+      }).addConsumerParameter({
+        name: 'b',
+        type: 'text',
+        label: 'B',
+        required: false
+      } as never)
+
+      expect(source.consumerParameters).to.have.length(1)
+    })
+
+    it('reset() discards compute mutations instead of replaying them', () => {
+      const builder = new ServiceBuilder<ServiceTypes.COMPUTE, FileTypes.URL>({
+        asset: getComputeAssetFixture(),
+        serviceId: SERVICE_ID
+      })
+
+      builder.allowRawAlgorithms(true).addTrustedAlgorithmPublisher('0xAbC')
+      builder.reset()
+
+      const service = builder.build()
+
+      expect(service.compute.allowRawAlgorithm).to.equal(false)
+      expect(service.compute.publisherTrustedAlgorithmPublishers).to.deep.equal(
+        []
+      )
+    })
+  })
 })
 
 describe('NautilusService projection', () => {

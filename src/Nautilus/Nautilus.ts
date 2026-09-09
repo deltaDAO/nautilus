@@ -437,14 +437,16 @@ export class Nautilus {
     })
 
     /**
-     * The signer is authoritative for `issuer`, so stamp it before validating, signing or
-     * returning the document. Leaving it to the signing envelope meant a builder-supplied
-     * issuer was overwritten there and nowhere else: `setIssuer()` looked like it worked,
-     * SHACL validated a document that was never signed, and `PublishResponse.ddo` reported
-     * an issuer the credential did not carry. A declared issuer that names someone other
-     * than the signer is rejected by `toCredential()` rather than silently replaced.
+     * The signer's identity is the *default* for `issuer`, stamped before validating,
+     * signing or returning the document, so SHACL checks the exact document that gets
+     * signed and `PublishResponse.ddo` reports the issuer the credential carries. Only the
+     * unset case is stamped (`project()` emits `''` when no issuer was declared): a
+     * deliberately declared issuer — `setIssuer()`, or the one seeded from a resolved asset
+     * on edit — must reach `toCredential()`, whose mismatch guard rejects signing for
+     * somebody else. Overwriting unconditionally here made that guard unreachable, so
+     * `setIssuer()` looked like it worked while the signed claims said something else.
      */
-    ddo.issuer = await ddoSigner.getIssuer()
+    if (!ddo.issuer) ddo.issuer = await ddoSigner.getIssuer()
 
     // Local SHACL validation, before anything is signed or written. Cheap, and it names the
     // exact failing field — the node never sees this document, so nothing else would.

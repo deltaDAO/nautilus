@@ -88,17 +88,24 @@ export class ServiceBuilder<
     service.timeout = existing.timeout
     service.existingEncryptedFiles = existing.files
     service.state = existing.state
-    service.credentials = getServiceCredentials(existing)
+
+    // Deep copies, not references: `getService()` hands back the resolved asset's own
+    // objects, and the compute/credential mutators write in place — aliasing them would
+    // contaminate the caller's asset, and reset() would replay the mutated state.
+    service.credentials = structuredClone(getServiceCredentials(existing))
 
     if (existing.name) service.name = existing.name
     if (existing.displayName) service.displayName = existing.displayName
     if (existing.description) service.description = existing.description
     if (existing.additionalInformation)
-      service.additionalInformation = existing.additionalInformation
-    if (existing.compute) service.compute = existing.compute
+      service.additionalInformation = structuredClone(
+        existing.additionalInformation
+      )
+    if (existing.compute) service.compute = structuredClone(existing.compute)
     if (existing.consumerParameters?.length)
-      service.consumerParameters =
-        existing.consumerParameters as unknown as ConsumerParameterV5[]
+      service.consumerParameters = structuredClone(
+        existing.consumerParameters
+      ) as unknown as ConsumerParameterV5[]
     if (existing.dataSchema) service.dataSchema = existing.dataSchema
     if (existing.inputSchema) service.inputSchema = existing.inputSchema
     if (existing.outputSchema) service.outputSchema = existing.outputSchema

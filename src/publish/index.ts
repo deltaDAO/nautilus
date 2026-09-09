@@ -24,7 +24,12 @@ import {
   NftFactory,
   ZERO_ADDRESS
 } from '@oceanprotocol/lib'
-import { type Signer, type TransactionReceipt, toBeHex } from 'ethers'
+import {
+  parseUnits,
+  type Signer,
+  type TransactionReceipt,
+  toBeHex
+} from 'ethers'
 import type {
   FileTypes,
   NautilusService,
@@ -182,21 +187,46 @@ export async function createDatatokenForService(params: {
     if (!pricing.freCreationParams)
       throw new Error('Fixed pricing needs freCreationParams.')
 
+    const freParams = { ...pricing.freCreationParams, owner }
+
+    // ocean.js's `Datatoken.createFixedRate` forwards fixedRate/marketFee raw to the
+    // contract, while the first-service path (`NftFactory.getFreCreationParams`) converts
+    // both with the datatoken's decimals. Convert here the same way, so both publish paths
+    // create identical exchanges — without this, a rate of '10' became 1e-17 tokens.
     response = await datatoken.createFixedRate(datatokenAddress, owner, {
-      ...pricing.freCreationParams,
-      owner
+      ...freParams,
+      fixedRate: parseUnits(
+        freParams.fixedRate,
+        freParams.datatokenDecimals
+      ).toString(),
+      marketFee: parseUnits(
+        freParams.marketFee,
+        freParams.datatokenDecimals
+      ).toString()
     })
   } else {
+    // Defaults and any user-supplied overrides are in human units, matching the
+    // first-service path.
+    const dispenserParams = {
+      maxTokens: '1',
+      maxBalance: '100000000',
+      withMint: true,
+      allowedSwapper: ZERO_ADDRESS,
+      ...pricing.dispenserParams
+    }
+
+    // Same raw-forwarding gap as above: `Datatoken.createDispenser` passes
+    // maxTokens/maxBalance straight through, while the first-service path
+    // (`NftFactory.createNftWithDatatokenWithDispenserTx`) converts both to 18-decimal
+    // units. Convert at the call boundary so overrides stay human-readable.
     response = await datatoken.createDispenser(
       datatokenAddress,
       owner,
       chainConfig.dispenserAddress as string,
       {
-        maxTokens: '1',
-        maxBalance: '100000000',
-        withMint: true,
-        allowedSwapper: ZERO_ADDRESS,
-        ...pricing.dispenserParams
+        ...dispenserParams,
+        maxTokens: parseUnits(dispenserParams.maxTokens, 18).toString(),
+        maxBalance: parseUnits(dispenserParams.maxBalance, 18).toString()
       }
     )
   }
