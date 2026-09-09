@@ -3,14 +3,15 @@
  * examples run in.
  *
  * Both are indirected through the environment so the examples work unchanged
- * against a remote network *and* against the local dev stack.
+ * against a remote network *and* against a stack you run locally.
  *
  * ## Why the URL matters more than it looks
  *
  * You never fetch these URLs — the **ocean-node** does, to encrypt the files
  * object at publish time and to stream the data on download. So the URL has to
- * resolve from inside Docker, not from your shell. `dev-stack` therefore sets
- * `ASSET_BASE_URL=http://host.docker.internal:8081`.
+ * resolve from inside the node's container, not from your shell — so serving
+ * the files locally means `ASSET_BASE_URL=http://host.docker.internal:8081`
+ * rather than a localhost URL.
  *
  * Do not be tempted to use `http://127.0.0.1:8081` — ocean-node's
  * `DEFAULT_UNSAFE_URLS` blocks anything matching 127.0.0.1 outright, and you
@@ -39,8 +40,9 @@ export const EXAMPLE_ALGORITHM_URL = () => assetUrl('count-lines-algorithm.js')
  * The checksum is env-overridable because image digests are **per platform**.
  * The value below is the one published for the linux/amd64 manifest; an Apple
  * Silicon host resolves node:18.17.1 to a different digest entirely, and
- * ocean-node verifies the manifest before it will start a job. `stack:seed`
- * resolves the right digest for your machine and writes ALGO_IMAGE_CHECKSUM.
+ * ocean-node verifies the manifest before it will start a job.
+ * `docker buildx imagetools inspect node:18.17.1` prints the per-platform
+ * digests; set ALGO_IMAGE_CHECKSUM to the one for your architecture.
  */
 export const NODE_CONTAINER = {
   language: 'Node.js',

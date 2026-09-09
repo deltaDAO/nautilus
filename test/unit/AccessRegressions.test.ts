@@ -249,6 +249,34 @@ describe('access endpoint routing', () => {
     expect(calls.initialize).to.deep.equal(['https://node.test.invalid'])
     expect(calls.download).to.deep.equal(['https://node.test.invalid'])
   })
+
+  it('challenges the credential provider with the service’s node', async () => {
+    // The session has to be minted by the policy server that will check it. Resolving
+    // against the configured node created it in one place and submitted it in another.
+    const asset = getAssetFixture()
+    asset.credentialSubject.services[0].serviceEndpoint = SERVICE_NODE
+
+    const { client } = createAccessNodeMock(asset)
+    const challenged: string[] = []
+
+    await access(
+      { assetDid: ASSET_DID },
+      {
+        node: client,
+        signer,
+        chainConfig,
+        credentials: {
+          interactive: true,
+          async resolve(challenge) {
+            challenged.push(challenge.node.nodeUri)
+            return null
+          }
+        }
+      }
+    )
+
+    expect(challenged).to.deep.equal([SERVICE_NODE])
+  })
 })
 
 describe('OceanNodeClient.initializePolicyVerification', () => {

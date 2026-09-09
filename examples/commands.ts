@@ -403,8 +403,8 @@ export function formatHelp(): string {
   return [
     'Usage: npm start -- <command> [args...]',
     '',
-    'Set NETWORK and PRIVATE_KEY in .env first. For the local dev stack:',
-    '  set -a; . ../dev-stack/.generated/local.env; set +a',
+    'Set NETWORK and PRIVATE_KEY in .env first. NETWORK=LOCAL also needs the',
+    'contract addresses of your own deployment; see example.env.',
     '',
     ...sections,
     '',

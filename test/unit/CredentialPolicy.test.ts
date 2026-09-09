@@ -98,6 +98,64 @@ describe('SSI credential block', () => {
     ])
   })
 
+  it('replaces the vc policies instead of merging into them', () => {
+    // These are `set`, not `add`. Routing them through addRequestCredentials merged, so on
+    // an edited asset the policies the caller left out stayed in the document and the
+    // checks they meant to remove went on running.
+    let credentials = setVcPolicies({}, ALLOW, DEFAULT_VC_POLICIES)
+    credentials = setVcPolicies(credentials, ALLOW, ['signature'])
+
+    expect(ssiEntry(credentials)?.values[0].vc_policies).to.deep.equal([
+      'signature'
+    ])
+  })
+
+  it('keeps the request credentials it is not asked about', () => {
+    let credentials = addRequestCredentials({}, ALLOW, [
+      { type: 'UniversityDegree', format: 'jwt_vc_json' }
+    ])
+    credentials = setVcPolicies(credentials, ALLOW, ['signature'])
+
+    expect(ssiEntry(credentials)?.values[0].request_credentials).to.deep.equal([
+      { type: 'UniversityDegree', format: 'jwt_vc_json' }
+    ])
+  })
+
+  it('clears the policies when given an empty list', () => {
+    let credentials = setVcPolicies({}, ALLOW, DEFAULT_VC_POLICIES)
+    credentials = setVcPolicies(credentials, ALLOW, [])
+
+    expect(ssiEntry(credentials)?.values[0].vc_policies).to.deep.equal([])
+  })
+
+  it('replaces the vp policies too', () => {
+    let credentials = setVpPolicies({}, ALLOW, [
+      'holder-binding',
+      { policy: 'minimum-credentials', args: '1' }
+    ])
+    credentials = setVpPolicies(credentials, ALLOW, ['holder-binding'])
+
+    expect(ssiEntry(credentials)?.values[0].vp_policies).to.deep.equal([
+      'holder-binding'
+    ])
+  })
+
+  it('still merges policies passed through addRequestCredentials', () => {
+    // The additive path keeps its behaviour: this is how asset- and service-level
+    // policies accumulate as the builders are called.
+    let credentials = addRequestCredentials({}, ALLOW, [], {
+      vcPolicies: ['signature']
+    })
+    credentials = addRequestCredentials(credentials, ALLOW, [], {
+      vcPolicies: ['not-before']
+    })
+
+    expect(ssiEntry(credentials)?.values[0].vc_policies).to.deep.equal([
+      'signature',
+      'not-before'
+    ])
+  })
+
   it('deduplicates vp policies by value, not by reference', () => {
     let credentials = setVpPolicies({}, ALLOW, [
       { policy: 'minimum-credentials', args: '1' }

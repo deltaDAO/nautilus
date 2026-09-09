@@ -129,10 +129,19 @@ function provider(
   })
 }
 
-const challenge = {
-  asset: getAssetFixture(),
-  serviceId: SERVICE_ID,
-  consumerAddress: OWNER_ADDRESS
+/**
+ * A challenge for one node.
+ *
+ * The node is part of it: a session is only valid on the node that minted it, so the
+ * provider resolves against the node the challenge names rather than its own.
+ */
+function challengeFor(client: OceanNodeClient) {
+  return {
+    asset: getAssetFixture(),
+    serviceId: SERVICE_ID,
+    consumerAddress: OWNER_ADDRESS,
+    node: client
+  }
 }
 
 describe('policy server payload', () => {
@@ -167,9 +176,9 @@ describe('WaltIdCredentialProvider', () => {
     // clean feature test for "this deployment has no policy server".
     const { client } = nodeStub({})
 
-    expect(await provider(client, walletStub()).resolve(challenge)).to.equal(
-      null
-    )
+    expect(
+      await provider(client, walletStub()).resolve(challengeFor(client))
+    ).to.equal(null)
   })
 
   it('short-circuits when the server says verification already succeeded', async () => {
@@ -181,7 +190,9 @@ describe('WaltIdCredentialProvider', () => {
       }
     })
 
-    const payload = await provider(client, walletStub()).resolve(challenge)
+    const payload = await provider(client, walletStub()).resolve(
+      challengeFor(client)
+    )
 
     expect(payload?.sessionId).to.equal('existing-session')
     // No presentation definition was fetched, and the wallet was never touched.
@@ -200,7 +211,9 @@ describe('WaltIdCredentialProvider', () => {
       }
     })
 
-    const payload = await provider(client, walletStub()).resolve(challenge)
+    const payload = await provider(client, walletStub()).resolve(
+      challengeFor(client)
+    )
 
     expect(payload?.sessionId).to.equal(SERVER_SESSION)
   })
@@ -212,7 +225,9 @@ describe('WaltIdCredentialProvider', () => {
       }
     })
 
-    const payload = await provider(client, walletStub()).resolve(challenge)
+    const payload = await provider(client, walletStub()).resolve(
+      challengeFor(client)
+    )
 
     expect(payload?.sessionId).to.equal(SERVER_SESSION)
   })
@@ -244,7 +259,7 @@ describe('WaltIdCredentialProvider', () => {
       }
     })
 
-    await provider(client, wallet).resolve(challenge)
+    await provider(client, wallet).resolve(challengeFor(client))
 
     expect(passthroughCalls[0]?.action).to.equal(PolicyServerAction.GET_PD)
     expect(calls).to.deep.equal(['match', 'resolve', 'present'])
@@ -269,7 +284,7 @@ describe('WaltIdCredentialProvider', () => {
       }
     })
 
-    await provider(client, wallet).resolve(challenge)
+    await provider(client, wallet).resolve(challengeFor(client))
 
     expect(presented).to.deep.equal(['credential-1', 'credential-2'])
   })
@@ -295,7 +310,7 @@ describe('WaltIdCredentialProvider', () => {
 
     await provider(client, wallet, {
       onSelectCredentials: async (matches) => [matches[1]]
-    }).resolve(challenge)
+    }).resolve(challengeFor(client))
 
     expect(presented).to.deep.equal(['credential-2'])
   })
@@ -319,10 +334,10 @@ describe('WaltIdCredentialProvider', () => {
       }
     })
 
-    await provider(client, wallet).resolve(challenge)
+    await provider(client, wallet).resolve(challengeFor(client))
     await provider(client, wallet, {
       onSelectDid: async (dids) => dids[1].did
-    }).resolve(challenge)
+    }).resolve(challengeFor(client))
 
     expect(used).to.deep.equal(['did:key:first', 'did:key:second'])
   })
@@ -347,7 +362,7 @@ describe('WaltIdCredentialProvider', () => {
     })
 
     await expectThrowsAsync(
-      () => provider(client, wallet).resolve(challenge),
+      () => provider(client, wallet).resolve(challengeFor(client)),
       /no credential satisfying the requested presentation definition/
     )
   })
@@ -369,7 +384,7 @@ describe('WaltIdCredentialProvider', () => {
     })
 
     await expectThrowsAsync(
-      () => provider(client, wallet).resolve(challenge),
+      () => provider(client, wallet).resolve(challengeFor(client)),
       /policy holder-binding failed/
     )
   })
@@ -391,7 +406,7 @@ describe('WaltIdCredentialProvider', () => {
     })
 
     await expectThrowsAsync(
-      () => provider(client, wallet).resolve(challenge),
+      () => provider(client, wallet).resolve(challengeFor(client)),
       /rejected the presentation/
     )
   })
@@ -417,8 +432,8 @@ describe('WaltIdCredentialProvider', () => {
 
     const instance = provider(client, wallet)
 
-    await instance.resolve(challenge)
-    await instance.resolve(challenge)
+    await instance.resolve(challengeFor(client))
+    await instance.resolve(challengeFor(client))
 
     expect(matchCount).to.equal(1)
   })
@@ -446,16 +461,62 @@ describe('WaltIdCredentialProvider', () => {
 
     const instance = provider(client, wallet)
 
-    await instance.resolve(challenge)
-    await instance.resolve({ ...challenge, consumerAddress: '0xSomeoneElse' })
+    await instance.resolve(challengeFor(client))
+    await instance.resolve({
+      ...challengeFor(client),
+      consumerAddress: '0xSomeoneElse'
+    })
 
     expect(matchCount).to.equal(2)
+  })
+
+  it('resolves against the node in the challenge, not its own', async () => {
+    // A service hosted on another node is enforced by *that* node's policy server. The
+    // provider used to always talk to the node it was constructed with, so it created a
+    // session on one node and handed it to another, where it is simply unknown.
+    const configured = nodeStub({ initiate: null })
+    const serviceNode = nodeStub({ initiate: null })
+
+    await provider(configured.client, walletStub()).resolve({
+      ...challengeFor(serviceNode.client)
+    })
+
+    expect(configured.initializeCalls).to.have.length(0)
+    expect(serviceNode.initializeCalls).to.have.length(1)
+  })
+
+  it('does not replay a session cached for a different node', async () => {
+    // Session ids are minted by one policy server and meaningless to another, so the node
+    // has to be part of the cache key as much as the consumer address is.
+    let initiations = 0
+
+    function counting(uri: string) {
+      const stub = nodeStub({ initiate: null })
+
+      return {
+        ...stub.client,
+        nodeUri: uri,
+        async initializePolicyVerification() {
+          initiations++
+          return null
+        }
+      } as unknown as OceanNodeClient
+    }
+
+    const first = counting('https://node-a.test.invalid')
+    const second = counting('https://node-b.test.invalid')
+    const instance = provider(first, walletStub())
+
+    await instance.resolve(challengeFor(first))
+    await instance.resolve(challengeFor(second))
+
+    expect(initiations).to.equal(2)
   })
 
   it('passes documentId and serviceId to the node when initiating', async () => {
     const { client, initializeCalls } = nodeStub({ initiate: null })
 
-    await provider(client, walletStub()).resolve(challenge)
+    await provider(client, walletStub()).resolve(challengeFor(client))
 
     expect(initializeCalls[0]).to.deep.include({
       documentId: ASSET_DID,
@@ -501,7 +562,12 @@ describe('WaltIdCredentialProvider', () => {
 })
 
 describe('MemorySessionStore', () => {
-  const key = { did: 'did:ope:a', serviceId: 's', consumerAddress: '0xAbC' }
+  const key = {
+    did: 'did:ope:a',
+    serviceId: 's',
+    consumerAddress: '0xAbC',
+    nodeUri: 'https://node-a.test.invalid'
+  }
 
   it('is case-insensitive on the consumer address', () => {
     const store = new MemorySessionStore()
@@ -517,5 +583,15 @@ describe('MemorySessionStore', () => {
     store.set(key, { sessionId: 'x', skipped: false })
 
     expect(store.get({ ...key, serviceId: 'other' })).to.equal(undefined)
+  })
+
+  it('separates different nodes', () => {
+    // A session id is minted by one policy server and meaningless to another.
+    const store = new MemorySessionStore()
+    store.set(key, { sessionId: 'x', skipped: false })
+
+    expect(
+      store.get({ ...key, nodeUri: 'https://node-b.test.invalid' })
+    ).to.equal(undefined)
   })
 })

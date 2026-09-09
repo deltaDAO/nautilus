@@ -9,8 +9,10 @@
 import {
   type Config,
   Datatoken,
+  type FixedPriceExchange,
   FixedRateExchange,
-  type PublishingMarketFee
+  type PublishingMarketFee,
+  ZERO_ADDRESS
 } from '@oceanprotocol/lib'
 import { Decimal } from 'decimal.js'
 import type { Signer } from 'ethers'
@@ -22,21 +24,51 @@ export interface PricingInfo {
   /** Datatoken template: 1 (basic), 2 (enterprise) or 4 (confidential EVM). */
   templateId: number
   datatokenAddress: string
-  /** Fixed-rate exchange id, when `schema` is `'fixed'`. */
+  /** The *active* fixed-rate exchange, when `schema` is `'fixed'`. */
   exchangeId?: string
   baseTokenAddress?: string
   baseTokenDecimals?: number
   publishMarketFee: PublishingMarketFee
 }
 
+/**
+ * Your market's cut of a fixed-rate order, and who collects it.
+ *
+ * Both halves are required, because an amount on its own has nowhere to go: the exchange
+ * pays its swap fee to whichever address the order names, and that used to be the
+ * *publish* market's collector — so a consume-market fee was quoted to the caller and then
+ * handed to somebody else.
+ */
+export interface ConsumeMarketFee {
+  /** The account that collects the fee. */
+  address: string
+  /**
+   * The cut as a decimal **fraction**, not an amount — `'0.01'` is 1%.
+   *
+   * This is the unit the exchange works in: it scales the fraction by 1e18 and derives the
+   * amount from the swap itself, so an absolute token amount passed here was read as a
+   * percentage and meant something else entirely.
+   */
+  fee: string
+}
+
 export interface OrderPrice {
-  /** Total to approve and spend, including publish-market and consume-market fees. */
+  /** Total to approve and spend, including every fee below. */
   total: string
-  /** Base-token amount the exchange itself charges. */
+  /** Base-token amount the exchange charges, its own fees included. */
   baseTokenAmount: string
   opcFee: string
   publishMarketFee: string
+  /** What your market collects — the absolute amount the exchange derived from `fee`. */
   consumeMarketFee: string
+  /**
+   * The consume-market fee this quote was calculated with.
+   *
+   * Carried on the quote rather than taken as a second argument to `order()`, so the fee
+   * that was priced is necessarily the fee that gets charged, to the address it was priced
+   * with.
+   */
+  consumeMarket?: ConsumeMarketFee
 }
 
 /**
@@ -44,6 +76,10 @@ export interface OrderPrice {
  *
  * `getFixedRates()` and `getDispensers()` are the authoritative source — a datatoken can
  * have neither, in which case it simply cannot be ordered.
+ *
+ * `getFixedRates()` is a history rather than a shortlist, so only an *active* exchange
+ * counts as fixed-rate pricing; a datatoken whose exchanges are all deactivated falls
+ * through to its dispenser.
  */
 export async function getPricingInfo(
   signer: Signer,
@@ -61,25 +97,33 @@ export async function getPricingInfo(
     ])
 
   if (fixedRates?.length) {
-    const exchangeId = extractExchangeId(fixedRates[0])
-    const exchange = exchangeId
-      ? await new FixedRateExchange(
-          config?.fixedRateExchangeAddress as string,
-          signer
-        ).getExchange(exchangeId)
-      : undefined
+    // Without the exchange contract the entries cannot be resolved at all. Report the
+    // scheme as read and let `order()` fail on the missing base token, which names the
+    // real problem — falling through to 'none' here would blame the datatoken instead.
+    if (!config?.fixedRateExchangeAddress)
+      return {
+        schema: 'fixed',
+        templateId: Number(templateId),
+        datatokenAddress,
+        exchangeId: extractExchangeId(fixedRates[0]),
+        publishMarketFee
+      }
 
-    return {
-      schema: 'fixed',
-      templateId: Number(templateId),
-      datatokenAddress,
-      exchangeId,
-      baseTokenAddress: exchange?.baseToken,
-      baseTokenDecimals: exchange?.btDecimals
-        ? Number.parseInt(String(exchange.btDecimals), 10)
-        : 18,
-      publishMarketFee
-    }
+    const active = await findActiveExchange(signer, config, fixedRates)
+
+    // No *active* exchange is not fixed-rate pricing: fall through, because a dispenser
+    // may well be live. Reporting 'fixed' on the strength of a deactivated exchange
+    // pointed orders at one that reverts, and hid the dispenser that would have worked.
+    if (active)
+      return {
+        schema: 'fixed',
+        templateId: Number(templateId),
+        datatokenAddress,
+        exchangeId: active.exchangeId,
+        baseTokenAddress: active.exchange.baseToken,
+        baseTokenDecimals: toDecimals(active.exchange.btDecimals),
+        publishMarketFee
+      }
   }
 
   if (dispensers?.length)
@@ -101,24 +145,30 @@ export async function getPricingInfo(
 /**
  * What ordering one datatoken will cost.
  *
- * Free (dispenser) pricing still carries market fees, so this is not simply zero.
+ * Free (dispenser) pricing still carries the publish market's fee, so this is not simply
+ * zero.
+ *
+ * @param consumeMarketFee your own market's cut, if you charge one. Only fixed-rate
+ * pricing can carry it — see {@link ConsumeMarketFee}.
  */
 export async function getOrderPrice(
   signer: Signer,
   pricing: PricingInfo,
   config: Config,
-  consumeMarketFeeAmount = '0'
+  consumeMarketFee?: ConsumeMarketFee
 ): Promise<OrderPrice> {
   const publishMarketFee =
     pricing.publishMarketFee?.publishMarketFeeAmount || '0'
 
+  const consumeMarket = validateConsumeMarketFee(pricing, consumeMarketFee)
+
   if (pricing.schema !== 'fixed' || !pricing.exchangeId)
     return {
-      total: sum(['0', publishMarketFee, consumeMarketFeeAmount]),
+      total: sum(['0', publishMarketFee]),
       baseTokenAmount: '0',
       opcFee: '0',
       publishMarketFee,
-      consumeMarketFee: consumeMarketFeeAmount
+      consumeMarketFee: '0'
     }
 
   const exchange = new FixedRateExchange(
@@ -129,19 +179,20 @@ export async function getOrderPrice(
   const priceAndFees = await exchange.calcBaseInGivenDatatokensOut(
     pricing.exchangeId,
     '1',
-    consumeMarketFeeAmount
+    consumeMarket?.fee || '0'
   )
 
   return {
-    total: sum([
-      priceAndFees.baseTokenAmount,
-      publishMarketFee,
-      consumeMarketFeeAmount
-    ]),
+    // `baseTokenAmount` is what the exchange wants in, fees included — the OPC cut, its
+    // own market fee and the consume-market fee are all already inside it. Adding those
+    // back on top double-counted them, and adding the consume-market *fraction* to a token
+    // amount was not even the same unit.
+    total: sum([priceAndFees.baseTokenAmount, publishMarketFee]),
     baseTokenAmount: priceAndFees.baseTokenAmount,
     opcFee: priceAndFees.oceanFeeAmount,
     publishMarketFee,
-    consumeMarketFee: consumeMarketFeeAmount
+    consumeMarketFee: priceAndFees.consumeMarketFeeAmount || '0',
+    ...(consumeMarket ? { consumeMarket } : {})
   }
 }
 
@@ -154,6 +205,76 @@ export async function getOrderPrice(
  */
 export function hasReusableOrder(initialize: { validOrder?: string }): boolean {
   return Boolean(initialize?.validOrder)
+}
+
+/**
+ * The first *active* exchange on the datatoken.
+ *
+ * `getFixedRates()` is a history, not a shortlist: deactivating an exchange leaves it
+ * listed on the datatoken, so entry zero is regularly a dead one.
+ */
+async function findActiveExchange(
+  signer: Signer,
+  config: Config,
+  rows: unknown[]
+): Promise<{ exchangeId: string; exchange: FixedPriceExchange } | undefined> {
+  const contract = new FixedRateExchange(
+    config.fixedRateExchangeAddress as string,
+    signer
+  )
+
+  for (const row of rows) {
+    const exchangeId = extractExchangeId(row)
+    if (!exchangeId) continue
+
+    // One unreadable row must not hide the others: an id this contract does not know
+    // throws rather than answering.
+    const exchange = await contract
+      .getExchange(exchangeId)
+      .catch(() => undefined)
+
+    if (exchange?.active) return { exchangeId, exchange }
+  }
+
+  return undefined
+}
+
+/**
+ * Rejects a consume-market fee this order cannot actually carry.
+ *
+ * Quoting a fee that nothing charges — or charges to the wrong account — is worse than
+ * refusing it, because the caller believes their market is being paid.
+ */
+function validateConsumeMarketFee(
+  pricing: PricingInfo,
+  consumeMarketFee?: ConsumeMarketFee
+): ConsumeMarketFee | undefined {
+  if (!consumeMarketFee || toDecimal(consumeMarketFee.fee).lte(0))
+    return undefined
+
+  if (!consumeMarketFee.address || consumeMarketFee.address === ZERO_ADDRESS)
+    throw new Error(
+      'A consume-market fee needs the address that collects it; a fee paid to the zero address is simply lost.'
+    )
+
+  if (pricing.schema !== 'fixed')
+    throw new Error(
+      `A consume-market fee rides on the fixed-rate swap, and this datatoken is priced '${pricing.schema}' — there is no swap to take it from. Order without the fee, or price the asset with a fixed-rate exchange.`
+    )
+
+  if (toDecimal(consumeMarketFee.fee).gte(1))
+    throw new Error(
+      `A consume-market fee is a fraction of the swap, not an amount: '${consumeMarketFee.fee}' means ${toDecimal(consumeMarketFee.fee).mul(100)}% of it. Pass '0.01' for 1%.`
+    )
+
+  return consumeMarketFee
+}
+
+/** `btDecimals` arrives as a string or a bigint, and 0 is a legitimate value. */
+function toDecimals(value: unknown): number {
+  const parsed = Number.parseInt(String(value ?? ''), 10)
+
+  return Number.isFinite(parsed) ? parsed : 18
 }
 
 /**

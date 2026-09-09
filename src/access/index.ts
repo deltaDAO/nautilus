@@ -63,6 +63,15 @@ export async function access(
         : `Asset ${config.assetDid} has no 'access' service to download from.`
     )
 
+  // Everything that talks to a node talks to *this* one: the file object was encrypted
+  // with a key local to the node in the service's own endpoint, so the quote, the policy
+  // session and the download all have to come from there — the configured node would take
+  // the payment and then fail to decrypt, and a session it minted is unknown to the node
+  // that actually enforces the policy.
+  const serviceNode = service.serviceEndpoint
+    ? node.forEndpoint(service.serviceEndpoint)
+    : node
+
   // 1. Satisfy the policy first — before spending anything.
   const policyServer =
     supportsSsi(asset) &&
@@ -70,7 +79,8 @@ export async function access(
       ? await (credentials as CredentialProvider).resolve({
           asset,
           serviceId: service.id,
-          consumerAddress
+          consumerAddress,
+          node: serviceNode
         })
       : null
 
@@ -86,15 +96,8 @@ export async function access(
     skipped: config.skipCredentials
   })
 
-  // 2. Ask the node for provider fees and whether a previous order can be reused.
-  //
-  // Not necessarily the configured node: the file object was encrypted with a key local to
-  // the node in the service's own endpoint, so the quote and the download must come from
-  // there — the configured node would take the payment and then fail to decrypt.
-  const serviceNode = service.serviceEndpoint
-    ? node.forEndpoint(service.serviceEndpoint)
-    : node
-
+  // 2. Ask the service's node for provider fees and whether a previous order can be
+  //    reused.
   const initialized = await serviceNode.initialize(asset.id, service.id, {
     fileIndex: config.fileIndex,
     consumerAddress,

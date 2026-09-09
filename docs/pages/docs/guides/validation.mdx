@@ -54,6 +54,12 @@ The error's `message` is already a readable one-liner, because it runs the error
 reverting on chain, so you are never charged for a document the indexer would reject.
 :::
 
+It runs twice, and the first pass is the one that saves you money. Before the NFT exists,
+publish validates the document it *would* publish, with stand-ins for the addresses it does
+not have yet — so a missing `providedBy` or a misshapen `license` stops the publish while
+nothing has been minted. Once the tokens are real, the final document — the exact one that
+gets signed and stored — is validated again.
+
 Calling `validate` yourself is still worth it when you want to surface field errors in a form
 before the user hits publish.
 

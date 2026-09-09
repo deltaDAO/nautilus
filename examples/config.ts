@@ -10,10 +10,10 @@ export enum Network {
   PONTUSXTEST = 'PONTUSXTEST',
   OASISSAPPHIRE = 'OASISSAPPHIRE',
   /**
-   * The local dev stack in `dev-stack/` at the repo root — chain 8996 plus an
-   * ocean-node, all in Docker. Unlike the others, every address here comes
-   * from the environment, because they are freshly deployed on each `up`.
-   * `npm run stack:up` writes them to `dev-stack/.generated/local.env`.
+   * A stack you run yourself — chain 8996 plus an ocean-node. Unlike the other
+   * networks, every address here comes from the environment, because a local
+   * deployment mints fresh ones each time it comes up. `example.env` lists the
+   * variables this network reads.
    */
   LOCAL = 'LOCAL'
 }
@@ -24,9 +24,9 @@ function fromLocalEnv(name: string): string {
 
   if (!value)
     throw new Error(
-      `NETWORK=LOCAL needs ${name}. Load the generated env file:\n` +
-        '  set -a; . ../dev-stack/.generated/local.env; set +a\n' +
-        'or bring the stack up first with `npm run stack:up` in the repo root.'
+      `NETWORK=LOCAL needs ${name}. Export the addresses your local deployment ` +
+        'produced — see example.env for the full list — or set NETWORK to one of ' +
+        'the hosted networks instead.'
     )
 
   return value
@@ -109,7 +109,7 @@ export const NETWORK_CONFIGS: { [key in Network]: NetworkConfig } = {
     sdk: 'oasis'
   },
   // Populated lazily by resolveNetwork(), so that merely importing this module
-  // does not require the dev stack to be running.
+  // does not require a local stack to be running.
   [Network.LOCAL]: {
     chainId: 8996,
     network: 'development',

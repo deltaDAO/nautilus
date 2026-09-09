@@ -53,31 +53,51 @@ Every field is a decimal string.
 
 | Field | Meaning |
 | --- | --- |
-| `total` | **What to approve and spend** — the sum of everything below |
-| `baseTokenAmount` | What the exchange itself charges |
+| `total` | **What to approve and spend** |
+| `baseTokenAmount` | What the exchange charges, its own fees included |
 | `opcFee` | Ocean Protocol Community fee |
-| `publishMarketFee` | The publishing market's cut |
-| `consumeMarketFee` | Your market's cut, if you charge one |
+| `publishMarketFee` | The publishing market's cut, charged on the order |
+| `consumeMarketFee` | What your market collects, if you charge anything |
+| `consumeMarket` | The `{ address, fee }` this quote was priced with |
 
 :::warning
-Free is not zero. A dispenser-priced asset still carries publish- and consume-market fees, so
-`getOrderPrice` returns those rather than short-circuiting to `'0'`. Always spend `total`.
+Free is not zero. A dispenser-priced asset still carries the publish market's fee, so
+`getOrderPrice` returns it rather than short-circuiting to `'0'`. Always spend `total`.
 :::
 
 ## Charging a consume-market fee
 
+Your cut is a **fraction of the swap**, not an amount — `'0.01'` is 1% — and it needs the
+account that collects it. The exchange pays its swap fee to whichever address the order
+names, so a fee without a collector is either lost or paid to somebody else.
+
 ```ts twoslash
-import { getOrderPrice } from '@deltadao/nautilus'
+import { getOrderPrice, order } from '@deltadao/nautilus'
 import type { PricingInfo } from '@deltadao/nautilus'
-import type { Config } from '@oceanprotocol/lib'
+import type { Config, ProviderFees } from '@oceanprotocol/lib'
 import type { Signer } from 'ethers'
 
 declare const signer: Signer
 declare const pricing: PricingInfo
 declare const config: Config
+declare const providerFees: ProviderFees
+declare const consumer: string
 // ---cut---
-const price = await getOrderPrice(signer, pricing, config, '0.1') // [!code focus]
+const price = await getOrderPrice(signer, pricing, config, {
+  address: '0xYourMarketCollector', // [!code focus]
+  fee: '0.01' // 1% of the swap // [!code focus]
+})
+
+// `price` carries the fee, so the order charges what was quoted, to the address it was
+// quoted for.
+await order({ signer, config, pricing, price, serviceIndex: 0, providerFees, consumer })
 ```
+
+:::info
+Only fixed-rate pricing can carry a consume-market fee: it rides on the exchange swap, and
+a dispenser order has no swap to take it from. Asking for one anyway throws, rather than
+quoting a fee nothing will collect.
+:::
 
 ## Do you already hold an order?
 

@@ -22,11 +22,20 @@ import {
   ZERO_ADDRESS
 } from '@oceanprotocol/lib'
 import type { Signer, TransactionReceipt, TransactionResponse } from 'ethers'
-import type { OrderPrice, PricingInfo } from './pricing.js'
+import type { ConsumeMarketFee, OrderPrice, PricingInfo } from './pricing.js'
 
 /** Templates that settle the purchase and the order in a single transaction. */
 const ATOMIC_ORDER_TEMPLATES = new Set([2, 4])
 
+/**
+ * The order-level consume-market fee is always zero here.
+ *
+ * It is a second, unrelated mechanism: an absolute amount in a token of its own, which the
+ * datatoken pulls from the payer during `startOrder`. Nautilus charges the consume market
+ * through the exchange's swap fee instead (see `OrderPrice.consumeMarket`), which is the
+ * one `getOrderPrice` can quote — so nothing must be set here, or the caller would pay
+ * twice for one fee.
+ */
 const NO_CONSUME_MARKET_FEE = {
   consumeMarketFeeAddress: ZERO_ADDRESS,
   consumeMarketFeeToken: ZERO_ADDRESS,
@@ -136,6 +145,12 @@ async function orderFixed(
 
   const atomic = ATOMIC_ORDER_TEMPLATES.has(pricing.templateId)
 
+  // The exchange pays its swap fee to whichever address the order names. That address must
+  // be the *consume* market's collector — this used to pass the publish market's, which
+  // quietly redirected the caller's own cut to the publisher (or, with no publish market,
+  // to the zero address).
+  const consumeMarket = requireConsumeMarketCollector(price)
+
   // Template 1 approves the exchange (it buys, then orders separately). Templates 2 and 4
   // approve the datatoken itself, which pulls the funds during the combined call.
   const spender = atomic
@@ -158,10 +173,11 @@ async function orderFixed(
       exchangeId: pricing.exchangeId,
       maxBaseTokenAmount: price.total,
       baseTokenAddress: pricing.baseTokenAddress,
-      baseTokenDecimals: pricing.baseTokenDecimals || 18,
-      swapMarketFee: price.consumeMarketFee,
-      marketFeeAddress:
-        pricing.publishMarketFee?.publishMarketFeeAddress || ZERO_ADDRESS
+      // `??`, not `||`: a 0-decimal base token is unusual but legal, and `|| 18` turned it
+      // straight back into 18 — scaling every amount in the order by 1e18.
+      baseTokenDecimals: pricing.baseTokenDecimals ?? 18,
+      swapMarketFee: consumeMarket.fee,
+      marketFeeAddress: consumeMarket.address
     }
 
     const receipt = await confirm(
@@ -187,8 +203,8 @@ async function orderFixed(
       pricing.exchangeId,
       '1',
       price.total,
-      pricing.publishMarketFee?.publishMarketFeeAddress || ZERO_ADDRESS,
-      price.consumeMarketFee
+      consumeMarket.address,
+      consumeMarket.fee
     )
   )
 
@@ -230,6 +246,26 @@ async function orderFree(
   )
 
   return startOrder(datatoken, pricing.datatokenAddress, orderParams)
+}
+
+/**
+ * The consume-market fee to charge on the swap, refusing one that cannot be routed.
+ *
+ * `getOrderPrice` already rejects a fee with no collector, so this only bites on a
+ * hand-assembled `OrderPrice` — where silently falling back to the zero address would burn
+ * the caller's own cut.
+ */
+function requireConsumeMarketCollector(price: OrderPrice): ConsumeMarketFee {
+  const consumeMarket = price.consumeMarket
+
+  if (!consumeMarket) return { address: ZERO_ADDRESS, fee: '0' }
+
+  if (!consumeMarket.address || consumeMarket.address === ZERO_ADDRESS)
+    throw new Error(
+      'This order carries a consume-market fee with no collector address. Pass the fee to getOrderPrice(), which resolves both halves together.'
+    )
+
+  return consumeMarket
 }
 
 async function startOrder(

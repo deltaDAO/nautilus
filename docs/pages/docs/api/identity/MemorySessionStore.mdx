@@ -16,8 +16,10 @@ const credentials = new WaltIdCredentialProvider(node, {
 })
 ```
 
-Sessions are keyed by `{ did, serviceId, consumerAddress }`, so re-accessing the same gated
-service does not repeat the exchange.
+Sessions are keyed by `{ nodeUri, did, serviceId, consumerAddress }`, so re-accessing the
+same gated service does not repeat the exchange — while switching accounts, or reaching a
+service hosted on another node, does. A session id means nothing to a policy server that
+did not mint it.
 
 :::info
 Implement `SessionStore` yourself — `get`, `set`, `delete`, `clear` — to share sessions across

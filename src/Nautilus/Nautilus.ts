@@ -43,6 +43,7 @@ import { editPrice, setMetadataState } from '../utils/contracts.js'
 import { resolvePublisherTrustedAlgorithms } from '../utils/helpers/trusted-algorithms.js'
 import { getChainId } from '../utils/index.js'
 import type { NautilusAsset } from './Asset/NautilusAsset.js'
+import { PLACEHOLDER_ADDRESS } from './Asset/NautilusDDO.js'
 import type {
   FileTypes,
   NautilusService,
@@ -286,8 +287,17 @@ export class Nautilus {
     // failures of configuration, and discovering them after the NFT and datatokens had
     // been created only burned gas and left orphaned tokens behind.
     const remoteStore = this.requireRemoteStore(options)
+    const ddoSigner = this.resolveDdoSigner(options)
+    const issuer = await ddoSigner.getIssuer()
+
     await resolvePublisherTrustedAlgorithms(this.node, services)
     await this.assertServicesPublishable(services)
+    await this.assertValidBeforeSpend({
+      asset,
+      create: true,
+      nftAddress: PLACEHOLDER_ADDRESS,
+      issuer
+    })
 
     const published: PublishedService[] = []
 
@@ -323,13 +333,15 @@ export class Nautilus {
       published.push({ service, datatokenAddress, tx })
     }
 
-    const result = await this.writeAsset(
+    const result = await this.writeAsset({
       asset,
-      created.nftAddress,
-      true,
+      nftAddress: created.nftAddress,
+      create: true,
       options,
-      remoteStore
-    )
+      remoteStore,
+      ddoSigner,
+      issuer
+    })
 
     return { ...result, nftAddress: created.nftAddress, services: published }
   }
@@ -356,8 +368,18 @@ export class Nautilus {
     const owner = asset.owner || (await this.signer.getAddress())
 
     const remoteStore = this.requireRemoteStore(options)
+    const ddoSigner = this.resolveDdoSigner(options)
+    const issuer = await ddoSigner.getIssuer()
+
     await resolvePublisherTrustedAlgorithms(this.node, asset.ddo.services)
     await this.assertServicesPublishable(asset.ddo.services)
+    // The NFT is real on an edit; only the datatokens of newly priced services are not.
+    await this.assertValidBeforeSpend({
+      asset,
+      create: false,
+      nftAddress,
+      issuer
+    })
 
     const published: PublishedService[] = []
 
@@ -376,13 +398,15 @@ export class Nautilus {
       published.push({ service, datatokenAddress, tx })
     }
 
-    const result = await this.writeAsset(
+    const result = await this.writeAsset({
       asset,
       nftAddress,
-      false,
+      create: false,
       options,
-      remoteStore
-    )
+      remoteStore,
+      ddoSigner,
+      issuer
+    })
 
     return { ...result, nftAddress, services: published }
   }
@@ -417,18 +441,58 @@ export class Nautilus {
     for (const service of services) await service.assertPublishable(this.node)
   }
 
-  /** Builds, validates, signs, stores and writes the DDO. Shared by publish and edit. */
-  private async writeAsset(
-    asset: NautilusAsset,
-    nftAddress: string,
-    create: boolean,
-    options: PublishOptions,
-    remoteStore: RemoteStore
-  ): Promise<Omit<PublishResponse, 'nftAddress' | 'services'>> {
-    const ddoSigner =
+  /** The signer for the DDO's credential, which is not necessarily the chain signer. */
+  private resolveDdoSigner(options: PublishOptions): DdoSigner {
+    return (
       options.ddoSigner ||
       this.options.ddoSigner ||
       new Eip191VcSigner(this.signer)
+    )
+  }
+
+  /**
+   * SHACL-validates the document before the first transaction.
+   *
+   * The configuration checks above catch a missing store or an unreachable endpoint, but
+   * the document's own shape was only checked in `writeAsset()` — after the NFT and every
+   * datatoken had been minted. A misshapen `license` or a missing `providedBy` therefore
+   * cost gas and left orphaned tokens behind, which is exactly what validating locally is
+   * supposed to prevent.
+   *
+   * The addresses are stand-ins, so this cannot be the last word: `writeAsset()` validates
+   * the real document again once they exist.
+   */
+  private async assertValidBeforeSpend(params: {
+    asset: NautilusAsset
+    create: boolean
+    nftAddress: string
+    issuer: string
+  }): Promise<void> {
+    const preflight = params.asset.ddo.getPreflightDDO({
+      create: params.create,
+      chainId: this.config.chainId as number,
+      nftAddress: params.nftAddress,
+      datatokenAddress: PLACEHOLDER_ADDRESS
+    })
+
+    if (!preflight.issuer) preflight.issuer = params.issuer
+
+    await assertValid(preflight)
+  }
+
+  /** Builds, validates, signs, stores and writes the DDO. Shared by publish and edit. */
+  private async writeAsset(params: {
+    asset: NautilusAsset
+    nftAddress: string
+    create: boolean
+    options: PublishOptions
+    remoteStore: RemoteStore
+    ddoSigner: DdoSigner
+    /** Resolved before the first transaction, so it is not asked for twice. */
+    issuer: string
+  }): Promise<Omit<PublishResponse, 'nftAddress' | 'services'>> {
+    const { asset, nftAddress, create, options, remoteStore, ddoSigner } =
+      params
 
     const ddo = await asset.ddo.getDDO(this.node, {
       create,
@@ -446,7 +510,7 @@ export class Nautilus {
      * somebody else. Overwriting unconditionally here made that guard unreachable, so
      * `setIssuer()` looked like it worked while the signed claims said something else.
      */
-    if (!ddo.issuer) ddo.issuer = await ddoSigner.getIssuer()
+    if (!ddo.issuer) ddo.issuer = params.issuer
 
     // Local SHACL validation, before anything is signed or written. Cheap, and it names the
     // exact failing field — the node never sees this document, so nothing else would.

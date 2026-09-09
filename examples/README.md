@@ -46,7 +46,7 @@ the one in this checkout. You can point them at the published package instead; s
 
    | Variable | Value |
    | --- | --- |
-   | `NETWORK` | `PONTUSXDEV` (rapid testing), `PONTUSXTEST` (staging), `OASISSAPPHIRE` (production MVP), `LOCAL` (the dev stack) |
+   | `NETWORK` | `PONTUSXDEV` (rapid testing), `PONTUSXTEST` (staging), `OASISSAPPHIRE` (production MVP), `LOCAL` (a stack you run yourself) |
    | `PRIVATE_KEY` | Private key of your account — export it from MetaMask |
 
    Your account needs funds for gas, and for any non-free asset it buys. On Pontus-X that

@@ -18,7 +18,6 @@ import {
   ServiceTypes
 } from '../../src/Nautilus/Asset/Service/NautilusService.js'
 import { ServiceBuilder } from '../../src/Nautilus/Asset/Service/ServiceBuilder.js'
-import { getOrderPrice } from '../../src/utils/pricing.js'
 import {
   DATATOKEN_ADDRESS,
   getAssetFixture,
@@ -183,22 +182,5 @@ describe('getStatsForService', () => {
   })
 })
 
-describe('getOrderPrice', () => {
-  it('sums fees without rounding them through a double', async () => {
-    // Converting each decimal string to Number first rounded any amount past 15 significant
-    // digits, so the total came out low and the approval it sized could be short.
-    const price = await getOrderPrice(
-      undefined as never,
-      {
-        schema: 'free',
-        publishMarketFee: {
-          publishMarketFeeAmount: '0.123456789012345678'
-        }
-      } as never,
-      undefined as never,
-      '0.000000000000000001'
-    )
-
-    expect(price.total).to.equal('0.123456789012345679')
-  })
-})
+// `getOrderPrice` and the fee routing around it live in PricingRouting.test.ts, together
+// with the exchange selection they depend on.

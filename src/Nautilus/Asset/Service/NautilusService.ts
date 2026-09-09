@@ -169,8 +169,6 @@ export class NautilusService<
     if (!datatokenAddress)
       throw new Error('datatokenAddress is required to build a service.')
 
-    const filesChanged = this.checkIfFilesObjectChanged()
-
     let encryptedFiles: string
     if (this.needsEncryption()) {
       const assetFiles: AssetFiles = {
@@ -191,6 +189,40 @@ export class NautilusService<
     } else {
       encryptedFiles = this.existingEncryptedFiles as string
     }
+
+    return this.project(encryptedFiles, datatokenAddress, language)
+  }
+
+  /**
+   * The same projection with a stand-in for the ciphertext, for validating a service
+   * before anything is on chain.
+   *
+   * Encryption needs the datatoken address, which does not exist until it is minted — so
+   * the pre-transaction check cannot have the real file object. Everything SHACL actually
+   * looks at outside `files` is the real thing, which is what makes the check worth
+   * running; and doing it this way costs no node round trip, so validating first does not
+   * mean encrypting twice.
+   */
+  projectForValidation(
+    placeholderFiles: string,
+    dtAddress: string,
+    language: LanguageOptions = {}
+  ): ServiceV5 {
+    return this.project(
+      this.needsEncryption()
+        ? placeholderFiles
+        : (this.existingEncryptedFiles as string),
+      dtAddress,
+      language
+    )
+  }
+
+  private project(
+    encryptedFiles: string,
+    datatokenAddress: string,
+    language: LanguageOptions
+  ): ServiceV5 {
+    const filesChanged = this.checkIfFilesObjectChanged()
 
     // The service id is the hash of its encrypted file object, so re-encrypting new files
     // necessarily yields a new id — which is why an edited files object replaces the

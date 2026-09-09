@@ -115,6 +115,7 @@ export async function compute(
   // 1. Satisfy every policy before any order is placed. Any failure aborts the whole job
   //    with nothing spent — the ordering here is the whole point.
   const policyServer = await resolvePolicies(
+    node,
     inputs,
     consumerAddress,
     credentials,
@@ -217,6 +218,7 @@ export async function freeCompute(
     )
 
   const policyServer = await resolvePolicies(
+    node,
     inputs,
     consumerAddress,
     credentials,
@@ -452,6 +454,7 @@ function resolveMaxJobDuration(
  * alongside it — each input is gated on its own version.
  */
 async function resolvePolicies(
+  node: OceanNodeClient,
   inputs: ResolvedInput[],
   consumerAddress: string,
   credentials?: CredentialProvider,
@@ -466,7 +469,10 @@ async function resolvePolicies(
       ? await (credentials as CredentialProvider).resolve({
           asset: input.asset,
           serviceId: input.serviceId,
-          consumerAddress
+          consumerAddress,
+          // The node running the job is the one that checks every input's policy — unlike
+          // a download, which is served by each service's own node.
+          node
         })
       : null
 

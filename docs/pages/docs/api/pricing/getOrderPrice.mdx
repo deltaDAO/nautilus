@@ -44,9 +44,16 @@ From [`getPricingInfo`](/docs/api/pricing/getPricingInfo).
 
 - Type: `Config`
 
-### consumeMarketFeeAmount
+### consumeMarketFee (optional)
 
-- Type: `string`
-- Default: `'0'`
+- Type: [`ConsumeMarketFee`](/docs/guides/pricing#charging-a-consume-market-fee)
 
-Your own market's cut, as a decimal string.
+Your own market's cut: `{ address, fee }`, where `fee` is a decimal **fraction** of the
+swap — `'0.01'` is 1% — and `address` is the account that collects it.
+
+Both halves are required together. An amount with no collector has nowhere to go: the
+exchange pays its swap fee to whichever address the order names, so a fee without one is
+either lost or paid to somebody else.
+
+Only fixed-rate pricing can carry it. Asked of a dispenser-priced or unpriced datatoken,
+this throws rather than quoting a fee nothing will collect.

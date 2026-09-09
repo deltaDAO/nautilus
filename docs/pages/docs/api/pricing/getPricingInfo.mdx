@@ -26,6 +26,10 @@ pricing.schema // 'fixed' | 'free' | 'none'
 neither, which yields `schema: 'none'` — it simply cannot be ordered.
 :::
 
+`getFixedRates()` returns a history rather than a shortlist: a deactivated exchange stays
+listed on the datatoken. Only an **active** one is reported as `'fixed'`, so a datatoken
+whose exchanges are all dead falls through to its dispenser, or to `'none'`.
+
 ## Parameters
 
 ### signer

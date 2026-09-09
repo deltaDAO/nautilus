@@ -1,6 +1,6 @@
 # OrderPrice
 
-What [`getOrderPrice`](/docs/api/pricing/getOrderPrice) returns. Every field is a decimal
+What [`getOrderPrice`](/docs/api/pricing/getOrderPrice) returns. Every amount is a decimal
 string.
 
 ```ts twoslash
@@ -13,14 +13,24 @@ price.baseTokenAmount
 price.opcFee
 price.publishMarketFee
 price.consumeMarketFee
+price.consumeMarket // who collects it, and the fraction it came from
 ```
 
 | Field | Meaning |
 | --- | --- |
-| `total` | **Approve and spend this** — the sum of everything below. |
-| `baseTokenAmount` | What the exchange itself charges. |
+| `total` | **Approve and spend this.** |
+| `baseTokenAmount` | What the exchange charges, its own fees included. |
 | `opcFee` | Ocean Protocol Community fee. |
-| `publishMarketFee` | The publishing market's cut. |
-| `consumeMarketFee` | Your market's cut, if you charge one. |
+| `publishMarketFee` | The publishing market's cut, charged on the order. |
+| `consumeMarketFee` | What your market collects — the amount the exchange derived. |
+| `consumeMarket` | The `{ address, fee }` this quote was priced with, if any. |
+
+`baseTokenAmount` is what the exchange wants in, so the OPC cut, its own market fee and the
+consume-market fee are already inside it. Only the publish market's order-level fee is added
+on top. Do not sum the fields yourself — spend `total`.
+
+`consumeMarket` travels on the quote so that
+[`order`](/docs/guides/pricing#charging-a-consume-market-fee) charges the fee that was
+priced, to the address it was priced with.
 
 Replaces v1's `OrderPriceAndFees`. See [pricing](/docs/guides/pricing).

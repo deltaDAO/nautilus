@@ -14,6 +14,14 @@ export interface SessionKey {
   did: string
   serviceId: string
   consumerAddress: string
+  /**
+   * The node that minted the session.
+   *
+   * Also part of the key: only the policy server behind that node knows the session, so a
+   * session cached for one node and replayed to another is rejected the same way a
+   * session minted for another account is.
+   */
+  nodeUri: string
 }
 
 interface CacheEntry {
@@ -22,8 +30,13 @@ interface CacheEntry {
   skipped: boolean
 }
 
-function keyOf({ did, serviceId, consumerAddress }: SessionKey): string {
-  return `${did}|${serviceId}|${consumerAddress.toLowerCase()}`
+function keyOf({
+  did,
+  serviceId,
+  consumerAddress,
+  nodeUri
+}: SessionKey): string {
+  return `${nodeUri}|${did}|${serviceId}|${consumerAddress.toLowerCase()}`
 }
 
 export interface SessionStore {

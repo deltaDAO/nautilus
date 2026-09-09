@@ -8,6 +8,7 @@
  */
 import type { AssetV5 } from '@oceanprotocol/ddo-js'
 import type { PolicyServerPayload } from '../ddo/types.js'
+import type { OceanNodeClient } from '../node/OceanNodeClient.js'
 
 export interface CredentialChallenge {
   /** The asset whose service is gated. */
@@ -16,6 +17,16 @@ export interface CredentialChallenge {
   serviceId: string
   /** The address the node will attribute the request to. */
   consumerAddress: string
+  /**
+   * The node that will enforce this policy — for a download, the one in the service's
+   * `serviceEndpoint`; for a compute job, the one running it.
+   *
+   * Part of the challenge because a session is only valid on the node that minted it. A
+   * provider resolving against its own configured node instead created the session on one
+   * node and submitted it to another, where it is simply unknown — which is exactly what
+   * happens whenever a service points somewhere other than the configured node.
+   */
+  node: OceanNodeClient
 }
 
 export interface CredentialProvider {

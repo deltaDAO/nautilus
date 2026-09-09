@@ -1,5 +1,5 @@
 /**
- * Every non-SSI example, run in dependency order against the local dev stack.
+ * Every non-SSI example, run in dependency order against one network.
  *
  * The individual commands each need a DID from a previous one, so running them
  * by hand means copying identifiers between invocations. This threads them
@@ -10,15 +10,15 @@
  * is where behaviour is pinned down. What this answers is narrower and useful
  * on its own: *does every example still run?*
  *
- *   npm run stack:up && npm run stack:seed        # from the repo root
- *   set -a; . dev-stack/.generated/local.env; set +a
  *   cd examples && npm run scenario:e2e
  *
- * SSI examples are excluded. `up.sh --ssi` does bring walt.id and the policy
- * server up, and the gating path through ocean-node works — but walt.id's
- * wallet endpoints cannot consume the ktor-authnz token its own web3 login
- * issues, so nautilus can authenticate and then not read its wallet. See
- * "SSI" in dev-stack/README.md.
+ * It needs a funded account and, for the compute steps, a node advertising a
+ * compute environment.
+ *
+ * SSI examples are excluded. The gating path through ocean-node works, but
+ * walt.id's wallet endpoints cannot consume the ktor-authnz token its own web3
+ * login issues, so nautilus can authenticate and then not read its wallet —
+ * run `npm start -- ssi:round-trip` by hand against a verifier you trust.
  */
 import * as dotenv from 'dotenv'
 import { COMMANDS, type Context } from '../commands'

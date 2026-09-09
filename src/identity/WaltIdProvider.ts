@@ -105,7 +105,18 @@ export class WaltIdCredentialProvider implements CredentialProvider {
     challenge: CredentialChallenge
   ): Promise<PolicyServerPayload | null> {
     const { asset, serviceId, consumerAddress } = challenge
-    const key = { did: asset.id, serviceId, consumerAddress }
+
+    // The session belongs to the node that will enforce the policy, not to the one this
+    // provider was constructed with: for a service hosted on another node, a session
+    // minted here would be unknown there.
+    const node = challenge.node || this.node
+
+    const key = {
+      did: asset.id,
+      serviceId,
+      consumerAddress,
+      nodeUri: node.nodeUri
+    }
 
     const cached = this.sessions.get(key)
     if (cached)
@@ -113,7 +124,7 @@ export class WaltIdCredentialProvider implements CredentialProvider {
 
     // 1. Ask the node to start a verification. A null answer means the node advertises no
     //    policy-server endpoint at all, so nothing is gated here.
-    const initiated = (await this.node.initializePolicyVerification({
+    const initiated = (await node.initializePolicyVerification({
       documentId: asset.id,
       serviceId,
       consumerAddress,
@@ -160,9 +171,12 @@ export class WaltIdCredentialProvider implements CredentialProvider {
         initiated
       )
 
-    // 4. Fetch the presentation definition through the node's passthrough.
-    const presentationDefinition =
-      await this.getPresentationDefinition(sessionId)
+    // 4. Fetch the presentation definition through the node's passthrough — the same node
+    //    the session was minted on, since that is the only one that knows it.
+    const presentationDefinition = await this.getPresentationDefinition(
+      node,
+      sessionId
+    )
 
     // 5-7. Satisfy it with the wallet.
     await this.present(presentationDefinition, presentationRequest)
@@ -180,9 +194,15 @@ export class WaltIdCredentialProvider implements CredentialProvider {
   /**
    * Re-checks a session and, if it failed, digs the specific failing VC policy out of the
    * verifier's report. A named policy beats a bare "access denied".
+   *
+   * @param node the node that minted the session, when it is not the configured one — no
+   * other node can answer for it.
    */
-  async explainFailure(sessionId: string): Promise<string | undefined> {
-    const response = (await this.node.policyServerPassthrough({
+  async explainFailure(
+    sessionId: string,
+    node: OceanNodeClient = this.node
+  ): Promise<string | undefined> {
+    const response = (await node.policyServerPassthrough({
       action: PolicyServerAction.CHECK_SESSION_ID,
       sessionId
     })) as CheckSessionResponse | undefined
@@ -205,8 +225,11 @@ export class WaltIdCredentialProvider implements CredentialProvider {
     return failures.length ? failures.join('; ') : undefined
   }
 
-  private async getPresentationDefinition(sessionId: string): Promise<unknown> {
-    const response = (await this.node.policyServerPassthrough({
+  private async getPresentationDefinition(
+    node: OceanNodeClient,
+    sessionId: string
+  ): Promise<unknown> {
+    const response = (await node.policyServerPassthrough({
       action: PolicyServerAction.GET_PD,
       sessionId
     })) as { message?: unknown } | undefined

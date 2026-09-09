@@ -38,14 +38,81 @@ export function isAddressCredential(
 
 /**
  * Adds request credentials and policies to one list, merging into an existing `SSIpolicy`
- * entry rather than appending a second one — the policy server merges asset- and
- * service-level entries, but two entries in the same list is needless ambiguity.
+ * entry rather than appending a second one.
+ *
+ * Additive throughout: everything already on the entry is kept. Use `setVcPolicies` /
+ * `setVpPolicies` to replace a policy list outright.
  */
 export function addRequestCredentials(
   credentials: DdoCredentials,
   list: CredentialListTypes,
   requestCredentials: RequestCredential[],
   policies: { vcPolicies?: VcPolicy[]; vpPolicies?: VpPolicy[] } = {}
+): DdoCredentials {
+  return updateSsiPolicy(credentials, list, (value) => {
+    value.request_credentials = dedupeRequestCredentials([
+      ...(value.request_credentials || []),
+      ...requestCredentials
+    ])
+
+    // Always arrays: the policy server's scalar fallback reads a typo'd `v_cpolicies`, so a
+    // bare string is silently dropped.
+    if (policies.vcPolicies)
+      value.vc_policies = dedupe([
+        ...(value.vc_policies || []),
+        ...policies.vcPolicies
+      ])
+
+    if (policies.vpPolicies)
+      value.vp_policies = dedupeVpPolicies([
+        ...(value.vp_policies || []),
+        ...policies.vpPolicies
+      ])
+  })
+}
+
+/**
+ * Replaces the VC policies on the given list's `SSIpolicy` entry, keeping its request
+ * credentials.
+ *
+ * A genuine replacement, which routing this through `addRequestCredentials` was not: that
+ * merges, so on an edited asset the policies the caller left out stayed in the document
+ * and the checks they meant to remove went on running. Passing `[]` clears them.
+ */
+export function setVcPolicies(
+  credentials: DdoCredentials,
+  list: CredentialListTypes,
+  vcPolicies: VcPolicy[]
+): DdoCredentials {
+  return updateSsiPolicy(credentials, list, (value) => {
+    value.vc_policies = dedupe(vcPolicies)
+  })
+}
+
+/**
+ * Replaces the VP policies on the given list's `SSIpolicy` entry, keeping its request
+ * credentials. Passing `[]` clears them.
+ */
+export function setVpPolicies(
+  credentials: DdoCredentials,
+  list: CredentialListTypes,
+  vpPolicies: VpPolicy[]
+): DdoCredentials {
+  return updateSsiPolicy(credentials, list, (value) => {
+    value.vp_policies = dedupeVpPolicies(vpPolicies)
+  })
+}
+
+/**
+ * Applies a change to one list's single `SSIpolicy` entry, creating it if needed.
+ *
+ * One entry per list: the policy server merges asset- and service-level entries, but two
+ * entries in the same list is needless ambiguity.
+ */
+function updateSsiPolicy(
+  credentials: DdoCredentials,
+  list: CredentialListTypes,
+  mutate: (value: SsiPolicyValue) => void
 ): DdoCredentials {
   const entries = credentials[list] || []
   const existing = entries.find(isSsiPolicyCredential)
@@ -54,47 +121,12 @@ export function addRequestCredentials(
     request_credentials: []
   }
 
-  value.request_credentials = dedupeRequestCredentials([
-    ...(value.request_credentials || []),
-    ...requestCredentials
-  ])
-
-  // Always arrays: the policy server's scalar fallback reads a typo'd `v_cpolicies`, so a
-  // bare string is silently dropped.
-  if (policies.vcPolicies)
-    value.vc_policies = dedupe([
-      ...(value.vc_policies || []),
-      ...policies.vcPolicies
-    ])
-
-  if (policies.vpPolicies)
-    value.vp_policies = dedupeVpPolicies([
-      ...(value.vp_policies || []),
-      ...policies.vpPolicies
-    ])
+  mutate(value)
 
   if (existing) existing.values = [value]
   else entries.push({ type: 'SSIpolicy', values: [value] })
 
   return { ...credentials, [list]: entries }
-}
-
-/** Replaces the VC policies on the given list's `SSIpolicy` entry. */
-export function setVcPolicies(
-  credentials: DdoCredentials,
-  list: CredentialListTypes,
-  vcPolicies: VcPolicy[]
-): DdoCredentials {
-  return addRequestCredentials(credentials, list, [], { vcPolicies })
-}
-
-/** Replaces the VP policies on the given list's `SSIpolicy` entry. */
-export function setVpPolicies(
-  credentials: DdoCredentials,
-  list: CredentialListTypes,
-  vpPolicies: VpPolicy[]
-): DdoCredentials {
-  return addRequestCredentials(credentials, list, [], { vpPolicies })
 }
 
 /**

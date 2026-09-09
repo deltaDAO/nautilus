@@ -16,13 +16,13 @@ import { setup } from './nautilus'
  * Note the `did:ope:` prefix on every DID — that is DDO v5. v4 assets used
  * `did:op:`.
  *
- * To run these with no funded wallet and no remote endpoints, bring up the
- * local stack from the repo root (`npm run stack:up`) and source the env file
- * it generates.
+ * To run against a local deployment rather than a public network, set
+ * `NETWORK=LOCAL` and export the addresses it produced — `example.env` lists
+ * every variable that network reads.
  */
 
-// Loads .env if present; the dev stack's local.env is sourced into the
-// environment instead, and already-set variables win.
+// Loads .env if present. Variables already exported into the environment win,
+// so a locally sourced env file overrides the file.
 dotenv.config()
 
 async function main() {

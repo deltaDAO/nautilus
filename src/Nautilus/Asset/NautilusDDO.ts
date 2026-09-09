@@ -19,6 +19,18 @@ import type {
 } from './Service/NautilusService.js'
 
 /**
+ * Stand-in for an address that does not exist before the first transaction.
+ *
+ * Well-formed on purpose: the shapes check `nftAddress`, `datatokenAddress` and the DID
+ * derived from them, so a placeholder has to look like an address — otherwise the
+ * pre-transaction validation would fail on the placeholder instead of on the document.
+ */
+export const PLACEHOLDER_ADDRESS = '0x0000000000000000000000000000000000000001'
+
+/** Stand-in for a file object that cannot be encrypted until the datatoken exists. */
+const PLACEHOLDER_FILES = 'preflight-placeholder'
+
+/**
  * Accumulates the state that becomes a DDO.
  *
  * Deliberately thin: it holds builder state and delegates every structural decision to
@@ -117,6 +129,52 @@ export class NautilusDDO {
       options.datatokenAddress
     )
 
+    return this.assemble(built, {
+      create: options.create,
+      chainId,
+      nftAddress,
+      now: options.now
+    })
+  }
+
+  /**
+   * The document as it will be published, assembled without touching the network.
+   *
+   * For validating before the first transaction. The addresses are stand-ins — they cannot
+   * be anything else, since a DDO is derived from an NFT that does not exist yet — so this
+   * document is for checking, never for publishing. Nothing here mutates builder state, and
+   * the placeholder ciphertext means no service is encrypted twice.
+   */
+  getPreflightDDO(options: {
+    create: boolean
+    chainId: number
+    nftAddress: string
+    datatokenAddress: string
+    now?: string
+  }): Record<string, unknown> {
+    const built = this.services.map((service, index) =>
+      service.projectForValidation(
+        // Distinct per service: the id is the hash of this value, and one shared
+        // placeholder would collapse every service in the document onto one id.
+        `${PLACEHOLDER_FILES}-${index}`,
+        service.datatokenAddress || options.datatokenAddress,
+        this.language
+      )
+    )
+
+    return this.assemble(built, options)
+  }
+
+  /** Merges freshly built services over the baseline and projects the document. */
+  private assemble(
+    built: ServiceV5[],
+    options: {
+      create: boolean
+      chainId: number
+      nftAddress: string
+      now?: string
+    }
+  ): Record<string, unknown> {
     if (options.create && !built.length)
       throw new Error('An asset needs at least one service. Call addService().')
 
@@ -133,8 +191,8 @@ export class NautilusDDO {
 
     return project(this.toState(), {
       create: options.create,
-      chainId,
-      nftAddress,
+      chainId: options.chainId,
+      nftAddress: options.nftAddress,
       services,
       baseline: this.baseline,
       now: options.now
