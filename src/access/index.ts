@@ -6,7 +6,7 @@
  */
 
 import type { Config } from '@oceanprotocol/lib'
-import { allowanceWei, approveWei, LoggerInstance } from '@oceanprotocol/lib'
+import { LoggerInstance } from '@oceanprotocol/lib'
 import type { Signer } from 'ethers'
 import type { AccessConfig, AccessResult } from '../@types/Access.js'
 import {
@@ -24,7 +24,7 @@ import {
   shouldResolveCredentials
 } from '../identity/policy.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
-import { order, reuseOrder } from '../utils/order.js'
+import { approveFeeWei, order, reuseOrder } from '../utils/order.js'
 import {
   getOrderPrice,
   getPricingInfo,
@@ -226,35 +226,12 @@ async function approveProviderFee(params: {
   providerFeeToken: string
   providerFeeAmount: string
 }): Promise<void> {
-  const { signer, chainConfig, datatokenAddress } = params
-  const account = await signer.getAddress()
-
-  // A standing allowance that covers the fee needs no transaction.
-  const standing = await allowanceWei(
-    signer,
-    params.providerFeeToken,
-    account,
-    datatokenAddress
-  )
-
-  if (BigInt(standing) >= BigInt(params.providerFeeAmount)) return
-
-  const response = await approveWei(
-    signer,
-    chainConfig,
-    account,
-    params.providerFeeToken,
-    datatokenAddress,
-    params.providerFeeAmount,
-    // Force: the allowance was already checked above, with >= where ocean.js uses a
-    // strict >, so an allowance exactly equal to the fee is not re-approved.
-    true
-  )
-
-  // ocean.js waits for the approval itself but swallows a failed send and returns null;
-  // surface that here rather than letting the order revert on a missing allowance.
-  if (!response)
-    throw new Error(
-      `Could not approve the provider fee of ${params.providerFeeAmount} wei on token ${params.providerFeeToken} for ${datatokenAddress}.`
-    )
+  return approveFeeWei({
+    signer: params.signer,
+    config: params.chainConfig,
+    token: params.providerFeeToken,
+    spender: params.datatokenAddress,
+    amount: params.providerFeeAmount,
+    what: 'provider fee'
+  })
 }

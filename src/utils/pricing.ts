@@ -12,6 +12,7 @@ import {
   type FixedPriceExchange,
   FixedRateExchange,
   type PublishingMarketFee,
+  unitsToAmount,
   ZERO_ADDRESS
 } from '@oceanprotocol/lib'
 import { Decimal } from 'decimal.js'
@@ -53,11 +54,19 @@ export interface ConsumeMarketFee {
 }
 
 export interface OrderPrice {
-  /** Total to approve and spend, including every fee below. */
+  /**
+   * What to approve and spend **in the base token**, the exchange's own fees included.
+   *
+   * Only the base token: the publish-market fee is charged separately, in a token of its
+   * own choosing, and nautilus approves it for you. Adding it in here mixed two currencies
+   * into one number — and, because the contract reports it in base units while this is a
+   * human-readable amount, mixed two *units* as well.
+   */
   total: string
   /** Base-token amount the exchange charges, its own fees included. */
   baseTokenAmount: string
   opcFee: string
+  /** The publishing market's cut, in `publishMarketFeeToken` — not in the base token. */
   publishMarketFee: string
   /** What your market collects — the absolute amount the exchange derived from `fee`. */
   consumeMarketFee: string
@@ -157,14 +166,13 @@ export async function getOrderPrice(
   config: Config,
   consumeMarketFee?: ConsumeMarketFee
 ): Promise<OrderPrice> {
-  const publishMarketFee =
-    pricing.publishMarketFee?.publishMarketFeeAmount || '0'
+  const publishMarketFee = await readPublishMarketFee(signer, pricing)
 
   const consumeMarket = validateConsumeMarketFee(pricing, consumeMarketFee)
 
   if (pricing.schema !== 'fixed' || !pricing.exchangeId)
     return {
-      total: sum(['0', publishMarketFee]),
+      total: '0',
       baseTokenAmount: '0',
       opcFee: '0',
       publishMarketFee,
@@ -187,7 +195,7 @@ export async function getOrderPrice(
     // own market fee and the consume-market fee are all already inside it. Adding those
     // back on top double-counted them, and adding the consume-market *fraction* to a token
     // amount was not even the same unit.
-    total: sum([priceAndFees.baseTokenAmount, publishMarketFee]),
+    total: priceAndFees.baseTokenAmount,
     baseTokenAmount: priceAndFees.baseTokenAmount,
     opcFee: priceAndFees.oceanFeeAmount,
     publishMarketFee,
@@ -237,6 +245,27 @@ async function findActiveExchange(
   }
 
   return undefined
+}
+
+/**
+ * The publish-market fee as a human-readable amount of its own token.
+ *
+ * `getPublishingMarketFee()` hands back the raw `uint256` — base units — while every other
+ * amount here is human-readable. Reporting it unconverted made the two indistinguishable,
+ * and the one place that then spent it (`approve`, which scales by the token's decimals)
+ * inflated it by a further 10^18.
+ */
+async function readPublishMarketFee(
+  signer: Signer,
+  pricing: PricingInfo
+): Promise<string> {
+  const fee = pricing.publishMarketFee
+  const amount = fee?.publishMarketFeeAmount
+
+  if (!amount || amount === '0') return '0'
+
+  // Decimals come from the fee's own token, which need not be the exchange's base token.
+  return unitsToAmount(signer, fee.publishMarketFeeToken, amount)
 }
 
 /**
@@ -294,19 +323,6 @@ function extractExchangeId(row: unknown): string | undefined {
   }
 
   return undefined
-}
-
-/**
- * Sums decimal strings without ever going through `Number`.
- *
- * Token amounts routinely carry 18 decimals, which is well past the 15 significant digits
- * a double can hold — converting first silently rounded the operands, so the total came
- * out low and the approval it sized could be short of the order.
- */
-function sum(values: string[]): string {
-  return values
-    .reduce((total, value) => total.add(toDecimal(value)), new Decimal(0))
-    .toString()
 }
 
 /** `new Decimal()` throws on unparseable input; a missing price is worth zero, not a crash. */

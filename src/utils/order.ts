@@ -10,7 +10,9 @@
  *     several frames away.
  */
 import {
+  allowanceWei,
   approve,
+  approveWei,
   type Config,
   Datatoken,
   Dispenser,
@@ -21,6 +23,7 @@ import {
   type ProviderFees,
   ZERO_ADDRESS
 } from '@oceanprotocol/lib'
+import { Decimal } from 'decimal.js'
 import type { Signer, TransactionReceipt, TransactionResponse } from 'ethers'
 import type { ConsumeMarketFee, OrderPrice, PricingInfo } from './pricing.js'
 
@@ -157,15 +160,40 @@ async function orderFixed(
     ? pricing.datatokenAddress
     : (config.fixedRateExchangeAddress as string)
 
+  const publishMarketFee = publishMarketFeeOf(pricing)
+
+  // An ERC20 approval replaces the previous one rather than adding to it, so where the
+  // publish-market fee is charged in the base token *and* pulled by the same contract that
+  // takes the swap — the atomic templates, where the datatoken is both — one allowance has
+  // to cover both amounts. Approving them separately would leave whichever came second.
+  const mergedWithSwap =
+    atomic &&
+    publishMarketFee &&
+    sameAddress(publishMarketFee.token, pricing.baseTokenAddress)
+
   await approveSpend({
     signer,
     config,
     account: payer,
     token: pricing.baseTokenAddress,
     spender,
-    amount: price.total,
+    amount: mergedWithSwap
+      ? addAmounts(price.total, price.publishMarketFee)
+      : price.total,
     decimals: pricing.baseTokenDecimals
   })
+
+  // Otherwise it is an allowance of its own: a different token, or the same token pulled by
+  // the datatoken while the swap is approved to the exchange (template 1).
+  if (publishMarketFee && !mergedWithSwap)
+    await approveFeeWei({
+      signer,
+      config,
+      token: publishMarketFee.token,
+      spender: pricing.datatokenAddress,
+      amount: publishMarketFee.amount,
+      what: 'publish-market fee'
+    })
 
   if (atomic) {
     const freParams: FreOrderParams = {
@@ -224,6 +252,20 @@ async function orderFree(
     throw new Error(
       'The chain config has no dispenserAddress, so free assets cannot be ordered.'
     )
+
+  // Free is not free of fees: the datatoken charges its publish-market fee on a dispenser
+  // order exactly as on a paid one, and there is no swap approval here to carry it.
+  const publishMarketFee = publishMarketFeeOf(pricing)
+
+  if (publishMarketFee)
+    await approveFeeWei({
+      signer,
+      config,
+      token: publishMarketFee.token,
+      spender: pricing.datatokenAddress,
+      amount: publishMarketFee.amount,
+      what: 'publish-market fee'
+    })
 
   if (ATOMIC_ORDER_TEMPLATES.has(pricing.templateId)) {
     const receipt = await confirm(
@@ -285,6 +327,94 @@ async function startOrder(
   )
 
   return { transferTxId: receipt.hash, reused: false }
+}
+
+/**
+ * Approves a fee whose amount is already in the token's own units.
+ *
+ * `approveWei` rather than `approve`: the latter expects human units and would scale the
+ * amount by the token's decimals a second time. Shared by the provider fee and the
+ * publish-market fee, which are pulled the same way — `transferFrom(payer)` inside the
+ * order, by the datatoken — and so need the same allowance.
+ */
+export async function approveFeeWei(params: {
+  signer: Signer
+  config: Config
+  token: string
+  spender: string
+  /** In the token's own units, as the contract or the node reported it. */
+  amount: string
+  /** Named in the error, so a failed approval says which fee it was. */
+  what: string
+}): Promise<void> {
+  const { signer, config, token, spender, amount } = params
+  const account = await signer.getAddress()
+
+  // A standing allowance that covers the fee needs no transaction.
+  const standing = await allowanceWei(signer, token, account, spender)
+
+  if (BigInt(standing) >= BigInt(amount)) return
+
+  const response = await approveWei(
+    signer,
+    config,
+    account,
+    token,
+    spender,
+    amount,
+    // Force: the allowance was already checked above, with >= where ocean.js uses a
+    // strict >, so an allowance exactly equal to the fee is not re-approved.
+    true
+  )
+
+  // ocean.js waits for the approval itself but swallows a failed send and returns null;
+  // surface that here rather than letting the order revert on a missing allowance.
+  if (!response)
+    throw new Error(
+      `Could not approve the ${params.what} of ${amount} wei on token ${token} for ${spender}.`
+    )
+}
+
+/**
+ * The publish-market fee the datatoken charges on every order, if it charges one.
+ *
+ * Stored on the datatoken, and pulled by it from the payer during `startOrder` — so it
+ * needs an allowance to the *datatoken*, in its own token, exactly like the provider fee.
+ * Neither nautilus nor ocean.js's own `orderAsset` ever approved it: upstream instead adds
+ * the raw amount to the base-token approval, which only works when the fee happens to be
+ * charged in the base token, and silently mixes wei into a human-unit total.
+ */
+function publishMarketFeeOf(
+  pricing: PricingInfo
+): { token: string; address: string; amount: string } | undefined {
+  const fee = pricing.publishMarketFee
+
+  if (!fee?.publishMarketFeeAmount) return undefined
+  if (BigInt(fee.publishMarketFeeAmount) <= 0n) return undefined
+
+  // The contract skips the transfer unless all three are set, so nothing to approve.
+  if (
+    !fee.publishMarketFeeToken ||
+    fee.publishMarketFeeToken === ZERO_ADDRESS ||
+    !fee.publishMarketFeeAddress ||
+    fee.publishMarketFeeAddress === ZERO_ADDRESS
+  )
+    return undefined
+
+  return {
+    token: fee.publishMarketFeeToken,
+    address: fee.publishMarketFeeAddress,
+    amount: fee.publishMarketFeeAmount
+  }
+}
+
+function sameAddress(a?: string, b?: string): boolean {
+  return Boolean(a && b && a.toLowerCase() === b.toLowerCase())
+}
+
+/** Adds two human-unit decimal strings without going through `Number`. */
+function addAmounts(a: string, b: string): string {
+  return new Decimal(a || 0).add(new Decimal(b || 0)).toString()
 }
 
 /** Approves a spend, skipping the call when the amount is zero. */
