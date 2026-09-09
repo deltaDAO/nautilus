@@ -173,11 +173,26 @@ export const sidebarV1Items = [
           },
           { text: 'setLicense', link: '/v1/docs/api/assetbuilder/setLicense' },
           { text: 'setName', link: '/v1/docs/api/assetbuilder/setName' },
-          { text: 'setNftTokenName', link: '/v1/docs/api/assetbuilder/setNftTokenName' },
-          { text: 'setNftTokenSymbol', link: '/v1/docs/api/assetbuilder/setNftTokenSymbol' },
-          { text: 'setNftTokenTemplate', link: '/v1/docs/api/assetbuilder/setNftTokenTemplate' },
-          { text: 'setNftTokenTransferable', link: '/v1/docs/api/assetbuilder/setNftTokenTransferable' },
-          { text: 'setNftTokenUri', link: '/v1/docs/api/assetbuilder/setNftTokenUri' },
+          {
+            text: 'setNftTokenName',
+            link: '/v1/docs/api/assetbuilder/setNftTokenName'
+          },
+          {
+            text: 'setNftTokenSymbol',
+            link: '/v1/docs/api/assetbuilder/setNftTokenSymbol'
+          },
+          {
+            text: 'setNftTokenTemplate',
+            link: '/v1/docs/api/assetbuilder/setNftTokenTemplate'
+          },
+          {
+            text: 'setNftTokenTransferable',
+            link: '/v1/docs/api/assetbuilder/setNftTokenTransferable'
+          },
+          {
+            text: 'setNftTokenUri',
+            link: '/v1/docs/api/assetbuilder/setNftTokenUri'
+          },
           { text: 'setType', link: '/v1/docs/api/assetbuilder/setType' }
         ]
       },
