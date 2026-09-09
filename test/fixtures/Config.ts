@@ -1,73 +1,33 @@
-import fs from 'node:fs'
-import { homedir } from 'node:os'
 import { type Config, ConfigHelper } from '@oceanprotocol/lib'
 import type { Signer } from 'ethers'
+import { getChainId } from '../../src/utils/index.js'
 
-// Get Config and Addresses for barge test environment
-
-export const getTestConfig = async (signer: Signer): Promise<Config> => {
-  const config = new ConfigHelper().getConfig(await signer.getChainId())
+/**
+ * Chain config for the integration suite.
+ *
+ * `metadataCacheUri`, `providerUri` and `subgraphUri` no longer exist on ocean.js's
+ * `Config` — one `oceanNodeUri` replaces the first two and the subgraph is gone — so this
+ * only ever overrides the node URI.
+ */
+export async function getTestConfig(signer: Signer): Promise<Partial<Config>> {
+  const chainId = await getChainId(signer)
+  const defaults = new ConfigHelper().getConfig(chainId)
 
   return {
-    ...config,
-    providerUri: process.env.PROVIDER_URI_TEST || config.providerUri,
-    metadataCacheUri:
-      process.env.METADATA_CACHE_URI_TEST || config.metadataCacheUri
+    ...(defaults || {}),
+    chainId,
+    ...(process.env.NODE_URL ? { oceanNodeUri: process.env.NODE_URL } : {})
   }
-
-  // TODO: look into fixing development test env
-  // const addresses = getAddresses()
-
-  // const isDevelopment = config.network === 'development'
-
-  // return isDevelopment
-  //   ? {
-  //       ...config,
-  //       metadataCacheUri: 'http://127.0.0.1:5000', // if running on macOS
-  //       // metadataCacheUri: 'http://172.15.0.5:5000',
-  //       providerUri: 'http://127.0.0.1:8030', // if running on macOS
-  //       // providerUri: 'http://172.15.0.4:8030',
-  //       providerAddress: '0xe08A1dAe983BC701D05E492DB80e0144f8f4b909', // barge
-  //       subgraphUri: 'http://127.0.0.1:9000', // if running on macOS
-  //       // subgraphUri: 'https://172.15.0.15:8000',
-  //       oceanTokenAddress: addresses.Ocean,
-  //       nftFactoryAddress: addresses.ERC721Factory,
-  //       dispenserAddress: addresses.Dispenser,
-  //       opfCommunityFeeCollector: addresses.OPFCommunityFeeCollector,
-  //       fixedRateExchangeAddress: addresses.FixedPrice
-  //     }
-  //   : {
-  //       ...config,
-  //       providerUri: process.env.PROVIDER_URI_TEST || config.providerUri,
-  //       metadataCacheUri:
-  //         process.env.METADATA_CACHE_URI_TEST || config.metadataCacheUri
-  //     }
 }
 
-export const getAddresses = (): {
-  chainId: number
-  Ocean: string
-  MockDAI: string
-  MockUSDC: string
-  OPFCommunityFeeCollector: string
-  startBlock: number
-  Router: string
-  FixedPrice: string
-  ERC20Template: {
-    '1': string
-    '2': string
-  }
-  ERC721Template: { '1': string }
-  Dispenser: string
-  ERC721Factory: string
-} => {
-  const data = JSON.parse(
-    // eslint-disable-next-line security/detect-non-literal-fs-filename
-    fs.readFileSync(
-      process.env.ADDRESS_FILE ||
-        `${homedir}/.ocean/ocean-contracts/artifacts/address.json`,
-      'utf8'
+/** The ocean-node under test. */
+export function getNodeUri(): string {
+  const nodeUri = process.env.NODE_URL
+
+  if (!nodeUri)
+    throw new Error(
+      'NODE_URL is not set; the integration suite needs an ocean-node.'
     )
-  )
-  return data.development
+
+  return nodeUri
 }

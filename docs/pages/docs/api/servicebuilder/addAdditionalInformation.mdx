@@ -1,0 +1,32 @@
+# addAdditionalInformation
+
+Attach arbitrary extra information to the service.
+
+:::warning
+DDO v5 narrowed this to primitive values — `string`, `number` or `boolean`. Nested objects must be serialised by the caller.
+:::
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+// ---cut---
+serviceBuilder.addAdditionalInformation({ // [!code focus]
+  updateFrequency: 'hourly', // [!code focus]
+  rowCount: 8760 // [!code focus]
+}) // [!code focus]
+```
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.

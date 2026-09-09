@@ -1,0 +1,133 @@
+import { Card, Cards } from 'vocs'
+
+# Examples
+
+The guides on this site show you the calls. The examples are the same calls, wired up and
+runnable: a small CLI covering publishing, editing, downloading, Compute-to-Data and
+credential-gated access, against a real network.
+
+They live in the nautilus repository, under
+[`examples/`](https://github.com/deltaDAO/nautilus/tree/main/examples).
+
+:::warning
+nautilus 2.0.0 is a **pre-release**. The API can still change between betas and you should
+expect bugs. Please report anything you hit on
+[GitHub](https://github.com/deltaDAO/nautilus/issues).
+:::
+
+## Getting them running
+
+```sh
+git clone https://github.com/deltaDAO/nautilus.git
+cd nautilus
+npm install && npm run build
+
+cd examples
+npm install
+cp example.env .env
+```
+
+Node 22 or later. There is no build step for the examples themselves — [`tsx`](https://tsx.is)
+runs the TypeScript directly.
+
+Set two variables in `.env`:
+
+| Variable | Value |
+| --- | --- |
+| `NETWORK` | `PONTUSXDEV`, `PONTUSXTEST`, `OASISSAPPHIRE`, or `LOCAL` |
+| `PRIVATE_KEY` | The account that publishes and consumes |
+
+Your account needs funds for gas, and for any non-free asset it buys. Contact deltaDAO at
+contact@delta-dao.com for tokens and onboarding.
+
+Then check what your ocean-node actually is, before anything else:
+
+```sh
+npm start -- check:node
+```
+
+:::warning
+nautilus v2 needs an **ocean-node**, and the public Pontus-X endpoints do not run one yet —
+they still report the legacy standalone `Provider 2.1.3`. Set `OCEAN_NODE_URI` in `.env` to a
+node you can actually reach. Without one, publishing gets as far as encrypting files and then
+fails with *"does not answer as an ocean-node"*.
+:::
+
+## The CLI
+
+Every example is a named command:
+
+```sh
+npm start -- <command> [args...]
+npm start -- help
+```
+
+`help` is generated from the command table in `commands.ts`, so it never drifts from what is
+actually there. The groups:
+
+| Group | What it covers |
+| --- | --- |
+| `check:` | Diagnostics. `check:node` is the one to run first. |
+| `publish:` | Datasets, algorithms, SaaS offers, multi-service assets, local validation. |
+| `asset:` | Inspecting, unlisting and revoking a published asset. |
+| `edit:` | Metadata, descriptions, prices, services, trusted algorithms, lifecycle. |
+| `access:` | Price checks, ordering, downloading, service selection, consumer parameters. |
+| `compute:` | Environments, free and paid jobs, status, logs, results, multi-dataset jobs. |
+| `ssi:` | Credential-gated publishing and consuming with walt.id. |
+
+A first run, end to end:
+
+```sh
+npm start -- publish:access-dataset      # prints a did:ope:… DID
+npm start -- access:price did:ope:…
+npm start -- access:download did:ope:…
+```
+
+Or chain the whole thing:
+
+```sh
+npm run scenario:e2e             # publish → order → download → compute
+npm start -- ssi:round-trip      # the credential-gated round trip
+```
+
+## Running against a local nautilus
+
+The examples ship pointing at the nautilus in the same checkout
+(`"@deltadao/nautilus": "file:../src"`), so they exercise your working copy by default. Three
+scripts control it:
+
+```sh
+npm run nautilus:which   # report which is active
+npm run use:local        # build ../src and link it   (the default)
+npm run use:npm          # switch to the published package
+```
+
+`use:npm` reads the version from `src/package.json`, so it tracks whatever the checkout is
+about to release. Pin something specific with `--spec`:
+
+```sh
+npm run use:npm -- --spec 2.0.0-beta.0
+npm run use:npm -- --spec beta
+```
+
+Switching rewrites `package.json` and `package-lock.json`; that churn is not meant to be
+committed. And until `2.0.0-beta.0` is published, a bare `use:npm` will warn and fail — the
+local checkout is the way to run these today.
+
+It is a dependency rewrite rather than `npm link`, deliberately: nothing is written to your
+global npm prefix.
+
+## Where to look
+
+<Cards>
+  <Card title="Publishing" description="publish:access-dataset, publish:saas, publish:multi-service" to="/docs/guides/publish" />
+  <Card title="Download" description="access:price, access:order, access:download" to="/docs/guides/download" />
+  <Card title="Compute to Data" description="compute:envs, compute:free, compute:paid, compute:full" to="/docs/guides/compute" />
+  <Card title="Editing" description="edit:metadata, edit:price, edit:trusted-algorithms" to="/docs/guides/edit" />
+  <Card title="Credential-gated assets" description="ssi:connect, ssi:round-trip, ssi:consume" to="/docs/guides/identity" />
+</Cards>
+
+The examples' own
+[README](https://github.com/deltaDAO/nautilus/blob/main/examples/README.md) goes further on
+the three things that most often surprise people coming from v1: publishing needing a remote
+store, one ocean-node replacing two URLs, and what DDO v5 did to the metadata.

@@ -1,0 +1,57 @@
+# waitForIndexer
+
+Block until ocean-node's indexer has an asset, or has a specific update to it.
+
+Useful directly after publishing: the metadata transaction confirms on chain before the
+indexer has processed it, so an immediate `getAsset` can still miss.
+
+## Usage
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const asset = await nautilus.waitForIndexer('did:ope:2a6ebce0af...') // [!code focus]
+```
+
+To wait for a *particular* update rather than merely for the asset to exist, pass the
+transaction hash. This matters when editing, where the asset already exists and you need
+the indexer to have picked up your change specifically:
+
+```ts twoslash
+import { Nautilus, AssetBuilder } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+const asset = await nautilus.getAsset('did:ope:2a6ebce0af...')
+// ---cut---
+const { ddo, setMetadataTxReceipt } = await nautilus.edit(
+  new AssetBuilder(asset).setName('Renamed').build()
+)
+
+const updated = await nautilus.waitForIndexer( // [!code focus]
+  ddo.id as string, // [!code focus]
+  setMetadataTxReceipt.hash // [!code focus]
+) // [!code focus]
+```
+
+`publish()` and `edit()` can do this for you — pass `{ waitForIndexer: true }`.
+
+## Returns
+
+- Type: `AssetV5 | undefined`
+
+The indexed asset, or `undefined` if it did not appear before the retry limit. It returns
+rather than throws, so you can decide whether a timeout is fatal.
+
+## Parameters
+
+### did
+
+- Type: `string`
+
+### txid (optional)
+
+- Type: `string`
+
+Wait for the update carried by this transaction, not just for the asset to exist.

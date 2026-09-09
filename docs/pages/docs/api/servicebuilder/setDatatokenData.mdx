@@ -1,0 +1,33 @@
+# setDatatokenData
+
+Set every datatoken creation parameter at once.
+
+Most callers only need [`setDatatokenNameAndSymbol`](/docs/api/servicebuilder/setDatatokenNameAndSymbol). Reach for this to change the template, cap or market fees.
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+// ---cut---
+serviceBuilder.setDatatokenData({ // [!code focus]
+  templateIndex: 2, // [!code focus]
+  cap: '100000', // [!code focus]
+  feeAmount: '0', // [!code focus]
+  feeToken: '0x0000000000000000000000000000000000000000', // [!code focus]
+  mpFeeAddress: '0x0000000000000000000000000000000000000000' // [!code focus]
+}) // [!code focus]
+```
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.

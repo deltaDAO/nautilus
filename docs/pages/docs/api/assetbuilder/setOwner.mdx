@@ -1,0 +1,21 @@
+# setOwner
+
+Set the address that will own the data NFT.
+
+Defaults to the publishing signer's address, so this is only needed when publishing on someone else's behalf.
+
+## Usage
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+assetBuilder.setOwner('0x0DB823218e337a6817e6D7740eb17635DEAdafAF') // [!code focus]
+```
+
+## Returns
+
+- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
+
+The asset builder instance, to chain further calls with.

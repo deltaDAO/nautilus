@@ -1,0 +1,27 @@
+# setAllAlgorithmsTrusted
+
+Allow any published algorithm to run.
+
+Writes `null` to the trusted list, which the node reads as *no restriction* — distinct from an empty list, which means *no algorithm may run*.
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.COMPUTE, FileTypes.URL>({
+  serviceType: ServiceTypes.COMPUTE
+})
+// ---cut---
+serviceBuilder.setAllAlgorithmsTrusted() // [!code focus]
+```
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.

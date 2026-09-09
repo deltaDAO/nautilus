@@ -1,0 +1,29 @@
+{
+  "name": "nautilus-examples",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Runnable nautilus v2 examples: publish, edit, download, compute and credential-gated flows.",
+  "type": "module",
+  "scripts": {
+    "start": "tsx index.ts",
+    "scenario:e2e": "tsx scenarios/e2e.ts",
+    "typecheck": "tsc --noEmit",
+    "use:local": "node scripts/use-nautilus.mjs local",
+    "use:npm": "node scripts/use-nautilus.mjs npm",
+    "nautilus:which": "node scripts/use-nautilus.mjs"
+  },
+  "author": "deltaDAO AG",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@deltadao/nautilus": "file:../src",
+    "dotenv": "^16.4.7",
+    "ethers": "^6.17.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

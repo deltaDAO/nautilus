@@ -1,0 +1,29 @@
+# setState
+
+Set the service's own lifecycle state.
+
+New in DDO v5: state is now per-service as well as per-asset, so one service can be retired while the rest of the asset stays active.
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+// ---cut---
+import { LifecycleStates } from '@deltadao/nautilus'
+
+serviceBuilder.setState(LifecycleStates.ORDERING_DISABLED_TEMPORARILY) // [!code focus]
+```
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.

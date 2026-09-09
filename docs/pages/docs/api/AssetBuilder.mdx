@@ -1,96 +1,189 @@
 # AssetBuilder
 
-With the `AssetBuilder` class you are able to use a typesafe API to build metadata for the assets you want to publish or edit.
+Builds the metadata for an asset you want to publish or edit, with a typesafe fluent API.
 
-## Instantiate AssetBuilder
+## Instantiating
 
-There are two options on initialization of a new `AssetBuilder` instance.
-
-The first example simply instantiates a clean empty builder to start adding metadata to and *building* your asset.
-
-If you already have an asset published and rather want to toEditorSettings, you can use the `getAquariusAsset` method the fetch the existing metadata. The `AssetBuilder` then takes the `aquariusAsset` as parameter to prepare the editing.
+Two modes, chosen by whether you pass an existing asset.
 
 :::code-group
 ```ts twoslash [create]
 import { AssetBuilder } from '@deltadao/nautilus'
 
-const assetBuilder = new AssetBuilder() // [!code focus]
-// @log: empty ddo object will be created
+const builder = new AssetBuilder() // [!code focus]
+// @log: an empty asset, to be filled in
 ```
 
-```ts twoslash [update]
+```ts twoslash [edit]
 import { AssetBuilder, Nautilus } from '@deltadao/nautilus'
 import { Wallet } from 'ethers'
 
 const nautilus = await Nautilus.create(new Wallet('0x1234'))
-const aquariusAsset = await nautilus.getAquariusAsset('did:op:2a6ebce0af9361e2c7d1e1e7909ecac3e4cabb4f089f7edd51865e0b77a5c216') // [!code focus]
 
-const assetBuilder = new AssetBuilder(aquariusAsset) // [!code focus]
-// @log: ddo:
-// @log: {
-// @log:    id: 'did:op:2a6ebce0af9361e2c7d1e1e7909ecac3e4cabb4f089f7edd51865e0b77a5c216'
-// @log:    nftAddress: '0xBB9Dd69845C51B95a39aec1537cC3027De1dAa53'
-// @log:    metadata: {
-// @log:      name: 'Nautilus-Example: Access Dataset Name',
-// @log:      ...
-// @log:    },
-// @log:    ...
-// @log: }
+const published = await nautilus.getAsset( // [!code focus]
+  'did:ope:2a6ebce0af9361e2c7d1e1e7909ecac3e4cabb4f089f7edd51865e0b77a5c216' // [!code focus]
+) // [!code focus]
+
+const editBuilder = new AssetBuilder(published) // [!code focus]
 ```
 :::
 
-## Using AssetBuilder to build metadata
-With the instance ready, it is now possible to build your metadata using the available methods. To finalize the process and receive a `NautilusAsset` object, you have to run the `build()` method.
+:::info
+v1 called the argument `aquariusAsset`. Aquarius no longer exists as a separate service —
+ocean-node serves the metadata API — so it is simply the asset from
+[`getAsset`](/docs/api/nautilus/getAsset).
+:::
 
-:::code-group
-```ts twoslash [create]
+In edit mode the builder seeds itself from the published document, including its owner and
+lifecycle state, and immediately strips the indexer-derived fields so they can never be
+signed back in. Setting one field leaves everything else intact: the merge is structural,
+not top-level, so you never have to resupply metadata you are not changing.
+
+`reset()` returns to whichever state the constructor produced. In edit mode that means the
+loaded asset — v1 emptied the builder, which made `reset()` unusable while editing.
+
+## A minimal new asset
+
+```ts twoslash
+import {
+  AssetBuilder,
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const minimalService = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+  .setServiceEndpoint('https://ocean-node.dev.pontus-x.eu')
+  .addFile({ type: 'url', url: 'https://data.example/x.csv', method: 'GET' })
+  .setPricing({ type: 'free' })
+  .build()
+// ---cut---
+const minimal = new AssetBuilder()
+  .setType('dataset') // required
+  .setName('Hourly Weather Observations') // required
+  .setProvidedBy('deltaDAO AG') // required by DDO v5 // [!code focus]
+  .addService(minimalService) // at least one
+  .build()
+```
+
+`build()` rejects a new asset missing `name`, `type` or `providedBy`, and one with no
+services. An `algorithm` also needs container metadata. Everything else is checked by
+[`publish`](/docs/api/nautilus/publish), which validates the whole DDO locally against the
+DDO v5 schema before spending gas.
+
+:::warning
+`setProvidedBy` is **new and required**. DDO v4 had no equivalent field.
+:::
+
+## DDO v5 changes worth knowing
+
+Three setters take the same arguments as in v1 but produce a different shape, because DDO v5
+changed the fields. The builder absorbs that, so you keep passing plain strings.
+
+```ts twoslash
 import { AssetBuilder } from '@deltadao/nautilus'
+const shapes = new AssetBuilder()
+// ---cut---
+// Stored as { '@value', '@language', '@direction' } — v4 used a plain string.
+shapes.setDescription('One row per hour, comma separated')
 
-const assetBuilder = new AssetBuilder()
+// Stored as { name } — v4 used a plain string. Pass the object form for ODRL terms.
+shapes.setLicense('https://market.oceanprotocol.com/terms')
 
-const asset = assetBuilder // [!code focus]
-      .setName('Nautilus edit Example: New name') // [!code focus]
-      .setAuthor('Author') // [!code focus]
-      .setDescription( // [!code focus]
-        '# Asset Description - Markdown supported' // [!code focus]
-      ) // [!code focus]
-      .build() // [!code focus]
-// @log: ddo:
-// @log: {
-// @log:    metadata: {
-// @log:      name: 'Nautilus edit Example: New name',
-// @log:      author: 'Author',
-// @log:      description: '# Asset Description - Markdown supported'
-// @log:    }
-// @log: }
+// Stored as a { label: url } map — v4 used an array. An array still works, keyed by index.
+shapes.addLinks(['https://docs.example'])
+shapes.addLinks({ docs: 'https://docs.example' })
 ```
 
-```ts twoslash [update]
-import { AssetBuilder, Nautilus } from '@deltadao/nautilus'
-import { Wallet } from 'ethers'
+`setContentLanguage` was **repurposed**. In v4 it wrote a `contentLanguage` metadata field;
+v5 moved the language onto each value, so it now sets the tag applied to every
+language-tagged field the builder emits:
 
-const nautilus = await Nautilus.create(new Wallet('0x1234'))
-const aquariusAsset = await nautilus.getAquariusAsset('did:op:2a6ebce0af9361e2c7d1e1e7909ecac3e4cabb4f089f7edd51865e0b77a5c216')
-
-const assetBuilder = new AssetBuilder(aquariusAsset)
-
-const asset = assetBuilder // [!code focus]
-      .setName('An Updated Asset Name') // [!code focus]
-      .build() // [!code focus]
-
-// @log: ddo:
-// @log: {
-// @log:    id: 'did:op:2a6ebce0af9361e2c7d1e1e7909ecac3e4cabb4f089f7edd51865e0b77a5c216'
-// @log:    nftAddress: '0xBB9Dd69845C51B95a39aec1537cC3027De1dAa53'
-// @log:    metadata: {
-// @log:      name: 'An Updated Asset Name',
-// @log:      ...
-// @log:    },
-// @log:    ...
-// @log: }
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+const language = new AssetBuilder()
+// ---cut---
+language.setContentLanguage('de', 'ltr') // [!code focus]
+language.setDescription('Stündliche Wetterbeobachtungen')
+// @log: description: { '@value': '...', '@language': 'de', '@direction': 'ltr' }
 ```
-:::
 
-With the built `asset` object you are now able to call the [`nautilus.publish()`](/docs/guides/publish), [`nautilus.edit()`](/docs/guides/edit) to publish your changes.
+It defaults to `en` / `ltr`.
 
-To get a full overview of all `AssetBuilder` methods, head over to the [API documentation](/docs/api/assetbuilder/build).
+## Gating access
+
+Address lists work as they did in v1. Verifiable-credential gating is new in DDO v5.
+
+```ts twoslash
+import { AssetBuilder, CredentialListTypes } from '@deltadao/nautilus'
+const gated = new AssetBuilder()
+// ---cut---
+gated
+  // Only these addresses may access it.
+  .addCredentialAddresses(CredentialListTypes.ALLOW, ['0x0DB823218e337a...'])
+  // Or: anyone holding a credential of this type.
+  .addRequestCredentials(CredentialListTypes.ALLOW, [ // [!code focus]
+    { type: 'VerifiableId', format: 'jwt_vc_json' } // [!code focus]
+  ]) // [!code focus]
+  .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'not-before']) // [!code focus]
+```
+
+See [Credential-gated assets](/docs/guides/identity) for the whole picture, including the
+consumer side.
+
+## Method reference
+
+### Metadata
+
+[`setType`](/docs/api/assetbuilder/setType) ·
+[`setName`](/docs/api/assetbuilder/setName) ·
+[`setDescription`](/docs/api/assetbuilder/setDescription) ·
+[`setDisplayTitle`](/docs/api/assetbuilder/setDisplayTitle) ·
+[`setAuthor`](/docs/api/assetbuilder/setAuthor) ·
+[`setProvidedBy`](/docs/api/assetbuilder/setProvidedBy) ·
+[`setCopyrightHolder`](/docs/api/assetbuilder/setCopyrightHolder) ·
+[`setLicense`](/docs/api/assetbuilder/setLicense) ·
+[`setAlgorithm`](/docs/api/assetbuilder/setAlgorithm) ·
+[`setContentLanguage`](/docs/api/assetbuilder/setContentLanguage) ·
+[`addTags`](/docs/api/assetbuilder/addTags) ·
+[`addCategories`](/docs/api/assetbuilder/addCategories) ·
+[`addLinks`](/docs/api/assetbuilder/addLinks) ·
+[`addAttachments`](/docs/api/assetbuilder/addAttachments) ·
+[`addAdditionalInformation`](/docs/api/assetbuilder/addAdditionalInformation)
+
+### Services
+
+[`addService`](/docs/api/assetbuilder/addService) ·
+[`removeService`](/docs/api/assetbuilder/removeService)
+
+### NFT
+
+[`setNftData`](/docs/api/assetbuilder/setNftData) ·
+[`setNftTokenName`](/docs/api/assetbuilder/setNftTokenName) ·
+[`setNftTokenSymbol`](/docs/api/assetbuilder/setNftTokenSymbol) ·
+[`setNftTokenUri`](/docs/api/assetbuilder/setNftTokenUri) ·
+[`setNftTokenTransferable`](/docs/api/assetbuilder/setNftTokenTransferable) ·
+[`setNftTokenTemplate`](/docs/api/assetbuilder/setNftTokenTemplate)
+
+### Identity and gating
+
+[`setIssuer`](/docs/api/assetbuilder/setIssuer) ·
+[`addCredentialAddresses`](/docs/api/assetbuilder/addCredentialAddresses) ·
+[`removeCredentialAddresses`](/docs/api/assetbuilder/removeCredentialAddresses) ·
+[`addCredentialAccessList`](/docs/api/assetbuilder/addCredentialAccessList) ·
+[`addRequestCredentials`](/docs/api/assetbuilder/addRequestCredentials) ·
+[`setVcPolicies`](/docs/api/assetbuilder/setVcPolicies) ·
+[`setVpPolicies`](/docs/api/assetbuilder/setVpPolicies) ·
+[`setCredentialMatchRules`](/docs/api/assetbuilder/setCredentialMatchRules)
+
+### Lifecycle
+
+[`setLifecycleState`](/docs/api/assetbuilder/setLifecycleState) ·
+[`setOwner`](/docs/api/assetbuilder/setOwner)
+
+### Building
+
+[`build`](/docs/api/assetbuilder/build) ·
+[`reset`](/docs/api/assetbuilder/reset)

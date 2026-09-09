@@ -1,0 +1,23 @@
+# setLifecycleState
+
+Set the asset's lifecycle state as part of an edit.
+
+Use [`nautilus.setAssetLifecycleState`](/docs/api/nautilus/setAssetLifecycleState) when the state is the only thing you want to change — it sends one transaction instead of republishing the DDO.
+
+## Usage
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+import { LifecycleStates } from '@deltadao/nautilus'
+
+assetBuilder.setLifecycleState(LifecycleStates.ASSET_UNLISTED) // [!code focus]
+```
+
+## Returns
+
+- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
+
+The asset builder instance, to chain further calls with.

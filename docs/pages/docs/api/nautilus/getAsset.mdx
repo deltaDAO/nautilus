@@ -1,0 +1,61 @@
+# getAsset
+
+Resolve a published asset by its decentralized identifier.
+
+In v1 this was `getAquariusAsset`. Aquarius no longer exists as a separate service —
+ocean-node serves the metadata API — so the method dropped the name.
+
+## Usage
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const asset = await nautilus.getAsset( // [!code focus]
+  'did:ope:2a6ebce0af9361e2c7d1e1e7909ecac3e4cabb4f089f7edd51865e0b77a5c216' // [!code focus]
+) // [!code focus]
+```
+
+## Returns
+
+- Type: `AssetV5`
+
+The DDO v5 asset. Note that DDO v5 is a W3C Verifiable Credential: everything the v4 DDO
+carried at the top level now lives under `credentialSubject`.
+
+Rather than indexing into that structure, read it through the exported helpers. They go
+through `ddo-js`'s version-aware manager, so your code keeps working when a future DDO
+version moves fields again.
+
+```ts twoslash
+import { Nautilus, getMetadata, getServices, getOwner } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const asset = await nautilus.getAsset('did:ope:2a6ebce0af...')
+
+const name = getMetadata(asset).name // [!code focus]
+const services = getServices(asset) // [!code focus]
+const owner = getOwner(asset) // [!code focus]
+```
+
+Available helpers: `getMetadata`, `getServices`, `getService`, `getServiceByType`,
+`getCredentials`, `getServiceCredentials`, `getDatatokens`, `getNft`, `getOwner`,
+`getLifecycleState`, `getIndexedMetadata`, `getStatsForService`, `getChainId`,
+`getNftAddress`, `getVersion`, `supportsSsi`.
+
+## Throws
+
+Unlike v1, which resolved to `undefined` for an unknown DID, this throws an
+`OceanNodeError` naming the DID. If the asset may not be indexed yet, use
+[`waitForIndexer`](/docs/api/nautilus/waitForIndexer) instead.
+
+## Parameters
+
+### did
+
+- Type: `string`
+
+The decentralized identifier of the asset. DDO v5 DIDs use the `did:ope:` prefix; v4 used
+`did:op:`.

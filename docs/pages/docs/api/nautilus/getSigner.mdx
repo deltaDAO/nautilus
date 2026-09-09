@@ -1,0 +1,23 @@
+# getSigner
+
+The ethers `Signer` the instance was created with.
+
+## Usage
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const signer = nautilus.getSigner() // [!code focus]
+
+const address = await signer.getAddress()
+```
+
+## Returns
+
+- Type: `Signer`
+
+The same signer instance passed to [`create`](/docs/api/nautilus/create) — useful for the
+handful of helpers that take a signer directly, such as
+[`getPricingInfo`](/docs/api/pricing/getPricingInfo).

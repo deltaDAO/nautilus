@@ -1,0 +1,27 @@
+# setServiceEndpoint
+
+Set the ocean-node serving this service.
+
+Required: `build()` fails without it. Changing it on a published service means the file object must be re-encrypted by the new node, which gives the service a new id.
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+// ---cut---
+serviceBuilder.setServiceEndpoint('https://node.example.org') // [!code focus]
+```
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.

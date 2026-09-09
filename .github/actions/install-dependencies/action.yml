@@ -5,10 +5,15 @@ runs:
   using: 'composite'
   steps:
     - name: Set up npm
-      uses: actions/setup-node@v2
+      uses: actions/setup-node@v5
       with:
-        node-version: '18'
+        # Kept in sync with .nvmrc and the `engines.node` floor in package.json.
+        # @oceanprotocol/lib 9 and nautilus 2.x both require Node >= 22.
+        node-version-file: '.nvmrc'
+        cache: 'npm'
 
     - name: Install dependencies
       shell: bash
-      run: npm install
+      # `ci` rather than `install`: installs exactly what the lockfile describes and
+      # fails instead of silently resolving newer versions.
+      run: npm ci

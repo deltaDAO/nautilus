@@ -1,65 +1,50 @@
 # getComputeStatus
 
-Request the status of a previously started compute job.
+Get the status of a compute job.
 
 ## Usage
 
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'
 import { Wallet } from 'ethers'
-
 const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const job = await nautilus.getComputeStatus({ jobId: 'a-job-id' }) // [!code focus]
 
-await nautilus.getComputeStatus({ // [!code focus]
-    jobId: 'abcd1234', // [!code focus]
-    providerUri: 'https://provider.dev.pontus-x.eu' // [!code focus]
-}) // [!code focus]
+console.log(job?.status, job?.statusText)
 ```
+
+:::info
+v1 required a `providerUri`. It now defaults to the node the instance is configured with;
+pass `nodeUri` only for a job running on a different node.
+:::
 
 ## Returns
 
-[`ComputeJob | ComputeJob[]`](https://github.com/oceanprotocol/ocean.js/blob/main/src/%40types/Compute.ts#L34-L47) {/*link to type in docs if possible*/}
+- Type: `ComputeJob | undefined`
 
-A compute job object containing information abot the job status.
+`undefined` when the node does not know the job. Status `70` (`JobFinished`) and `71`
+(`JobSettle`) both mean the results are ready — either is enough for
+[`getComputeResult`](/docs/api/nautilus/getComputeResult) to return a URL.
 
-## Parameters 
+## Parameters
 
 ### config
-- Type: `ComputeStatusConfig`
 
-The configuration object to request the compute job status.
+- Type: `ComputeStatusConfig`
 
 #### Properties
 
 ##### jobId
+
 - Type: `string`
 
-The jobId of the compute job to request a status for.
+##### nodeUri (optional)
 
-
-```ts twoslash
-import { Nautilus } from '@deltadao/nautilus'
-import { Wallet } from 'ethers'
-const nautilus = await Nautilus.create(new Wallet('0x1234'))
-// ---cut---
-await nautilus.getComputeStatus({
-    jobId: 'abcd1234', // [!code focus]
-    providerUri: 'https://provider.dev.pontus-x.eu' 
-})
-```
-
-##### providerUri
 - Type: `string`
 
-The uri of the provider that hosts the compute job to request a status for.
+For a job on another node.
 
-```ts twoslash
-import { Nautilus } from '@deltadao/nautilus'
-import { Wallet } from 'ethers'
-const nautilus = await Nautilus.create(new Wallet('0x1234'))
-// ---cut---
-await nautilus.getComputeStatus({
-    jobId: 'abcd1234', 
-    providerUri: 'https://provider.dev.pontus-x.eu' // [!code focus]
-})
-```
+##### agreementId (optional)
+
+- Type: `string`

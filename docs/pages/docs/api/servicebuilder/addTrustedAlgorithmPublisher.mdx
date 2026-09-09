@@ -1,0 +1,27 @@
+# addTrustedAlgorithmPublisher
+
+Trust every algorithm from a given publisher.
+
+Coarser than pinning algorithms individually: any algorithm that address publishes becomes runnable, including ones published later.
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.COMPUTE, FileTypes.URL>({
+  serviceType: ServiceTypes.COMPUTE
+})
+// ---cut---
+serviceBuilder.addTrustedAlgorithmPublisher('0x0DB823218e337a6817e6D7740eb17635DEAdafAF') // [!code focus]
+```
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.

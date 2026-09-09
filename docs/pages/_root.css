@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+/* Vocs stores the active theme on the document's `color-scheme` rather than a
+   `.dark` class, so the `dark:` variant has to follow that instead. */
+@custom-variant dark (
+  &:where(
+    :root[style*="color-scheme:dark"] *,
+    :root[style*="color-scheme: dark"] *
+  )
+);
+
+/* Landing-page hero: let the install snippet fill its column and match the
+   scale of the tagline beside it. Vocs v2 renders code groups as Base UI tabs,
+   so hook onto its `data-v-*` attributes rather than internal class names. */
+#home-install pre {
+  font-size: 18px;
+}
+
+#home-install [data-v-code-group] {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+}
+
+/* The panel wrapper sits after the tab list and holds each tab's code block. */
+#home-install [data-v-code-group] > :last-child {
+  flex: 1;
+}
+
+#home-install [data-v-code-group-panel],
+#home-install [data-v-code-group-panel] pre {
+  height: 100%;
+}

@@ -2,7 +2,13 @@
 
 Set the description of the asset. This supports the [markdown syntax](https://en.wikipedia.org/wiki/Markdown).
 
-Official OceanProtocol documentation: [DDO Specification](https://docs.oceanprotocol.com/developers/ddo-specification)
+:::warning[Shape changed in DDO v5]
+v5 language-tags this value, so it is stored as
+`{ '@value', '@language', '@direction' }` rather than a plain string. You still pass a
+string — the builder wraps it, using whatever
+[`setContentLanguage`](/docs/api/assetbuilder/setContentLanguage) selected (`en`/`ltr` by
+default).
+:::
 
 ## Usage
 
@@ -27,7 +33,11 @@ const asset = assetBuilder.build() // [!code focus]
 await nautilus.publish(asset) // [!code focus]
 // @log: ddo.metadata: 
 // @log: { 
-// @log:    description: '# Asset Title\n\nA detailed description of my asset and what it offers.\n\nThis supports markdown, such as **highlights** or [links](https://link.to/my-external-resource) to other resources.'
+// @log:    description: {
+// @log:      '@value': '# Asset Title\n\nA detailed description…',
+// @log:      '@language': 'en',
+// @log:      '@direction': 'ltr'
+// @log:    }
 // @log: }
 ```
 
@@ -44,9 +54,9 @@ This supports markdown, such as **highlights** or [links](https://link.to/my-ext
 
 - Type: [`AssetBuilder`](/docs/api/AssetBuilder)
 
-The asset builder instance to chain building calls with.
+The asset builder instance, to chain further calls with.
 
-## Parameter
+## Parameters
 
 ### description
 

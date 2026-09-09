@@ -1,0 +1,149 @@
+# Pricing [What a service costs, read from the chain]
+
+v1 read prices from the Ocean subgraph. That is gone — `Config` has no `subgraphUri` at all
+any more, and nautilus no longer depends on `urql` or `graphql`. Prices now come from
+**contract reads**, the same way ocean.js derives them.
+
+For most flows you never need this: [`access`](/docs/api/nautilus/access) orders whatever is
+required. Reach for it when you want to show a price *before* committing to a purchase.
+
+## Two steps
+
+Pricing is read in two calls: what scheme the datatoken uses, then what one order costs.
+
+```ts twoslash
+import { Nautilus, getPricingInfo, getOrderPrice, getDatatokenForService, getServices } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const asset = await nautilus.getAsset('did:ope:1234abcd...')
+const serviceId = getServices(asset)[0].id
+const datatoken = getDatatokenForService(asset, serviceId) as string
+
+const signer = nautilus.getSigner()
+const config = nautilus.getOceanConfig()
+
+const pricing = await getPricingInfo(signer, datatoken, config) // [!code focus]
+const price = await getOrderPrice(signer, pricing, config) // [!code focus]
+
+console.log(price.total)
+```
+
+## `PricingInfo`
+
+| Field | Meaning |
+| --- | --- |
+| `schema` | `'fixed'`, `'free'` or `'none'` |
+| `templateId` | Datatoken template: `1` basic, `2` enterprise, `4` confidential EVM |
+| `datatokenAddress` | The token being priced |
+| `exchangeId` | The fixed-rate exchange id, when `schema` is `'fixed'` |
+| `baseTokenAddress` | What the exchange charges in |
+| `baseTokenDecimals` | Decimals of that token |
+| `publishMarketFee` | The publisher's market fee |
+
+:::info
+`schema: 'none'` is a real outcome, not an error. A datatoken can have neither a fixed-rate
+exchange nor a dispenser, in which case it simply cannot be ordered. `getFixedRates()` and
+`getDispensers()` are the authoritative source.
+:::
+
+## `OrderPrice`
+
+Every field is a decimal string.
+
+| Field | Meaning |
+| --- | --- |
+| `total` | **The base-token spend** — what the exchange takes |
+| `baseTokenAmount` | The same amount, named for what it is |
+| `opcFee` | Ocean Protocol Community fee |
+| `publishMarketFee` | The publishing market's cut, in its own token |
+| `consumeMarketFee` | What your market collects, if you charge anything |
+| `consumeMarket` | The `{ address, fee }` this quote was priced with |
+
+`total` already contains every swap-side fee, so never sum the fields yourself.
+
+:::warning
+Free is not free of fees. A dispenser-priced asset costs nothing to swap — `total` is
+`'0'` — but the datatoken still charges its publish-market fee, in whatever token its
+publisher chose, and pulls it from you during the order. It is reported separately in
+`publishMarketFee` because it is usually not the base token at all; nautilus approves the
+allowance for it on your behalf.
+:::
+
+## Charging a consume-market fee
+
+Your cut is a **fraction of the swap**, not an amount — `'0.01'` is 1% — and it needs the
+account that collects it. The exchange pays its swap fee to whichever address the order
+names, so a fee without a collector is either lost or paid to somebody else.
+
+```ts twoslash
+import { getOrderPrice, order } from '@deltadao/nautilus'
+import type { PricingInfo } from '@deltadao/nautilus'
+import type { Config, ProviderFees } from '@oceanprotocol/lib'
+import type { Signer } from 'ethers'
+
+declare const signer: Signer
+declare const pricing: PricingInfo
+declare const config: Config
+declare const providerFees: ProviderFees
+declare const consumer: string
+// ---cut---
+const price = await getOrderPrice(signer, pricing, config, {
+  address: '0xYourMarketCollector', // [!code focus]
+  fee: '0.01' // 1% of the swap // [!code focus]
+})
+
+// `price` carries the fee, so the order charges what was quoted, to the address it was
+// quoted for.
+await order({ signer, config, pricing, price, serviceIndex: 0, providerFees, consumer })
+```
+
+:::info
+Only fixed-rate pricing can carry a consume-market fee: it rides on the exchange swap, and
+a dispenser order has no swap to take it from. Asking for one anyway throws, rather than
+quoting a fee nothing will collect.
+:::
+
+## Do you already hold an order?
+
+`hasReusableOrder` answers from what the node reports, rather than reconstructing it from
+events — the node returns `validOrder` when a previous order is still inside the service's
+timeout.
+
+```ts twoslash
+import { hasReusableOrder } from '@deltadao/nautilus'
+
+declare const initialize: { validOrder?: string }
+// ---cut---
+if (hasReusableOrder(initialize)) {
+  // Already paid, still inside the timeout — no new order needed.
+}
+```
+
+:::danger[Currently always false]
+ocean-node 3.2.21's access `initialize` returns `{ providerFee, datatoken, nonce, computeAddress }`
+and **no `validOrder`**, so this is always `false` and every
+[`access`](/docs/api/nautilus/access) buys a fresh datatoken — even within the timeout. On a
+paid asset that is repeated payment for access you already hold. The v4 Provider returned the
+field; until it comes back, cache the download URL rather than re-calling `access`.
+:::
+
+## Coming from v1
+
+| v1 | v2 |
+| --- | --- |
+| `getAccessDetails()` | `getPricingInfo()` |
+| `AccessDetails` | `PricingInfo` |
+| `OrderPriceAndFees` | `OrderPrice` |
+| `AssetWithAccessDetails` | — read pricing separately from the asset |
+| subgraph queries | contract reads |
+
+## Try it
+
+```sh
+npm start -- access:price did:ope:…      # what an asset costs right now
+npm start -- edit:price did:ope:… 2.95   # reprice a fixed-rate exchange
+```
+
+`config.ts` in [`examples/`](/docs/examples) holds ready-made pricing configs per network,
+with the payment-token addresses already filled in.

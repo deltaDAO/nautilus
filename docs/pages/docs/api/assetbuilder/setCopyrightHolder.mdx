@@ -1,3 +1,31 @@
 # setCopyrightHolder
 
-{/* TODO: create api docs */}
+Set the entity holding copyright over the asset's content.
+
+This is distinct from [`setAuthor`](/docs/api/assetbuilder/setAuthor), which names who
+produced the data, and from [`setProvidedBy`](/docs/api/assetbuilder/setProvidedBy), which
+names the organisation offering it.
+
+## Usage
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+assetBuilder.setCopyrightHolder('deltaDAO AG') // [!code focus]
+```
+
+## Returns
+
+- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
+
+The asset builder instance, to chain further calls with.
+
+## Parameters
+
+### copyrightHolder
+
+- Type: `string`
+
+A plain string. Unlike `description`, this field is not language-tagged in DDO v5.

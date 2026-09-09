@@ -1,0 +1,32 @@
+# setDataSchema
+
+Describe the shape of the data this service serves.
+
+New in DDO v5. A `RemoteObject` pointing at a schema document, so consumers can know the structure before buying.
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+// ---cut---
+serviceBuilder.setDataSchema({ // [!code focus]
+  name: 'observations.schema.json', // [!code focus]
+  fileType: 'json', // [!code focus]
+  sha256: 'e3b0c44298fc1c149afbf4c8996fb924...', // [!code focus]
+  mirrors: [{ type: 'url', url: 'https://example.org/schema.json', method: 'GET' }] // [!code focus]
+}) // [!code focus]
+```
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.

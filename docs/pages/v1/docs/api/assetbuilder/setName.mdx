@@ -1,0 +1,52 @@
+---
+searchPriority: 0
+---
+
+:::warning
+You are viewing the documentation for Nautilus **v1.1.0** (legacy). Switch to the [latest documentation](/docs/introduction), or follow the [migration guide](/docs/migration) to upgrade.
+:::
+
+# setName
+
+Set the name of the asset.
+
+Official OceanProtocol documentation: [DDO Specification](https://docs.oceanprotocol.com/developers/ddo-specification)
+
+## Usage
+
+```ts
+import { AssetBuilder, Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+
+const assetBuilder = new AssetBuilder()
+assetBuilder.setName('Randomly Generated Weather Data') // [!code focus]
+const asset = assetBuilder.build() // [!code focus]
+
+await nautilus.publish(asset) // [!code focus]
+// => ddo.metadata: 
+// => { 
+// =>    name: 'Randomly Generated Weather Data'
+// => }
+```
+
+## Returns
+
+- Type: [`AssetBuilder`](/v1/docs/api/AssetBuilder)
+
+The asset builder instance to chain building calls with.
+
+## Parameter
+
+### name
+
+- Type: `string`
+
+A short descriptive name to use for the asset's metadata.
+
+```ts
+assetBuilder.setName(
+    'Asset Name' // [!code focus]
+)
+```

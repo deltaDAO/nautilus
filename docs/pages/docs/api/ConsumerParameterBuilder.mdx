@@ -1,5 +1,3 @@
-import { Callout } from 'vocs/components'
-
 # ConsumerParameterBuilder
 
 Builder class used to build custom parameters.
@@ -28,6 +26,6 @@ const service = builder.addConsumerParameter(numberParameter)
 We can use the `ServiceBuilder` in combination with the `ConsumerParameterBuilder` to add the parameter to the service metadata.
 The supported types of parameters are `'text'`, `'number'`, `'boolean'` and `'select'`.
 
-<Callout type='tip'>
+:::tip
 It is also possible to attach consumer parameters to algorithm metadata via [`setAlgorithm()`](/docs/api/assetbuilder/setAlgorithm) to gain access to user input at algorithm runtime.
-</Callout>
+:::

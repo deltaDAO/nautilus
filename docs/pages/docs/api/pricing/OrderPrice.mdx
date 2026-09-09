@@ -1,0 +1,43 @@
+# OrderPrice
+
+What [`getOrderPrice`](/docs/api/pricing/getOrderPrice) returns. Every amount is a decimal
+string.
+
+```ts twoslash
+import type { OrderPrice } from '@deltadao/nautilus'
+// ---cut---
+declare const price: OrderPrice
+
+price.total // what to approve and spend
+price.baseTokenAmount
+price.opcFee
+price.publishMarketFee
+price.consumeMarketFee
+price.consumeMarket // who collects it, and the fraction it came from
+```
+
+| Field | Meaning |
+| --- | --- |
+| `total` | **The base-token spend** — what the exchange takes. |
+| `baseTokenAmount` | The same amount, named for what it is. |
+| `opcFee` | Ocean Protocol Community fee. |
+| `publishMarketFee` | The publishing market's cut, **in its own token**. |
+| `consumeMarketFee` | What your market collects — the amount the exchange derived. |
+| `consumeMarket` | The `{ address, fee }` this quote was priced with, if any. |
+
+`total` is what the exchange wants in, so the OPC cut, its own market fee and the
+consume-market fee are all already inside it. Do not sum the fields yourself.
+
+:::warning
+`publishMarketFee` is **not** part of `total` and is usually not even in the same currency:
+the datatoken charges it in whatever token its publisher chose, and pulls it from you during
+the order. Nautilus approves that allowance for you, so there is nothing to do — but a
+`total` that quietly included it was both double-counted and, since the contract reports the
+fee in base units while every field here is human-readable, out by a factor of 10^18.
+:::
+
+`consumeMarket` travels on the quote so that
+[`order`](/docs/guides/pricing#charging-a-consume-market-fee) charges the fee that was
+priced, to the address it was priced with.
+
+Replaces v1's `OrderPriceAndFees`. See [pricing](/docs/guides/pricing).

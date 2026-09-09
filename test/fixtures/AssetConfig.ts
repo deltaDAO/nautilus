@@ -1,131 +1,75 @@
-import type { Signer } from 'ethers'
-import type {
-  MetadataConfig,
-  PricingConfig,
-  ServiceConfig
-} from '../../src/@types/Publish'
-import type { PricingConfigWithoutOwner } from '../../src/Nautilus'
-import { getTestConfig } from './Config'
-import { datatokenParams } from './DatatokenParams'
-import { freParams } from './FixedRateExchangeParams'
+import type { MetadataConfig } from '../../src/@types/Publish.js'
+import type { UrlFileObject } from '../../src/Nautilus/Asset/Service/NautilusService.js'
 
+/** Minimal valid DDO v5 dataset metadata — note `providedBy`, which v5 requires. */
 export const datasetMetadata: MetadataConfig = {
   type: 'dataset',
-  name: 'Test Dataset',
-  description: 'Automated Publishing Test on GEN-X',
-  author: 'publish-script-test',
-  license: 'MIT'
+  name: 'Nautilus Test Dataset',
+  description: 'Published by the nautilus integration suite',
+  author: 'deltaDAO',
+  providedBy: 'deltaDAO AG',
+  copyrightHolder: 'deltaDAO AG',
+  license: 'https://market.oceanprotocol.com/terms',
+  tags: ['nautilus', 'test']
 }
 
 export const algorithmMetadata: MetadataConfig = {
   type: 'algorithm',
-  name: 'Test Algo',
-  description: 'Automated Publishing Test on GEN-X',
-  author: 'publish-script-test',
-  license: 'MIT',
+  name: 'Nautilus Test Algorithm',
+  description: 'A trivial algorithm used by the nautilus integration suite',
+  author: 'deltaDAO',
+  providedBy: 'deltaDAO AG',
+  license: 'https://market.oceanprotocol.com/terms',
   algorithm: {
-    language: 'Node.js',
-    version: '1.0.0',
+    language: 'python',
+    version: '0.1.0',
+    /**
+     * Env-overridable because image digests are per-platform and ocean-node
+     * verifies the manifest before it will start a job.
+     *
+     * The defaults are amd64-only: `oceanprotocol/algo_dockers` publishes no
+     * arm64 manifest at all, so on Apple Silicon compute needs a multi-arch
+     * image instead — export these three variables with a digest resolved for
+     * the host platform (e.g. from `node:18.17.1`) to run there.
+     */
     container: {
-      entrypoint: 'node $ALGO',
-      image: 'node',
-      tag: 'latest',
+      entrypoint: process.env.ALGO_IMAGE_ENTRYPOINT ?? 'python $ALGO',
+      image: process.env.ALGO_IMAGE_NAME ?? 'oceanprotocol/algo_dockers',
+      tag: process.env.ALGO_IMAGE_TAG ?? 'python-branin',
       checksum:
-        'sha256:026026d98942438e4df232b3e8cd7ca32416b385918977ce5ec0c6333618c423'
-    },
-    consumerParameters: [
-      {
-        name: 'hometown',
-        type: 'text',
-        label: 'Hometown',
-        required: true,
-        description: 'What is your hometown?',
-        default: 'Nowhere'
-      },
-      {
-        name: 'age',
-        type: 'number',
-        label: 'Age',
-        required: false,
-        description: 'Please fill your age',
-        default: '0'
-      },
-      {
-        name: 'developer',
-        type: 'boolean',
-        label: 'Developer',
-        required: false,
-        description: 'Are you a developer?',
-        default: 'false'
-      },
-      {
-        name: 'languagePreference',
-        type: 'select',
-        label: 'Language',
-        required: false,
-        description: 'Do you like NodeJs or Python',
-        default: 'nodejs',
-        options: '[{"nodejs": "I love NodeJs"},{"python": "I love Python"}]'
-      }
-    ]
+        process.env.ALGO_IMAGE_CHECKSUM ??
+        'sha256:8f36c4b2b7b4b0e6b0d0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0'
+    }
   }
 }
 
-export const datasetService: Omit<
-  ServiceConfig,
-  'serviceEndpoint' | 'pricing'
-> = {
-  type: 'access',
-  files: [
-    {
-      type: 'url',
-      url: 'https://raw.githubusercontent.com/oceanprotocol/testdatasets/main/shs_dataset_test.txt',
-      method: 'GET'
-    }
-  ],
-  timeout: 0,
-  datatokenCreateParams: datatokenParams
+/**
+ * The ocean-node — not this process — fetches these URLs, to encrypt the files
+ * object at publish time and to stream the data on download. They must
+ * therefore resolve from wherever the node runs, not from this process; point
+ * ASSET_BASE_URL at a host the node can reach to override the public defaults.
+ *
+ * Note that ocean-node rejects any URL matching 127.0.0.1 outright
+ * (DEFAULT_UNSAFE_URLS), so a node in Docker needs host.docker.internal.
+ */
+const assetBase =
+  process.env.ASSET_BASE_URL ??
+  'https://raw.githubusercontent.com/oceanprotocol'
+
+const localAssets = Boolean(process.env.ASSET_BASE_URL)
+
+export const datasetFile: UrlFileObject = {
+  type: 'url',
+  url: localAssets
+    ? `${assetBase}/example-dataset.json`
+    : `${assetBase}/testdatasets/main/shs_dataset_test.txt`,
+  method: 'GET'
 }
 
-export const algorithmService: Omit<
-  ServiceConfig,
-  'serviceEndpoint' | 'pricing'
-> = {
-  type: 'compute',
-  files: [
-    {
-      type: 'url',
-      url: 'https://raw.githubusercontent.com/deltaDAO/files/main/main.js',
-      method: 'GET'
-    }
-  ],
-  timeout: 600,
-  datatokenCreateParams: datatokenParams
-}
-
-export const freePricing: PricingConfig = { type: 'free' }
-export const fixedPricing: PricingConfig = {
-  type: 'fixed'
-}
-
-export async function getPricing(
-  signer: Signer,
-  type?: PricingConfig['type']
-): Promise<PricingConfigWithoutOwner> {
-  const config = await getTestConfig(signer)
-
-  switch (type) {
-    case 'fixed':
-      return {
-        type: 'fixed',
-        freCreationParams: {
-          ...freParams,
-          baseTokenAddress: config.oceanTokenAddress,
-          fixedRateAddress: config.fixedRateExchangeAddress
-        }
-      }
-    case 'free':
-    default:
-      return { type: 'free' }
-  }
+export const algorithmFile: UrlFileObject = {
+  type: 'url',
+  url: localAssets
+    ? `${assetBase}/count-lines-algorithm.js`
+    : `${assetBase}/test-algorithm/master/javascript/algo.js`,
+  method: 'GET'
 }

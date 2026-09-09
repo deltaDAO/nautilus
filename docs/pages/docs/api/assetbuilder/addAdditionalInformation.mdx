@@ -1,74 +1,51 @@
 # addAdditionalInformation
 
-Add any additional information you might need to describe your asset.
+Attach arbitrary extra information to the asset's metadata.
 
-Official OceanProtocol documentation: [DDO Specification](https://docs.oceanprotocol.com/developers/ddo-specification)
+Merged rather than replaced, so repeated calls accumulate.
 
 ## Usage
-
-
-```ts twoslash
-import { AssetBuilder, Nautilus } from '@deltadao/nautilus'
-import { Wallet } from 'ethers'
-
-const nautilus = await Nautilus.create(new Wallet('0x1234'))
-
-const assetBuilder = new AssetBuilder()
-
-assetBuilder.addAdditionalInformation({ // [!code focus]
-    display: 'test', // [!code focus]
-    ecosystemMetadata: { // [!code focus]
-        termsAndConditions: { // [!code focus]
-            hash: 'sha256:abc123', // [!code focus]
-            signature: '0x12345' // [!code focus]
-        } // [!code focus]
-    } // [!code focus]
-}) // [!code focus]
-const asset = assetBuilder.build() // [!code focus]
-
-await nautilus.publish(asset) // [!code focus]
-// @log: ddo.metadata: 
-// @log: { 
-// @log:    additionalInformation: {
-// @log:        display: 'test', 
-// @log:        ecosystemMetadata: { 
-// @log:            termsAndConditions: { 
-// @log:                hash: 'sha256:abc123', 
-// @log:                signature: '0x12345' 
-// @log:            } 
-// @log:        } 
-// @log:    }
-// @log: }
-```
-
-## Returns
-
-- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
-
-The asset builder instance to chain building calls with.
-
-## Parameter
-
-### additionalInformation
-
-- Type: `{ [key: string]: any }`
-
-The additional information object you want to add. This is an object with custom _unique_ keys and any data format to enable your use-case.
 
 ```ts twoslash
 import { AssetBuilder } from '@deltadao/nautilus'
 
 const assetBuilder = new AssetBuilder()
 // ---cut---
-assetBuilder.addAdditionalInformation(
-    { // [!code focus]
-        display: 'test', // [!code focus]
-        ecosystemMetadata: { // [!code focus]
-            termsAndConditions: { // [!code focus]
-                hash: 'sha256:abc123', // [!code focus]
-                signature: '0x12345' // [!code focus]
-            } // [!code focus]
-        } // [!code focus]
-    } // [!code focus]
-) 
+assetBuilder.addAdditionalInformation({ // [!code focus]
+  updateFrequency: 'hourly', // [!code focus]
+  rowCount: 8760, // [!code focus]
+  termsAccepted: true // [!code focus]
+}) // [!code focus]
 ```
+
+:::warning
+DDO v5 narrowed this to primitive values — `string`, `number` or `boolean`. In v4 it accepted
+`any`, so nested objects went in directly. They now have to be serialised by the caller:
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+const assetBuilder = new AssetBuilder()
+// ---cut---
+assetBuilder.addAdditionalInformation({
+  termsAndConditions: JSON.stringify({ // [!code focus]
+    hash: '0xabc...', // [!code focus]
+    signature: '0xdef...' // [!code focus]
+  }) // [!code focus]
+})
+```
+
+Note also that this field is indexed with `enabled: false` by ocean-node, so it is stored and
+returned but **not searchable**. Anything you need to query on belongs in a field of its own.
+:::
+
+## Returns
+
+- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
+
+The asset builder instance, to chain further calls with.
+
+## Parameters
+
+### additionalInformation
+
+- Type: `Record<string, string | number | boolean>`

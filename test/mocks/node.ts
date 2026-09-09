@@ -1,0 +1,104 @@
+import type { AssetV5 } from '@oceanprotocol/ddo-js'
+import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
+
+/**
+ * A stand-in for `OceanNodeClient`.
+ *
+ * One mock replaces v1's separate `aquarius` and `provider` mocks, because the client is now
+ * the single seam to ocean-node. Only the methods a unit test actually reaches are
+ * implemented; anything else throws loudly rather than returning `undefined`, so a test that
+ * accidentally depends on a network call fails with a clear message.
+ */
+export interface NodeMockOptions {
+  assets?: Record<string, AssetV5>
+  encrypted?: string
+  fileInfoValid?: boolean
+  fileChecksum?: string
+  validNode?: boolean
+}
+
+export interface NodeMock {
+  client: OceanNodeClient
+  calls: {
+    encrypt: unknown[]
+    getFileInfo: unknown[]
+    checkDidFiles: unknown[]
+    resolve: string[]
+    /** The node each `encrypt` call was addressed to — services must use their own. */
+    encryptTargets: string[]
+    /** The node each `getFileInfo` call was addressed to. */
+    fileInfoTargets: string[]
+  }
+}
+
+export function createNodeMock(options: NodeMockOptions = {}): NodeMock {
+  const calls: NodeMock['calls'] = {
+    encrypt: [],
+    getFileInfo: [],
+    checkDidFiles: [],
+    resolve: [],
+    encryptTargets: [],
+    fileInfoTargets: []
+  }
+
+  const notImplemented = (name: string) => () => {
+    throw new Error(
+      `The node mock has no ${name}(); this test reached the network unexpectedly.`
+    )
+  }
+
+  const client = {
+    nodeUri: 'https://node.test.invalid',
+    chainId: 32456,
+
+    async isValidNode() {
+      return options.validNode !== false
+    },
+
+    async encrypt(
+      data: unknown,
+      _policyServer?: unknown,
+      _signal?: unknown,
+      nodeUri: string = 'https://node.test.invalid'
+    ) {
+      calls.encrypt.push(data)
+      calls.encryptTargets.push(nodeUri)
+      return options.encrypted ?? 'encrypted-files-blob'
+    },
+
+    async getFileInfo(
+      file: unknown,
+      _withChecksum?: boolean,
+      _signal?: unknown,
+      nodeUri: string = 'https://node.test.invalid'
+    ) {
+      calls.getFileInfo.push(file)
+      calls.fileInfoTargets.push(nodeUri)
+      return [{ valid: options.fileInfoValid !== false }]
+    },
+
+    async checkDidFiles(did: string, serviceId: string) {
+      calls.checkDidFiles.push({ did, serviceId })
+      return [
+        { valid: true, checksum: options.fileChecksum ?? 'files-checksum' }
+      ]
+    },
+
+    async resolve(did: string) {
+      calls.resolve.push(did)
+
+      const asset = options.assets?.[did]
+      if (!asset) throw new Error(`node mock has no asset for ${did}`)
+
+      return asset
+    },
+
+    requireSigner: notImplemented('requireSigner'),
+    getConsumerAddress: notImplemented('getConsumerAddress'),
+    initialize: notImplemented('initialize'),
+    getDownloadUrl: notImplemented('getDownloadUrl'),
+    computeStart: notImplemented('computeStart')
+  } as unknown as OceanNodeClient
+
+  return { client, calls }
+}

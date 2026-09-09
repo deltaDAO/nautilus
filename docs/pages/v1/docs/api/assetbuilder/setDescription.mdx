@@ -1,0 +1,63 @@
+---
+searchPriority: 0
+---
+
+:::warning
+You are viewing the documentation for Nautilus **v1.1.0** (legacy). Switch to the [latest documentation](/docs/introduction), or follow the [migration guide](/docs/migration) to upgrade.
+:::
+
+# setDescription
+
+Set the description of the asset. This supports the [markdown syntax](https://en.wikipedia.org/wiki/Markdown).
+
+Official OceanProtocol documentation: [DDO Specification](https://docs.oceanprotocol.com/developers/ddo-specification)
+
+## Usage
+
+:::code-group
+```ts [asset.ts]
+import { AssetBuilder, Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+import Description from './description.md'
+
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+
+const assetBuilder = new AssetBuilder()
+assetBuilder.setDescription(Description) // [!code focus]
+const asset = assetBuilder.build() // [!code focus]
+
+await nautilus.publish(asset) // [!code focus]
+// => ddo.metadata: 
+// => { 
+// =>    description: '# Asset Title\n\nA detailed description of my asset and what it offers.\n\nThis supports markdown, such as **highlights** or [links](https://link.to/my-external-resource) to other resources.'
+// => }
+```
+
+```markdown [description.md]
+# Asset Title
+
+A detailed description of my asset and what it offers.
+
+This supports markdown, such as **highlights** or [links](https://link.to/my-external-resource) to other resources.
+```
+:::
+
+## Returns
+
+- Type: [`AssetBuilder`](/v1/docs/api/AssetBuilder)
+
+The asset builder instance to chain building calls with.
+
+## Parameter
+
+### description
+
+- Type: `string`
+
+The description you want to set to the asset's metadata to be built. Can contain markdown syntax.
+
+```ts
+assetBuilder.setDescription(
+    '# Title for my asset\n\nA **detailed** description of my asset.' // [!code focus]
+)
+```

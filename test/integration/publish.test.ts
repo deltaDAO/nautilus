@@ -1,371 +1,201 @@
-import assert from 'node:assert'
+import { beforeAll, describe, expect, it } from 'vitest'
+import { getCredentials, getServices, getVersion } from '../../src/ddo/read.js'
+import { CredentialListTypes } from '../../src/ddo/types.js'
+import { validate } from '../../src/ddo/validate.js'
+import { AssetBuilder, Nautilus } from '../../src/index.js'
+import { datasetMetadata } from '../fixtures/AssetConfig.js'
+import { getConsumerParameters } from '../fixtures/ConsumerParameters.js'
 import {
-  Aquarius,
-  type Config,
-  type ConsumerParameter
-} from '@oceanprotocol/lib'
-import type { Signer } from 'ethers'
-import { CredentialListTypes } from '../../src/@types'
-import {
-  AssetBuilder,
-  ConsumerParameterBuilder,
-  FileTypes,
-  LogLevel,
-  Nautilus,
-  ServiceBuilder,
-  ServiceTypes
-} from '../../src/Nautilus'
-import {
-  algorithmMetadata,
-  algorithmService,
-  datasetService,
-  getPricing
-} from '../fixtures/AssetConfig'
-import { getTestConfig } from '../fixtures/Config'
-import { TESTING_NODE_URI, getSigner } from '../fixtures/Ethers'
+  accessService,
+  computeService,
+  createPublisher,
+  freeAlgorithm,
+  freeDataset,
+  integrationEnabled,
+  publishAndIndex
+} from './helpers.js'
 
-const nodeUri = TESTING_NODE_URI
+describe('publish', () => {
+  if (!integrationEnabled) {
+    it.skip('needs PRIVATE_KEY_TESTS_1/2 and NODE_URL to run', () => {})
+    return
+  }
 
-describe('Publish Integration tests', function () {
-  // set timeout for this describe block considering tsx will happen
-  this.timeout(100000)
-
-  let aquarius: Aquarius
-  let config: Config
-  let signer: Signer
-  let signerAddress: string
   let nautilus: Nautilus
-  let providerUri: string
 
-  before(async () => {
-    Nautilus.setLogLevel(LogLevel.Verbose)
-    signer = getSigner(1, nodeUri)
-    signerAddress = await signer.getAddress()
-    config = await getTestConfig(signer)
+  beforeAll(async () => {
+    nautilus = await createPublisher()
+  })
 
-    console.log('Testing with signer:', signerAddress)
+  it('publishes a free dataset and returns a v5 DDO', async () => {
+    const result = await publishAndIndex(nautilus, freeDataset())
 
-    nautilus = await Nautilus.create(signer, {
-      metadataCacheUri: process.env.METADATA_CACHE_URI_TEST
+    expect(result.nftAddress).to.be.a('string')
+    expect(result.services).to.have.length(1)
+    expect(result.services[0].datatokenAddress).to.be.a('string')
+    expect(result.setMetadataTxReceipt.status).to.equal(1)
+
+    expect(getVersion(result.ddo)).to.equal('5.0.0')
+    expect(result.ddo.id).to.match(/^did:ope:/)
+    expect(result.indexed).to.equal(true)
+  })
+
+  it('signs the DDO as a verifiable credential', async () => {
+    const result = await publishAndIndex(nautilus, freeDataset())
+
+    expect(result.credential?.jwt.split('.')).to.have.length(3)
+    expect(result.credential?.issuer).to.be.a('string')
+  })
+
+  it('produces a DDO that passes local validation', async () => {
+    const result = await publishAndIndex(nautilus, freeDataset())
+    const { valid, errors } = await validate(result.ddo)
+
+    expect(errors).to.deep.equal({})
+    expect(valid).to.equal(true)
+  })
+
+  it('publishes a fixed-price dataset', async () => {
+    const config = nautilus.getOceanConfig()
+
+    const asset = new AssetBuilder()
+      .setType('dataset')
+      .setName('Nautilus Fixed Price Dataset')
+      .setDescription(datasetMetadata.description as string)
+      .setProvidedBy('deltaDAO AG')
+      .setAuthor('deltaDAO')
+      .addService(
+        accessService()
+          .setPricing({
+            type: 'fixed',
+            freCreationParams: {
+              fixedRateAddress: config.fixedRateExchangeAddress as string,
+              baseTokenAddress: config.oceanTokenAddress as string,
+              marketFeeCollector: await nautilus.getSigner().getAddress(),
+              baseTokenDecimals: 18,
+              datatokenDecimals: 18,
+              fixedRate: '1',
+              marketFee: '0',
+              withMint: true
+            }
+          })
+          .build()
+      )
+      .build()
+
+    const result = await publishAndIndex(nautilus, asset)
+
+    expect(result.services).to.have.length(1)
+  })
+
+  it('publishes a multi-service asset', async () => {
+    // The bundle transaction covers the first service; each further one gets its own
+    // datatoken on the same NFT.
+    const asset = new AssetBuilder()
+      .setType('dataset')
+      .setName('Nautilus Multi-Service Dataset')
+      .setDescription('Two services on one NFT')
+      .setProvidedBy('deltaDAO AG')
+      .addService(accessService().setPricing({ type: 'free' }).build())
+      .addService(computeService().setPricing({ type: 'free' }).build())
+      .build()
+
+    const result = await publishAndIndex(nautilus, asset)
+
+    expect(result.services).to.have.length(2)
+    expect(getServices(result.ddo)).to.have.length(2)
+    expect(
+      getServices(result.ddo).map((service) => service.type)
+    ).to.have.members(['access', 'compute'])
+  })
+
+  it('publishes an algorithm', async () => {
+    const result = await publishAndIndex(nautilus, freeAlgorithm())
+
+    expect(result.ddo.id).to.match(/^did:ope:/)
+  })
+
+  it('publishes consumer parameters as a structured array', async () => {
+    const asset = new AssetBuilder()
+      .setType('dataset')
+      .setName('Nautilus Dataset With Parameters')
+      .setDescription('Carries consumer parameters')
+      .setProvidedBy('deltaDAO AG')
+      .addService(
+        (() => {
+          const builder = accessService().setPricing({ type: 'free' })
+          for (const parameter of getConsumerParameters())
+            builder.addConsumerParameter(parameter)
+          return builder.build()
+        })()
+      )
+      .build()
+
+    const result = await publishAndIndex(nautilus, asset)
+    const parameters = getServices(result.ddo)[0].consumerParameters
+
+    expect(parameters).to.have.length(4)
+    // v5 keeps options structured; v4 encoded them as a JSON string.
+    const select = parameters?.find((parameter) => parameter.type === 'select')
+    expect(select?.options).to.be.an('array')
+  })
+
+  it('publishes address-gated credentials', async () => {
+    const consumer = await nautilus.getSigner().getAddress()
+
+    const asset = new AssetBuilder()
+      .setType('dataset')
+      .setName('Nautilus Gated Dataset')
+      .setDescription('Restricted to one address')
+      .setProvidedBy('deltaDAO AG')
+      .addCredentialAddresses(CredentialListTypes.ALLOW, [consumer])
+      .addService(accessService().setPricing({ type: 'free' }).build())
+      .build()
+
+    const result = await publishAndIndex(nautilus, asset)
+    expect(getCredentials(result.ddo).allow?.[0]).to.deep.equal({
+      type: 'address',
+      values: [{ address: consumer }]
     })
+  })
 
-    providerUri =
-      process.env.PROVIDER_URI_TEST || nautilus.getOceanConfig().providerUri
+  it('publishes an SSI-gated asset in the shape the policy server parses', async () => {
+    const asset = new AssetBuilder()
+      .setType('dataset')
+      .setName('Nautilus SSI Dataset')
+      .setDescription('Requires a verifiable credential')
+      .setProvidedBy('deltaDAO AG')
+      .addRequestCredentials(CredentialListTypes.ALLOW, [
+        { type: 'VerifiableId', format: 'jwt_vc_json' }
+      ])
+      .setVcPolicies(CredentialListTypes.ALLOW, ['signature'])
+      .addService(accessService().setPricing({ type: 'free' }).build())
+      .build()
 
-    console.log('Testing with signer:', signerAddress)
-
-    aquarius = new Aquarius(
-      process.env.METADATA_CACHE_URI_TEST || config?.metadataCacheUri
+    const result = await publishAndIndex(nautilus, asset)
+    const ssi = getCredentials(result.ddo).allow?.find(
+      (entry) => entry.type === 'SSIpolicy'
     )
+
+    expect(ssi).to.exist
+    // Assert on the serialized form: these are the exact snake_case keys the policy
+    // server parses, and a rename would silently disable gating.
+    expect(JSON.stringify(ssi)).to.contain('"type":"VerifiableId"')
+    expect(JSON.stringify(ssi)).to.contain('"vc_policies":["signature"]')
   })
 
-  it('publishes a free access asset', async () => {
-    const serviceBuilder = new ServiceBuilder({
-      serviceType: ServiceTypes.ACCESS,
-      fileType: FileTypes.URL
+  it('refuses to publish without a remote store, naming the fix', async () => {
+    const withoutStore = await Nautilus.create(nautilus.getSigner(), {
+      config: nautilus.getOceanConfig()
     })
-    const service = serviceBuilder
-      .setServiceEndpoint(providerUri)
-      .setTimeout(datasetService.timeout)
-      .addFile(datasetService.files[0])
-      .setPricing(await getPricing(signer, 'free'))
-      .build()
 
-    const assetBuilder = new AssetBuilder()
-    const asset = assetBuilder
-      .setAuthor('testAuthor')
-      .setDescription('A dataset publishing test')
-      .setLicense('MIT')
-      .setName('Test Publish Dataset Free')
-      .setOwner(signerAddress)
-      .setType('dataset')
-      .addService(service)
-      .build()
-
-    const result = await nautilus.publish(asset)
-
-    assert(result)
-  })
-
-  it('publishes a fixed price access asset', async () => {
-    const serviceBuilder = new ServiceBuilder({
-      serviceType: ServiceTypes.ACCESS,
-      fileType: FileTypes.URL
-    })
-    const service = serviceBuilder
-      .setServiceEndpoint(providerUri)
-      .setTimeout(datasetService.timeout)
-      .addFile(datasetService.files[0])
-      .setPricing(await getPricing(signer, 'fixed'))
-      .build()
-
-    const assetBuilder = new AssetBuilder()
-    const asset = assetBuilder
-      .setAuthor('testAuthor')
-      .setDescription('A dataset publishing test')
-      .setLicense('MIT')
-      .setName('Test Publish Dataset Fixed')
-      .setOwner(signerAddress)
-      .setType('dataset')
-      .addService(service)
-      .build()
-
-    const result = await nautilus.publish(asset)
-
-    assert(result)
-  })
-
-  it('publishes a multi service compute type dataset', async () => {
-    const assetBuilder = new AssetBuilder()
-
-    const pricing = await getPricing(signer, 'fixed')
-    const services = [
-      {
-        name: 'test service 1',
-        serviceEndpoint: providerUri,
-        timeout: datasetService.timeout,
-        pricing,
-        file: datasetService.files[0]
-      },
-      {
-        name: 'test service 2',
-        serviceEndpoint: providerUri,
-        timeout: datasetService.timeout,
-        pricing,
-        file: datasetService.files[0]
-      }
-    ]
-
-    for (const service of services) {
-      const serviceBuilder = new ServiceBuilder({
-        serviceType: ServiceTypes.COMPUTE,
-        fileType: FileTypes.URL
-      })
-
-      const builtService = serviceBuilder
-        .setName(service.name)
-        .setServiceEndpoint(service.serviceEndpoint)
-        .setTimeout(service.timeout)
-        .setPricing(pricing)
-        .addFile(service.file)
-        .build()
-
-      assetBuilder.addService(builtService)
+    let message = ''
+    try {
+      await withoutStore.publish(freeDataset())
+    } catch (error) {
+      message = (error as Error).message
     }
 
-    const asset = assetBuilder
-      .setAuthor('testAuthor')
-      .setDescription('A dataset publishing test')
-      .setLicense('MIT')
-      .setName('Test Publish Dataset Fixed')
-      .setOwner(signerAddress)
-      .setType('dataset')
-      .build()
-
-    const result = await nautilus.publish(asset)
-    const fixedPriceComputeDataset = result?.ddo
-    console.log(
-      `asset published (${fixedPriceComputeDataset?.id}), waiting for aquarius indexing...`
-    )
-    await aquarius.waitForIndexer(fixedPriceComputeDataset?.id)
-
-    assert(result)
-  })
-
-  it('publishes an asset with credentials', async () => {
-    const serviceBuilder = new ServiceBuilder({
-      serviceType: ServiceTypes.ACCESS,
-      fileType: FileTypes.URL
-    })
-    const service = serviceBuilder
-      .setServiceEndpoint(providerUri)
-      .setTimeout(datasetService.timeout)
-      .setPricing(await getPricing(signer, 'free'))
-      .addFile(datasetService.files[0])
-      .build()
-
-    const assetBuilder = new AssetBuilder()
-    const asset = assetBuilder
-      .setAuthor('testAuthor')
-      .setDescription('A dataset publishing test')
-      .setLicense('MIT')
-      .setName('Test Publish Dataset Service Credentials Free')
-      .setOwner(signerAddress)
-      .setType('dataset')
-      .addService(service)
-      .addCredentialAddresses(CredentialListTypes.ALLOW, [signerAddress])
-      .build()
-
-    const result = await nautilus.publish(asset)
-
-    assert(result)
-  })
-
-  it('publishes an asset with service consumerParameters', async () => {
-    const serviceBuilder = new ServiceBuilder({
-      serviceType: ServiceTypes.ACCESS,
-      fileType: FileTypes.URL
-    })
-    const {
-      textParameter,
-      numberParameter,
-      booleanParameter,
-      selectParameter
-    } = getConsumerParameters()
-
-    const service = serviceBuilder
-      .setServiceEndpoint(providerUri)
-      .setTimeout(datasetService.timeout)
-      .addFile(datasetService.files[0])
-      .addConsumerParameter(textParameter)
-      .addConsumerParameter(numberParameter)
-      .addConsumerParameter(booleanParameter)
-      .addConsumerParameter(selectParameter)
-      .setPricing(await getPricing(signer, 'free'))
-      .build()
-
-    const assetBuilder = new AssetBuilder()
-    const asset = assetBuilder
-      .setAuthor('testAuthor')
-      .setDescription('A dataset publishing test')
-      .setLicense('MIT')
-      .setName('Test Publish Dataset Service Params Free')
-      .setOwner(signerAddress)
-      .setType('dataset')
-      .addService(service)
-      .build()
-
-    const result = await nautilus.publish(asset)
-
-    assert(result)
-  })
-
-  it('publishes an asset with algorithm metadata consumerParameters', async () => {
-    const serviceBuilder = new ServiceBuilder({
-      serviceType: ServiceTypes.COMPUTE,
-      fileType: FileTypes.URL
-    })
-    const {
-      textParameter,
-      numberParameter,
-      booleanParameter,
-      selectParameter
-    } = getConsumerParameters()
-
-    const service = serviceBuilder
-      .setServiceEndpoint(providerUri)
-      .setTimeout(algorithmService.timeout)
-      .setPricing(await getPricing(signer, 'fixed'))
-      .addFile(algorithmService.files[0])
-      .build()
-
-    const assetBuilder = new AssetBuilder()
-    const asset = assetBuilder
-      .setAuthor('testAuthor')
-      .setDescription('A dataset publishing test')
-      .setLicense('MIT')
-      .setName('Test Publish Algorithm Params Fixed')
-      .setOwner(signerAddress)
-      .setType('algorithm')
-      .addService(service)
-      .setAlgorithm({
-        ...algorithmMetadata.algorithm,
-        consumerParameters: [
-          textParameter,
-          numberParameter,
-          booleanParameter,
-          selectParameter
-        ]
-      })
-      .build()
-
-    const result = await nautilus.publish(asset)
-
-    assert(result)
-  })
-
-  // TODO use published algo did for addTrustedAlgorithms
-  it('publishes a fixed price compute dataset with trusted algorithm', async () => {
-    const serviceBuilder = new ServiceBuilder({
-      serviceType: ServiceTypes.COMPUTE,
-      fileType: FileTypes.URL
-    })
-    const service = serviceBuilder
-      .setServiceEndpoint(providerUri)
-      .setTimeout(datasetService.timeout)
-      .addFile(datasetService.files[0])
-      .setPricing(await getPricing(signer, 'fixed'))
-      .addTrustedAlgorithms([
-        {
-          did: 'did:op:02961b8c52b0273bac94f776a88ed13833cbc50bc2bc666ab7495751941546dc'
-        }
-      ])
-      .build()
-
-    const assetBuilder = new AssetBuilder()
-    const asset = assetBuilder
-      .setAuthor('testAuthor')
-      .setDescription('A dataset publishing test')
-      .setLicense('MIT')
-      .setName('Test Publish Dataset Fixed')
-      .setOwner(signerAddress)
-      .setType('dataset')
-      .addService(service)
-      .build()
-
-    const result = await nautilus.publish(asset)
-
-    assert(result)
+    expect(message).to.match(/remote store/i)
   })
 })
-
-function getConsumerParameters(): { [key: string]: ConsumerParameter } {
-  const customParamBuilder = new ConsumerParameterBuilder()
-  const numberParameter = customParamBuilder
-    .setType('number')
-    .setName('numberParameter')
-    .setLabel('Number Parameter')
-    .setDescription('A cool description for a test number parameter')
-    .setDefault('12')
-    .setRequired(false)
-    .build()
-
-  customParamBuilder.reset()
-  const selectParameter = customParamBuilder
-    .setType('select')
-    .setName('selectParameter')
-    .setLabel('Test Select Parameter')
-    .setDescription('A cool description for a test select parameter')
-    .setDefault('myValue')
-    .addOption({ myValue: 'My Label' })
-    .addOption({ myOtherValue: 'My Other Label' })
-    .setRequired(true)
-    .build()
-
-  customParamBuilder.reset()
-  const textParameter = customParamBuilder
-    .setType('text')
-    .setName('textParameter')
-    .setLabel('Text Parameter')
-    .setDescription('A cool description for a test text parameter')
-    .setDefault('default-text')
-    .setRequired(true)
-    .build()
-
-  customParamBuilder.reset()
-  const booleanParameter = customParamBuilder
-    .setType('boolean')
-    .setName('booleanParameter')
-    .setLabel('Boolean Parameter')
-    .setDescription('A cool description for a test boolean parameter')
-    .setDefault('false')
-    .setRequired(false)
-    .build()
-
-  return {
-    textParameter,
-    numberParameter,
-    booleanParameter,
-    selectParameter
-  }
-}

@@ -1,0 +1,60 @@
+# getOrderPrice
+
+What ordering one datatoken will actually cost, fees included.
+
+## Usage
+
+```ts twoslash
+import { getOrderPrice } from '@deltadao/nautilus'
+import type { PricingInfo } from '@deltadao/nautilus'
+import type { Config } from '@oceanprotocol/lib'
+import type { Signer } from 'ethers'
+
+declare const signer: Signer
+declare const pricing: PricingInfo
+declare const config: Config
+// ---cut---
+const price = await getOrderPrice(signer, pricing, config) // [!code focus]
+
+price.total // the base-token spend
+```
+
+:::warning
+`total` is the base-token spend only. A datatoken's publish-market fee is charged in a token
+of its own and reported separately in `publishMarketFee` — nautilus approves it for you, so a
+dispenser-priced asset can legitimately have `total: '0'` and still cost you that fee.
+:::
+
+## Returns
+
+- Type: [`OrderPrice`](/docs/api/pricing/OrderPrice)
+
+## Parameters
+
+### signer
+
+- Type: `Signer`
+
+### pricing
+
+- Type: [`PricingInfo`](/docs/api/pricing/PricingInfo)
+
+From [`getPricingInfo`](/docs/api/pricing/getPricingInfo).
+
+### config
+
+- Type: `Config`
+
+### consumeMarketFee (optional)
+
+- Type: [`ConsumeMarketFee`](/docs/guides/pricing#charging-a-consume-market-fee)
+
+Your own market's cut: `{ address, fee }`, where `fee` is a decimal **fraction** of the
+swap — `'0.01'` is 1% — and `address` is the account that collects it.
+
+Both halves are required together. An amount with no collector has nowhere to go: the
+exchange pays its swap fee to whichever address the order names, so a fee without one is
+either lost or paid to somebody else.
+
+Only fixed-rate pricing can carry it. Asked of a dispenser-priced or unpriced datatoken,
+this throws rather than quoting a fee nothing will collect.

@@ -1,0 +1,33 @@
+# getAssets
+
+Resolve several assets in a single query.
+
+## Usage
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const assets = await nautilus.getAssets([ // [!code focus]
+  'did:ope:2a6ebce0af9361e2c7d1e1e7909ecac3e4cabb4f089f7edd51865e0b77a5c216', // [!code focus]
+  'did:ope:926098d069b017dcf3736370f3c3d77e6046ca6622af111229accf5f9c83e308' // [!code focus]
+]) // [!code focus]
+
+const asset = assets['did:ope:2a6ebce0af9361e2c7d1e1e7909ecac3e4cabb4f089f7edd51865e0b77a5c216']
+```
+
+## Returns
+
+- Type: `Record<string, AssetV5>`
+
+The resolved assets, keyed by **lower-cased** DID. A DID the node does not know is simply
+absent from the result rather than causing a throw.
+
+## Parameters
+
+### dids
+
+- Type: `string[]`
+
+The identifiers to resolve. An empty array returns an empty object without hitting the node.

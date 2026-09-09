@@ -1,0 +1,37 @@
+# addConsumerParameter
+
+Add a parameter consumers supply when accessing the service.
+
+Build them with the [`ConsumerParameterBuilder`](/docs/api/ConsumerParameterBuilder). Consumers pass values through `access`'s `userdata`.
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+// ---cut---
+import { ConsumerParameterBuilder } from '@deltadao/nautilus'
+
+const parameter = new ConsumerParameterBuilder()
+  .setType('text')
+  .setName('region')
+  .setLabel('Region')
+  .setDescription('Which region to return')
+  .setDefault('eu')
+  .build()
+
+serviceBuilder.addConsumerParameter(parameter) // [!code focus]
+```
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.
