@@ -1,0 +1,82 @@
+---
+searchPriority: 0
+---
+
+:::warning
+You are viewing the documentation for Nautilus **v1.1.0** (legacy). Switch to the [latest documentation](/docs/introduction), or follow the [migration guide](/docs/migration) to upgrade.
+:::
+
+# addService
+
+Adds a pre-defined service to the description of your asset.
+
+To learn more about building services, please refer to the [`ServiceBuilder` documentation](/v1/docs/api/ServiceBuilder).
+
+Official OceanProtocol documentation: [DDO Specification](https://docs.oceanprotocol.com/developers/ddo-specification)
+
+## Usage
+
+:::code-group
+```ts [asset.ts]
+import { AssetBuilder, Nautilus, NautilusService } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+import { service } from './service'
+
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+
+const assetBuilder = new AssetBuilder()
+
+assetBuilder.addService(service) // [!code focus]
+const asset = assetBuilder.build() // [!code focus]
+
+await nautilus.publish(asset) // [!code focus]
+// => ddo.services: 
+// => [ 
+// =>    {
+// =>        id: '6a0faa655f70198dd6457450eab66ae29a493ea861cfc666d563c897c65a0d26',
+// =>        datatokenAddress: '0x99358d0F9A92420C44138802ebd6e95De54801e4',
+// =>        type: 'access',
+// =>        serviceEndpoint: 'https://provider.dev.pontus-x.eu',
+// =>        timeout: 0,
+// =>        files: '0x046e589d49...'
+// =>    }
+// => ]
+```
+
+```ts [service.ts]
+import { ServiceBuilder, ServiceTypes, FileTypes } from '@deltadao/nautilus'
+const builder = new ServiceBuilder({ serviceType: ServiceTypes.ACCESS, fileType: FileTypes.URL })
+
+builder // [!code focus]
+    .addFile({ // [!code focus]
+        type: 'url', // [!code focus]
+        method: 'GET', // [!code focus]
+        url: 'https://delta-dao.com' // [!code focus]
+    }) // [!code focus]
+    .setServiceEndpoint('https://provider.dev.pontus-x.eu') // [!code focus]
+    .setTimeout(0) // [!code focus]
+
+export const service = builder.build() // [!code focus]
+```
+:::
+
+## Returns
+
+- Type: [`AssetBuilder`](/v1/docs/api/AssetBuilder)
+
+The asset builder instance to chain building calls with.
+
+## Parameter
+
+### service
+
+- Type: `NautilusService`
+
+The service to be added to the asset.
+To learn more about building services, please refer to the [`ServiceBuilder` documentation](/v1/docs/api/ServiceBuilder).
+
+```ts
+assetBuilder.addService(
+    service // [!code focus]
+) 
+```

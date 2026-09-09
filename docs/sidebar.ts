@@ -1,6 +1,8 @@
 import type { Config } from 'vocs/config'
+import { sidebarV1Items } from './sidebar-v1.js'
 
 export const sidebar = {
+  '/v1/': { backLink: true, items: sidebarV1Items },
   '/docs/': [
     {
       text: 'Introduction',

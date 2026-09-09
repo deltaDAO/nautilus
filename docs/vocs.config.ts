@@ -1,6 +1,7 @@
 import { defineConfig } from 'vocs/config'
 import pkg from '../src/package.json' with { type: 'json' }
 import { sidebar } from './sidebar.js'
+import { archivedVersions } from './versions.js'
 
 /**
  * `baseUrl` becomes a `<base href>` on every page, so every relative request the client
@@ -62,7 +63,12 @@ export default defineConfig({
         {
           text: 'Changelog',
           link: 'https://github.com/deltaDAO/nautilus/blob/main/src/CHANGELOG.md'
-        }
+        },
+        ...archivedVersions.map((v) => ({
+          text: `${v.label} (legacy)`,
+          link: v.link,
+          match: v.match
+        }))
         // {
         //   text: 'Contributing',
         //   link: 'https://github.com/deltaDAO/nautilus/blob/main/.github/CONTRIBUTING.md',

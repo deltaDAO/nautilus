@@ -1,0 +1,40 @@
+---
+searchPriority: 0
+---
+
+:::warning
+You are viewing the documentation for Nautilus **v1.1.0** (legacy). Switch to the [latest documentation](/docs/introduction), or follow the [migration guide](/docs/migration) to upgrade.
+:::
+
+# setLogLevel
+
+Set the level for logs of all nautilus instances.
+
+## Usage
+
+```ts
+import { LogLevel, Nautilus } from '@deltadao/nautilus'
+
+const nautilus = await Nautilus.setLogLevel(LogLevel.Verbose) // [!code focus]
+```
+
+## Returns
+
+`void` {/*link to type in docs if possible*/}
+
+## Parameters
+
+### level
+- Type: `LogLevel`
+
+The log level to set the internal `LoggerInstance` to.
+
+Possible values:
+
+|Level|Description|
+|-----|-----------|
+|None| |
+|Eror| |
+|Warn| |
+|Log| |
+|Verbose| |

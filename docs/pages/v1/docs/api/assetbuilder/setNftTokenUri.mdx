@@ -1,0 +1,50 @@
+---
+searchPriority: 0
+---
+
+:::warning
+You are viewing the documentation for Nautilus **v1.1.0** (legacy). Switch to the [latest documentation](/docs/introduction), or follow the [migration guide](/docs/migration) to upgrade.
+:::
+
+# setNftTokenUri
+
+Image link associated with the asset. Will be saved in the base64 encoded NFT metadata (`data:application/json;base64`). 
+
+The default token uri is an empty string(`''`). 
+
+Official OceanProtocol documentation: [DDO Specification](https://docs.oceanprotocol.com/developers/ddo-specification)
+
+## Usage
+
+```ts
+import { AssetBuilder, Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+
+const assetBuilder = new AssetBuilder()
+assetBuilder.setNftTokenUri('https://www.example.com/images/logo.png') // [!code focus]
+const asset = assetBuilder.build() // [!code focus]
+
+await nautilus.publish(asset) // [!code focus]
+```
+
+## Returns
+
+- Type: [`AssetBuilder`](/v1/docs/api/AssetBuilder)
+
+The asset builder instance to chain building calls with.
+
+## Parameter
+
+### uri
+
+- Type: `string`
+
+A link to your asset image.
+
+```ts
+assetBuilder.setNftTokenUri(
+    'https://www.example.com/images/logo.png' // [!code focus]
+)
+```
