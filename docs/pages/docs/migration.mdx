@@ -17,17 +17,18 @@ New to nautilus rather than upgrading? Start with
 "@oceanprotocol/lib": "3.4.6", // [!code --]
 "ethers": "^5.7.2" // [!code --]
 "@oceanprotocol/lib": "^9.0.0", // [!code ++]
-"@oceanprotocol/ddo-js": "0.4.1", // [!code ++]
+"@oceanprotocol/ddo-js": "^0.5.0", // [!code ++]
 "ethers": "^6.17.0" // [!code ++]
 ```
 
 `@oceanprotocol/lib` re-exports only the **v4** `DDO` type, so DDO v5 types come from
-`@oceanprotocol/ddo-js` directly. Pin it and dedupe: ocean.js itself asks for `^0.3.0`,
-which npm resolves to a *different* copy unless you add an override.
+`@oceanprotocol/ddo-js` directly. Take `^0.5.0`: it is the first release whose `exports` map
+carries `types` conditions, and every earlier one leaves the declarations unreachable.
 
-```json
-"overrides": { "@oceanprotocol/ddo-js": "0.4.1" }
-```
+ocean.js 9.x still asks for `^0.4.1`, so expect two copies in `npm ls` — the hoisted 0.5.0
+your imports use, and a nested 0.4.1 for ocean.js internals. That is the expected tree and
+needs no override. See [TypeScript](/docs/typescript) for how to confirm which copy your
+imports resolve to, and what to do if npm hoisted the older one.
 
 ## 2. Setting up
 

@@ -56,31 +56,51 @@ import { AssetBuilder } from '@deltadao/nautilus/dist/AssetBuilder' // [!code --
 `moduleResolution: "node"` (the TypeScript 4 default) cannot read the `exports` map and will
 report that the module has no declarations.
 
-## Pin `@oceanprotocol/ddo-js`
+## `@oceanprotocol/ddo-js`
 
 DDO v5 types come from `@oceanprotocol/ddo-js`, because `@oceanprotocol/lib` re-exports only
-the **v4** `DDO` type. nautilus depends on `^0.5.0` — the first release whose `exports` map
-carries a `types` condition, so the declarations are reachable under `nodenext` and
-`bundler`. ocean.js 9.x still asks for `^0.4.1`, and npm happily installs both — at which
-point `AssetV5` from one copy is not assignable to `AssetV5` from the other, and the errors
-are baffling.
+the **v4** `DDO` type. nautilus requires `^0.5.0` — the first release whose `exports` map
+carries `types` conditions, so its declarations resolve under `nodenext`, `node16` and
+`bundler` unaided. Earlier releases, 0.4.1 included, ship an `exports` map with no `types`
+condition, and once a package defines `exports` TypeScript stops reading the top-level
+`types` field: the bundled declarations become unreachable and every import degrades to
+`any` (TS7016 under `strict`).
 
-Dedupe it explicitly:
+ocean.js 9.x still asks for `^0.4.1`, so a normal install ends up with two copies:
+
+```text
+@deltadao/nautilus  ->  @oceanprotocol/ddo-js@0.5.0   # hoisted — what your imports resolve to
+@oceanprotocol/lib  ->  @oceanprotocol/ddo-js@0.4.1   # nested — ocean.js internals only
+```
+
+Two entries in `npm ls` are not a problem to fix — this is the tree nautilus itself builds
+and tests against. What matters is that *your* imports land on 0.5.0. If npm hoisted 0.4.1
+to the top of your tree instead, every `@oceanprotocol/ddo-js` import reports TS7016. Check
+which copy you got:
+
+```sh
+npx tsc --noEmit --traceResolution | grep '@oceanprotocol/ddo-js'
+```
+
+If it is the wrong one, force the resolution:
 
 ```json [package.json]
 {
   "overrides": {
-    "@oceanprotocol/ddo-js": "0.5.0"
+    "@oceanprotocol/ddo-js": "^0.5.0"
   }
 }
 ```
 
-0.4.1 and 0.5.0 are identical at runtime — 0.5.0 changed only how the package advertises its
-types — so the override is safe for ocean.js.
+:::warning
+An override added next to an existing `package-lock.json` is ignored — npm reuses the tree
+already recorded there and the install looks unchanged. Delete that lockfile's
+`@oceanprotocol/ddo-js` entries (or the whole lockfile) and reinstall for it to take effect.
 
-:::tip
-`npm ls @oceanprotocol/ddo-js` should print exactly one version. If it prints two, this is
-your problem.
+The override also pushes ocean.js off its declared `^0.4.1`, so `npm ls` reports that copy as
+`invalid` and exits non-zero even though the install is correct. 0.4.1 and 0.5.0 are
+identical at runtime — 0.5.0 changed only how the package advertises its types — so this is
+safe for ocean.js.
 :::
 
 ## Type-only exports
