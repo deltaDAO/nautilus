@@ -53,16 +53,21 @@ Every field is a decimal string.
 
 | Field | Meaning |
 | --- | --- |
-| `total` | **What to approve and spend** |
-| `baseTokenAmount` | What the exchange charges, its own fees included |
+| `total` | **The base-token spend** — what the exchange takes |
+| `baseTokenAmount` | The same amount, named for what it is |
 | `opcFee` | Ocean Protocol Community fee |
-| `publishMarketFee` | The publishing market's cut, charged on the order |
+| `publishMarketFee` | The publishing market's cut, in its own token |
 | `consumeMarketFee` | What your market collects, if you charge anything |
 | `consumeMarket` | The `{ address, fee }` this quote was priced with |
 
+`total` already contains every swap-side fee, so never sum the fields yourself.
+
 :::warning
-Free is not zero. A dispenser-priced asset still carries the publish market's fee, so
-`getOrderPrice` returns it rather than short-circuiting to `'0'`. Always spend `total`.
+Free is not free of fees. A dispenser-priced asset costs nothing to swap — `total` is
+`'0'` — but the datatoken still charges its publish-market fee, in whatever token its
+publisher chose, and pulls it from you during the order. It is reported separately in
+`publishMarketFee` because it is usually not the base token at all; nautilus approves the
+allowance for it on your behalf.
 :::
 
 ## Charging a consume-market fee

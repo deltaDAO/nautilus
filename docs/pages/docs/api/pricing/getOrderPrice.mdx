@@ -16,12 +16,13 @@ declare const config: Config
 // ---cut---
 const price = await getOrderPrice(signer, pricing, config) // [!code focus]
 
-price.total // approve and spend this
+price.total // the base-token spend
 ```
 
 :::warning
-Free is not zero — a dispenser-priced asset still carries publish- and consume-market fees.
-Always spend `total` rather than assuming `'0'`.
+`total` is the base-token spend only. A datatoken's publish-market fee is charged in a token
+of its own and reported separately in `publishMarketFee` — nautilus approves it for you, so a
+dispenser-priced asset can legitimately have `total: '0'` and still cost you that fee.
 :::
 
 ## Returns

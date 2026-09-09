@@ -1,23 +1,30 @@
 /**
  * Which exchange a price comes from, and where the fees on it end up.
  *
- * Three findings live here, all of them invisible to the type checker:
+ * Four findings live here, none of them visible to the type checker — and all four were
+ * inherited from ocean.js's own `orderAsset`, which still does the same:
  *
  *   - `getFixedRates()` is a history, so entry zero is regularly a *deactivated* exchange.
  *     Pricing off it pointed orders at an exchange that reverts, and hid a live dispenser.
  *   - the consume-market fee was quoted as an absolute amount, added to a total that
  *     already contained it, and then paid to the *publish* market's collector.
+ *   - the publish-market fee was added into a base-token total although the contract
+ *     reports it in base units, in a token of its own — and nothing ever approved it, so
+ *     any non-zero fee reverted the order.
  *   - `|| 18` turned a legitimate 0-decimal base token back into 18 decimals.
  */
 import {
+  allowanceWei,
   approve,
+  approveWei,
   type Config,
   Datatoken,
   FixedRateExchange,
   type ProviderFees,
+  unitsToAmount,
   ZERO_ADDRESS
 } from '@oceanprotocol/lib'
-import type { Signer } from 'ethers'
+import { formatUnits, type Signer } from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { order } from '../../src/utils/order.js'
 import {
@@ -34,6 +41,13 @@ vi.mock('@oceanprotocol/lib', async (importOriginal) => {
   return {
     ...actual,
     approve: vi.fn(async () => 1),
+    approveWei: vi.fn(async () => ({ hash: '0xapproval' })),
+    allowanceWei: vi.fn(async () => '0'),
+    // Every fee token in these tests has 18 decimals, so the conversion the real one does
+    // with a contract read is done here arithmetically.
+    unitsToAmount: vi.fn(async (_signer, _token, amount: string) =>
+      formatUnits(amount, 18)
+    ),
     Datatoken: vi.fn(),
     FixedRateExchange: vi.fn()
   }
@@ -44,6 +58,7 @@ const BASE_TOKEN = '0x4444444444444444444444444444444444444444'
 const PUBLISH_MARKET = '0x5555555555555555555555555555555555555555'
 const CONSUME_MARKET = '0x6666666666666666666666666666666666666666'
 const CONSUMER = '0x7777777777777777777777777777777777777777'
+const FEE_TOKEN = '0x8888888888888888888888888888888888888888'
 
 const signer = {
   getAddress: async () => CONSUMER
@@ -82,6 +97,15 @@ beforeEach(() => {
   vi.mocked(approve)
     .mockReset()
     .mockResolvedValue(1 as never)
+  vi.mocked(approveWei)
+    .mockReset()
+    .mockResolvedValue({ hash: '0xapproval' } as never)
+  vi.mocked(allowanceWei).mockReset().mockResolvedValue('0')
+  vi.mocked(unitsToAmount)
+    .mockReset()
+    .mockImplementation(async (_signer, _token, amount: string) =>
+      formatUnits(amount, 18)
+    )
   vi.mocked(Datatoken).mockReset()
   vi.mocked(FixedRateExchange).mockReset()
 })
@@ -268,24 +292,42 @@ describe('getOrderPrice consume-market fee', () => {
     expect(price.consumeMarket).to.equal(undefined)
   })
 
-  it('sums fees without rounding them through a double', async () => {
-    // Converting each decimal string to Number first rounded any amount past 15
-    // significant digits, so the total came out low and the approval it sized was short.
+  it('reports the publish-market fee in its own units, outside the total', async () => {
+    // `getPublishingMarketFee()` answers in base units while every other amount here is
+    // human-readable, and the fee is charged in a token of its own — so adding it into a
+    // base-token total mixed both currencies and units into one number. The one place that
+    // then spent `total` scales by the token's decimals again, inflating it by 1e18.
+    mockExchangeQuote()
+
     const price = await getOrderPrice(
       signer,
       {
-        schema: 'free',
-        templateId: 1,
-        datatokenAddress: DATATOKEN,
+        ...fixed,
         publishMarketFee: {
-          ...publishMarketFee,
-          publishMarketFeeAmount: '0.123456789012345678'
+          publishMarketFeeAddress: PUBLISH_MARKET,
+          publishMarketFeeToken: FEE_TOKEN,
+          publishMarketFeeAmount: '1000000000000000000'
         }
       },
       chainConfig
     )
 
-    expect(price.total).to.equal('0.123456789012345678')
+    expect(vi.mocked(unitsToAmount)).toHaveBeenCalledWith(
+      signer,
+      FEE_TOKEN,
+      '1000000000000000000'
+    )
+    expect(price.publishMarketFee).to.equal('1.0')
+    expect(price.total).to.equal('10.5')
+  })
+
+  it('reports no publish-market fee as zero, without reading a token', async () => {
+    mockExchangeQuote()
+
+    const price = await getOrderPrice(signer, fixed, chainConfig)
+
+    expect(vi.mocked(unitsToAmount)).not.toHaveBeenCalled()
+    expect(price.publishMarketFee).to.equal('0')
   })
 })
 
@@ -405,6 +447,186 @@ describe('order fee routing', () => {
           { ...price, consumeMarket: { address: '', fee: '0.02' } }
         ),
       /no collector address/i
+    )
+  })
+})
+
+/**
+ * The publish-market fee the datatoken charges on every order.
+ *
+ * It is stored on the datatoken and pulled by it from the payer during the order, exactly
+ * like the provider fee — so it needs an allowance to the datatoken, in its own token and
+ * its own units. Neither nautilus nor ocean.js's `orderAsset` ever approved it: upstream
+ * folds the raw amount into the base-token approval instead, which only works when the fee
+ * happens to be charged in the base token by a contract that is also the swap's spender.
+ */
+describe('publish-market fee approval', () => {
+  const feeInBaseToken = {
+    publishMarketFeeAddress: PUBLISH_MARKET,
+    publishMarketFeeToken: BASE_TOKEN,
+    publishMarketFeeAmount: '1000000000000000000'
+  }
+
+  const feeInOwnToken = {
+    ...feeInBaseToken,
+    publishMarketFeeToken: FEE_TOKEN
+  }
+
+  /** A quote whose amounts are exact at 18 decimals, so a double would round them. */
+  const price: OrderPrice = {
+    total: '10.123456789012345678',
+    baseTokenAmount: '10.123456789012345678',
+    opcFee: '0',
+    publishMarketFee: '1.000000000000000001',
+    consumeMarketFee: '0'
+  }
+
+  function placeOrder(pricing: PricingInfo) {
+    return order({
+      signer,
+      config: chainConfig,
+      pricing,
+      price,
+      serviceIndex: 0,
+      providerFees: {} as ProviderFees,
+      consumer: CONSUMER
+    })
+  }
+
+  function atomic(publishMarketFee: PricingInfo['publishMarketFee']) {
+    return {
+      schema: 'fixed' as const,
+      templateId: 2,
+      datatokenAddress: DATATOKEN,
+      exchangeId: '0xlive',
+      baseTokenAddress: BASE_TOKEN,
+      baseTokenDecimals: 18,
+      publishMarketFee
+    }
+  }
+
+  function mockAtomicDatatoken() {
+    constructs(vi.mocked(Datatoken), {
+      buyFromFreAndOrder: vi
+        .fn()
+        .mockResolvedValue({ wait: async () => ({ hash: '0xreceipt' }) })
+    })
+  }
+
+  it('covers swap and fee with one allowance when both are the same token', async () => {
+    // An ERC20 approval replaces the previous one rather than adding to it, and on the
+    // atomic templates the datatoken is the spender for both — so two approvals would
+    // leave only the second, and the order would revert on the shortfall.
+    mockAtomicDatatoken()
+
+    await placeOrder(atomic(feeInBaseToken))
+
+    expect(vi.mocked(approve)).toHaveBeenCalledTimes(1)
+
+    const [, , , token, spender, amount] = vi.mocked(approve).mock.calls[0]
+
+    expect(token).to.equal(BASE_TOKEN)
+    expect(spender).to.equal(DATATOKEN)
+    // Summed with Decimal: a double rounds this to 11.123456789012346.
+    expect(amount).to.equal('11.123456789012345679')
+    expect(vi.mocked(approveWei)).not.toHaveBeenCalled()
+  })
+
+  it('approves a fee charged in another token separately, to the datatoken', async () => {
+    mockAtomicDatatoken()
+
+    await placeOrder(atomic(feeInOwnToken))
+
+    const [, , , token, , amount] = vi.mocked(approve).mock.calls[0]
+
+    expect(token).to.equal(BASE_TOKEN)
+    // The swap approval is untouched: a fee in another token cannot ride on it.
+    expect(amount).to.equal('10.123456789012345678')
+
+    expect(vi.mocked(approveWei)).toHaveBeenCalledOnce()
+
+    const [, , , feeToken, feeSpender, feeAmount] =
+      vi.mocked(approveWei).mock.calls[0]
+
+    expect(feeToken).to.equal(FEE_TOKEN)
+    // The datatoken, not the exchange: the datatoken is what pulls the fee.
+    expect(feeSpender).to.equal(DATATOKEN)
+    // In base units, as the contract reported it — `approveWei`, not `approve`.
+    expect(feeAmount).to.equal('1000000000000000000')
+  })
+
+  it('approves the fee to the datatoken while the swap is approved to the exchange', async () => {
+    // Template 1 buys through the exchange and orders separately, so the base-token
+    // allowance goes to the exchange and cannot cover a fee the datatoken pulls.
+    constructs(vi.mocked(Datatoken), {
+      startOrder: vi
+        .fn()
+        .mockResolvedValue({ wait: async () => ({ hash: '0xreceipt' }) })
+    })
+    constructs(vi.mocked(FixedRateExchange), {
+      buyDatatokens: vi
+        .fn()
+        .mockResolvedValue({ wait: async () => ({ hash: '0xbuy' }) })
+    })
+
+    await placeOrder({ ...atomic(feeInBaseToken), templateId: 1 })
+
+    const [, , , , spender] = vi.mocked(approve).mock.calls[0]
+
+    expect(spender).to.equal(chainConfig.fixedRateExchangeAddress)
+    expect(vi.mocked(approveWei)).toHaveBeenCalledOnce()
+    expect(vi.mocked(approveWei).mock.calls[0][4]).to.equal(DATATOKEN)
+  })
+
+  it('approves the fee on a dispenser order, which has no swap to carry it', async () => {
+    // Free is not free of fees: the datatoken charges its publish-market fee on a
+    // dispenser order exactly as on a paid one.
+    constructs(vi.mocked(Datatoken), {
+      buyFromDispenserAndOrder: vi
+        .fn()
+        .mockResolvedValue({ wait: async () => ({ hash: '0xreceipt' }) })
+    })
+
+    await placeOrder({
+      schema: 'free',
+      templateId: 2,
+      datatokenAddress: DATATOKEN,
+      publishMarketFee: feeInOwnToken
+    })
+
+    expect(vi.mocked(approveWei)).toHaveBeenCalledOnce()
+    expect(vi.mocked(approveWei).mock.calls[0][3]).to.equal(FEE_TOKEN)
+    expect(vi.mocked(approveWei).mock.calls[0][4]).to.equal(DATATOKEN)
+  })
+
+  it('skips the approval when a standing allowance already covers the fee', async () => {
+    vi.mocked(allowanceWei).mockResolvedValue('1000000000000000000')
+    mockAtomicDatatoken()
+
+    await placeOrder(atomic(feeInOwnToken))
+
+    expect(vi.mocked(approveWei)).not.toHaveBeenCalled()
+  })
+
+  it('does not approve anything extra when no fee is charged', async () => {
+    mockAtomicDatatoken()
+
+    await placeOrder(atomic(publishMarketFee))
+
+    expect(vi.mocked(approveWei)).not.toHaveBeenCalled()
+    expect(vi.mocked(approve).mock.calls[0][5]).to.equal(
+      '10.123456789012345678'
+    )
+  })
+
+  it('surfaces a failed fee approval instead of letting the order revert', async () => {
+    // ocean.js catches a failed send and returns null.
+    vi.mocked(approveWei).mockResolvedValue(null as never)
+    mockAtomicDatatoken()
+
+    await expectThrowsAsync(
+      () => placeOrder(atomic(feeInOwnToken)),
+      /could not approve the publish-market fee/i
     )
   })
 })

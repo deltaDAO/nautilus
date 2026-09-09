@@ -113,8 +113,14 @@ export async function checkPrice(nautilus: Nautilus, assetDid: string) {
   console.log(`  schema:      ${pricing.schema}`)
   console.log(`  template:    ${pricing.templateId}`)
   console.log(`  base token:  ${pricing.baseTokenAddress ?? '—'}`)
-  console.log(`  total:       ${price.total}`)
-  console.log(`  market fee:  ${price.publishMarketFee}`)
+  console.log(`  total:       ${price.total} (in the base token)`)
+  // Charged in `publishMarketFeeToken`, which is often not the base token — so it is a
+  // separate line rather than part of the total. nautilus approves it during the order.
+  console.log(
+    `  market fee:  ${price.publishMarketFee} ${
+      pricing.publishMarketFee?.publishMarketFeeToken ?? ''
+    }`
+  )
 
   return { pricing, price }
 }
