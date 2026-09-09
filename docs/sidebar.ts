@@ -7,6 +7,7 @@ export const sidebar = {
       items: [
         { text: 'Why Nautilus', link: '/docs/introduction' },
         { text: 'Getting Started', link: '/docs/getting-started' },
+        { text: 'Examples', link: '/docs/examples' },
         { text: 'TypeScript', link: '/docs/typescript' },
         { text: 'FAQ', link: '/docs/faq' },
         {

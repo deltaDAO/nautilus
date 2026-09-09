@@ -164,3 +164,14 @@ console.log(pricing.schema, price.total)
 
 `pricing.schema` is `'fixed'`, `'free'`, or `'none'` when the datatoken has neither a
 fixed-rate exchange nor a dispenser and so cannot be ordered at all.
+
+## Try it
+
+Runnable versions of everything on this page live in [`examples/`](/docs/examples):
+
+```sh
+npm start -- access:price did:ope:…      # what it costs, before you buy
+npm start -- access:download did:ope:…   # order and fetch
+npm start -- access:service did:ope:…    # pick a specific service
+npm start -- access:userdata did:ope:…   # pass consumer parameters
+```

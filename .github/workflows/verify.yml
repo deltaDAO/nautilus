@@ -65,6 +65,36 @@ jobs:
       - name: Check types
         run: npm run typecheck
 
+  examples:
+    name: Examples
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v5
+
+      - name: Install dependencies
+        uses: ./.github/actions/install-dependencies
+
+      # `examples` is deliberately not a workspace — it resolves nautilus the way a
+      # consumer does, through `src/package.json`'s exports map. That map points at
+      # `_esm` and `_types`, so the library has to be built before the examples can
+      # even be installed, let alone typechecked.
+      - name: Build nautilus
+        run: npm run build
+
+      - name: Install examples
+        run: npm ci
+        working-directory: examples
+
+      # The examples are the widest exercise of the public v2 API, so this is where
+      # API drift surfaces while 2.0.0 is still in beta.
+      - name: Check types
+        run: npm run typecheck
+        working-directory: examples
+
   test:
     name: Test
     runs-on: ubuntu-latest

@@ -247,3 +247,14 @@ const computeService = new ServiceBuilder<ServiceTypes.COMPUTE, FileTypes.URL>({
 access, an algorithm cannot send your data anywhere.
 
 See [Publishing](/docs/guides/publish) for the algorithm side.
+
+## Try it
+
+The [examples](/docs/examples) cover the whole job lifecycle:
+
+```sh
+npm start -- compute:envs                            # what a node offers, and at what price
+npm start -- compute:free  <datasetDid> <algoDid>    # no order, no escrow
+npm start -- compute:paid  <datasetDid> <algoDid>    # funds the escrow from the node's quote
+npm start -- compute:full  <datasetDid> <algoDid>    # start → wait → logs → result
+```

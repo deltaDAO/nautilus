@@ -54,10 +54,7 @@ export default defineConfig({
   accentColor: 'light-dark(#007599, #00caff)',
   topNav: [
     { text: 'Docs', link: '/docs/getting-started', match: '/docs' },
-    {
-      text: 'Examples',
-      link: 'https://github.com/deltaDAO/nautilus-examples'
-    },
+    { text: 'Examples', link: '/docs/examples' },
     {
       text: pkg.version,
       items: [

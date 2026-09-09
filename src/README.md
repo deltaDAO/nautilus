@@ -37,6 +37,8 @@
 
 A TypeScript library enabling you to explore the Data Economy. It is built on top of [ocean.js](https://github.com/oceanprotocol/ocean.js) and offers feature complete, automated interactions with any [Ocean Protocol](https://oceanprotocol.com) ecosystem.
 
+> **Beta** — nautilus 2.0.0 is a pre-release. The API can still change between betas and you should expect bugs. Install it with `npm install @deltadao/nautilus@beta`, and please report anything you hit at [github.com/deltaDAO/nautilus/issues](https://github.com/deltaDAO/nautilus/issues).
+
 ## Overview
 
 nautilus addresses many common pain points faced by developers interacting with the data economy by offering a range of features enhancing productivity and efficiency.
@@ -190,7 +192,7 @@ Find dedicated feature documentation by following one of the links below:
 - [Editing](https://nautilus.delta-dao.com/docs/guides/edit)
 - [Credential-gated assets](https://nautilus.delta-dao.com/docs/guides/identity)
 
-If you want to jump straight into code, feel free to take a look at some of our code examples in the [nautilus-examples repository](https://github.com/deltaDAO/nautilus-examples).
+If you want to jump straight into code, feel free to take a look at the runnable [examples](https://github.com/deltaDAO/nautilus/tree/main/examples) in this repository — a small CLI covering publishing, editing, downloading, Compute-to-Data and credential-gated access.
 
 ## License
 

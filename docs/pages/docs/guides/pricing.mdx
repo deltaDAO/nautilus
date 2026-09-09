@@ -112,3 +112,13 @@ field; until it comes back, cache the download URL rather than re-calling `acces
 | `OrderPriceAndFees` | `OrderPrice` |
 | `AssetWithAccessDetails` | — read pricing separately from the asset |
 | subgraph queries | contract reads |
+
+## Try it
+
+```sh
+npm start -- access:price did:ope:…      # what an asset costs right now
+npm start -- edit:price did:ope:… 2.95   # reprice a fixed-rate exchange
+```
+
+`config.ts` in [`examples/`](/docs/examples) holds ready-made pricing configs per network,
+with the payment-token addresses already filled in.

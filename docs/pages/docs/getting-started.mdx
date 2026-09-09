@@ -2,17 +2,24 @@ import { Card, Cards } from 'vocs'
 
 # Getting Started
 
+:::warning
+nautilus 2.0.0 is a **pre-release**. The API can still change between betas and you should
+expect bugs. It is published under the `beta` tag — a plain `npm install @deltadao/nautilus`
+still resolves to v1. Please report anything you hit on
+[GitHub](https://github.com/deltaDAO/nautilus/issues).
+:::
+
 ## Installation
 
 :::code-group
 ```bash [npm]
-npm install @deltadao/nautilus ethers
+npm install @deltadao/nautilus@beta ethers
 ```
 ```bash [pnpm]
-pnpm add @deltadao/nautilus ethers
+pnpm add @deltadao/nautilus@beta ethers
 ```
 ```bash [yarn]
-yarn add @deltadao/nautilus ethers
+yarn add @deltadao/nautilus@beta ethers
 ```
 :::
 
@@ -91,5 +98,6 @@ download is visible — see [`access`](/docs/api/nautilus/access).
   <Card title="Credential-gated assets" description="Require verifiable credentials to consume." to="/docs/guides/identity" />
 </Cards>
 
-For runnable code, see the
-[nautilus-examples repository](https://github.com/deltaDAO/nautilus-examples).
+For runnable code, see the [Examples](/docs/examples) — a CLI covering every flow above, in
+the [`examples/`](https://github.com/deltaDAO/nautilus/tree/main/examples) folder of this
+repository.

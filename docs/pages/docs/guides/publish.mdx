@@ -227,6 +227,18 @@ const asset = new AssetBuilder()
   .build()
 ```
 
+## Try it
+
+Every shape above is a runnable command in [`examples/`](/docs/examples):
+
+```sh
+npm start -- publish:access-dataset      # a dataset anyone can download
+npm start -- publish:compute-dataset     # a dataset algorithms can run against
+npm start -- publish:saas                # a SaaS offer
+npm start -- publish:multi-service       # one NFT carrying two services
+npm start -- publish:validate            # build and validate, without publishing
+```
+
 ## Next steps
 
 - [Editing](/docs/guides/edit) — change a published asset

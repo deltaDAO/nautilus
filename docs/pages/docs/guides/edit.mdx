@@ -255,3 +255,14 @@ const indexed = await nautilus.waitForIndexer( // [!code focus]
 
 Passing the transaction hash matters here: without it, `waitForIndexer` is satisfied by the
 asset merely existing, which it already did.
+
+## Try it
+
+Each edit on this page is a command in [`examples/`](/docs/examples):
+
+```sh
+npm start -- edit:metadata did:ope:… "New name"
+npm start -- edit:price did:ope:… 2.95
+npm start -- edit:trusted-algorithms <datasetDid> <algoDid> [...]
+npm start -- asset:unlist did:ope:…      # hide it from listings
+```

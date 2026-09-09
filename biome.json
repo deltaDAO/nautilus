@@ -8,7 +8,8 @@
       "!**/tsconfig.json",
       "!**/tsconfig.*.json",
       "!docs/public",
-      "!docs/dist"
+      "!docs/dist",
+      "!examples/example_publish_assets"
     ]
   },
   "vcs": {

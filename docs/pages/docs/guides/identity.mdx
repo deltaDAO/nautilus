@@ -252,3 +252,14 @@ generation, which walt.id has marked for deprecation in favour of `*-api2`
 nautilus keeps them behind a narrow eleven-method `WaltIdWallet` interface for exactly this
 reason: a v2 backend is a new implementation of that interface, not a rewrite. Pass your own
 with the `wallet` option.
+
+## Try it
+
+The [examples](/docs/examples) cover both halves of the exchange. Set `SSI_WALLET_API` in
+`.env` first:
+
+```sh
+npm start -- ssi:connect                 # authenticate, list your wallets, keys and DIDs
+npm start -- ssi:round-trip              # publish a gated dataset and consume it, end to end
+npm start -- ssi:consume did:ope:…       # consume someone else's gated asset
+```
