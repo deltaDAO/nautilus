@@ -10,12 +10,8 @@
   "files": [
     "_esm",
     "_types",
-    "scripts",
     "README.md"
   ],
-  "scripts": {
-    "postinstall": "node scripts/patch-ddo-js-types.mjs"
-  },
   "exports": {
     ".": {
       "types": "./_types/index.d.ts",
@@ -28,7 +24,7 @@
     "ethers": "^6.17.0"
   },
   "dependencies": {
-    "@oceanprotocol/ddo-js": "^0.4.1",
+    "@oceanprotocol/ddo-js": "^0.5.0",
     "@oceanprotocol/lib": "^9.0.0",
     "axios": "^1.20.0",
     "decimal.js": "^10.6.0",
