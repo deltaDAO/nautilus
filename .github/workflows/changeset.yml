@@ -4,7 +4,11 @@ on:
     branches: [main, development]
   workflow_dispatch:
 
-# Every job declares exactly what it needs. Only `publish` gets `id-token: write`.
+# Every job declares exactly what it needs. Only the two jobs that publish, `publish`
+# and `canary-publish`, get `id-token: write`, and each runs in a GitHub environment
+# whose deployment-branch policy limits which refs may reach it. npm's trusted
+# publisher registration names that environment, so a publish from any other ref or
+# any other environment is refused by the registry.
 permissions: {}
 
 concurrency:
@@ -16,7 +20,8 @@ jobs:
   verify:
     name: Verify
     uses: ./.github/workflows/verify.yml
-    secrets: inherit
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     permissions:
       contents: read
 
@@ -103,9 +108,12 @@ jobs:
 
   publish:
     name: Publish to npm
+    if: github.ref == 'refs/heads/main'
     needs: pack
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Deployment branches: main only. Registered on npm as the release trusted publisher.
+    environment: npm-release
     permissions:
       # Pushes the release tag and creates the GitHub release.
       contents: write
@@ -118,22 +126,27 @@ jobs:
         with:
           persist-credentials: false
 
-      # No dependency cache on the job that holds the publish credential.
+      # No dependency cache on a job that holds the publish credential.
       - name: Set up npm
         uses: actions/setup-node@v5
         with:
           node-version-file: '.nvmrc'
           package-manager-cache: false
 
-      # Trusted publishing needs npm 11.5.1 or newer.
-      - name: Update npm
-        run: npm install -g npm@latest && npm --version
+      # Trusted publishing needs npm 11.5.1 or newer. Node 24 bundles a newer one; fail
+      # loudly rather than silently install whatever `npm@latest` is on the day.
+      - name: Check npm version
+        run: npx --yes semver@7 --range '>=11.5.1' "$(npm --version)"
 
+      # Only @changesets/cli runs here, and it publishes the tarball from the pack job.
+      # Nothing in this job needs install scripts, and no third-party script should run
+      # next to the OIDC credential.
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       # Publishes the tarballs from the pack job, then tags the commit and creates the
-      # GitHub release. In changesets pre mode the dist-tag comes from .changeset/pre.json.
+      # GitHub release. The dist-tag comes from the publish plan: `beta` while
+      # .changeset/pre.json is in pre mode.
       - name: Publish
         uses: changesets/action/publish@v2
         with:
@@ -141,18 +154,24 @@ jobs:
           create-github-releases: true
 
   # A snapshot of every push, published as 0.0.0-<branch>.<timestamp> under the branch
-  # name as dist-tag, e.g. `npm i @deltadao/nautilus@main`. Skipped only when the same
-  # push is a real release, so the two never publish side by side.
-  canary:
-    name: Publish canary
-    if: github.ref != 'refs/heads/main' || needs.select-mode.outputs.mode != 'publish'
+  # name as dist-tag, e.g. `npm i @deltadao/nautilus@main`. Only on push events for the
+  # two branches, and skipped when the same push to main is a real release, so the two
+  # never publish side by side. Built and packed here without any credential; the
+  # publish happens in the minimal job below.
+  canary-pack:
+    name: Pack canary
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/development' ||
+       (github.ref == 'refs/heads/main' && needs.select-mode.outputs.mode != 'publish'))
     needs: [verify, select-mode]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
-      # npm trusted publishing (OIDC), same registration as the release job.
-      id-token: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
 
     steps:
       - name: Clone repository
@@ -160,31 +179,76 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install dependencies
+        uses: ./.github/actions/install-dependencies
+
+      # The branch name doubles as the dist-tag, reduced to what npm accepts in a tag.
+      # Names that would land on a release channel are refused outright.
+      - name: Set version
+        id: version
+        working-directory: src
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          tag=$(printf '%s' "$REF_NAME" | tr -cs '[:alnum:]-' '-' | tr '[:upper:]' '[:lower:]' | sed 's/-$//')
+          case "$tag" in
+            ''|latest|beta|next|alpha|rc|canary)
+              echo "::error::refusing to publish a canary under dist-tag '$tag'"
+              exit 1
+              ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          npm version --no-git-tag-version "0.0.0-$tag.$(date -u +%Y%m%dT%H%M%S)"
+
+      - name: Build
+        run: npm run build
+
+      - name: Pack
+        working-directory: src
+        run: mkdir -p ../canary && npm pack --pack-destination ../canary
+
+      - name: Upload tarball
+        id: upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: canary-tarball
+          path: canary/*.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  canary-publish:
+    name: Publish canary
+    needs: canary-pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Deployment branches: main and development. Registered on npm as the canary
+    # trusted publisher.
+    environment: npm-canary
+    permissions:
+      contents: read
+      # npm trusted publishing (OIDC), see `publish`.
+      id-token: write
+
+    steps:
       - name: Set up npm
         uses: actions/setup-node@v5
         with:
           node-version-file: '.nvmrc'
           package-manager-cache: false
 
-      - name: Update npm
-        run: npm install -g npm@latest && npm --version
+      - name: Check npm version
+        run: npx --yes semver@7 --range '>=11.5.1' "$(npm --version)"
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Download tarball
+        uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.canary-pack.outputs.artifact-id }}
+          path: canary
+          merge-multiple: true
 
-      # The branch name doubles as the dist-tag, reduced to what npm accepts in a tag.
-      - name: Set version
-        working-directory: src
-        env:
-          REF_NAME: ${{ github.ref_name }}
-        run: |
-          tag=$(printf '%s' "$REF_NAME" | tr -cs '[:alnum:]-' '-' | tr '[:upper:]' '[:lower:]' | sed 's/-$//')
-          echo "tag=$tag" >> "$GITHUB_ENV"
-          npm version --no-git-tag-version "0.0.0-$tag.$(date -u +%Y%m%dT%H%M%S)"
-
-      - name: Build
-        run: npm run build
-
+      # No checkout and no install: the only input is the tarball built above, and
+      # provenance is attached automatically under trusted publishing.
       - name: Publish
-        working-directory: src
-        run: npm publish --tag "$tag"
+        env:
+          TAG: ${{ needs.canary-pack.outputs.tag }}
+        run: npm publish canary/*.tgz --tag="$TAG"
