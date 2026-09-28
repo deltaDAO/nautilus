@@ -134,9 +134,15 @@ jobs:
           package-manager-cache: false
 
       # Trusted publishing needs npm 11.5.1 or newer. Node 24 bundles a newer one; fail
-      # loudly rather than silently install whatever `npm@latest` is on the day.
+      # loudly rather than silently install whatever `npm@latest` is on the day. Plain
+      # coreutils on purpose: nothing fetched from the registry runs next to the credential.
       - name: Check npm version
-        run: npx --yes semver@7 --range '>=11.5.1' "$(npm --version)"
+        run: |
+          have=$(npm --version)
+          if ! printf '11.5.1\n%s\n' "$have" | sort -V -C; then
+            echo "::error::npm $have is older than 11.5.1, which trusted publishing requires"
+            exit 1
+          fi
 
       # Only @changesets/cli runs here, and it publishes the tarball from the pack job.
       # Nothing in this job needs install scripts, and no third-party script should run
@@ -172,6 +178,7 @@ jobs:
     outputs:
       tag: ${{ steps.version.outputs.tag }}
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      node-version: ${{ steps.node.outputs.version }}
 
     steps:
       - name: Clone repository
@@ -181,6 +188,11 @@ jobs:
 
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
+
+      # The publish job below has no checkout, so it cannot read .nvmrc itself.
+      - name: Read Node version
+        id: node
+        run: echo "version=$(tr -d '[:space:]' < .nvmrc)" >> "$GITHUB_OUTPUT"
 
       # The branch name doubles as the dist-tag, reduced to what npm accepts in a tag.
       # Names that would land on a release channel are refused outright.
@@ -230,14 +242,21 @@ jobs:
       id-token: write
 
     steps:
+      # Same Node as everywhere else, taken from .nvmrc by the pack job: this job has
+      # no checkout on purpose.
       - name: Set up npm
         uses: actions/setup-node@v5
         with:
-          node-version-file: '.nvmrc'
+          node-version: ${{ needs.canary-pack.outputs.node-version }}
           package-manager-cache: false
 
       - name: Check npm version
-        run: npx --yes semver@7 --range '>=11.5.1' "$(npm --version)"
+        run: |
+          have=$(npm --version)
+          if ! printf '11.5.1\n%s\n' "$have" | sort -V -C; then
+            echo "::error::npm $have is older than 11.5.1, which trusted publishing requires"
+            exit 1
+          fi
 
       - name: Download tarball
         uses: actions/download-artifact@v8
