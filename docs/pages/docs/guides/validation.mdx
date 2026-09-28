@@ -102,4 +102,5 @@ mismatch under the `id` key.
 | --- | --- |
 | `providedBy: Less than 1 values` | New in DDO v5, no v4 equivalent. Set it with [`setProvidedBy`](/docs/api/assetbuilder/setProvidedBy). |
 | `name: Less than 1 values` | Required. [`setName`](/docs/api/assetbuilder/setName). |
+| `credentials: Less than 1 values` | Required on the asset and on every service since ddo-js 1.0.0. The builders always emit an object (`{}` when no rules are set), so this only appears for a hand-assembled or hand-patched DDO. |
 | `id: did does not derive from…` | The document's `id` does not match its `nftAddress` and `chainId` — see above. |

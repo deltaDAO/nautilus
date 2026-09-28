@@ -11,18 +11,23 @@ This is a call-by-call map. If something is not listed, it did not change.
 ```diff
 - "@oceanprotocol/lib": "3.4.6",
 - "ethers": "^5.7.2"
-+ "@oceanprotocol/lib": "^9.0.0",
-+ "@oceanprotocol/ddo-js": "0.4.1",
++ "@oceanprotocol/lib": "^9.2.1",
++ "@oceanprotocol/ddo-js": "^1.0.0",
 + "ethers": "^6.17.0"
 ```
 
 `@oceanprotocol/lib` re-exports only the **v4** `DDO` type, so DDO v5 types come from
-`@oceanprotocol/ddo-js` directly. Pin it and dedupe: ocean.js itself asks for `^0.3.0`,
-which npm resolves to a *different* copy unless you add an override.
+`@oceanprotocol/ddo-js` directly. nautilus requires `^1.0.0`, whose `exports` map carries
+`types` conditions, so its declarations resolve under `nodenext`, `node16` and `bundler`.
 
-```json
-"overrides": { "@oceanprotocol/ddo-js": "0.4.1" }
-```
+ocean.js main already depends on `^1.0.0`, so once its next release ships a normal install
+has a single copy. Until then, ocean.js 9.2.1 still asks for `^0.4.1` and npm nests that copy
+under `@oceanprotocol/lib`. It is harmless — at runtime it differs only in the DDO schema
+tightening described below — and needs no override.
+
+DDO v5 now requires a `credentials` object on the asset and on every service (ddo-js 1.0.0).
+The builders always emit one (`{}` when no access rules are set), so this only matters if you
+assemble or patch DDOs by hand.
 
 ## 2. Setting up
 

@@ -31,11 +31,12 @@ library all changed underneath.
   streamable logs and results.
 - **Local DDO validation** via ddo-js SHACL, before any gas is spent.
 - **`strict` TypeScript** is enabled, and ethers v6 is required.
-- **No install-time patching.** nautilus requires `@oceanprotocol/ddo-js` ^0.5.0, the first
-  release whose `exports` map carries `types` conditions, so its declarations resolve under
-  `nodenext`, `node16` and `bundler` unaided. The `postinstall` hook that used to rewrite the
-  installed manifest is gone: nautilus runs no lifecycle script on install, and works
-  unchanged under `--ignore-scripts` and pnpm. 0.5.0 is identical to 0.4.1 at runtime; only
-  the packaging metadata changed.
+- **No install-time patching.** nautilus requires `@oceanprotocol/ddo-js` ^1.0.0, whose
+  `exports` map carries `types` conditions, so its declarations resolve under `nodenext`,
+  `node16` and `bundler` unaided. The `postinstall` hook that used to rewrite the installed
+  manifest is gone: nautilus runs no lifecycle script on install, and works unchanged under
+  `--ignore-scripts` and pnpm. ddo-js 1.0.0 also tightens the DDO v5 schema: `credentials`
+  is now required on the asset and on every service. The builders always emit it, and an
+  edit normalizes untouched services that lack it.
 
 See `MIGRATION.md` for a call-by-call mapping from v1.
