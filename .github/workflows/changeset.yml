@@ -1,7 +1,7 @@
 name: Changesets
 on:
   push:
-    branches: [main]
+    branches: [main, development]
   workflow_dispatch:
 
 # Every job declares exactly what it needs. Only `publish` gets `id-token: write`.
@@ -47,7 +47,7 @@ jobs:
 
   version:
     name: Create version pull request
-    if: needs.select-mode.outputs.mode == 'version'
+    if: github.ref == 'refs/heads/main' && needs.select-mode.outputs.mode == 'version'
     needs: select-mode
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -74,7 +74,7 @@ jobs:
 
   pack:
     name: Pack
-    if: needs.select-mode.outputs.mode == 'publish'
+    if: github.ref == 'refs/heads/main' && needs.select-mode.outputs.mode == 'publish'
     needs: [verify, select-mode]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -139,3 +139,52 @@ jobs:
         with:
           pack-dir-artifact-id: ${{ needs.pack.outputs.pack-dir-artifact-id }}
           create-github-releases: true
+
+  # A snapshot of every push, published as 0.0.0-<branch>.<timestamp> under the branch
+  # name as dist-tag, e.g. `npm i @deltadao/nautilus@main`. Skipped only when the same
+  # push is a real release, so the two never publish side by side.
+  canary:
+    name: Publish canary
+    if: github.ref != 'refs/heads/main' || needs.select-mode.outputs.mode != 'publish'
+    needs: [verify, select-mode]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # npm trusted publishing (OIDC), same registration as the release job.
+      id-token: write
+
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set up npm
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: '.nvmrc'
+          package-manager-cache: false
+
+      - name: Update npm
+        run: npm install -g npm@latest && npm --version
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The branch name doubles as the dist-tag, reduced to what npm accepts in a tag.
+      - name: Set version
+        working-directory: src
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          tag=$(printf '%s' "$REF_NAME" | tr -cs '[:alnum:]-' '-' | tr '[:upper:]' '[:lower:]' | sed 's/-$//')
+          echo "tag=$tag" >> "$GITHUB_ENV"
+          npm version --no-git-tag-version "0.0.0-$tag.$(date -u +%Y%m%dT%H%M%S)"
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish
+        working-directory: src
+        run: npm publish --tag "$tag"
