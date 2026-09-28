@@ -1,2 +1,124 @@
 # Nautilus [The instance that enables all data economy interactions]
 
+Every interaction goes through a `Nautilus` instance. It holds three things — an ethers
+`Signer`, a resolved chain [`Config`](/docs/guides/config), and an
+[ocean-node](/docs/guides/ocean-node) client — and every method reuses them, which is why no
+call takes a `signer`, `chainConfig` or `providerUri` the way v1's did.
+
+## Creating an instance
+
+The constructor is private: the chain config has to be resolved from the signer's network
+before the instance is usable, and that is asynchronous. Use the static factory.
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus } from '@deltadao/nautilus'
+
+const provider = new JsonRpcProvider('https://rpc.dev.pontus-x.eu')
+const signer = new Wallet('0x...', provider)
+
+const nautilus = await Nautilus.create(signer, { // [!code focus]
+  config: { oceanNodeUri: 'https://ocean-node.dev.pontus-x.eu' } // [!code focus]
+}) // [!code focus]
+```
+
+See [`create`](/docs/api/nautilus/create) for the full option reference.
+
+### The two-step bootstrap
+
+Two options — `remoteStore` and `credentials` — need an `OceanNodeClient`, and the only way
+to get one is from an instance. So build a throwaway instance first, take its client, and
+pass it to the real one.
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus, NodePersistentRemoteStore } from '@deltadao/nautilus'
+
+const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const config = { oceanNodeUri: 'https://ocean-node.dev.pontus-x.eu' }
+// ---cut---
+const bootstrap = await Nautilus.create(signer, { config }) // [!code focus]
+
+const nautilus = await Nautilus.create(signer, {
+  config,
+  remoteStore: new NodePersistentRemoteStore(bootstrap.getNodeClient()) // [!code focus]
+})
+```
+
+:::info
+The bootstrap instance is cheap — `create` resolves config and builds a client, it does not
+talk to the chain. You can reuse one bootstrap for both a remote store and a credential
+provider.
+:::
+
+## `NautilusOptions`
+
+| Option | Type | Purpose |
+| --- | --- | --- |
+| `config` | `Partial<Config>` | Overrides merged over the chain config resolved from the signer's network. `oceanNodeUri` is effectively required. |
+| `remoteStore` | `RemoteStore` | Where the signed DDO is stored. **Required to publish** — nautilus writes a `{remote}` pointer on chain, not the document. See [remote stores](/docs/guides/remote-stores). |
+| `ddoSigner` | `DdoSigner` | Signs the DDO as a verifiable credential. Defaults to the Ethereum key (`ETH-EIP191`). See [signing](/docs/guides/signing). |
+| `credentials` | `CredentialProvider` | Satisfies credential-gated access. Omit to skip SSI entirely. See [credential-gated assets](/docs/guides/identity). |
+
+## `PublishOptions`
+
+Accepted by both [`publish`](/docs/api/nautilus/publish) and [`edit`](/docs/api/nautilus/edit).
+
+| Option | Type | Default | Purpose |
+| --- | --- | --- | --- |
+| `encrypt` | `boolean` | `true` | Encrypt the on-chain pointer (flags `0x02`). |
+| `waitForIndexer` | `boolean` | `false` | Block until the indexer has the asset, so the result is immediately resolvable. |
+| `remoteStore` | `RemoteStore` | instance's | Override the remote store for this call. |
+| `ddoSigner` | `DdoSigner` | instance's | Override the DDO signer for this call. |
+
+## Method reference
+
+### Static
+
+[`create`](/docs/api/nautilus/create) ·
+[`setLogLevel`](/docs/api/nautilus/setLogLevel)
+
+### Accessors
+
+[`getOceanConfig`](/docs/api/nautilus/getOceanConfig) ·
+[`getNodeClient`](/docs/api/nautilus/getNodeClient) ·
+[`getSigner`](/docs/api/nautilus/getSigner) ·
+[`setCredentialProvider`](/docs/api/nautilus/setCredentialProvider)
+
+### Metadata
+
+[`getAsset`](/docs/api/nautilus/getAsset) ·
+[`getAssets`](/docs/api/nautilus/getAssets) ·
+[`query`](/docs/api/nautilus/query) ·
+[`waitForIndexer`](/docs/api/nautilus/waitForIndexer)
+
+### Publishing and editing
+
+[`publish`](/docs/api/nautilus/publish) ·
+[`edit`](/docs/api/nautilus/edit) ·
+[`setServicePrice`](/docs/api/nautilus/setServicePrice) ·
+[`setAssetLifecycleState`](/docs/api/nautilus/setAssetLifecycleState)
+
+### Access
+
+[`access`](/docs/api/nautilus/access)
+
+### Compute
+
+[`getComputeEnvironments`](/docs/api/nautilus/getComputeEnvironments) ·
+[`getComputeEnvironment`](/docs/api/nautilus/getComputeEnvironment) ·
+[`compute`](/docs/api/nautilus/compute) ·
+[`freeCompute`](/docs/api/nautilus/freeCompute) ·
+[`getComputeStatus`](/docs/api/nautilus/getComputeStatus) ·
+[`getComputeResult`](/docs/api/nautilus/getComputeResult) ·
+[`streamComputeResult`](/docs/api/nautilus/streamComputeResult) ·
+[`getComputeLogs`](/docs/api/nautilus/getComputeLogs) ·
+[`stopCompute`](/docs/api/nautilus/stopCompute)
+
+## Job ids
+
+Every compute method takes and returns the **bare** job id. Internally nautilus re-qualifies
+it to `<environmentHash>-<jobId>` for the result, logs and stop endpoints, because those
+address a job that way and a bare id resolves to an empty environment hash. You never have to
+do that yourself — and passing an already-qualified id is harmless, since the conversion is
+idempotent.

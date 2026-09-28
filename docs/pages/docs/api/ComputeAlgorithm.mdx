@@ -1,50 +1,60 @@
-# ComputeAsset
+# ComputeAlgorithmRef
 
-Used to describe algorithms when initializing new compute jobs via [`nautilus.compute()`](/docs/api/nautilus/compute)
+References the algorithm to run, in
+[`nautilus.compute()`](/docs/api/nautilus/compute) and
+[`nautilus.freeCompute()`](/docs/api/nautilus/freeCompute).
+
+Everything [`ComputeAssetRef`](/docs/api/ComputeAsset) has, plus two algorithm-specific
+fields.
+
+:::warning
+Renamed from `ComputeAlgorithm` in v1, for the same reason as `ComputeAssetRef`: ocean.js
+exports a different type under that name.
+:::
 
 ## Usage
-This type is used for the `algorithm` properties when starting compute jobs.
 
 ```ts twoslash
-import { Nautilus } from '@deltadao/nautilus'
-import { Wallet } from 'ethers'
-const nautilus = await Nautilus.create(new Wallet('0x1234'))
+import type { ComputeAlgorithmRef } from '@deltadao/nautilus'
 // ---cut---
-await nautilus.compute({
-    dataset: { 
-        did: 'did:op:1234abcd...',
-    }, 
-    algorithm: { // [!code focus]
-        did: 'did:op:5678wxyz...' // [!code focus]
-    } // [!code focus]
-})
+const algorithm: ComputeAlgorithmRef = {
+  did: 'did:ope:5678wxyz...'
+}
 ```
 
 ## Properties
 
-This interface inherits the same properties provided by [`ComputeAsset`](/docs/api/ComputeAsset).
+### did / serviceId / userdata
 
-In addition, it provides the following properties.
+As [`ComputeAssetRef`](/docs/api/ComputeAsset).
 
 ### algocustomdata (optional)
-- Type: [`UserCustomParameters`](/docs/api/UserCustomParameters)
 
-Custom parameters that will be passed to the algorithm at runtime. This is defined by the algorithm publisher and can be found in the algorithms metadata.
+- Type: `Record<string, unknown>`
+
+Values for the *algorithm's* own consumer parameters, as distinct from the dataset's
+`userdata`.
 
 ```ts twoslash
-import { ComputeAlgorithm } from '@deltadao/nautilus'
+import type { ComputeAlgorithmRef } from '@deltadao/nautilus'
 // ---cut---
-const algorithm = {
-    did: 'did:op:1234abcd...', 
-    serviceId: 'specific-service-id',
-    userdata: { 
-        parameter: 'value',
-    }, 
-    algocustomdata: { // [!code focus]
-        parameter: 'value', // [!code focus]
-        number: 123, // [!code focus]
-        boolean: true, // [!code focus]
-        select: 'option', // [!code focus]
-    } // [!code focus]
-} satisfies ComputeAlgorithm
+const algorithm: ComputeAlgorithmRef = {
+  did: 'did:ope:5678wxyz...',
+  algocustomdata: { epochs: 10 } // [!code focus]
+}
+```
+
+### envs (optional)
+
+- Type: `Record<string, string>`
+
+Environment variables set inside the algorithm container. New in C2D v2.
+
+```ts twoslash
+import type { ComputeAlgorithmRef } from '@deltadao/nautilus'
+// ---cut---
+const algorithm: ComputeAlgorithmRef = {
+  did: 'did:ope:5678wxyz...',
+  envs: { LOG_LEVEL: 'debug' } // [!code focus]
+}
 ```

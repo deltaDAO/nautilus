@@ -1,0 +1,32 @@
+# Eip191VcSigner
+
+Sign the DDO with the Ethereum key. This is the **default** — it is what you get when you do
+not pass a `ddoSigner`.
+
+## Usage
+
+```ts twoslash
+import { Eip191VcSigner } from '@deltadao/nautilus'
+import type { Signer } from 'ethers'
+
+declare const signer: Signer
+// ---cut---
+const ddoSigner = new Eip191VcSigner(signer) // [!code focus]
+```
+
+The credential's `issuer` is the signer's address.
+
+:::warning
+`alg: 'ETH-EIP191'` is not a registered JOSE algorithm. Verifiers that only understand
+standard JOSE algorithms will not validate these credentials. Use
+[`WaltIdVcSigner`](/docs/api/signing/WaltIdVcSigner) when third parties must verify your
+issuer.
+:::
+
+## Parameters
+
+### signer
+
+- Type: `Signer`
+
+Usually the same signer the instance uses. See [signing](/docs/guides/signing).

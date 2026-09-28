@@ -1,5 +1,63 @@
 # PublishResponse
 
-The object returned by a [`nautilus.publish()`](/docs/api/nautilus/publish) call.
+What [`publish`](/docs/api/nautilus/publish) and [`edit`](/docs/api/nautilus/edit) return.
 
-{/* TODO: create api docs */}
+## Properties
+
+### nftAddress
+
+- Type: `string`
+
+The data NFT holding the asset's metadata.
+
+### services
+
+- Type: `PublishedService[]`
+
+One entry per service that got a **new datatoken** in this call — every service on publish,
+and only re-priced services on edit.
+
+```ts twoslash
+import type { PublishedService } from '@deltadao/nautilus'
+// ---cut---
+declare const published: PublishedService
+
+published.service // the builder object, with its datatoken filled in
+published.datatokenAddress
+published.tx // the transaction that created it
+```
+
+:::info
+On publish, the first service's datatoken and pricing are created **in the same transaction
+as the NFT**, so a single-service asset costs one transaction rather than v1's three.
+:::
+
+### ddo
+
+- Type: `Record<string, unknown>`
+
+The DDO as published, including its derived `did:ope:` id. Read it through the exported
+helpers (`getMetadata`, `getServices`, …) rather than indexing into `credentialSubject`.
+
+### credential
+
+- Type: `{ jwt: string; issuer: string } | undefined`
+
+The signed verifiable credential the on-chain pointer refers to. `issuer` is the holder DID
+when signing through walt.id, or the signer's address when using the default
+`Eip191VcSigner`.
+
+New in v2: v1 wrote the DDO itself on chain and had nothing to sign.
+
+### setMetadataTxReceipt
+
+- Type: `TransactionReceipt`
+
+The `setMetadata` transaction that wrote the pointer.
+
+### indexed
+
+- Type: `boolean | undefined`
+
+Present only when you passed `{ waitForIndexer: true }`. `true` means the asset is
+resolvable now.

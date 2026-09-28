@@ -2,8 +2,6 @@
 
 Add links to useful resources to the description of your asset.
 
-Official OceanProtocol documentation: [DDO Specification](https://docs.oceanprotocol.com/developers/ddo-specification)
-
 ## Usage
 
 ```ts twoslash
@@ -18,30 +16,51 @@ assetBuilder.addLinks(['https://some.example.of/my/data', 'https://link.to/the/s
 const asset = assetBuilder.build() // [!code focus]
 
 await nautilus.publish(asset) // [!code focus]
-// @log: ddo.metadata: 
-// @log: { 
-// @log:    links: [
-// @log:        'https://some.example.of/my/data',
-// @log:        'https://link.to/the/schema/of/my-data'
-// @log:    ]
+// @log: ddo.metadata:
+// @log: {
+// @log:    links: {
+// @log:        'link-0': 'https://some.example.of/my/data',
+// @log:        'link-1': 'https://link.to/the/schema/of/my-data'
+// @log:    }
 // @log: }
 ```
 
-> **NOTE**: In marketplace or portal frontends, the first entry is used as a link to an example of your published file (e.g. sample data or an algorithm snippet).
+:::warning[Shape changed in DDO v5]
+v5 stores links as a `{ label: url }` **map**, not an array. An array still works — it is
+keyed by index as `link-0`, `link-1`, … — so v1-style calls keep working. Pass a map when you
+want meaningful labels.
+:::
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+assetBuilder.addLinks({ // [!code focus]
+  sample: 'https://some.example.of/my/data', // [!code focus]
+  schema: 'https://link.to/the/schema/of/my-data' // [!code focus]
+}) // [!code focus]
+```
+
+:::info
+In marketplace or portal frontends, the first entry is used as a link to an example of your
+published file — sample data, or an algorithm snippet.
+:::
 
 ## Returns
 
 - Type: [`AssetBuilder`](/docs/api/AssetBuilder)
 
-The asset builder instance to chain building calls with.
+The asset builder instance, to chain further calls with.
 
-## Parameter
+## Parameters
 
 ### links
 
-- Type: `string[]`
+- Type: `string[] | Record<string, string>`
 
-The links you want to add to the asset to be built.
+The links to add. Repeated calls accumulate; an array continues the `link-N` numbering from
+whatever is already there.
 
 ```ts twoslash
 import { AssetBuilder } from '@deltadao/nautilus'

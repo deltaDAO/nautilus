@@ -1,0 +1,58 @@
+---
+searchPriority: 0
+---
+
+:::warning
+You are viewing the documentation for Nautilus **v1.1.0** (legacy). Switch to the [latest documentation](/docs/introduction), or follow the [migration guide](/docs/migration) to upgrade.
+:::
+
+# addLinks
+
+Add links to useful resources to the description of your asset.
+
+Official OceanProtocol documentation: [DDO Specification](https://docs.oceanprotocol.com/developers/ddo-specification)
+
+## Usage
+
+```ts
+import { AssetBuilder, Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+
+const assetBuilder = new AssetBuilder()
+
+assetBuilder.addLinks(['https://some.example.of/my/data', 'https://link.to/the/schema/of/my-data']) // [!code focus]
+const asset = assetBuilder.build() // [!code focus]
+
+await nautilus.publish(asset) // [!code focus]
+// => ddo.metadata: 
+// => { 
+// =>    links: [
+// =>        'https://some.example.of/my/data',
+// =>        'https://link.to/the/schema/of/my-data'
+// =>    ]
+// => }
+```
+
+> **NOTE**: In marketplace or portal frontends, the first entry is used as a link to an example of your published file (e.g. sample data or an algorithm snippet).
+
+## Returns
+
+- Type: [`AssetBuilder`](/v1/docs/api/AssetBuilder)
+
+The asset builder instance to chain building calls with.
+
+## Parameter
+
+### links
+
+- Type: `string[]`
+
+The links you want to add to the asset to be built.
+
+```ts
+assetBuilder.addLinks(
+    ['https://some.example.of/my/data', 'https://link.to/the/schema/of/my-data'] // [!code focus]
+) 
+```

@@ -1,0 +1,37 @@
+# streamComputeResult
+
+Stream a compute result instead of fetching it through a URL.
+
+New in v2.
+
+## Usage
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const stream = await nautilus.streamComputeResult({ jobId: 'a-job-id' }) // [!code focus]
+
+for await (const chunk of stream) { // [!code focus]
+  process.stdout.write(chunk) // [!code focus]
+} // [!code focus]
+```
+
+Preferable for large results: nothing is buffered in memory, and you can begin processing
+before the transfer finishes.
+
+## Returns
+
+- Type: `ComputeResultStream`
+
+An `AsyncIterable<Uint8Array>`.
+
+## Parameters
+
+### config
+
+- Type: `ComputeResultConfig`
+
+Same as [`getComputeResult`](/docs/api/nautilus/getComputeResult). `resultIndex` defaults
+to `0` here rather than searching for the `output` entry.

@@ -1,9 +1,18 @@
 {
+  // The suite runs on vitest, which imports its globals explicitly (describe/it/expect),
+  // so no ambient test types are needed. Module settings are inherited from the base config
+  // (nodenext) so tests resolve imports exactly the way the published package does.
+  "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "resolveJsonModule": true,
-    "module": "CommonJS",
     "target": "ESNext",
     "esModuleInterop": true,
     "skipLibCheck": true,
-  }
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["**/*.ts", "../src/**/*.ts"],
+  // The build output ships .d.ts files that would otherwise shadow the source and create
+  // duplicate type identities for the same class.
+  "exclude": ["../src/_esm", "../src/_types"]
 }

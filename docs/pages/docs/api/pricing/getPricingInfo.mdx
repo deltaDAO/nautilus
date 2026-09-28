@@ -1,0 +1,50 @@
+# getPricingInfo
+
+Read which pricing scheme a datatoken uses, straight from the chain.
+
+## Usage
+
+```ts twoslash
+import { getPricingInfo } from '@deltadao/nautilus'
+import type { Config } from '@oceanprotocol/lib'
+import type { Signer } from 'ethers'
+
+declare const signer: Signer
+declare const config: Config
+// ---cut---
+const pricing = await getPricingInfo(signer, '0xDatatokenAddress...', config) // [!code focus]
+
+pricing.schema // 'fixed' | 'free' | 'none'
+```
+
+## Returns
+
+- Type: [`PricingInfo`](/docs/api/pricing/PricingInfo)
+
+:::info
+`getFixedRates()` and `getDispensers()` are the authoritative source. A datatoken can have
+neither, which yields `schema: 'none'` — it simply cannot be ordered.
+:::
+
+`getFixedRates()` returns a history rather than a shortlist: a deactivated exchange stays
+listed on the datatoken. Only an **active** one is reported as `'fixed'`, so a datatoken
+whose exchanges are all dead falls through to its dispenser, or to `'none'`.
+
+## Parameters
+
+### signer
+
+- Type: `Signer`
+
+### datatokenAddress
+
+- Type: `string`
+
+Get it from the asset with `getDatatokenForService(asset, serviceId)`.
+
+### config
+
+- Type: `Config | undefined`
+
+The chain config. Read it from the instance with
+[`getOceanConfig`](/docs/api/nautilus/getOceanConfig).

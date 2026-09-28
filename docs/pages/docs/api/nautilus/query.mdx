@@ -1,0 +1,51 @@
+# query
+
+Search the node's metadata index directly.
+
+New in v2.
+
+## Usage
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const results = await nautilus.query({ // [!code focus]
+  query: { // [!code focus]
+    bool: { // [!code focus]
+      filter: [{ term: { 'credentialSubject.metadata.type': 'dataset' } }] // [!code focus]
+    } // [!code focus]
+  }, // [!code focus]
+  size: 25 // [!code focus]
+}) // [!code focus]
+```
+
+An escape hatch for searches nautilus does not wrap. The query is passed to the node
+untouched.
+
+:::warning
+Field paths follow the **DDO v5** index mapping, so metadata lives under
+`credentialSubject.metadata.*` rather than at the top level. Note also that several fields
+are indexed with `enabled: false` and are therefore not queryable at all —
+`credentials`, `license`, `links`, `attachments`, `algorithm` and `additionalInformation`
+among them.
+:::
+
+## Returns
+
+- Type: `unknown`
+
+The node's raw response — typically `{ hits: { hits: [{ _source }] } }`. It is not typed,
+because the shape depends on the node's database backend.
+
+For the common case of resolving several known DIDs, use
+[`getAssets`](/docs/api/nautilus/getAssets) instead, which unwraps the response for you.
+
+## Parameters
+
+### query
+
+- Type: `SearchQuery`
+
+`{ query, from?, size?, sort?, aggs? }`.

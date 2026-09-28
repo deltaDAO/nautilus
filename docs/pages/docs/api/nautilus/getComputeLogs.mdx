@@ -1,0 +1,28 @@
+# getComputeLogs
+
+Read a job's streamable logs.
+
+New in v2. Useful while a job is still running, when there is no result to fetch yet.
+
+## Usage
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const logs = await nautilus.getComputeLogs({ jobId: 'a-job-id' }) // [!code focus]
+```
+
+## Returns
+
+- Type: `unknown`
+
+Whatever the node streams. The shape is not fixed by ocean.js, so nautilus passes it
+through rather than inventing a type for it.
+
+## Parameters
+
+### config
+
+- Type: `ComputeStatusConfig`

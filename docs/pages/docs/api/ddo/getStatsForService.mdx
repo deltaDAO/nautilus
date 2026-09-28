@@ -1,0 +1,33 @@
+# getStatsForService
+
+Indexed order counts and prices for one service.
+
+## Usage
+
+```ts twoslash
+import { Nautilus, getStatsForService, getServices } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const asset = await nautilus.getAsset('did:ope:1234abcd...')
+const serviceId = getServices(asset)[0].id
+
+const stats = getStatsForService(asset, serviceId) // [!code focus]
+```
+
+## Returns
+
+- Type: `Stats | undefined`
+
+Derived by the indexer, not signed by the publisher. For an authoritative current price, read
+it from the chain with [`getPricingInfo`](/docs/api/pricing/getPricingInfo) instead.
+
+## Parameters
+
+### ddo
+
+- Type: `unknown`
+
+### serviceId
+
+- Type: `string`

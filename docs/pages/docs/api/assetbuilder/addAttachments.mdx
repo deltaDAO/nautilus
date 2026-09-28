@@ -1,0 +1,28 @@
+# addAttachments
+
+Attach referenced documents to the asset — datasheets, terms, sample files.
+
+New in DDO v5. Each attachment is a `RemoteObject`, carrying a checksum and one or more mirrors, so a consumer can verify what they fetched.
+
+## Usage
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+assetBuilder.addAttachments([ // [!code focus]
+  { // [!code focus]
+    name: 'datasheet', // [!code focus]
+    fileType: 'pdf', // [!code focus]
+    sha256: 'e3b0c44298fc1c149afbf4c8996fb924...', // [!code focus]
+    mirrors: [{ type: 'url', url: 'https://example.org/datasheet.pdf', method: 'GET' }] // [!code focus]
+  } // [!code focus]
+]) // [!code focus]
+```
+
+## Returns
+
+- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
+
+The asset builder instance, to chain further calls with.

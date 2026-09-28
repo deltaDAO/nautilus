@@ -1,0 +1,28 @@
+# getOwner
+
+The address that owns the asset's NFT.
+
+## Usage
+
+```ts twoslash
+import { Nautilus, getOwner } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const asset = await nautilus.getAsset('did:ope:1234abcd...')
+
+const owner = getOwner(asset) // [!code focus]
+```
+
+## Returns
+
+- Type: `string | undefined`
+
+Read from indexer-derived data, so it is `undefined` on a document the indexer has not
+processed yet — for example one you just built locally.
+
+## Parameters
+
+### ddo
+
+- Type: `unknown`

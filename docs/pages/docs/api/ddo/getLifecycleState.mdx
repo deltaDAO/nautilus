@@ -1,0 +1,43 @@
+# getLifecycleState
+
+The asset's lifecycle state, as recorded on its NFT.
+
+## Usage
+
+```ts twoslash
+import { Nautilus, getLifecycleState, LifecycleStates } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const asset = await nautilus.getAsset('did:ope:1234abcd...')
+
+const state = getLifecycleState(asset) // [!code focus]
+
+if (state === LifecycleStates.ACTIVE) {
+  // orderable
+}
+```
+
+## Returns
+
+- Type: `number | undefined`
+
+Compare against `LifecycleStates`:
+
+| Value | State |
+| --- | --- |
+| `0` | `ACTIVE` |
+| `1` | `END_OF_LIFE` |
+| `2` | `DEPRECATED` |
+| `3` | `REVOKED_BY_PUBLISHER` |
+| `4` | `ORDERING_DISABLED_TEMPORARILY` |
+| `5` | `ASSET_UNLISTED` |
+
+Change it with
+[`setAssetLifecycleState`](/docs/api/nautilus/setAssetLifecycleState).
+
+## Parameters
+
+### ddo
+
+- Type: `unknown`

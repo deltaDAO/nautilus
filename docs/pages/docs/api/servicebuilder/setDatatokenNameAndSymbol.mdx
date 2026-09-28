@@ -1,0 +1,27 @@
+# setDatatokenNameAndSymbol
+
+Name the datatoken minted for this service.
+
+Defaults to a generated name. Worth setting when an asset has several services, so they are distinguishable on chain.
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+// ---cut---
+serviceBuilder.setDatatokenNameAndSymbol('Observations Access', 'OBS-AT') // [!code focus]
+```
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.

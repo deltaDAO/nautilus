@@ -1,0 +1,21 @@
+# setIssuer
+
+Set the issuer of the asset's verifiable credential.
+
+New in v2, because the DDO is now signed. Leave it unset and publish fills it in from whichever signer signs the document — the holder DID when signing through walt.id, or the signer's address when using the default `Eip191VcSigner`.
+
+## Usage
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+assetBuilder.setIssuer('did:web:example.org') // [!code focus]
+```
+
+## Returns
+
+- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
+
+The asset builder instance, to chain further calls with.

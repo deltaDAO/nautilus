@@ -1,0 +1,34 @@
+# IpfsRemoteStore
+
+Store the signed DDO on IPFS.
+
+## Usage
+
+```ts twoslash
+import { IpfsRemoteStore } from '@deltadao/nautilus'
+// ---cut---
+const store = new IpfsRemoteStore({ // [!code focus]
+  uploadUrl: 'http://127.0.0.1:5001/api/v0/add' // [!code focus]
+}) // [!code focus]
+```
+
+:::warning
+The **node** dereferences this pointer, not you. An endpoint reachable only from your machine
+will publish fine and then fail to index.
+:::
+
+## Parameters
+
+### options
+
+- Type: `IpfsRemoteStoreOptions`
+
+| Option | Type | Purpose |
+| --- | --- | --- |
+| `uploadUrl` | `string` | The Kubo RPC add endpoint. Required. |
+| `headers` | `Record<string, string>` | For an authenticated gateway. |
+| `extractCid` | `(response: unknown) => string \| undefined` | Override CID extraction. Defaults to `Hash`/`cid`/`Cid`/`IpfsHash`/`hash`. |
+| `fetchImpl` | `typeof fetch` | Inject a custom fetch. |
+
+Produces an `{ type: 'ipfs', hash }` pointer. See
+[remote stores](/docs/guides/remote-stores).

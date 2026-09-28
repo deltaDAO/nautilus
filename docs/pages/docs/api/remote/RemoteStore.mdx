@@ -1,0 +1,50 @@
+# RemoteStore
+
+The interface every remote store implements. One method.
+
+```ts twoslash
+import type { RemoteStore } from '@deltadao/nautilus'
+import type { StorageObject } from '@oceanprotocol/lib'
+// ---cut---
+class MyStore implements RemoteStore {
+  async put(payload: string, hint: { did: string }): Promise<StorageObject> { // [!code focus]
+    const url = await upload(payload, `${hint.did}.json`)
+
+    return { type: 'url', url, method: 'GET' } as StorageObject
+  }
+}
+
+declare function upload(body: string, name: string): Promise<string>
+```
+
+## Parameters
+
+### payload
+
+- Type: `string`
+
+The signed DDO, as a compact JWT.
+
+### hint
+
+- Type: `{ did: string }`
+
+A stable name derived from the DID, for stores that need a key.
+
+## Returns
+
+- Type: `Promise<StorageObject>`
+
+Any pointer shape ocean-node understands:
+
+| `type` | shape |
+| --- | --- |
+| `ipfs` | `{ type, hash }` |
+| `url` | `{ type, url, method }` |
+| `arweave` | `{ type, transactionId }` |
+| `s3` | `{ type, s3Access }` |
+| `ftp` | `{ type, url }` |
+| `nodePersistentStorage` | `{ type, bucketId, fileName }` |
+
+nautilus wraps it with `toRemotePointer` — `{ remote: … }` — before writing it on chain. The
+wrapper must carry exactly one key or the node will not treat it as a remote DDO.

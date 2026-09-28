@@ -1,47 +1,63 @@
 # Custom Configuration
 
-If want to use a custom configuration of your nautilus instance, you can set an additional `config` parameter in the [`Nautilus.create()`](/docs/api/nautilus/create) call. 
-
-The custom configuration provided will overwrite the default network config that is accessible in the [ocean.js repository](https://github.com/oceanprotocol/ocean.js/blob/be52ec26c2bc5a542795bfa2b028fcf2318005de/src/config/ConfigHelper.ts#L26).
-
-## Example
+nautilus resolves the chain from your signer's provider and then merges ocean.js's default
+config for that chain with whatever you pass in `config`.
 
 ```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
 import { Nautilus } from '@deltadao/nautilus'
-import { Wallet } from 'ethers'
 
-const nautilus = await Nautilus.create(
-  new Wallet('0x1234'), 
-  { // [!code focus]
-    nodeUri: 'https://rpc.dev.pontus-x.eu', // [!code focus]
-    metadataCacheUri: 'https://aquarius.dev.pontus-x.eu' // [!code focus]
+const signer = new Wallet('0x1234', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+
+const nautilus = await Nautilus.create(signer, {
+  config: { // [!code focus]
+    oceanNodeUri: 'https://ocean-node.dev.pontus-x.eu' // [!code focus]
   } // [!code focus]
-) 
+})
 ```
 
-For the most common use-cases we provide examples below, but if you need a full picture on what configurations are available we recommend the [Ocean Library Docs](https://docs.oceanprotocol.com/building-with-ocean/using-ocean-libraries/configuration#create-a-configuration-file).
+:::warning
+In v1 the config was the second argument directly. It now lives under a `config` key,
+because `Nautilus.create` also takes a remote store, a DDO signer and a credential
+provider. See [`create`](/docs/api/nautilus/create).
+:::
 
-### Custom Metadata Cache
+## What changed from v1
+
+The `Config` type moved with the stack. Three fields nautilus v1 relied on are gone:
+
+| v1 field | v2 |
+| --- | --- |
+| `metadataCacheUri` | **`oceanNodeUri`** — one node serves metadata, provider services and the indexer |
+| `providerUri` | **`oceanNodeUri`** — same node |
+| `subgraphUri` | **removed** — pricing is derived from chain reads and the DDO's indexed stats |
+
+New fields worth knowing about: `escrow` (compute payments), `accessListFactory`
+(access-list gating), and `sdk`, which is `'oasis'` on confidential EVMs and `'evm'`
+elsewhere.
+
+## The ocean-node URI
+
+The single most important setting. One ocean-node replaces the old Aquarius plus Provider
+pair, so this is where metadata resolution, file encryption, download URLs and compute all
+go:
 
 ```ts twoslash
 import type { Config } from '@oceanprotocol/lib'
 // ---cut---
 const customConfig: Partial<Config> = {
-  metadataCacheUri: 'https://aquarius.dev.pontus-x.eu' // [!code focus]
+  oceanNodeUri: 'https://ocean-node.dev.pontus-x.eu' // [!code focus]
 }
 ```
 
-### Custom Provider
+A peer id or multiaddr also works instead of an HTTP URL, in which case ocean.js talks to
+the node over libp2p rather than REST.
 
-```ts twoslash
-import type { Config } from '@oceanprotocol/lib'
-// ---cut---
-const customConfig: Partial<Config> = {
-  providerUri: 'https://provider.dev.pontus-x.eu' // [!code focus]
-}
-```
+## The RPC endpoint
 
-### Custom RPC Endpoint
+`nodeUri` is the **blockchain** RPC, not the ocean-node — an easy pair to confuse. In
+practice you rarely set it, because nautilus uses the provider already attached to your
+signer for every transaction.
 
 ```ts twoslash
 import type { Config } from '@oceanprotocol/lib'
@@ -51,10 +67,14 @@ const customConfig: Partial<Config> = {
 }
 ```
 
-### Custom Network
+## An unsupported network
 
-If your network is not yet supported by the official ocean.js repository, you can still interact with it by providing all necessary configurations.
-{/* TODO: add complete example */}
+ocean.js's `ConfigHelper` ships defaults for a handful of chains, and for deltaDAO that
+means **Pontus-X devnet (32456)**. Anywhere else, supply the addresses yourself.
+
+`Nautilus.create` validates `nftFactoryAddress`, `fixedRateExchangeAddress` and
+`dispenserAddress` up front, so a missing one fails immediately with a message naming it —
+rather than halfway through a publish.
 
 ```ts twoslash
 import type { Config } from '@oceanprotocol/lib'
@@ -62,15 +82,36 @@ import type { Config } from '@oceanprotocol/lib'
 const customConfig = {
   chainId: 32456,
   network: 'pontusx',
-  metadataCacheUri: 'https://aquarius.dev.pontus-x.eu',
+
+  // The ocean-node: metadata, provider services and the indexer.
+  oceanNodeUri: 'https://ocean-node.dev.pontus-x.eu',
+  // The blockchain RPC.
   nodeUri: 'https://rpc.dev.pontus-x.eu',
-  providerUri: 'https://provider.dev.pontus-x.eu',
-  subgraphUri: 'https://subgraph.dev.pontus-x.eu',
-  oceanTokenAddress: '0xdF171F74a8d3f4e2A789A566Dce9Fa4945196112',
-  oceanTokenSymbol: 'OCEAN',
+
+  // Validated at construction.
+  nftFactoryAddress: '0xFdC4a5DEaCDfc6D82F66e894539461a269900E13',
   fixedRateExchangeAddress: '0x8372715D834d286c9aECE1AcD51Da5755B32D505',
   dispenserAddress: '0x5461b629E01f72E0A468931A36e039Eea394f9eA',
-  nftFactoryAddress: '0xFdC4a5DEaCDfc6D82F66e894539461a269900E13',
+
+  oceanTokenAddress: '0xdF171F74a8d3f4e2A789A566Dce9Fa4945196112',
+  oceanTokenSymbol: 'OCEAN',
   providerAddress: '0x68C24FA5b2319C81b34f248d1f928601D2E5246B'
 } satisfies Partial<Config>
+```
+
+For compute you will also need `escrow`, which is where paid jobs lock their funds.
+
+For the full set of fields, see the
+[ocean.js `Config`](https://github.com/oceanprotocol/ocean.js/blob/main/src/config/Config.ts).
+
+## Reading back the resolved config
+
+Useful for checking what the defaults actually gave you:
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const config = nautilus.getOceanConfig() // [!code focus]
 ```

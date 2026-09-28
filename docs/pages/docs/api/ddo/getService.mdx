@@ -1,0 +1,31 @@
+# getService
+
+Find one service by id.
+
+## Usage
+
+```ts twoslash
+import { Nautilus, getService } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const asset = await nautilus.getAsset('did:ope:1234abcd...')
+
+const service = getService(asset, 'a-service-id') // [!code focus]
+```
+
+## Returns
+
+- Type: `ServiceV5 | undefined`
+
+`undefined` when the asset has no service with that id.
+
+## Parameters
+
+### ddo
+
+- Type: `unknown`
+
+### serviceId
+
+- Type: `string`

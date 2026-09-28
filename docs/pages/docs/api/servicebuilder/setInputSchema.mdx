@@ -1,0 +1,32 @@
+# setInputSchema
+
+Describe the input an algorithm service expects.
+
+New in DDO v5. The algorithm counterpart of [`setDataSchema`](/docs/api/servicebuilder/setDataSchema).
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.COMPUTE, FileTypes.URL>({
+  serviceType: ServiceTypes.COMPUTE
+})
+// ---cut---
+serviceBuilder.setInputSchema({ // [!code focus]
+  name: 'input.schema.json', // [!code focus]
+  fileType: 'json', // [!code focus]
+  sha256: 'e3b0c44298fc1c149afbf4c8996fb924...', // [!code focus]
+  mirrors: [{ type: 'url', url: 'https://example.org/input.json', method: 'GET' }] // [!code focus]
+}) // [!code focus]
+```
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.

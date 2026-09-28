@@ -1,144 +1,100 @@
-import assert from 'node:assert'
-import type { ConsumerParameter } from '@oceanprotocol/lib'
-import { ConsumerParameterBuilder } from '../../src/Nautilus/Asset/ConsumerParameters'
+import { describe, expect, it } from 'vitest'
+import { ConsumerParameterBuilder } from '../../src/Nautilus/Asset/ConsumerParameters/ConsumerParameterBuilder.js'
+
+function base() {
+  return new ConsumerParameterBuilder()
+    .setName('param')
+    .setLabel('A parameter')
+    .setDescription('What it does')
+}
 
 describe('ConsumerParameterBuilder', () => {
-  it('builds text consumerParameter correctly', () => {
-    const builder = new ConsumerParameterBuilder()
+  it('builds a text parameter', () => {
+    const parameter = base().setType('text').setDefault('hello').build()
 
-    const myParam: ConsumerParameter = {
-      type: 'select',
-      name: 'my-param',
-      label: 'My Param',
-      description: 'A description of my param for the enduser.',
-      default: 'value',
-      required: true
-    }
-
-    const textParam = builder
-      .setType(myParam.type)
-      .setName(myParam.name)
-      .setLabel(myParam.label)
-      .setDescription(myParam.description)
-      .setDefault(myParam.default)
-      .setRequired(myParam.required)
-      .build()
-
-    assert.deepStrictEqual(textParam, myParam)
-  })
-
-  it('builds number consumerParameter correctly', () => {
-    const builder = new ConsumerParameterBuilder()
-
-    const myNumberParam: ConsumerParameter = {
-      type: 'number',
-      name: 'my-param',
-      label: 'My Param',
-      description: 'A description of my param for the enduser.',
-      default: '123',
-      required: false
-    }
-
-    const numberParam = builder
-      .setType(myNumberParam.type)
-      .setName(myNumberParam.name)
-      .setLabel(myNumberParam.label)
-      .setDescription(myNumberParam.description)
-      .setDefault(myNumberParam.default)
-      .setRequired(myNumberParam.required)
-      .build()
-
-    assert.deepStrictEqual(numberParam, myNumberParam)
-  })
-
-  it('builds boolean consumerParameter correctly', () => {
-    const builder = new ConsumerParameterBuilder()
-
-    const myBooleanParam: ConsumerParameter = {
-      type: 'boolean',
-      name: 'my-param',
-      label: 'My Param',
-      description: 'A description of my param for the enduser.',
-      default: 'false',
-      required: true
-    }
-
-    const booleanParam = builder
-      .setType(myBooleanParam.type)
-      .setName(myBooleanParam.name)
-      .setLabel(myBooleanParam.label)
-      .setDescription(myBooleanParam.description)
-      .setDefault(myBooleanParam.default)
-      .setRequired(myBooleanParam.required)
-      .build()
-
-    assert.deepStrictEqual(booleanParam, myBooleanParam)
-  })
-
-  it('builds select consumerParameter correctly', () => {
-    const builder = new ConsumerParameterBuilder()
-
-    const options = [{ value: 'Label' }, { 'another-value': 'Another label' }]
-
-    const mySelectParam: ConsumerParameter = {
-      type: 'select',
-      name: 'my-param',
-      label: 'My Param',
-      description: 'A description of my param for the enduser.',
-      default: 'key',
+    expect(parameter).to.deep.include({
+      name: 'param',
+      type: 'text',
+      label: 'A parameter',
       required: false,
-      options: JSON.stringify(options)
-    }
-
-    builder
-      .setType(mySelectParam.type)
-      .setName(mySelectParam.name)
-      .setLabel(mySelectParam.label)
-      .setDescription(mySelectParam.description)
-      .setDefault(mySelectParam.default)
-      .setRequired(mySelectParam.required)
-
-    for (const option of options) builder.addOption(option)
-
-    const selectParam = builder.build()
-
-    assert.deepStrictEqual(selectParam, mySelectParam)
+      default: 'hello'
+    })
   })
 
-  it('does not allow options for non-select type param', () => {
-    const builder = new ConsumerParameterBuilder()
-    const option = { key: 'value' }
+  it('keeps a number default as a number', () => {
+    // v4 required `default` to be a string, so v1 coerced everything with .toString().
+    const parameter = base().setType('number').setDefault(42).build()
 
-    assert.throws(
-      () => {
-        builder.addOption(option).build()
-      },
-      Error,
-      'Should throw error for options being set on undefined "type"'
-    )
+    expect(parameter.default).to.equal(42)
+    expect(parameter.default).to.be.a('number')
+  })
 
-    assert.throws(
-      () => {
-        builder.setType('text').addOption(option).build()
-      },
-      Error,
-      'Should throw error for options being set on "type" = "text"'
-    )
+  it('keeps a boolean default as a boolean', () => {
+    const parameter = base().setType('boolean').setDefault(false).build()
 
-    assert.throws(
-      () => {
-        builder.setType('number').addOption(option).build()
-      },
-      Error,
-      'Should throw error for options being set on "type" = "number"'
-    )
+    expect(parameter.default).to.equal(false)
+    expect(parameter.default).to.be.a('boolean')
+  })
 
-    assert.throws(
-      () => {
-        builder.setType('boolean').addOption(option).build()
-      },
-      Error,
-      'Should throw error for options being set on "type" = "boolean"'
+  it('emits select options as an array, not a JSON string', () => {
+    // v4 encoded options as a stringified array; v5 stores them structurally.
+    const parameter = base()
+      .setType('select')
+      .setDefault('a')
+      .addOption({ a: 'Option A' })
+      .addOption({ b: 'Option B' })
+      .build()
+
+    expect(parameter.options).to.deep.equal([
+      { a: 'Option A' },
+      { b: 'Option B' }
+    ])
+    expect(parameter.options).to.be.an('array')
+  })
+
+  it('records required', () => {
+    expect(
+      base().setType('text').setDefault('x').setRequired(true).build().required
+    ).to.equal(true)
+  })
+
+  it('rejects options on a non-select parameter', () => {
+    expect(() => base().setType('text').addOption({ a: 'A' })).to.throw(
+      /only be added to a 'select' parameter/
     )
+  })
+
+  it('requires a select parameter to have at least one option', () => {
+    expect(() => base().setType('select').setDefault('a').build()).to.throw(
+      /at least one option/
+    )
+  })
+
+  it('requires name, type and label', () => {
+    expect(() =>
+      new ConsumerParameterBuilder().setType('text').setDefault('x').build()
+    ).to.throw(/name, type and label/)
+  })
+
+  it('requires a default value', () => {
+    expect(() => base().setType('text').build()).to.throw(
+      /default value is required/
+    )
+  })
+
+  it('reset() clears the accumulated state', () => {
+    const builder = base().setType('text').setDefault('x')
+    builder.reset()
+
+    expect(() => builder.build()).to.throw(/name, type and label/)
+  })
+
+  it('returns a copy, so the builder can be reused', () => {
+    const builder = base().setType('text').setDefault('x')
+    const first = builder.build()
+
+    builder.setName('renamed')
+
+    expect(first.name).to.equal('param')
   })
 })

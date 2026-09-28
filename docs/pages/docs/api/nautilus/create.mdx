@@ -5,49 +5,136 @@ Creates a new nautilus instance.
 ## Usage
 
 ```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
 import { Nautilus } from '@deltadao/nautilus'
-import { Wallet } from 'ethers'
 
-const nautilus = await Nautilus.create( // [!code focus]
-    new Wallet('0x1234') // [!code focus]
-) // [!code focus]
+const provider = new JsonRpcProvider('https://rpc.dev.pontus-x.eu')
+const signer = new Wallet('0x...', provider)
+
+const nautilus = await Nautilus.create(signer, { // [!code focus]
+  config: { oceanNodeUri: 'https://node.example.org' } // [!code focus]
+}) // [!code focus]
 ```
+
+The chain is read from the signer's provider, so there is no chain parameter. nautilus then
+merges `ConfigHelper`'s defaults for that chain with whatever you pass in `config`.
+
+:::warning
+`ConfigHelper` only ships a handful of networks, and for deltaDAO that means **Pontus-X
+devnet (chain 32456)**. On any other network, pass the contract addresses yourself —
+`nftFactoryAddress`, `fixedRateExchangeAddress` and `dispenserAddress` are all validated at
+construction, so a missing one fails immediately rather than mid-publish.
+:::
 
 ## Returns
 
-`Nautilus` {/*link to type in docs if possible*/}
-
-The nautilus instance using the provided ethers signer.
+- Type: `Promise<Nautilus>`
 
 ## Parameters
 
 ### signer
-- Type: `Signer` ([ethers.js documentation](https://docs.ethers.org/v5/api/signer/)){/*link to type in docs if possible*/}
 
-The signer to use with this nautilus instance. This will be used to handle all required payments and transactions.
+- Type: `Signer` (ethers **v6**)
+
+nautilus v2 requires ethers v6. A v5 `Signer` is not structurally compatible.
+
+### options (optional)
+
+- Type: `NautilusOptions`
+
+#### Properties
+
+##### config
+
+- Type: `Partial<Config>`
+
+Overrides merged over `ConfigHelper`'s defaults.
+
+One `oceanNodeUri` now replaces v1's `metadataCacheUri` and `providerUri` — a single
+ocean-node serves metadata, provider services and the indexer. There is no `subgraphUri`:
+pricing comes from chain reads.
+
 ```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
 import { Nautilus } from '@deltadao/nautilus'
+const signer = new Wallet('0x1234', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
 // ---cut---
-import { Wallet } from 'ethers'
-
-const nautilus = Nautilus.create(
-    new Wallet('0x1234') // [!code focus]
-)
+const nautilus = await Nautilus.create(signer, {
+  config: { // [!code focus]
+    oceanNodeUri: 'https://node.example.org', // [!code focus]
+    nftFactoryAddress: '0x...', // [!code focus]
+    fixedRateExchangeAddress: '0x...', // [!code focus]
+    dispenserAddress: '0x...' // [!code focus]
+  } // [!code focus]
+})
 ```
 
-### config (optional)
-- Type: `Partial<Config>` ([ocean.js Config class](https://github.com/oceanprotocol/ocean.js/blob/main/src/config/Config.ts)) {/*link to type in docs if possible*/}
+##### remoteStore
 
-Optional custom configuration overwrites to use for the created nautilus instance.
+- Type: `RemoteStore`
+
+Where the signed DDO is stored. **Required to publish or edit**, because nautilus writes a
+`{ remote }` pointer on chain rather than the document itself.
+
+Two implementations ship with nautilus. `NodePersistentRemoteStore` uses ocean-node's own
+storage, so no external service is involved:
+
 ```ts twoslash
-import { Nautilus } from '@deltadao/nautilus'
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus, NodePersistentRemoteStore } from '@deltadao/nautilus'
+const signer = new Wallet('0x1234', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const config = { oceanNodeUri: 'https://node.example.org' }
 // ---cut---
-import { Wallet } from 'ethers'
+// The store needs a node client, so build the instance in two steps.
+const bootstrap = await Nautilus.create(signer, { config })
 
-const nautilus = Nautilus.create(
-    new Wallet('0x1234'),
-    { providerUri: 'https://provider.dev.pontus-x.eu' } // [!code focus]
-)
+const nautilus = await Nautilus.create(signer, {
+  config,
+  remoteStore: new NodePersistentRemoteStore(bootstrap.getNodeClient()) // [!code focus]
+})
 ```
 
-Learn more about [custom configuration](/docs/guides/config).
+`IpfsRemoteStore` posts to any IPFS upload endpoint — a Kubo node, or a pinning service:
+
+```ts twoslash
+import { IpfsRemoteStore } from '@deltadao/nautilus'
+// ---cut---
+const remoteStore = new IpfsRemoteStore({
+  uploadUrl: 'http://127.0.0.1:5001/api/v0/add'
+})
+```
+
+ocean-node resolves the pointer through the same storage layer it uses for asset files, so
+`url`, `ipfs`, `arweave`, `s3`, `ftp` and `nodePersistentStorage` all work. Implement
+`RemoteStore` for anything else.
+
+##### ddoSigner
+
+- Type: `DdoSigner`
+
+Signs the DDO as a verifiable credential. Defaults to `Eip191VcSigner`, which signs with
+the Ethereum key and sets the issuer to the signer's address.
+
+Pass a `WaltIdVcSigner` to issue from a real DID instead — see the
+[identity guide](/docs/guides/identity).
+
+##### credentials
+
+- Type: `CredentialProvider`
+
+Satisfies credential-gated access. Omit it and nautilus skips SSI entirely.
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus, WaltIdCredentialProvider } from '@deltadao/nautilus'
+const signer = new Wallet('0x1234', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const config = { oceanNodeUri: 'https://node.example.org' }
+const bootstrap = await Nautilus.create(signer, { config })
+// ---cut---
+const nautilus = await Nautilus.create(signer, {
+  config,
+  credentials: new WaltIdCredentialProvider(bootstrap.getNodeClient(), { // [!code focus]
+    walletApi: 'https://wallet.example.org' // [!code focus]
+  }) // [!code focus]
+})
+```

@@ -1,0 +1,32 @@
+# getDatatokenForService
+
+The datatoken address backing one service.
+
+## Usage
+
+```ts twoslash
+import { Nautilus, getDatatokenForService, getServices } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const asset = await nautilus.getAsset('did:ope:1234abcd...')
+const serviceId = getServices(asset)[0].id
+
+const datatoken = getDatatokenForService(asset, serviceId) // [!code focus]
+```
+
+This is what [`getPricingInfo`](/docs/api/pricing/getPricingInfo) reads from the chain.
+
+## Returns
+
+- Type: `string | undefined`
+
+## Parameters
+
+### ddo
+
+- Type: `unknown`
+
+### serviceId
+
+- Type: `string`

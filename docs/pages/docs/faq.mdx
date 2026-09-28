@@ -1,2 +1,81 @@
 # FAQ [Answers to our most frequented questions]
-{/* TODO: create faq page */}
+
+## Why does publishing need a remote store?
+
+Because v2 does not write the DDO on chain. It signs the document as a verifiable
+credential, stores it off chain, and writes only a `{ remote: … }` pointer that ocean-node
+dereferences. Without somewhere to put the document there is nothing to point at, so
+[`publish`](/docs/api/nautilus/publish) throws.
+
+The default needs no external infrastructure — `NodePersistentRemoteStore` uses the node's
+own storage. See [remote stores](/docs/guides/remote-stores).
+
+## Where did the subgraph go?
+
+Gone, along with the `urql` and `graphql` dependencies. `Config` has no `subgraphUri` at all
+any more. Prices are derived from **contract reads** plus the indexed
+`indexedMetadata.stats[].prices`, exactly as ocean.js does it.
+
+v1's `getAccessDetails` and `AccessDetails` are replaced by
+[`getPricingInfo`](/docs/api/pricing/getPricingInfo) and
+[`getOrderPrice`](/docs/api/pricing/getOrderPrice). See [pricing](/docs/guides/pricing).
+
+## Why is my gated asset letting everyone through?
+
+Almost certainly because the node has no `POLICY_SERVER_URL` configured. ocean-node **fails
+open**: with no policy server it allows everything, regardless of what credentials the asset
+requires.
+
+`initializePSVerification` returning `null` is the clean signal that no policy is being
+enforced. This is a deployment property, not something nautilus can compensate for.
+
+:::warning
+Publish-time policy enforcement does not exist yet either — the policy server's `newDDO`,
+`updateDDO`, `validateDDO`, `encrypt` and `decrypt` actions are stubs that always allow.
+Credential gating is enforced on **consumption**, not on publication.
+:::
+
+## Why am I paying twice for the same asset?
+
+A known limitation of the current node, not of nautilus. ocean-node's access `initialize`
+returns `{ providerFee, datatoken, nonce, computeAddress }` and **no `validOrder`**, so
+`hasReusableOrder()` is always false and every [`access`](/docs/api/nautilus/access) buys a
+fresh datatoken — even inside the service timeout, where you already hold a valid order.
+
+The v4 Provider returned that field; 3.2.21 does not. On a paid asset this is repeated
+payment for access you already have. Until it is restored, cache the download URL you get
+back rather than calling `access` again.
+
+## Never put `127.0.0.1` in a DDO
+
+ocean-node's `DEFAULT_UNSAFE_URLS` blocks any URL matching it, and the failure surfaces as
+"URL is marked as unsafe" rather than a connection error — which sends people looking in the
+wrong place entirely.
+
+Use a hostname the **node** can resolve. Remember that *you* never fetch these URLs; the node
+does, to encrypt the files object at publish time.
+
+## Free compute vs. paid compute
+
+[`freeCompute`](/docs/api/nautilus/freeCompute) places no order, funds no escrow and takes no
+payment token. It needs a compute environment that exposes free resources — if none does, the
+call fails and there is nothing to configure your way out of.
+
+[`compute`](/docs/api/nautilus/compute) orders every input, locks funds in the `Escrow`
+contract from what the node quotes, and then starts the job.
+
+## Why does `build()` reject my asset?
+
+DDO v5 requires `providedBy`, which had no v4 equivalent, so assets ported from v1 fail on a
+field that did not used to exist. `build()` also requires `name`, `type`, and at least one
+service — and container metadata when `type` is `'algorithm'`.
+
+Everything beyond that is checked by [`validate`](/docs/guides/validation), which
+`publish()` runs automatically before spending any gas.
+
+## Do I still need separate Aquarius and Provider URLs?
+
+No. One **ocean-node** serves metadata, provider services and the indexer, so
+`metadataCacheUri` and `providerUri` both collapse into a single `oceanNodeUri`. See
+[migrating from v1](/docs/migration).
+

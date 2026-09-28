@@ -1,5 +1,5 @@
 import { ZERO_ADDRESS } from '@oceanprotocol/lib'
-import type { DatatokenCreateParamsWithoutOwner } from '../../../@types/Publish'
+import type { DatatokenCreateParamsWithoutOwner } from '../../../@types/Publish.js'
 
 const templateIndex = 2 // TODO: research templateIndex 1 or 2
 const cap = '100000'

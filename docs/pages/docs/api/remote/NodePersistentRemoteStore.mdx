@@ -1,0 +1,44 @@
+# NodePersistentRemoteStore
+
+Store the signed DDO in ocean-node's own persistent storage. The default choice — it needs no
+external infrastructure.
+
+## Usage
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus, NodePersistentRemoteStore } from '@deltadao/nautilus'
+
+const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const config = { oceanNodeUri: 'https://ocean-node.dev.pontus-x.eu' }
+// ---cut---
+const bootstrap = await Nautilus.create(signer, { config })
+
+const nautilus = await Nautilus.create(signer, {
+  config,
+  remoteStore: new NodePersistentRemoteStore(bootstrap.getNodeClient()) // [!code focus]
+})
+```
+
+:::info
+It takes a node client, and the only way to get one is from an instance — hence the two-step
+construction. See [remote stores](/docs/guides/remote-stores).
+:::
+
+## Parameters
+
+### node
+
+- Type: `OceanNodeClient`
+
+From [`getNodeClient`](/docs/api/nautilus/getNodeClient).
+
+### options
+
+- Type: `NodePersistentRemoteStoreOptions`
+
+| Option | Type | Purpose |
+| --- | --- | --- |
+| `bucketId` | `string` | Reuse an existing bucket instead of creating one. |
+| `accessLists` | — | Restrict who may read the bucket. |
+| `label` | `string` | Name the bucket it creates. |

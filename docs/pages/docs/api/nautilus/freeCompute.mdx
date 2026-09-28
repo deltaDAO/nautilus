@@ -1,0 +1,40 @@
+# freeCompute
+
+Start a free Compute-to-Data job: no order, no escrow, no payment token.
+
+## Usage
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const environments = await nautilus.getComputeEnvironments()
+const free = environments.find((environment) => environment.free)
+
+const { jobs } = await nautilus.freeCompute({ // [!code focus]
+  dataset: { did: 'did:ope:1234abcd...' }, // [!code focus]
+  algorithm: { did: 'did:ope:5678wxyz...' }, // [!code focus]
+  computeEnv: free?.id // [!code focus]
+}) // [!code focus]
+```
+
+New in v2. The environment must expose a `free` configuration, and its access list may
+still restrict who can use it — an environment without one throws, naming it.
+
+Credentials are still satisfied: free of charge is not the same as ungated.
+
+## Returns
+
+- Type: `{ jobs: ComputeJob[]; environment: ComputeEnvironment }`
+
+No `orders` or `initializeResults`, because nothing was ordered or quoted.
+
+## Parameters
+
+### config
+
+- Type: `FreeComputeConfig`
+
+The same as [`ComputeConfig`](/docs/api/nautilus/compute) minus `paymentToken` and
+`maxJobDuration`. Resources default to the environment's `free.resources`.

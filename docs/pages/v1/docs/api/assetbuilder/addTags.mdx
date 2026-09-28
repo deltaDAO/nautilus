@@ -1,0 +1,53 @@
+---
+searchPriority: 0
+---
+
+:::warning
+You are viewing the documentation for Nautilus **v1.1.0** (legacy). Switch to the [latest documentation](/docs/introduction), or follow the [migration guide](/docs/migration) to upgrade.
+:::
+
+# addTags
+
+Add any additional information you might need to describe your asset.
+
+Official OceanProtocol documentation: [DDO Specification](https://docs.oceanprotocol.com/developers/ddo-specification)
+
+## Usage
+
+```ts
+import { AssetBuilder, Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+
+const assetBuilder = new AssetBuilder()
+
+assetBuilder.addTags(['ai', 'manufacturing', 'industry-4.0']) // [!code focus]
+const asset = assetBuilder.build() // [!code focus]
+
+await nautilus.publish(asset) // [!code focus]
+// => ddo.metadata: 
+// => { 
+// =>    tags: ['ai', 'manufacturing', 'industry-4.0']
+// => }
+```
+
+## Returns
+
+- Type: [`AssetBuilder`](/v1/docs/api/AssetBuilder)
+
+The asset builder instance to chain building calls with.
+
+## Parameter
+
+### tags
+
+- Type: `string[]`
+
+The tags you want to add to the asset to be built.
+
+```ts
+assetBuilder.addTags(
+    ['ai', 'manufacturing', 'industry-4.0'] // [!code focus]
+) 
+```

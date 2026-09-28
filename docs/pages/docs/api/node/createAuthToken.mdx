@@ -1,0 +1,46 @@
+# createAuthToken
+
+Mint a node session token, so subsequent calls skip the nonce-and-sign round trip.
+
+## Usage
+
+```ts twoslash
+import { createAuthToken, revokeAuthToken } from '@deltadao/nautilus'
+import type { Signer } from 'ethers'
+
+declare const signer: Signer
+const nodeUri = 'https://ocean-node.dev.pontus-x.eu'
+// ---cut---
+const token = await createAuthToken(signer, nodeUri) // [!code focus]
+
+// … many calls later
+await revokeAuthToken(signer, token, nodeUri) // [!code focus]
+```
+
+:::warning
+A client authenticating with a token must also be given `consumerAddress` — ocean.js does not
+re-export the `decodeJwt` helper that would let nautilus read the address out of the token, so
+`resolveConsumerAddress` throws without it.
+:::
+
+## Returns
+
+- Type: `Promise<string>`
+
+The bearer token.
+
+## Parameters
+
+### signer
+
+- Type: `Signer`
+
+### nodeUri
+
+- Type: `string`
+
+### signal
+
+- Type: `AbortSignal | undefined`
+
+See [the Ocean Node client guide](/docs/guides/ocean-node).

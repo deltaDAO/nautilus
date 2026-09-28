@@ -1,0 +1,40 @@
+# addTrustedAlgorithms
+
+Pin specific algorithms as trusted.
+
+nautilus resolves each algorithm's container and file checksums from its published DDO at publish time, so a publisher cannot swap the container out from under you afterwards.
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.COMPUTE, FileTypes.URL>({
+  serviceType: ServiceTypes.COMPUTE
+})
+// ---cut---
+serviceBuilder.addTrustedAlgorithms([ // [!code focus]
+  { did: 'did:ope:926098d069b017dcf3736370f3c3d77e6046ca6622af111229accf5f9c83e308' }, // [!code focus]
+  { // [!code focus]
+    did: 'did:ope:475698d069b017dcf3736370f3c3d77e6046ca6622af111229accf5f9c83e308', // [!code focus]
+    serviceIds: ['service-a', 'service-b'] // [!code focus]
+  } // [!code focus]
+]) // [!code focus]
+```
+
+:::info
+`serviceIds` is finally meaningful. DDO v5's `PublisherTrustedAlgorithms` carries a required
+`serviceId`, so an algorithm is trusted per service. Omit it to trust the algorithm's first
+compute service. In v4 there was no `serviceId` at all, and nautilus v1 could only ever pin
+`services[0]`.
+:::
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.

@@ -1,6 +1,6 @@
 # getComputeResult
 
-Request a specific result file of a finished compute job.
+Get a download URL for a finished job's result.
 
 ## Usage
 
@@ -8,66 +8,48 @@ Request a specific result file of a finished compute job.
 import { Nautilus } from '@deltadao/nautilus'
 import { Wallet } from 'ethers'
 const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const url = await nautilus.getComputeResult({ jobId: 'a-job-id' }) // [!code focus]
 
-const resultFileUri = await nautilus.getComputeResult({ // [!code focus]
-    jobId: 'abcd1234',  // [!code focus]
-    providerUri: 'https://provider.dev.pontus-x.eu' // [!code focus]
-})
-
-if(resultFileUri)
-    await fetch(resultFileUri)
+if (url) {
+  const results = await fetch(url)
+}
 ```
-
 
 ## Returns
 
-`string`
+- Type: `string | undefined`
 
-A one time accessible url to fetch the compute result file.
+`undefined` — with a log line explaining which — when the node does not know the job, the
+job has not reached a terminal status, or it has no `output` result and no
+`resultIndex` was given.
 
-### Unfinished jobs
-The compute job has to have completed in order to access result files.
-If no results can be accessed an error will be logged and the return value is `undefined`.
+Both `70` (`JobFinished`) and `71` (`JobSettle`) count as terminal: by the time a job
+reaches `71` the algorithm has run and its outputs are listed, and only the
+payment-claim cron is outstanding. There is no need to wait through `71`.
 
-```ts twoslash
-import { Nautilus } from '@deltadao/nautilus'
-import { Wallet } from 'ethers'
-const nautilus = await Nautilus.create(new Wallet('0x1234'))
-// ---cut---
-await nautilus.getComputeResult({ 
-    jobId: 'unfinished-job',  
-    providerUri: 'https://provider.dev.pontus-x.eu' 
-})
-// @error: [compute] Retrieve results: could not find results for the job.
-```
+To stream a large result instead of downloading it through a URL, use
+[`streamComputeResult`](/docs/api/nautilus/streamComputeResult).
 
-To learn more about how to check the status of an ongoing compute job, read the [`getComputeStatus` documentation](/docs/api/nautilus/getComputeStatus).
-
-## Parameters 
+## Parameters
 
 ### config
+
 - Type: `ComputeResultConfig`
-
-The configuration object to request the compute result.
-This inherits the properties of the [`ComputeStatusConfig`](/docs/api/nautilus/getComputeStatus#config)
-
-Additionally the following properties are supported.
 
 #### Properties
 
+##### jobId
+
+- Type: `string`
+
 ##### resultIndex (optional)
+
 - Type: `number`
 
-The index of the result file that should be accessed. Defaults to `0`.
+Which result to fetch. Defaults to the first result of type `output`. A job also produces
+`algorithmLog`, `configrationLog` and `publishLog` entries.
 
-```ts twoslash
-import { Nautilus } from '@deltadao/nautilus'
-import { Wallet } from 'ethers'
-const nautilus = await Nautilus.create(new Wallet('0x1234'))
-// ---cut---
-await nautilus.getComputeResult({
-    jobId: 'abcd1234', 
-    providerUri: 'https://provider.dev.pontus-x.eu',
-    resultIndex: 1 // [!code focus]
-})
-```
+##### nodeUri (optional)
+
+- Type: `string`

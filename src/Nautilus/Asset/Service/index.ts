@@ -1,2 +1,2 @@
-export * from './NautilusService'
-export * from './ServiceBuilder'
+export * from './NautilusService.js'
+export * from './ServiceBuilder.js'

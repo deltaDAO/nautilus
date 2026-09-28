@@ -1,0 +1,29 @@
+# PricingInfo
+
+What [`getPricingInfo`](/docs/api/pricing/getPricingInfo) returns.
+
+```ts twoslash
+import type { PricingInfo } from '@deltadao/nautilus'
+// ---cut---
+declare const pricing: PricingInfo
+
+pricing.schema // 'fixed' | 'free' | 'none'
+pricing.templateId // 1 basic, 2 enterprise, 4 confidential EVM
+pricing.datatokenAddress
+pricing.exchangeId // set when schema is 'fixed'
+pricing.baseTokenAddress
+pricing.baseTokenDecimals
+pricing.publishMarketFee
+```
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `schema` | `'fixed' \| 'free' \| 'none'` | How the datatoken is priced. `'none'` cannot be ordered. |
+| `templateId` | `number` | Datatoken template: `1` basic, `2` enterprise, `4` confidential EVM. |
+| `datatokenAddress` | `string` | The token being priced. |
+| `exchangeId` | `string \| undefined` | Fixed-rate exchange id, when `schema` is `'fixed'`. |
+| `baseTokenAddress` | `string \| undefined` | What the exchange charges in. |
+| `baseTokenDecimals` | `number \| undefined` | Decimals of that token. |
+| `publishMarketFee` | `PublishingMarketFee` | The publisher's market fee. |
+
+Replaces v1's `AccessDetails`. See [pricing](/docs/guides/pricing).

@@ -1,0 +1,33 @@
+# getServiceByType
+
+Find the first service of a given type — the same selection `access` and `compute` do when
+you omit `serviceId`.
+
+## Usage
+
+```ts twoslash
+import { Nautilus, getServiceByType } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const asset = await nautilus.getAsset('did:ope:1234abcd...')
+
+const compute = getServiceByType(asset, 'compute') // [!code focus]
+const access = getServiceByType(asset, 'access') // [!code focus]
+```
+
+## Returns
+
+- Type: `ServiceV5 | undefined`
+
+## Parameters
+
+### ddo
+
+- Type: `unknown`
+
+### type
+
+- Type: `string`
+
+`'access'` or `'compute'`.

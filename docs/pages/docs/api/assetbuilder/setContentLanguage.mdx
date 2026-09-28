@@ -1,3 +1,46 @@
 # setContentLanguage
 
-{/* TODO: create api docs */}
+Set the language tag applied to every language-tagged field the builder emits.
+
+:::warning[Repurposed in v2]
+In DDO v4 this wrote a `contentLanguage` metadata field. DDO v5 moved language onto each
+*value*, so the call no longer produces a field of its own — it chooses the `@language` and
+`@direction` attached to `description`, `displayTitle` and every other language-tagged value.
+:::
+
+## Usage
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+assetBuilder.setContentLanguage('de', 'ltr') // [!code focus]
+assetBuilder.setDescription('Stündliche Wetterbeobachtungen')
+// @log: description: { '@value': 'Stündliche…', '@language': 'de', '@direction': 'ltr' }
+```
+
+Set it **before** the fields it should apply to. It is read when each value is projected, so
+calling it last still tags everything — but reading the builder in between shows the old tag.
+
+## Returns
+
+- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
+
+The asset builder instance, to chain further calls with.
+
+## Parameters
+
+### language
+
+- Type: `string`
+- Default: `'en'`
+
+A BCP 47 language tag, such as `'en'`, `'de'` or `'pt-BR'`.
+
+### direction
+
+- Type: `string`
+- Default: `'ltr'`
+
+Text direction — `'ltr'` or `'rtl'`.

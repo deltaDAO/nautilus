@@ -1,0 +1,44 @@
+# WaltIdVcSigner
+
+Sign the DDO with a walt.id wallet key, so the asset's `issuer` is a real DID.
+
+## Usage
+
+```ts twoslash
+import { WaltIdVcSigner, WaltIdHttpWallet } from '@deltadao/nautilus'
+import type { Signer } from 'ethers'
+
+declare const signer: Signer
+// ---cut---
+const wallet = new WaltIdHttpWallet({ apiUrl: 'https://wallet.example.org' })
+
+const { token } = await wallet.authenticate(signer)
+const [{ id: walletId }] = await wallet.listWallets(token)
+const [key] = await wallet.listKeys(walletId, token)
+const [{ did }] = await wallet.listDids(walletId, token)
+
+const ddoSigner = new WaltIdVcSigner({ // [!code focus]
+  wallet, // [!code focus]
+  walletId, // [!code focus]
+  keyId: key.keyId.id, // [!code focus]
+  did, // [!code focus]
+  token // [!code focus]
+}) // [!code focus]
+```
+
+Pair it with [`setIssuer`](/docs/api/assetbuilder/setIssuer) when the document's declared
+issuer should match.
+
+## Parameters
+
+### options
+
+| Option | Type | Purpose |
+| --- | --- | --- |
+| `wallet` | `WaltIdWallet` | The wallet client. |
+| `walletId` | `string` | Which wallet to sign with. |
+| `keyId` | `string` | Which key in that wallet. |
+| `did` | `string` | Becomes the credential's `issuer`. |
+| `token` | `string` | The bearer token from `authenticate`. |
+
+See [signing](/docs/guides/signing).

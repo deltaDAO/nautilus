@@ -1,64 +1,247 @@
 # ServiceBuilder
 
-## Usage
+Builds one service on an asset. A service is what consumers actually order: it names an
+ocean-node, the files it serves, how long an order stays valid, and how it is paid for.
+
+## Instantiating
+
+Two modes, chosen by the config you pass.
+
 :::code-group
 ```ts twoslash [create]
-import { UrlFile, FileTypes, ServiceTypes, ServiceBuilder } from '@deltadao/nautilus'
+import { FileTypes, ServiceBuilder, ServiceTypes } from '@deltadao/nautilus'
 
-const urlFile = { 
-  type: 'url', 
-  url: 'https://link.to/my/asset', 
-  method: 'GET' 
-} satisfies UrlFile
-
-const serviceBuilder = new ServiceBuilder({ // [!code focus]
-    serviceType: ServiceTypes.ACCESS, // [!code focus]
-    fileType: FileTypes.URL // [!code focus]
+const serviceBuilder = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({ // [!code focus]
+  serviceType: ServiceTypes.ACCESS // [!code focus]
 }) // [!code focus]
-
-const service = serviceBuilder // [!code focus]
-    .setServiceEndpoint('https://provider.dev.pontus-x.eu') // [!code focus]
-    .setTimeout(0) // [!code focus]
-    .addFile(urlFile) // [!code focus]
-    .setPricing({ // [!code focus]
-        type: 'free' // [!code focus]
-    }) // [!code focus]
-    .build() // [!code focus]
 ```
 
-```ts twoslash [update]
-import { Nautilus } from '@deltadao/nautilus'
-import { Wallet} from 'ethers'
-const signer = new Wallet('0x...')
-const nautilus = await Nautilus.create(signer)
-// ---cut---
-import { ServiceBuilder } from '@deltadao/nautilus'
+```ts twoslash [edit]
+import {
+  FileTypes,
+  Nautilus,
+  ServiceBuilder,
+  ServiceTypes,
+  getServices
+} from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
 
-const aquariusAsset = await nautilus.getAquariusAsset( // [!code focus]
-    'did:op:926098d069b017dcf3736370f3c3d77e6046ca6622af111229accf5f9c83e308' // [!code focus]
-) // [!code focus]
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+const asset = await nautilus.getAsset('did:ope:2a6ebce0af...')
+const serviceId = getServices(asset)[0].id
 
-// create a ServiceBuilder instance, prepared with service metadata from the specified assets service
-const serviceBuilder = new ServiceBuilder({ // [!code focus]
-    aquariusAsset, // [!code focus]
-    serviceId: aquariusAsset?.services?.[0]?.id // '41b4f7004149620d9ffbc47e85cca980dda033dd824e0ddf7f9249e02284673b' // [!code focus]
+const serviceBuilder = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({ // [!code focus]
+  asset, // [!code focus]
+  serviceId // [!code focus]
 }) // [!code focus]
-
-const service = serviceBuilder // [!code focus]
-    .setName('Updated Service Name') // [!code focus]
-    .build() // [!code focus]
 ```
 :::
 
-## ServiceTypes
-{/* TODO: create api reference */}
-- `ACCESS`
-- `COMPUTE`
+In edit mode the builder loads the published service — its id, endpoint, timeout, compute
+options, consumer parameters, credentials, and the datatoken's name and symbol (recovered
+from the indexer's datatoken list, since they are not on the DDO's service object).
 
-## FileTypes
-{/* TODO: create api reference */}
-- `URL`
-- `IPFS`
-- `GRAPHQL` 
-- `ARWEAVE`
-- `SMARTCONTRACT`
+:::info
+v1 took `{ aquariusAsset, serviceId }`. Aquarius no longer exists as a separate service, so
+the key is now simply `asset`.
+:::
+
+`reset()` returns to whichever state the constructor produced — including a loaded service.
+v1 discarded the loaded state, which made `reset()` unusable while editing.
+
+## The two type parameters
+
+```ts twoslash
+import { FileTypes, ServiceBuilder, ServiceTypes } from '@deltadao/nautilus'
+// ---cut---
+new ServiceBuilder<ServiceTypes.COMPUTE, FileTypes.IPFS>({
+  serviceType: ServiceTypes.COMPUTE
+})
+```
+
+`ServiceTypes` is `ACCESS` (download) or `COMPUTE` (run algorithms on the data without
+exposing it).
+
+`FileTypes` picks which storage object [`addFile`](/docs/api/servicebuilder/addFile)
+accepts:
+
+```ts twoslash
+import { FileTypes } from '@deltadao/nautilus'
+// ---cut---
+FileTypes.URL // { type: 'url', url, method, headers? }
+FileTypes.IPFS // { type: 'ipfs', hash }
+FileTypes.ARWEAVE // { type: 'arweave', transactionId }
+FileTypes.S3 // { type: 's3', s3Access: { ... } }
+FileTypes.FTP // { type: 'ftp', url }
+FileTypes.NODE_PERSISTENT_STORAGE // { type: 'nodePersistentStorage', bucketId, fileName }
+```
+
+:::warning
+The set changed with ocean-node. `GRAPHQL` and `SMARTCONTRACT` are **gone** — the node no
+longer implements them. `S3`, `FTP` and `NODE_PERSISTENT_STORAGE` are **new**. The object
+types were renamed as well: `UrlFile` → `UrlFileObject`, `Ipfs` → `IpfsFileObject`,
+`Arweave` → `ArweaveFileObject`.
+:::
+
+## A minimal service
+
+```ts twoslash
+import { FileTypes, ServiceBuilder, ServiceTypes } from '@deltadao/nautilus'
+// ---cut---
+const service = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+  .setServiceEndpoint('https://ocean-node.dev.pontus-x.eu') // required
+  .setName('Access Service')
+  .setTimeout(86400)
+  .addFile({ type: 'url', url: 'https://data.example/x.csv', method: 'GET' })
+  .setPricing({ type: 'free' }) // required for a new service
+  .build()
+```
+
+`build()` checks only what cannot be checked later: a new service needs pricing, and every
+service needs an endpoint. The name is defaulted rather than required, even though DDO v5
+requires it.
+
+## Pricing
+
+Required for a new service, because it needs its own datatoken. **Blocked** for a published
+one — a new pricing config mints a new datatoken, which changes the service id. Use
+[`nautilus.setServicePrice`](/docs/api/nautilus/setServicePrice) instead.
+
+See [`setPricing`](/docs/api/servicebuilder/setPricing).
+
+## Compute services
+
+A `COMPUTE` service controls which algorithms may run against the data. The compute-only
+methods throw on an access service, naming the operation.
+
+```ts twoslash
+import { FileTypes, ServiceBuilder, ServiceTypes } from '@deltadao/nautilus'
+// ---cut---
+const service = new ServiceBuilder<ServiceTypes.COMPUTE, FileTypes.URL>({
+  serviceType: ServiceTypes.COMPUTE
+})
+  .setServiceEndpoint('https://ocean-node.dev.pontus-x.eu')
+  .addFile({ type: 'url', url: 'https://data.example/x.csv', method: 'GET' })
+  .setPricing({ type: 'free' })
+  .allowRawAlgorithms(false) // [!code focus]
+  .allowAlgorithmNetworkAccess(false) // [!code focus]
+  .addTrustedAlgorithms([{ did: 'did:ope:926098d069b017dcf...' }]) // [!code focus]
+  .build()
+```
+
+Trusted algorithms are staged here and resolved to container and file checksums at publish
+time, so a publisher cannot swap the container afterwards. DDO v5 requires a `serviceId` per
+trusted algorithm, so `serviceIds` is finally honoured — see
+[`addTrustedAlgorithms`](/docs/api/servicebuilder/addTrustedAlgorithms).
+
+## Per-service gating
+
+New in DDO v5: credentials sit on services as well as assets, so one service can be
+restricted while another stays open.
+
+```ts twoslash
+import {
+  CredentialListTypes,
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+// ---cut---
+const service = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+  .setServiceEndpoint('https://ocean-node.dev.pontus-x.eu')
+  .addFile({ type: 'url', url: 'https://data.example/x.csv', method: 'GET' })
+  .setPricing({ type: 'free' })
+  .addRequestCredentials(CredentialListTypes.ALLOW, [ // [!code focus]
+    { type: 'VerifiableId', format: 'jwt_vc_json' } // [!code focus]
+  ]) // [!code focus]
+  .build()
+```
+
+See [Credential-gated assets](/docs/guides/identity).
+
+## Attaching it to an asset
+
+```ts twoslash
+import {
+  AssetBuilder,
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const service = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+  .setServiceEndpoint('https://ocean-node.dev.pontus-x.eu')
+  .addFile({ type: 'url', url: 'https://data.example/x.csv', method: 'GET' })
+  .setPricing({ type: 'free' })
+  .build()
+// ---cut---
+const asset = new AssetBuilder()
+  .setType('dataset')
+  .setName('My Dataset')
+  .setProvidedBy('My Organisation')
+  .addService(service) // [!code focus]
+  .build()
+```
+
+## Method reference
+
+### Identity
+
+[`setName`](/docs/api/servicebuilder/setName) ·
+[`setDisplayName`](/docs/api/servicebuilder/setDisplayName) ·
+[`setDescription`](/docs/api/servicebuilder/setDescription) ·
+[`setState`](/docs/api/servicebuilder/setState)
+
+### Endpoint and files
+
+[`setServiceEndpoint`](/docs/api/servicebuilder/setServiceEndpoint) ·
+[`addFile`](/docs/api/servicebuilder/addFile) ·
+[`setTimeout`](/docs/api/servicebuilder/setTimeout)
+
+### Consumer parameters and schemas
+
+[`addConsumerParameter`](/docs/api/servicebuilder/addConsumerParameter) ·
+[`setDataSchema`](/docs/api/servicebuilder/setDataSchema) ·
+[`setInputSchema`](/docs/api/servicebuilder/setInputSchema) ·
+[`setOutputSchema`](/docs/api/servicebuilder/setOutputSchema) ·
+[`addAdditionalInformation`](/docs/api/servicebuilder/addAdditionalInformation)
+
+### Pricing and datatoken
+
+[`setPricing`](/docs/api/servicebuilder/setPricing) ·
+[`setDatatokenData`](/docs/api/servicebuilder/setDatatokenData) ·
+[`setDatatokenNameAndSymbol`](/docs/api/servicebuilder/setDatatokenNameAndSymbol)
+
+### Compute — trusted algorithms
+
+Compute services only; these throw on an access service.
+
+[`addTrustedAlgorithms`](/docs/api/servicebuilder/addTrustedAlgorithms) ·
+[`removeTrustedAlgorithm`](/docs/api/servicebuilder/removeTrustedAlgorithm) ·
+[`setAllAlgorithmsTrusted`](/docs/api/servicebuilder/setAllAlgorithmsTrusted) ·
+[`setAllAlgorithmsUntrusted`](/docs/api/servicebuilder/setAllAlgorithmsUntrusted) ·
+[`addTrustedAlgorithmPublisher`](/docs/api/servicebuilder/addTrustedAlgorithmPublisher) ·
+[`removeTrustedAlgorithmPublisher`](/docs/api/servicebuilder/removeTrustedAlgorithmPublisher) ·
+[`setAllAlgorithmPublishersTrusted`](/docs/api/servicebuilder/setAllAlgorithmPublishersTrusted) ·
+[`setAllAlgorithmPublishersUntrusted`](/docs/api/servicebuilder/setAllAlgorithmPublishersUntrusted)
+
+### Compute — job permissions
+
+[`allowRawAlgorithms`](/docs/api/servicebuilder/allowRawAlgorithms) ·
+[`allowAlgorithmNetworkAccess`](/docs/api/servicebuilder/allowAlgorithmNetworkAccess)
+
+### Gating
+
+[`addCredentialAddresses`](/docs/api/servicebuilder/addCredentialAddresses) ·
+[`addRequestCredentials`](/docs/api/servicebuilder/addRequestCredentials)
+
+### Building
+
+[`build`](/docs/api/servicebuilder/build) ·
+[`reset`](/docs/api/servicebuilder/reset)

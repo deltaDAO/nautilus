@@ -1,0 +1,91 @@
+# OceanNodeClient
+
+The client for a single ocean-node. One node serves metadata, provider services, the indexer
+and compute — replacing v1's separate Aquarius and Provider.
+
+Usually you take the one the instance already built rather than constructing your own.
+
+## Usage
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const node = nautilus.getNodeClient() // [!code focus]
+
+const status = await node.getNodeStatus()
+```
+
+Constructing one directly:
+
+```ts twoslash
+import { OceanNodeClient } from '@deltadao/nautilus'
+import type { Signer } from 'ethers'
+
+declare const signer: Signer
+// ---cut---
+const node = new OceanNodeClient({
+  nodeUri: 'https://ocean-node.dev.pontus-x.eu',
+  chainId: 32456,
+  auth: signer
+})
+```
+
+## Options
+
+| Option | Type | Purpose |
+| --- | --- | --- |
+| `nodeUri` | `string` | HTTP URL, or a peerId/multiaddr to use the libp2p transport. |
+| `chainId` | `number` | |
+| `auth` | `NodeAuth` | A `Signer`, a JWT auth token, or a pre-computed signature. |
+| `consumerAddress` | `string` | **Required when `auth` is a JWT**, which nautilus cannot decode. |
+
+## Selected methods
+
+### Metadata
+
+`resolve(did)` · `resolveMany(dids)` · `query(searchQuery)` · `waitForIndexer(did, txid?)` ·
+`validateRemote(ddo)`
+
+### Files and storage
+
+`getFileInfo(file, withChecksum?)` · `checkDidFiles(did, serviceId, withChecksum?)` ·
+`createBucket(accessLists, label?)` · `uploadFile(bucketId, fileName, content)` ·
+`getFileObject(bucketId, fileName)`
+
+### Compute
+
+`getComputeEnvironments()` · `initializeCompute(params)` · `computeStart(params)` ·
+`freeComputeStart(params)` · `computeStatus(jobId?, agreementId?)` · `getComputeJob(jobId)` ·
+`computeStop(jobId, agreementId?)` · `getComputeResultUrl(jobId, index)` ·
+`getComputeResult(jobId, index, offset?)` · `getComputeLogs(jobId)`
+
+### Identity
+
+`initializePolicyVerification(request)` · `policyServerPassthrough(action)`
+
+### Diagnostics
+
+`getNodeStatus()` · `isValidNode(uri?)` · `OceanNodeClient.clearValidityCache()`
+
+## Errors
+
+Every call is wrapped, so failures arrive as `OceanNodeError` with the operation named and the
+original error on `cause`.
+
+```ts twoslash
+import { OceanNodeError } from '@deltadao/nautilus'
+
+declare const run: () => Promise<unknown>
+// ---cut---
+try {
+  await run()
+} catch (error) {
+  if (error instanceof OceanNodeError) {
+    console.error(error.operation, error.cause) // [!code focus]
+  }
+}
+```
+
+See [the Ocean Node client guide](/docs/guides/ocean-node).

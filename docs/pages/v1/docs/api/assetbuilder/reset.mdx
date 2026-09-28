@@ -1,0 +1,37 @@
+---
+searchPriority: 0
+---
+
+:::warning
+You are viewing the documentation for Nautilus **v1.1.0** (legacy). Switch to the [latest documentation](/docs/introduction), or follow the [migration guide](/docs/migration) to upgrade.
+:::
+
+# reset
+
+Resets the state of the builder.
+
+## Usage
+
+```ts
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+
+assetBuilder.setName('Test') // [!code focus]
+assetBuilder.setDescription('My description') // [!code focus]
+assetBuilder.build() // [!code focus]
+// => ddo.metadata: 
+// => { 
+// =>    name: 'Test',
+// =>    description: 'My description'
+// => }
+
+assetBuilder.reset() // [!code focus]
+// => All asset data is reset and a new asset can be built with this instance.
+```
+
+## Returns
+
+- `void`
+
+No return value. The asset builder instance will be reset after this call.

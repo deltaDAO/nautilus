@@ -2,19 +2,30 @@
 
 Add any additional information you might need to describe your asset.
 
-Official OceanProtocol documentation: [DDO Specification](https://docs.oceanprotocol.com/developers/ddo-specification)
-
 ## Usage
 
-It is currently recommended to use [`addTags()`](/docs/api/assetbuilder/addTags) instead, as tags have broader adoption throughout the stack.
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+assetBuilder.addCategories(['weather', 'timeseries']) // [!code focus]
+```
+
+Categories are deduplicated, and repeated calls accumulate rather than replace.
+
+:::tip
+Prefer [`addTags()`](/docs/api/assetbuilder/addTags) where you can — tags have broader
+adoption throughout the stack, and most portals surface them rather than categories.
+:::
 
 ## Returns
 
 - Type: [`AssetBuilder`](/docs/api/AssetBuilder)
 
-The asset builder instance to chain building calls with.
+The asset builder instance, to chain further calls with.
 
-## Parameter
+## Parameters
 
 ### categories
 

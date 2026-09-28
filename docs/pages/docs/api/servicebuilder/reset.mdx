@@ -1,0 +1,27 @@
+# reset
+
+Return the builder to its initial state.
+
+In edit mode this replays the loaded service rather than emptying the builder — v1 discarded the loaded state, which made `reset()` unusable while editing.
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+// ---cut---
+serviceBuilder.reset() // [!code focus]
+```
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.

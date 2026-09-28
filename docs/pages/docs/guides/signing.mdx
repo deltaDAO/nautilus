@@ -1,0 +1,138 @@
+# Signing [The DDO as a verifiable credential]
+
+Because the DDO lives [off chain](/docs/guides/remote-stores), something has to make it
+tamper-evident. nautilus signs it as a **JWT Verifiable Credential** before storing it, and
+the asset's `issuer` is whoever signed.
+
+You do not have to configure this. The default works with nothing but the signer you already
+have.
+
+## The default: sign with the Ethereum key
+
+`Eip191VcSigner` signs with the same key that pays for the transaction, using an
+`alg: 'ETH-EIP191'` header. Publishing therefore works with no SSI wallet anywhere in the
+picture, and the `issuer` is the signer's address.
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus } from '@deltadao/nautilus'
+
+const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+// ---cut---
+// Nothing to configure — this is what you get.
+const nautilus = await Nautilus.create(signer, {
+  config: { oceanNodeUri: 'https://ocean-node.dev.pontus-x.eu' }
+})
+```
+
+:::warning
+`ETH-EIP191` is not a registered JOSE algorithm. Verifiers that only understand standard JOSE
+algorithms will not validate these credentials. It is the right default for getting started
+and for machine-to-machine publishing; it is not the right choice if third parties need to
+verify your issuer.
+:::
+
+## Issuing from a real DID
+
+`WaltIdVcSigner` signs with a wallet-held key, so the `issuer` is a proper DID and the
+credential validates like any other VC.
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus, WaltIdVcSigner, WaltIdHttpWallet } from '@deltadao/nautilus'
+
+const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const config = { oceanNodeUri: 'https://ocean-node.dev.pontus-x.eu' }
+// ---cut---
+const wallet = new WaltIdHttpWallet({ apiUrl: 'https://wallet.example.org' })
+
+// Web3 login returns a bearer token; the wallet, key and DID are listed with it.
+const { token } = await wallet.authenticate(signer)
+const [{ id: walletId }] = await wallet.listWallets(token)
+const [key] = await wallet.listKeys(walletId, token)
+const [{ did }] = await wallet.listDids(walletId, token)
+
+const nautilus = await Nautilus.create(signer, {
+  config,
+  ddoSigner: new WaltIdVcSigner({ // [!code focus]
+    wallet, // [!code focus]
+    walletId, // [!code focus]
+    keyId: key.keyId.id, // [!code focus]
+    did, // [!code focus]
+    token // [!code focus]
+  }) // [!code focus]
+})
+```
+
+Pair this with [`setIssuer`](/docs/api/assetbuilder/setIssuer) when you want the document's
+declared issuer to match.
+
+## What you get back
+
+[`publish`](/docs/api/nautilus/publish) returns the credential alongside the rest of the
+result.
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+import type { NautilusAsset } from '@deltadao/nautilus'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+declare const asset: NautilusAsset
+// ---cut---
+const { credential } = await nautilus.publish(asset)
+
+credential?.jwt // the compact JWT that was stored
+credential?.issuer // the DID or address that signed it
+```
+
+## Inspecting a credential
+
+`decodeCredential` reads the payload without verifying the signature — useful for debugging
+what was actually signed.
+
+```ts twoslash
+import { decodeCredential } from '@deltadao/nautilus'
+
+declare const jwt: string
+// ---cut---
+const payload = decodeCredential(jwt) // [!code focus]
+
+payload.id // the DID
+payload.issuer // the issuer
+```
+
+:::info
+The envelope is built for you: `type` is forced to `['VerifiableCredential']`, and the JWT
+registered claims (`iss`, `sub`, `jti`) mirror the DDO's identity, matching what the market
+expects. The document is stripped of indexer-derived fields before signing, so those can
+never be signed back in.
+:::
+
+## Writing your own signer
+
+```ts twoslash
+import type { DdoSigner, SignedCredential } from '@deltadao/nautilus'
+// ---cut---
+class MySigner implements DdoSigner {
+  async getIssuer(): Promise<string> { // [!code focus]
+    return 'did:web:example.org'
+  }
+
+  async sign(ddo: Record<string, unknown>): Promise<SignedCredential> { // [!code focus]
+    return { jwt: await signSomehow(ddo), issuer: await this.getIssuer() }
+  }
+}
+
+declare function signSomehow(ddo: Record<string, unknown>): Promise<string>
+```
+
+`getIssuer()` is asked first, and its answer is written onto the DDO before the document is
+validated, signed and returned — so `PublishResponse.ddo.issuer` always matches the signed
+claims. It must name the same identity `sign()` issues as.
+
+:::warning[`setIssuer()` must match the signer]
+[`AssetBuilder.setIssuer`](/docs/api/AssetBuilder) declares who signs; it does not change
+who signs. Publishing an asset whose declared issuer is not the signing identity is
+rejected rather than silently overwritten — either drop the call, or publish with the
+signer you named.
+:::

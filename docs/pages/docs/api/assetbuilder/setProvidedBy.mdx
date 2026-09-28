@@ -1,0 +1,23 @@
+# setProvidedBy
+
+Set the organisation providing the asset.
+
+:::warning
+Required by the DDO v5 schema. `build()` rejects a new asset without it, alongside `name` and `type`. There was no equivalent in DDO v4.
+:::
+
+## Usage
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+assetBuilder.setProvidedBy('deltaDAO AG') // [!code focus]
+```
+
+## Returns
+
+- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
+
+The asset builder instance, to chain further calls with.

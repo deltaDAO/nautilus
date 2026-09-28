@@ -1,78 +1,60 @@
-# ComputeAsset
+# ComputeAssetRef
 
-Used to describe datasets when initializing new compute jobs via [`nautilus.compute()`](/docs/api/nautilus/compute)
+References a published dataset to compute on, in
+[`nautilus.compute()`](/docs/api/nautilus/compute) and
+[`nautilus.freeCompute()`](/docs/api/nautilus/freeCompute).
+
+:::warning
+Renamed from `ComputeAsset` in v1. ocean.js exports a *different* type under that name — the
+wire-level `{ documentId, serviceId, transferTxId }` shape — and having both in scope was a
+standing source of confusion. nautilus builds the ocean.js form for you from this one.
+:::
 
 ## Usage
-This type is used for either the `dataset` or the `additionalDatasets` properties when starting compute jobs.
 
 ```ts twoslash
-import { Nautilus } from '@deltadao/nautilus'
-import { Wallet } from 'ethers'
-const nautilus = await Nautilus.create(new Wallet('0x1234'))
+import type { ComputeAssetRef } from '@deltadao/nautilus'
 // ---cut---
-await nautilus.compute({
-    dataset: { // [!code focus]
-        did: 'did:op:1234abcd...', // [!code focus]
-        userdata: { // [!code focus]
-            parameter: 'value' // [!code focus] 
-        }, // [!code focus]
-    }, // [!code focus]
-    algorithm: {
-        did: 'did:op:5678wxyz...'
-    },
-    additionalDatasets: [
-        { // [!code focus]
-            did: 'did:op:1234abcd...', // [!code focus]
-            serviceId: 'custom-service-id', // [!code focus]
-        } // [!code focus]
-    ]
-})
+const dataset: ComputeAssetRef = {
+  did: 'did:ope:1234abcd...'
+}
 ```
 
 ## Properties
 
 ### did
+
 - Type: `string`
 
-The decentralized identifier of the asset to compute on.
-```ts twoslash
-import { ComputeAsset } from '@deltadao/nautilus'
-// ---cut---
-const dataset = {
-    did: 'did:op:1234abcd...' // [!code focus]
-} satisfies ComputeAsset
-```
+The dataset to compute on.
 
 ### serviceId (optional)
+
 - Type: `string`
 
-Optionally specify a service to use for computation. Defaults to the first compute service of the asset's metadata.
+Which service to use. Defaults to the asset's first `compute` service; an asset with no
+compute service fails with a message saying so.
+
 ```ts twoslash
-import { ComputeAsset } from '@deltadao/nautilus'
+import type { ComputeAssetRef } from '@deltadao/nautilus'
 // ---cut---
-const dataset = {
-    did: 'did:op:1234abcd...', 
-    serviceId: 'specific-service-id', // [!code focus]
-} satisfies ComputeAsset
+const dataset: ComputeAssetRef = {
+  did: 'did:ope:1234abcd...',
+  serviceId: 'ccb398c50d6abd5b456e8d7242bd856a1767a890b537c2f8c10ba8b8a10e6025' // [!code focus]
+}
 ```
 
 ### userdata (optional)
-- Type: [`UserCustomParameters`](/docs/api/UserCustomParameters)
 
-If the asset requires or allows for custom user parameter input, this can be configured here.
+- Type: `Record<string, unknown>`
 
-Learn more about how to use custom userdata with your assets in our [Consumer Parameters Guide](/docs/api/ConsumerParameterBuilder).
+Values for the service's consumer parameters.
+
 ```ts twoslash
-import { ComputeAsset } from '@deltadao/nautilus'
+import type { ComputeAssetRef } from '@deltadao/nautilus'
 // ---cut---
-const dataset = {
-    did: 'did:op:1234abcd...', 
-    serviceId: 'specific-service-id',
-    userdata: { // [!code focus]
-        parameter: 'value', // [!code focus]
-        number: 123, // [!code focus]
-        boolean: true, // [!code focus]
-        select: 'option', // [!code focus]
-    } // [!code focus]
-} satisfies ComputeAsset
+const dataset: ComputeAssetRef = {
+  did: 'did:ope:1234abcd...',
+  userdata: { region: 'eu' } // [!code focus]
+}
 ```

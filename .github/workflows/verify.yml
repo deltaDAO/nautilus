@@ -11,13 +11,16 @@ jobs:
 
     steps:
       - name: Clone repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
 
+      # `biome check` reports and exits non-zero. Do not use the writing forms
+      # (`format --write` / `check --fix`) here: they mutate a throwaway checkout
+      # and always exit 0, which makes the gate incapable of failing.
       - name: Lint code
-        run: npm run format && npm run lint:fix
+        run: npm run lint
 
   build:
     name: Build
@@ -27,7 +30,7 @@ jobs:
 
     steps:
       - name: Clone repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
@@ -41,42 +44,77 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     strategy:
+      fail-fast: false
       matrix:
-        typescript-version: ['5.0.2', 'latest']
+        # 5.9 is what the repo builds with (see the `typescript` devDependency) and the
+        # floor for consumers of the published .d.ts. `latest` is TypeScript 7, the native
+        # compiler: the library typechecks clean under it, but the repo cannot adopt it yet
+        # because vocs' twoslash needs the JS TypeScript API that 7 dropped. Keeping it in
+        # the matrix guards that forward-compatibility until the docs can follow.
+        typescript-version: ['5.9', 'latest']
 
     steps:
       - name: Clone repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
 
-      - run: npm i -D typescript@${{ matrix.typescript-version }}
+      - run: npm i -D --no-save typescript@${{ matrix.typescript-version }}
 
       - name: Check types
         run: npm run typecheck
+
+  examples:
+    name: Examples
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v5
+
+      - name: Install dependencies
+        uses: ./.github/actions/install-dependencies
+
+      # `examples` is deliberately not a workspace — it resolves nautilus the way a
+      # consumer does, through `src/package.json`'s exports map. That map points at
+      # `_esm` and `_types`, so the library has to be built before the examples can
+      # even be installed, let alone typechecked.
+      - name: Build nautilus
+        run: npm run build
+
+      - name: Install examples
+        run: npm ci
+        working-directory: examples
+
+      # The examples are the widest exercise of the public v2 API, so this is where
+      # API drift surfaces while 2.0.0 is still in beta.
+      - name: Check types
+        run: npm run typecheck
+        working-directory: examples
 
   test:
     name: Test
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
     steps:
       - name: Clone repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
 
+      # No retry wrapper: these are deterministic unit tests, so a retry would
+      # hide a real failure rather than work around genuine flakiness.
       - name: Run tests
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 10
-          max_attempts: 3
-          command: npm run test:mocha:unit
-        # env:
-        #   SOME_ENV: ${{ vars.SOME_ENV }}
+        run: npm run test:unit:coverage
 
-      # - name: Upload coverage reports to Codecov
-      #   uses: codecov/codecov-action@v4
-      #   with:
-      #     token: ${{ secrets.CODECOV_TOKEN }}
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          fail_ci_if_error: false

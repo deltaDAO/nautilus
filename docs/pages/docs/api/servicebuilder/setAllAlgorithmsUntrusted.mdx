@@ -1,0 +1,27 @@
+# setAllAlgorithmsUntrusted
+
+Allow no algorithms at all.
+
+Writes an empty list. Use [`setAllAlgorithmsTrusted`](/docs/api/servicebuilder/setAllAlgorithmsTrusted) for the opposite.
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.COMPUTE, FileTypes.URL>({
+  serviceType: ServiceTypes.COMPUTE
+})
+// ---cut---
+serviceBuilder.setAllAlgorithmsUntrusted() // [!code focus]
+```
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.

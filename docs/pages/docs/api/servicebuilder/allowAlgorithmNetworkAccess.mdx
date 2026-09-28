@@ -1,0 +1,27 @@
+# allowAlgorithmNetworkAccess
+
+Allow the algorithm container network access.
+
+Compute services only. Off by default: without network access an algorithm cannot exfiltrate the data it was given.
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.COMPUTE, FileTypes.URL>({
+  serviceType: ServiceTypes.COMPUTE
+})
+// ---cut---
+serviceBuilder.allowAlgorithmNetworkAccess(true) // [!code focus]
+```
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.

@@ -3,8 +3,6 @@
 Set the type of the asset. This might affect what kind of other metadata is expected for the asset to be valid.
 See a usage example below for both supported cases: `'dataset'` and `'algorithm'`.
 
-Official OceanProtocol documentation: [DDO Specification](https://docs.oceanprotocol.com/developers/ddo-specification)
-
 ## Usage
 
 When defining `algorithm` type assets, additional metadata is necessary to be set. Feel free to toggle between the examples below or refer to the [`setAlgorithm() documentation`](/docs/api/assetbuilder/setAlgorithm) for further information.
@@ -65,9 +63,9 @@ await nautilus.publish(asset) // [!code focus]
 
 - Type: [`AssetBuilder`](/docs/api/AssetBuilder)
 
-The asset builder instance to chain building calls with.
+The asset builder instance, to chain further calls with.
 
-## Parameter
+## Parameters
 
 ### name
 

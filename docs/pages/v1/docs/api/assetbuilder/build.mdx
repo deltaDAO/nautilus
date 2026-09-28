@@ -1,0 +1,35 @@
+---
+searchPriority: 0
+---
+
+:::warning
+You are viewing the documentation for Nautilus **v1.1.0** (legacy). Switch to the [latest documentation](/docs/introduction), or follow the [migration guide](/docs/migration) to upgrade.
+:::
+
+# build
+
+Builds the `NautilusAsset` that was configured using this builder instance.
+
+## Usage
+
+```ts
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+
+assetBuilder.setName('Test') // [!code focus]
+assetBuilder.setDescription('My description') // [!code focus]
+assetBuilder.build() // [!code focus]
+// => ddo.metadata: 
+// => { 
+// =>    name: 'Test',
+// =>    description: 'My description'
+// => }
+```
+
+## Returns
+
+- `NautilusAsset`
+
+The built asset with all data that was set using the builder functions.
+This can then be used in [`publish()`](/v1/docs/api/nautilus/publish) or [`edit()`](/v1/docs/api/nautilus/edit) calls respectively.

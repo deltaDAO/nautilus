@@ -1,74 +1,78 @@
-import type { TransactionReceipt } from '@ethersproject/abstract-provider'
+/**
+ * Direct contract operations that sit outside the publish/access/compute flows.
+ */
 import {
-  type Asset,
   type Config,
   FixedRateExchange,
   LoggerInstance,
-  type Service
+  Nft
 } from '@oceanprotocol/lib'
-import type { Signer } from 'ethers'
-import type { AccessDetails } from '../@types'
-import { getAccessDetails } from './helpers/access-details'
+import type { Signer, TransactionReceipt } from 'ethers'
+import { getDatatokenForService, getService } from '../ddo/read.js'
+import { confirmTransaction } from './order.js'
+import { getPricingInfo } from './pricing.js'
 
-export async function editPrice(
-  aquariusAsset: Asset,
-  serviceId: string,
-  newPrice: string,
-  chainConfig: Config,
+/**
+ * Changes the price of a fixed-rate service.
+ *
+ * The exchange id is read from chain rather than the subgraph. Only fixed-rate services can
+ * be repriced — a dispenser has no rate to set.
+ */
+export async function editPrice(params: {
+  asset: unknown
+  serviceId: string
+  newPrice: string
+  chainConfig: Config
   signer: Signer
-): Promise<TransactionReceipt> {
-  if (!aquariusAsset) {
-    throw new Error('[editPrice] Aquarius asset is undefined')
-  }
+}): Promise<TransactionReceipt> {
+  const { asset, serviceId, newPrice, chainConfig, signer } = params
 
-  if (!aquariusAsset.services || aquariusAsset.services.length === 0) {
-    throw new Error('[editPrice] Aquarius asset has no services')
-  }
+  if (!getService(asset, serviceId))
+    throw new Error(`The asset has no service with id ${serviceId}.`)
 
-  // Find the specific service by its id
-  const service: Service | undefined = aquariusAsset.services.find(
-    (service) => service.id === serviceId
-  )
+  const datatokenAddress = getDatatokenForService(asset, serviceId)
 
-  if (!service) {
+  if (!datatokenAddress)
     throw new Error(
-      '[editPrice] No matching service found for provided serviceId'
+      `Could not determine the datatoken for service ${serviceId}.`
     )
-  }
 
-  const fixedRateInstance = new FixedRateExchange(
-    chainConfig.fixedRateExchangeAddress,
+  const pricing = await getPricingInfo(signer, datatokenAddress, chainConfig)
+
+  if (pricing.schema !== 'fixed' || !pricing.exchangeId)
+    throw new Error(
+      `Service ${serviceId} is not priced by a fixed-rate exchange (it is '${pricing.schema}'), so its rate cannot be set.`
+    )
+
+  LoggerInstance.debug('[editPrice] setting rate', {
+    exchangeId: pricing.exchangeId,
+    newPrice
+  })
+
+  const exchange = new FixedRateExchange(
+    chainConfig.fixedRateExchangeAddress as string,
     signer
   )
 
-  let accessDetails: AccessDetails
-  try {
-    accessDetails = await getAccessDetails(
-      chainConfig.subgraphUri,
-      service.datatokenAddress
-    )
-  } catch (error) {
-    LoggerInstance.error(
-      `[editPrice] Error fetching access details: ${error.message}`
-    )
-    throw error
-  }
+  return confirmTransaction(
+    'setRate',
+    await exchange.setRate(pricing.exchangeId, newPrice)
+  )
+}
 
-  let txReceipt: TransactionReceipt
-  try {
-    const tx = await fixedRateInstance.setRate(
-      accessDetails.addressOrId,
-      newPrice
-    )
+/** Sets the NFT's metadata state, which is what marks an asset retired or unlisted. */
+export async function setMetadataState(params: {
+  nftAddress: string
+  state: number
+  chainConfig: Config
+  signer: Signer
+}): Promise<TransactionReceipt> {
+  const { nftAddress, state, chainConfig, signer } = params
 
-    // Wait for the transaction to be confirmed
-    txReceipt = await tx.wait()
-  } catch (error) {
-    LoggerInstance.error(
-      `[editPrice] Error setting new price (setRate): ${error.message}`
-    )
-    throw error
-  }
+  const nft = new Nft(signer, chainConfig.chainId, chainConfig)
 
-  return txReceipt
+  return confirmTransaction(
+    'setMetadataState',
+    await nft.setMetadataState(nftAddress, await signer.getAddress(), state)
+  )
 }

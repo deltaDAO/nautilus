@@ -1,0 +1,33 @@
+# getServices
+
+Read an asset's services.
+
+## Usage
+
+```ts twoslash
+import { Nautilus, getServices } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const asset = await nautilus.getAsset('did:ope:1234abcd...')
+
+const services = getServices(asset) // [!code focus]
+
+for (const service of services) {
+  console.log(service.id, service.type, service.name)
+}
+```
+
+## Returns
+
+- Type: `ServiceV5[]`
+
+In document order. To pick one deliberately, use
+[`getServiceByType`](/docs/api/ddo/getServiceByType) or
+[`getService`](/docs/api/ddo/getService).
+
+## Parameters
+
+### ddo
+
+- Type: `unknown`

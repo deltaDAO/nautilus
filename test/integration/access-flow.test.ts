@@ -1,88 +1,90 @@
-import assert from 'node:assert'
-import { Aquarius } from '@oceanprotocol/lib'
-import { expect } from 'chai'
-import { AssetBuilder, LogLevel, Nautilus } from '../../src/Nautilus'
+import { beforeAll, describe, expect, it } from 'vitest'
+import { getServices } from '../../src/ddo/read.js'
+import type { Nautilus } from '../../src/index.js'
 import {
-  FileTypes,
-  ServiceBuilder,
-  ServiceTypes
-} from '../../src/Nautilus/Asset/Service'
-import {
-  algorithmMetadata,
-  algorithmService,
-  getPricing
-} from '../fixtures/AssetConfig'
-import { getTestConfig } from '../fixtures/Config'
-import { TESTING_NODE_URI, getSigner } from '../fixtures/Ethers'
-import { nftParams } from '../fixtures/NftCreateData'
+  createConsumer,
+  createPublisher,
+  freeDataset,
+  integrationEnabled,
+  publishAndIndex
+} from './helpers.js'
 
-describe('Access Flow Integration', function () {
-  let downloadAssetDid: string
-  let serviceEndpoint: string
+describe('access', () => {
+  if (!integrationEnabled) {
+    it.skip('needs PRIVATE_KEY_TESTS_1/2 and NODE_URL to run', () => {})
+    return
+  }
 
-  this.timeout(70000)
+  let publisher: Nautilus
+  let consumer: Nautilus
+  let did: string
+  let serviceId: string
 
-  before(() => {
-    Nautilus.setLogLevel(LogLevel.Verbose)
+  beforeAll(async () => {
+    publisher = await createPublisher()
+    consumer = await createConsumer()
+
+    const published = await publishAndIndex(publisher, freeDataset())
+
+    did = published.ddo.id as string
+    serviceId = getServices(published.ddo)[0].id
   })
 
-  // 1. Publish Download Asset -> store did
-  it('publishes a download asset', async () => {
-    // Setup Nautilus instance for publisher (PRIVATE_KEY_TESTS_1)
-    const signer = getSigner(1, TESTING_NODE_URI)
-    const nautilus = await Nautilus.create(signer, await getTestConfig(signer))
+  it('orders a free service and returns a download URL', async () => {
+    const result = await consumer.access({ assetDid: did })
 
-    const { providerUri } = nautilus.getOceanConfig()
-    serviceEndpoint = providerUri
-
-    const serviceBuilder = new ServiceBuilder({
-      serviceType: ServiceTypes.ACCESS,
-      fileType: FileTypes.URL
-    })
-    const service = serviceBuilder
-      .setServiceEndpoint(serviceEndpoint)
-      .setTimeout(algorithmService.timeout)
-      .addFile(algorithmService.files[0])
-      .setPricing(await getPricing(signer, 'free'))
-      .build()
-
-    const assetBuilder = new AssetBuilder()
-    const asset = assetBuilder
-      .setAuthor('testAuthor')
-      .setDescription('A publishing test with custom userdata')
-      .setLicense('MIT')
-      .setName('Test Publish Algorithm')
-      .setOwner(await signer.getAddress())
-      .setType('algorithm')
-      .setNftData(nftParams)
-      .addService(service)
-      .setAlgorithm(algorithmMetadata.algorithm)
-      .build()
-
-    const result = await nautilus.publish(asset)
-
-    assert(result)
-
-    downloadAssetDid = result.ddo.id
+    expect(result.url).to.be.a('string').and.contain('http')
+    expect(result.did).to.equal(did)
+    expect(result.serviceId).to.equal(serviceId)
+    expect(result.transferTxId).to.be.a('string')
+    expect(result.reusedOrder).to.equal(false)
   })
 
-  // 2. Access the Download Asset (1.)
-  it('accesses a download asset', async () => {
-    // Setup Nautilus instance for consumer (PRIVATE_KEY_TESTS_2)
-    const signer = getSigner(2, TESTING_NODE_URI)
-    const nautilus = await Nautilus.create(signer, await getTestConfig(signer))
+  /**
+   * Skipped because ocean-node cannot currently satisfy it, not because the
+   * expectation is wrong.
+   *
+   * Order reuse depends on `initialize` reporting an existing valid order, but
+   * oe-ocean-node 3.2.21's access initialize returns only
+   * `{ providerFee, datatoken, nonce, computeAddress }` — there is no
+   * `validOrder` field for it to report (see FeesHandler). So
+   * `hasReusableOrder()` is always false and every access buys a datatoken
+   * again, even inside the service timeout. On a paid asset that means paying
+   * twice.
+   *
+   * Verified directly against the local stack: four accesses of the same asset
+   * over 20s each produced a new transferTxId.
+   *
+   * Un-skip when the node returns `validOrder` again — the v4 Provider did.
+   */
+  it.skip('reuses the existing order on a second access', async () => {
+    const result = await consumer.access({ assetDid: did })
 
-    // wait until ddo is found in metadata cache
-    const aquarius = new Aquarius(nautilus.getOceanConfig().metadataCacheUri)
-    console.log(
-      `Waiting for aquarius at ${aquarius.aquariusURL} to access ${downloadAssetDid}`
-    )
-    await aquarius.waitForIndexer(downloadAssetDid)
+    expect(result.reusedOrder).to.equal(true)
+  })
 
-    const accessUrl = await nautilus.access({
-      assetDid: downloadAssetDid
-    })
+  it('fetches the data behind the URL', async () => {
+    const { url } = await consumer.access({ assetDid: did })
+    const response = await fetch(url)
 
-    expect(accessUrl).to.match(new RegExp(serviceEndpoint))
+    expect(response.ok).to.equal(true)
+    expect((await response.text()).length).to.be.greaterThan(0)
+  })
+
+  it('accepts an explicit serviceId', async () => {
+    const result = await consumer.access({ assetDid: did, serviceId })
+
+    expect(result.serviceId).to.equal(serviceId)
+  })
+
+  it('names the asset when the serviceId does not exist', async () => {
+    let message = ''
+    try {
+      await consumer.access({ assetDid: did, serviceId: 'not-a-service' })
+    } catch (error) {
+      message = (error as Error).message
+    }
+
+    expect(message).to.contain('not-a-service')
   })
 })

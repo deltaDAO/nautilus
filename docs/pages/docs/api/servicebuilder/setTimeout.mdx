@@ -1,0 +1,27 @@
+# setTimeout
+
+Set how long an order stays valid, in seconds.
+
+`0` means the order never expires. Within the timeout, nautilus reuses an existing order instead of buying another datatoken.
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+// ---cut---
+serviceBuilder.setTimeout(86400) // one day // [!code focus]
+```
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.

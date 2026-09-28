@@ -1,0 +1,104 @@
+---
+searchPriority: 0
+---
+
+:::warning
+You are viewing the documentation for Nautilus **v1.1.0** (legacy). Switch to the [latest documentation](/docs/introduction), or follow the [migration guide](/docs/migration) to upgrade.
+:::
+
+# AssetBuilder
+
+With the `AssetBuilder` class you are able to use a typesafe API to build metadata for the assets you want to publish or edit.
+
+## Instantiate AssetBuilder
+
+There are two options on initialization of a new `AssetBuilder` instance.
+
+The first example simply instantiates a clean empty builder to start adding metadata to and *building* your asset.
+
+If you already have an asset published and rather want to toEditorSettings, you can use the `getAquariusAsset` method the fetch the existing metadata. The `AssetBuilder` then takes the `aquariusAsset` as parameter to prepare the editing.
+
+:::code-group
+```ts [create]
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder() // [!code focus]
+// => empty ddo object will be created
+```
+
+```ts [update]
+import { AssetBuilder, Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+const aquariusAsset = await nautilus.getAquariusAsset('did:op:2a6ebce0af9361e2c7d1e1e7909ecac3e4cabb4f089f7edd51865e0b77a5c216') // [!code focus]
+
+const assetBuilder = new AssetBuilder(aquariusAsset) // [!code focus]
+// => ddo:
+// => {
+// =>    id: 'did:op:2a6ebce0af9361e2c7d1e1e7909ecac3e4cabb4f089f7edd51865e0b77a5c216'
+// =>    nftAddress: '0xBB9Dd69845C51B95a39aec1537cC3027De1dAa53'
+// =>    metadata: {
+// =>      name: 'Nautilus-Example: Access Dataset Name',
+// =>      ...
+// =>    },
+// =>    ...
+// => }
+```
+:::
+
+## Using AssetBuilder to build metadata
+With the instance ready, it is now possible to build your metadata using the available methods. To finalize the process and receive a `NautilusAsset` object, you have to run the `build()` method.
+
+:::code-group
+```ts [create]
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+
+const asset = assetBuilder // [!code focus]
+      .setName('Nautilus edit Example: New name') // [!code focus]
+      .setAuthor('Author') // [!code focus]
+      .setDescription( // [!code focus]
+        '# Asset Description - Markdown supported' // [!code focus]
+      ) // [!code focus]
+      .build() // [!code focus]
+// => ddo:
+// => {
+// =>    metadata: {
+// =>      name: 'Nautilus edit Example: New name',
+// =>      author: 'Author',
+// =>      description: '# Asset Description - Markdown supported'
+// =>    }
+// => }
+```
+
+```ts [update]
+import { AssetBuilder, Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+const aquariusAsset = await nautilus.getAquariusAsset('did:op:2a6ebce0af9361e2c7d1e1e7909ecac3e4cabb4f089f7edd51865e0b77a5c216')
+
+const assetBuilder = new AssetBuilder(aquariusAsset)
+
+const asset = assetBuilder // [!code focus]
+      .setName('An Updated Asset Name') // [!code focus]
+      .build() // [!code focus]
+
+// => ddo:
+// => {
+// =>    id: 'did:op:2a6ebce0af9361e2c7d1e1e7909ecac3e4cabb4f089f7edd51865e0b77a5c216'
+// =>    nftAddress: '0xBB9Dd69845C51B95a39aec1537cC3027De1dAa53'
+// =>    metadata: {
+// =>      name: 'An Updated Asset Name',
+// =>      ...
+// =>    },
+// =>    ...
+// => }
+```
+:::
+
+With the built `asset` object you are now able to call the [`nautilus.publish()`](/v1/docs/guides/publish), [`nautilus.edit()`](/v1/docs/guides/edit) to publish your changes.
+
+To get a full overview of all `AssetBuilder` methods, head over to the [API documentation](/v1/docs/api/assetbuilder/build).

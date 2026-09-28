@@ -1,0 +1,160 @@
+# Ocean Node client [The escape hatch under every nautilus call]
+
+In v1 there were two services: Aquarius for metadata and Provider for everything else. v2
+talks to a single **ocean-node**, which serves metadata, provider services, the indexer and
+compute — which is why `metadataCacheUri` and `providerUri` collapsed into one
+`oceanNodeUri`.
+
+Most of the time nautilus wraps this for you. When it does not, take the client.
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const node = nautilus.getNodeClient() // [!code focus]
+
+const status = await node.getNodeStatus()
+```
+
+## Checking what you are pointed at
+
+Worth doing first when something behaves unexpectedly — a v1 Provider and an ocean-node
+answer on the same port but are not the same thing.
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const node = nautilus.getNodeClient()
+
+const ok = await node.isValidNode() // [!code focus]
+const status = await node.getNodeStatus() // [!code focus]
+```
+
+## Authentication
+
+The client accepts three forms of auth, expressed as `NodeAuth`:
+
+| Form | When |
+| --- | --- |
+| `Signer` | The default. Each call does a nonce-and-sign round trip. |
+| JWT auth token | Skips that round trip. **Requires `consumerAddress`**, because nautilus cannot decode the token. |
+| Pre-computed signature | You already hold `{ consumerAddress, signature, nonce }`. |
+
+Minting a token is worth it for anything doing many calls:
+
+```ts twoslash
+import { createAuthToken, revokeAuthToken } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+
+declare const signer: Wallet
+const nodeUri = 'https://ocean-node.dev.pontus-x.eu'
+// ---cut---
+const token = await createAuthToken(signer, nodeUri) // [!code focus]
+
+// … many calls later
+await revokeAuthToken(signer, token, nodeUri) // [!code focus]
+```
+
+:::warning
+`resolveConsumerAddress` throws for a JWT with no `consumerAddress` supplied — ocean.js does
+not re-export the `decodeJwt` helper that would let nautilus read it out of the token. Pass
+the address explicitly whenever you authenticate with a token.
+:::
+
+## Calls nautilus does not wrap
+
+### Files
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+const node = nautilus.getNodeClient()
+// ---cut---
+// What the node can see about a file, before you publish it.
+const info = await node.getFileInfo(
+  { type: 'url', url: 'https://data.example/x.csv', method: 'GET' } as never
+)
+
+// Whether a published asset's files are still readable.
+const check = await node.checkDidFiles('did:ope:1234abcd...', 'service-id') // [!code focus]
+```
+
+`checkDidFiles` is the quickest way to find out whether an asset has rotted — a file server
+that went away shows up here rather than at download time.
+
+### Buckets
+
+The node's persistent storage, which is what
+[`NodePersistentRemoteStore`](/docs/guides/remote-stores) uses underneath.
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+const node = nautilus.getNodeClient()
+// ---cut---
+const bucketId = await node.createBucket([], 'my-bucket') // [!code focus]
+
+// `content` is a request body stream, not a string — a web `ReadableStream`,
+// a Node stream or a `Blob` all work.
+await node.uploadFile(bucketId, 'notes.txt', new Blob(['hello']).stream()) // [!code focus]
+
+const object = await node.getFileObject(bucketId, 'notes.txt')
+```
+
+### Remote validation
+
+[Local validation](/docs/guides/validation) is what `publish` runs. If you also want the
+node's opinion:
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+const node = nautilus.getNodeClient()
+declare const ddo: Record<string, unknown>
+// ---cut---
+const result = await node.validateRemote(ddo) // [!code focus]
+```
+
+## Errors
+
+Every call is wrapped, so failures arrive as `OceanNodeError` with the operation named and
+the original error kept on `cause`.
+
+```ts twoslash
+import { OceanNodeError } from '@deltadao/nautilus'
+
+declare const run: () => Promise<unknown>
+// ---cut---
+try {
+  await run()
+} catch (error) {
+  if (error instanceof OceanNodeError) {
+    console.error(error.operation, error.message, error.cause) // [!code focus]
+  }
+}
+```
+
+## Building one directly
+
+You rarely need to — `Nautilus.create` builds it — but the constructor is public.
+
+```ts twoslash
+import { OceanNodeClient } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+
+declare const signer: Wallet
+// ---cut---
+const node = new OceanNodeClient({
+  nodeUri: 'https://ocean-node.dev.pontus-x.eu',
+  chainId: 32456,
+  auth: signer
+})
+```
+
+`nodeUri` also accepts a peerId or multiaddr, which switches it to the libp2p transport.

@@ -1,0 +1,32 @@
+# setOutputSchema
+
+Describe the output an algorithm service produces.
+
+New in DDO v5.
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.COMPUTE, FileTypes.URL>({
+  serviceType: ServiceTypes.COMPUTE
+})
+// ---cut---
+serviceBuilder.setOutputSchema({ // [!code focus]
+  name: 'output.schema.json', // [!code focus]
+  fileType: 'json', // [!code focus]
+  sha256: 'e3b0c44298fc1c149afbf4c8996fb924...', // [!code focus]
+  mirrors: [{ type: 'url', url: 'https://example.org/output.json', method: 'GET' }] // [!code focus]
+}) // [!code focus]
+```
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.

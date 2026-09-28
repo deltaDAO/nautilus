@@ -1,0 +1,27 @@
+# setNftData
+
+Set every NFT creation parameter at once.
+
+The individual setters — [`setNftTokenName`](/docs/api/assetbuilder/setNftTokenName) and friends — are usually easier; this replaces the whole object.
+
+## Usage
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+assetBuilder.setNftData({ // [!code focus]
+  name: 'My Data NFT', // [!code focus]
+  symbol: 'MY-NFT', // [!code focus]
+  templateIndex: 1, // [!code focus]
+  tokenURI: '', // [!code focus]
+  transferable: false // [!code focus]
+}) // [!code focus]
+```
+
+## Returns
+
+- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
+
+The asset builder instance, to chain further calls with.

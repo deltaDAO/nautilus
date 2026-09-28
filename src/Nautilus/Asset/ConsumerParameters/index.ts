@@ -1,2 +1,2 @@
-export * from './ConsumerParameterBuilder'
-export * from './NautilusConsumerParameter'
+export * from './ConsumerParameterBuilder.js'
+export * from './NautilusConsumerParameter.js'

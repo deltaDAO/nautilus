@@ -1,0 +1,164 @@
+{
+  "houses": [
+    {
+      "sqft": 1200,
+      "bedrooms": 3,
+      "bathrooms": 2,
+      "garage": true,
+      "year_built": 1995,
+      "price": 250000
+    },
+    {
+      "sqft": 2200,
+      "bedrooms": 4,
+      "bathrooms": 3,
+      "garage": true,
+      "year_built": 2005,
+      "price": 320000
+    },
+    {
+      "sqft": 800,
+      "bedrooms": 2,
+      "bathrooms": 1,
+      "garage": false,
+      "year_built": 1980,
+      "price": 180000
+    },
+    {
+      "sqft": 1700,
+      "bedrooms": 3,
+      "bathrooms": 2,
+      "garage": true,
+      "year_built": 2000,
+      "price": 270000
+    },
+    {
+      "sqft": 1450,
+      "bedrooms": 3,
+      "bathrooms": 2.5,
+      "garage": false,
+      "year_built": 2010,
+      "price": 290000
+    },
+    {
+      "sqft": 1900,
+      "bedrooms": 4,
+      "bathrooms": 2,
+      "garage": false,
+      "year_built": 2015,
+      "price": 310000
+    },
+    {
+      "sqft": 2100,
+      "bedrooms": 4,
+      "bathrooms": 3.5,
+      "garage": true,
+      "year_built": 2020,
+      "price": 340000
+    },
+    {
+      "sqft": 1000,
+      "bedrooms": 2,
+      "bathrooms": 1,
+      "garage": false,
+      "year_built": 1990,
+      "price": 200000
+    },
+    {
+      "sqft": 1600,
+      "bedrooms": 3,
+      "bathrooms": 1.5,
+      "garage": true,
+      "year_built": 2002,
+      "price": 260000
+    },
+    {
+      "sqft": 2300,
+      "bedrooms": 5,
+      "bathrooms": 3,
+      "garage": true,
+      "year_built": 2018,
+      "price": 350000
+    },
+    {
+      "sqft": 1150,
+      "bedrooms": 3,
+      "bathrooms": 1.5,
+      "garage": false,
+      "year_built": 1992,
+      "price": 240000
+    },
+    {
+      "sqft": 2000,
+      "bedrooms": 4,
+      "bathrooms": 2,
+      "garage": true,
+      "year_built": 1998,
+      "price": 280000
+    },
+    {
+      "sqft": 1300,
+      "bedrooms": 3,
+      "bathrooms": 2,
+      "garage": false,
+      "year_built": 1996,
+      "price": 255000
+    },
+    {
+      "sqft": 1850,
+      "bedrooms": 3,
+      "bathrooms": 2.5,
+      "garage": true,
+      "year_built": 2011,
+      "price": 295000
+    },
+    {
+      "sqft": 2200,
+      "bedrooms": 4,
+      "bathrooms": 2,
+      "garage": true,
+      "year_built": 2019,
+      "price": 325000
+    },
+    {
+      "sqft": 1100,
+      "bedrooms": 2,
+      "bathrooms": 1,
+      "garage": false,
+      "year_built": 1985,
+      "price": 210000
+    },
+    {
+      "sqft": 1650,
+      "bedrooms": 4,
+      "bathrooms": 1.5,
+      "garage": false,
+      "year_built": 2001,
+      "price": 265000
+    },
+    {
+      "sqft": 1550,
+      "bedrooms": 3,
+      "bathrooms": 2,
+      "garage": true,
+      "year_built": 1997,
+      "price": 275000
+    },
+    {
+      "sqft": 2050,
+      "bedrooms": 4,
+      "bathrooms": 2.5,
+      "garage": true,
+      "year_built": 2012,
+      "price": 300000
+    },
+    {
+      "sqft": 1800,
+      "bedrooms": 3,
+      "bathrooms": 2,
+      "garage": true,
+      "year_built": 2007,
+      "price": 285000
+    }
+  ]
+}

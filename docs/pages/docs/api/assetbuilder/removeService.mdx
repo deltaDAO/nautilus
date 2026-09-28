@@ -1,0 +1,21 @@
+# removeService
+
+Remove a published service from the asset.
+
+Only meaningful when editing. The service is dropped from the republished document; the datatoken itself is not destroyed.
+
+## Usage
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+assetBuilder.removeService('ccb398c50d6abd5b456e8d7242bd856a1767a890b537c2f8c10ba8b8a10e6025') // [!code focus]
+```
+
+## Returns
+
+- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
+
+The asset builder instance, to chain further calls with.

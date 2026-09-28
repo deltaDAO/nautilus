@@ -6,74 +6,38 @@
   ],
   "type": "module",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "start": "npm run clean && tsc -w",
-    "build": "npm run clean && npm run build:cjs && npm run build:esm && npm run build:types",
-    "build:cjs": "tsc --project ./tsconfig.build.json --module commonjs --outDir ./src/_cjs --removeComments --verbatimModuleSyntax false && printf '{\"type\":\"commonjs\"}' > ./src/_cjs/package.json",
-    "build:esm": "tsc --project ./tsconfig.build.json --module es2015 --outDir ./src/_esm && printf '{\"type\": \"module\",\"sideEffects\":false}' > ./src/_esm/package.json",
-    "build:types": "tsc --project ./tsconfig.build.json --module esnext --declarationDir ./src/_types --emitDeclarationOnly --declaration --declarationMap",
+    "build": "npm run clean && npm run build:esm && npm run build:types",
+    "build:esm": "tsc --project ./tsconfig.build.json --module nodenext --outDir ./src/_esm --declaration false --declarationMap false --sourceMap false && printf '{\"type\": \"module\",\"sideEffects\":false}' > ./src/_esm/package.json",
+    "build:types": "tsc --project ./tsconfig.build.json --module nodenext --declarationDir ./src/_types --emitDeclarationOnly --declaration --declarationMap false",
     "changeset": "changeset",
-    "changeset:publish": "npm run prepublishOnly && npm run build && changeset publish",
+    "changeset:publish": "npm run build && changeset publish",
     "changeset:version": "changeset version && npm install --package-lock-only",
-    "clean": "rimraf src/_cjs src/_esm src/_types",
+    "clean": "node -e \"const fs=require('node:fs');for(const d of ['src/_esm','src/_types'])fs.rmSync(d,{recursive:true,force:true})\"",
     "docs:build": "cd docs && npm run build",
     "docs:dev": "cd docs && npm run dev",
     "docs:preview": "cd docs && npm run preview",
     "format": "biome format . --write",
-    "generate:graphql": "graphql-codegen",
     "lint": "biome check .",
-    "lint:fix": "npm run lint -- --apply",
-    "mocha": "TS_NODE_PROJECT='./test/tsconfig.json' mocha --config=test/.mocharc.json --node-env=test --exit",
-    "prepublishOnly": "node scripts/prepublishOnly.js",
-    "test": "npm run lint && npm run mocha -- test/**/*.test.ts test/*.test.ts",
-    "test:mocha": "npm run mocha -- test/**/*.test.ts",
-    "test:mocha:unit": "npm run mocha -- test/unit/**/*.test.ts",
-    "test:mocha:integration": "npm run mocha -- test/integration/**/*.test.ts",
+    "lint:fix": "biome check . --fix",
+    "start": "tsc --noEmit --watch",
+    "test": "npm run lint && npm run typecheck && npm run test:unit",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:unit": "vitest run",
+    "test:unit:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
     "typecheck": "tsc --noEmit && cd test && tsc --noEmit"
   },
   "devDependencies": {
-    "@biomejs/biome": "^1.9.4",
-    "@changesets/changelog-github": "^0.5.0",
-    "@changesets/cli": "^2.27.1",
-    "@graphql-codegen/cli": "^5.0.3",
-    "@graphql-codegen/near-operation-file-preset": "^2.5.0",
-    "@graphql-codegen/typescript": "^4.1.2",
-    "@graphql-codegen/typescript-operations": "^4.4.0",
-    "@types/chai": "^4.3.20",
-    "@types/mocha": "^10.0.10",
-    "@types/node": "^18.19.71",
-    "@types/sinon": "^10.0.16",
-    "chai": "^4.5.0",
-    "dotenv": "^16.4.7",
-    "mocha": "^10.8.2",
-    "rimraf": "^5.0.10",
-    "sinon": "^15.2.0",
-    "ts-node": "^9.1.1",
-    "typescript": "^5.7.3"
-  },
-  "codegen": {
-    "schema": "https://v4.subgraph.goerli.oceanprotocol.com/subgraphs/name/oceanprotocol/ocean-subgraph",
-    "documents": "./src/**/*.gql.ts",
-    "generates": {
-      "./src/@types/subgraph/api.ts": {
-        "plugins": [
-          "typescript"
-        ]
-      },
-      "./src/": {
-        "preset": "near-operation-file",
-        "presetConfig": {
-          "baseTypesPath": "@types/subgraph/api.ts",
-          "extension": ".generated.ts"
-        },
-        "plugins": [
-          "typescript-operations"
-        ],
-        "config": {
-          "omitOperationSuffix": true,
-          "typesPrefix": "I"
-        }
-      }
-    }
+    "@biomejs/biome": "^2.5.11",
+    "@changesets/changelog-github": "^1.0.0",
+    "@changesets/cli": "^3.0.1",
+    "@types/node": "^26.4.0",
+    "@vitest/coverage-v8": "^4.1.11",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
   }
 }
