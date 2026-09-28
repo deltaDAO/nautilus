@@ -1,7 +1,7 @@
 name: Changesets
 on:
   push:
-    branches: [main]
+    branches: [main, development]
   workflow_dispatch:
 
 # Every job declares exactly what it needs. Only the two jobs that publish, `publish`
@@ -159,16 +159,17 @@ jobs:
           pack-dir-artifact-id: ${{ needs.pack.outputs.pack-dir-artifact-id }}
           create-github-releases: true
 
-  # A snapshot of every push to main, published as 0.0.0-main.<timestamp> under the
-  # `main` dist-tag, i.e. `npm i @deltadao/nautilus@main`. Push events only, and skipped
-  # when the same push is a real release, so the two never publish side by side. Built
-  # and packed here without any credential; the publish happens in the minimal job below.
+  # A snapshot of every push, published as 0.0.0-<branch>.<timestamp> under the branch
+  # name as dist-tag, e.g. `npm i @deltadao/nautilus@main`. Only on push events for the
+  # two branches, and skipped when the same push to main is a real release, so the two
+  # never publish side by side. Built and packed here without any credential; the
+  # publish happens in the minimal job below.
   canary-pack:
     name: Pack canary
     if: >-
       github.event_name == 'push' &&
-      github.ref == 'refs/heads/main' &&
-      needs.select-mode.outputs.mode != 'publish'
+      (github.ref == 'refs/heads/development' ||
+       (github.ref == 'refs/heads/main' && needs.select-mode.outputs.mode != 'publish'))
     needs: [verify, select-mode]
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -232,7 +233,8 @@ jobs:
     needs: canary-pack
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # Deployment branches: main only. Registered on npm as the canary trusted publisher.
+    # Deployment branches: main and development. Registered on npm as the canary
+    # trusted publisher.
     environment: npm-canary
     permissions:
       contents: read
