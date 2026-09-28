@@ -1,4 +1,4 @@
-import type { AssetV5 } from '@oceanprotocol/ddo-js'
+import type { AssetV5 } from '../../src/ddo/index.js'
 import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
 
 /**

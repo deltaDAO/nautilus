@@ -1,5 +1,5 @@
-import type { MetadataV5, ServiceV5 } from '@oceanprotocol/ddo-js'
 import { describe, expect, it } from 'vitest'
+import type { MetadataV5, ServiceV5 } from '../../src/ddo/index.js'
 import { project } from '../../src/ddo/project.js'
 
 /** The projected metadata, for tests that need to break a required field. */

@@ -1,6 +1,6 @@
-import type { AssetV5 } from '@oceanprotocol/ddo-js'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { LifecycleStates } from '../../src/@types/Nautilus.js'
+import type { AssetV5 } from '../../src/ddo/index.js'
 import { fromLanguageValue } from '../../src/ddo/language.js'
 import {
   getCredentials,

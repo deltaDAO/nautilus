@@ -4,10 +4,10 @@
  *
  * Two reasons this file exists:
  *
- * 1. `@oceanprotocol/ddo-js` re-exports its DDO5 credential module with *named* exports
- *    only, so `CredentialPolicyBased`, `RequestCredential`, `Policy`, the v5 `Credentials`
- *    wrapper, `License` and friends are unreachable from the package. Unqualified
- *    `Credential`/`Credentials` resolve to the **v4** shapes.
+ * 1. `@oceanprotocol/ddo-js` re-exports its DDO5 credential and metadata modules with
+ *    *named* exports only, so `CredentialPolicyBased`, `RequestCredential`, `Policy`, the
+ *    v5 `Credentials` wrapper and `License` are unreachable from the package root.
+ *    Unqualified `Credential`/`Credentials` resolve to the **v4** shapes.
  * 2. The declared v5 credential type (`type: 'verifiableCredential'` with
  *    `requestCredentials`) is not what the policy server parses. It only understands
  *    `type: 'SSIpolicy'` with `values: [{ request_credentials, vc_policies, vp_policies }]`
@@ -16,7 +16,11 @@
  *
  * The types below follow the running stack. Where ddo-js and the stack disagree, the
  * stack wins.
+ *
+ * Anything ddo-js *does* expose is taken from there rather than re-declared here — see
+ * `./ddo-js.ts`.
  */
+import type { RemoteObject } from '@oceanprotocol/ddo-js'
 
 // #region policies
 
@@ -100,36 +104,27 @@ export enum CredentialListTypes {
 
 // #endregion
 
-// #region metadata pieces ddo-js does not export
+// #region metadata pieces
 
-/** A language-tagged string. v5 uses these wherever v4 used a plain `string`. */
-export interface LanguageValue {
-  '@value': string
-  '@language': string
-  '@direction': string
-}
+/**
+ * Taken from ddo-js rather than re-declared: its root star-exports `DDO5/Remote.js`, so
+ * unlike the credential module these three are reachable.
+ *
+ * `LanguageValue` — a language-tagged string, used wherever v4 used a plain `string` — is
+ * ddo-js's `LanguageValueObject` under the name nautilus has always exposed.
+ */
+export type {
+  LanguageValueObject as LanguageValue,
+  RemoteObject,
+  RemoteSource
+} from '@oceanprotocol/ddo-js'
 
-/** One retrievable location for a `RemoteObject`. */
-export interface RemoteSource {
-  type: string
-  url?: string
-  method?: string
-  headers?: string | Record<string, string | number | boolean>
-  ipfsCid?: string
-}
-
-/** A referenced document — license text, attachment, or a data/input/output schema. */
-export interface RemoteObject {
-  name: string
-  displayName?: LanguageValue
-  description?: LanguageValue
-  fileType: string
-  sha256: string
-  mirrors: RemoteSource[]
-  additionalInformation?: Record<string, string | number | boolean>
-}
-
-/** v5 replaced the plain `license: string` with a structured object. */
+/**
+ * v5 replaced the plain `license: string` with a structured object.
+ *
+ * Identical to ddo-js's `License`, but unreachable: `DDO5/Metadata.js` is exported as
+ * `{ Metadata as MetadataV5 }` only, so nothing else in that module escapes the package.
+ */
 export interface License {
   name: string
   ODRL?: unknown

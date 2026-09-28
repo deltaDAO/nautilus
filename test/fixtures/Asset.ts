@@ -1,4 +1,4 @@
-import type { AssetV5 } from '@oceanprotocol/ddo-js'
+import type { AssetV5 } from '../../src/ddo/index.js'
 
 /**
  * A published DDO v5 asset, shaped like the ones ocean-node actually returns.

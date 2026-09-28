@@ -1,4 +1,4 @@
-import type { AssetV5, ServiceV5, State } from '@oceanprotocol/ddo-js'
+import type { AssetV5, State } from '@oceanprotocol/ddo-js'
 import type { Config } from '@oceanprotocol/lib'
 import type {
   ConsumerParameterV5,
@@ -191,4 +191,4 @@ export type MetadataAlgorithmConfig = NonNullable<
 export type CredentialListTypesAlias =
   import('../ddo/types.js').CredentialListTypes
 
-export type { AssetV5, Config, DdoCredentials, ServiceV5 }
+export type { Config, DdoCredentials }

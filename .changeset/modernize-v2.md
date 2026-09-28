@@ -31,6 +31,9 @@ library all changed underneath.
   streamable logs and results.
 - **Local DDO validation** via ddo-js SHACL, before any gas is spent.
 - **`strict` TypeScript** is enabled, and ethers v6 is required.
+- **DDO v5 types from the package root.** nautilus re-exports the ddo-js v5 types its API
+  surfaces — `AssetV5`, `ServiceV5`, `MetadataV5`, `State` and friends — so consumers need no
+  direct `@oceanprotocol/ddo-js` dependency and never have to dedupe it.
 - **No install-time patching.** nautilus requires `@oceanprotocol/ddo-js` ^1.0.0, whose
   `exports` map carries `types` conditions, so its declarations resolve under `nodenext`,
   `node16` and `bundler` unaided. The `postinstall` hook that used to rewrite the installed

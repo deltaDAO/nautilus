@@ -5,7 +5,7 @@
  * `settleOrder` is mocked, so these tests exercise exactly the logic that broke —
  * which service an input resolves to, and which order id ends up on which input.
  */
-import type { AssetV5 } from '@oceanprotocol/ddo-js'
+
 import type {
   ComputeAlgorithm,
   ComputeAsset,
@@ -16,6 +16,7 @@ import type { Signer } from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComputeConfig } from '../../src/@types/Compute.js'
 import { compute } from '../../src/compute/index.js'
+import type { AssetV5 } from '../../src/ddo/index.js'
 import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
 import {
   ASSET_DID,

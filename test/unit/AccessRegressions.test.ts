@@ -6,12 +6,13 @@
  * node that cannot decrypt the file object, and a missing policy server that killed the
  * whole flow instead of degrading to "SSI unavailable".
  */
-import type { AssetV5 } from '@oceanprotocol/ddo-js'
+
 import type { Config } from '@oceanprotocol/lib'
 import { allowanceWei, approveWei, ProviderInstance } from '@oceanprotocol/lib'
 import type { Signer } from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { access, settleOrder } from '../../src/access/index.js'
+import type { AssetV5 } from '../../src/ddo/index.js'
 import { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
 import { order, reuseOrder } from '../../src/utils/order.js'
 import {

@@ -1,6 +1,6 @@
-import type { ServiceV5 } from '@oceanprotocol/ddo-js'
 import { DDOManager } from '@oceanprotocol/ddo-js'
 import { describe, expect, it } from 'vitest'
+import type { ServiceV5 } from '../../src/ddo/index.js'
 import { fromLanguageValue, toLanguageValue } from '../../src/ddo/language.js'
 import {
   DDO_VERSION,

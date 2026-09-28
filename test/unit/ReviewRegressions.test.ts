@@ -6,8 +6,9 @@
  * wrong question. They live together because they are one review's worth of findings; the
  * behaviours themselves belong to the modules named in each `describe`.
  */
-import type { AssetV5 } from '@oceanprotocol/ddo-js'
+
 import { describe, expect, it } from 'vitest'
+import type { AssetV5 } from '../../src/ddo/index.js'
 import {
   getDatatokenForService,
   getStatsForService
