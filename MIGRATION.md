@@ -12,18 +12,19 @@ This is a call-by-call map. If something is not listed, it did not change.
 - "@oceanprotocol/lib": "3.4.6",
 - "ethers": "^5.7.2"
 + "@oceanprotocol/lib": "^9.2.1",
-+ "@oceanprotocol/ddo-js": "^1.0.0",
 + "ethers": "^6.17.0"
 ```
 
-`@oceanprotocol/lib` re-exports only the **v4** `DDO` type, so DDO v5 types come from
-`@oceanprotocol/ddo-js` directly. nautilus requires `^1.0.0`, whose `exports` map carries
-`types` conditions, so its declarations resolve under `nodenext`, `node16` and `bundler`.
+`@oceanprotocol/lib` re-exports only the **v4** `DDO` type. The DDO v5 types — `AssetV5`,
+`ServiceV5`, `MetadataV5` and the rest — are exported by `@deltadao/nautilus` itself, so you
+do not need a direct `@oceanprotocol/ddo-js` dependency:
 
-ocean.js main already depends on `^1.0.0`, so once its next release ships a normal install
-has a single copy. Until then, ocean.js 9.2.1 still asks for `^0.4.1` and npm nests that copy
-under `@oceanprotocol/lib`. It is harmless — at runtime it differs only in the DDO schema
-tightening described below — and needs no override.
+```ts
+import type { AssetV5, MetadataV5, ServiceV5 } from '@deltadao/nautilus'
+```
+
+ocean.js 9.2.1 still nests an older ddo-js under `@oceanprotocol/lib` for its own internals.
+It is harmless and needs no override.
 
 DDO v5 now requires a `credentials` object on the asset and on every service (ddo-js 1.0.0).
 The builders always emit one (`{}` when no access rules are set), so this only matters if you

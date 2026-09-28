@@ -37,7 +37,8 @@ you are changing metadata anyway, and this when the state is all you want to cha
 | `4` | `ORDERING_DISABLED_TEMPORARILY` | Visible, but cannot be ordered. |
 | `5` | `ASSET_UNLISTED` | Accessible by DID, hidden from markets. |
 
-DDO v5 exports the same values as `State` from `@oceanprotocol/ddo-js`; both are accepted.
+DDO v5's `State` enum carries the same values and is accepted too. nautilus re-exports it as a
+type only, so pass `LifecycleStates` members when you need a value.
 
 ## Returns
 

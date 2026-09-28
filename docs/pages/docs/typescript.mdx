@@ -56,37 +56,26 @@ import { AssetBuilder } from '@deltadao/nautilus/dist/AssetBuilder' // [!code --
 `moduleResolution: "node"` (the TypeScript 4 default) cannot read the `exports` map and will
 report that the module has no declarations.
 
-## `@oceanprotocol/ddo-js`
+## DDO v5 types
 
-DDO v5 types come from `@oceanprotocol/ddo-js`, because `@oceanprotocol/lib` re-exports only
-the **v4** `DDO` type. nautilus requires `^1.0.0`, whose `exports` map carries `types`
-conditions, so its declarations resolve under `nodenext`, `node16` and `bundler` unaided.
-Releases before 0.5.0, 0.4.1 included, ship an `exports` map with no `types` condition, and
-once a package defines `exports` TypeScript stops reading the top-level `types` field: the
-bundled declarations become unreachable and every import degrades to `any` (TS7016 under
-`strict`).
+`@oceanprotocol/lib` re-exports only the **v4** `DDO` type, so the DDO v5 types come from
+`@oceanprotocol/ddo-js`. You do not install it: nautilus re-exports the v5 types its own API
+hands back, so they are imported from the package root like everything else:
 
-ocean.js main already depends on `^1.0.0`, so once its next release ships a normal install
-has a single copy. Until then, ocean.js 9.2.1 still asks for `^0.4.1`, and npm nests that copy
-under it:
-
-```text
-@deltadao/nautilus  ->  @oceanprotocol/ddo-js@1.0.0   # hoisted — what your imports resolve to
-@oceanprotocol/lib  ->  @oceanprotocol/ddo-js@0.4.1   # nested — ocean.js internals only
+```ts twoslash
+import type { AssetV5, MetadataV5, ServiceV5, State } from '@deltadao/nautilus'
 ```
 
-That is the tree nautilus itself builds and tests against, and it needs no override: the
-nested copy is only used inside ocean.js, and differs from 1.0.0 at runtime only in the
-stricter DDO schema. What matters is that *your* imports land on 1.0.0. If they resolved to
-0.4.1, every `@oceanprotocol/ddo-js` import would report TS7016. Check which copy you got:
+`AlgorithmV5`, `CredentialV5`, `Compute`, `PublisherTrustedAlgorithms`, `VersionedDDO`,
+`IndexedMetadata`, `AssetDatatoken`, `Stats` and `ValidateMetadata` come through the same
+door, alongside the v5 vocabulary nautilus declares or renames itself — `License`,
+`RemoteObject`, `RemoteSource`, `LanguageValue` and `ConsumerParameterV5`.
 
-```sh
-npx tsc --noEmit --traceResolution | grep '@oceanprotocol/ddo-js'
-```
-
-If you need a single copy before the next ocean.js release, an npm `overrides` entry for
-`@oceanprotocol/ddo-js` does it, at the cost of `npm ls` flagging ocean.js's copy as
-`invalid`. It is not required.
+:::info
+ddo-js is nautilus's dependency, not yours. nautilus requires `^1.0.0` because releases
+before 0.5.0 ship an `exports` map with no `types` condition, which leaves their declarations
+unreachable under `nodenext` and `bundler` — every import degrades to `any`.
+:::
 
 ## Type-only exports
 

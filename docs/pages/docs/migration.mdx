@@ -17,18 +17,19 @@ New to nautilus rather than upgrading? Start with
 "@oceanprotocol/lib": "3.4.6", // [!code --]
 "ethers": "^5.7.2" // [!code --]
 "@oceanprotocol/lib": "^9.2.1", // [!code ++]
-"@oceanprotocol/ddo-js": "^1.0.0", // [!code ++]
 "ethers": "^6.17.0" // [!code ++]
 ```
 
-`@oceanprotocol/lib` re-exports only the **v4** `DDO` type, so DDO v5 types come from
-`@oceanprotocol/ddo-js` directly. Take `^1.0.0`: releases before 0.5.0 ship an `exports` map
-with no `types` conditions, which leaves the declarations unreachable.
+`@oceanprotocol/lib` re-exports only the **v4** `DDO` type. The DDO v5 types — `AssetV5`,
+`ServiceV5`, `MetadataV5` and the rest — are exported by `@deltadao/nautilus` itself, so you
+do not need a direct `@oceanprotocol/ddo-js` dependency:
 
-ocean.js main already depends on `^1.0.0`, so once its next release ships a normal install
-has a single copy. Until then, ocean.js 9.2.1 still asks for `^0.4.1`, and npm nests that copy
-under `@oceanprotocol/lib` for ocean.js internals. It is harmless and needs no override. See
-[TypeScript](/docs/typescript) for how to confirm which copy your imports resolve to.
+```ts twoslash
+import type { AssetV5, MetadataV5, ServiceV5 } from '@deltadao/nautilus'
+```
+
+ocean.js 9.2.1 still nests an older ddo-js under `@oceanprotocol/lib` for its own internals.
+It is harmless and needs no override.
 
 ddo-js 1.0.0 also makes `credentials` mandatory on the asset and on every service. The
 builders always emit one (`{}` when no access rules are set), so this only affects DDOs you
