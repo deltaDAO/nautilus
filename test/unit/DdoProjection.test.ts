@@ -27,7 +27,7 @@ const service: ServiceV5 = {
   files: 'encrypted',
   timeout: 86400,
   state: 0,
-  credentials: [] as unknown as ServiceV5['credentials']
+  credentials: {} as ServiceV5['credentials']
 }
 
 function baseState() {
@@ -243,6 +243,27 @@ describe('mergeServices', () => {
       SERVICE_ID,
       'second-service'
     ])
+  })
+
+  it('gives a kept baseline service without credentials an empty object', () => {
+    const { credentials: _, ...bare } = service
+    const [kept] = mergeServices([bare as ServiceV5], [])
+
+    expect(kept.credentials).to.deep.equal({})
+  })
+
+  it('normalizes a kept baseline service with legacy array credentials', () => {
+    const legacy = {
+      ...service,
+      credentials: [
+        { type: 'address', values: ['0x1'] }
+      ] as unknown as ServiceV5['credentials']
+    }
+    const [kept] = mergeServices([legacy], [])
+
+    expect(kept.credentials).to.deep.equal({
+      allow: [{ type: 'address', values: ['0x1'] }]
+    })
   })
 
   it('drops removed ids', () => {

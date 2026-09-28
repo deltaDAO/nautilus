@@ -11,6 +11,7 @@ import {
   type ServiceV5
 } from '@oceanprotocol/ddo-js'
 import { type LanguageOptions, toLanguageValue } from './language.js'
+import { getServiceCredentials } from './read.js'
 import type {
   DdoCredentials,
   LanguageValue,
@@ -228,6 +229,11 @@ export function stripDerivedFields(
 /**
  * Replaces services by id, keeping any baseline service that was not rebuilt and dropping
  * the ids in `removed`.
+ *
+ * A kept baseline service has its `credentials` normalized to the object form. The v5
+ * shape (ddo-js 1.0.0) requires every service to carry a `credentials` object, and older
+ * assets can have none, or the legacy array form, which would otherwise fail validation on
+ * an edit that never touched that service.
  */
 export function mergeServices(
   baselineServices: ServiceV5[],
@@ -243,11 +249,23 @@ export function mergeServices(
     .filter((service) => !dropped.has(service.id))
     .map((service) => {
       const replacement = replacements.get(service.id)
-      if (!replacement) return service
+      if (!replacement) return withCredentialsObject(service)
 
       replacements.delete(service.id)
       return replacement
     })
 
   return [...merged, ...replacements.values()]
+}
+
+function withCredentialsObject(service: ServiceV5): ServiceV5 {
+  const raw = service.credentials as unknown
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) return service
+
+  return {
+    ...service,
+    credentials: getServiceCredentials(
+      service
+    ) as unknown as ServiceV5['credentials']
+  }
 }

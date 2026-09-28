@@ -25,7 +25,8 @@ const service = {
   files: 'encrypted',
   timeout: 86400,
   state: 0,
-  credentials: []
+  // What ServiceBuilder emits when no access rules are set.
+  credentials: {}
 } as unknown as ServiceV5
 
 function buildDdo(metadataOverrides: Record<string, unknown> = {}) {
@@ -69,6 +70,30 @@ describe('local DDO validation', () => {
 
     expect(valid).to.equal(false)
     expect(Object.keys(errors)).to.include('name')
+  })
+
+  // The v5 shape requires `credentials` on the asset and on every service (ddo-js
+  // 1.0.0). An empty object, which is what the builders emit, is enough.
+  it('rejects a DDO whose asset has no credentials', async () => {
+    const ddo = buildDdo()
+    delete (ddo.credentialSubject as Record<string, unknown>).credentials
+
+    const { valid, errors } = await validate(ddo)
+
+    expect(valid).to.equal(false)
+    expect(errors.credentials?.join(' ')).to.match(/less than 1 values/i)
+  })
+
+  it('rejects a DDO with a service that has no credentials', async () => {
+    const ddo = buildDdo()
+    const subject = ddo.credentialSubject as { services: ServiceV5[] }
+    const { credentials: _, ...bare } = subject.services[0]
+    subject.services = [bare as ServiceV5]
+
+    const { valid, errors } = await validate(ddo)
+
+    expect(valid).to.equal(false)
+    expect(errors.credentials?.join(' ')).to.match(/less than 1 values/i)
   })
 
   // Worth an explicit test: ddo-js computes this check but discards it when the SHACL
