@@ -16,3 +16,9 @@ updates:
     directory: "/"
     schedule:
       interval: "monthly"
+
+  # The composite action pins actions too; Dependabot only sees it with its own entry.
+  - package-ecosystem: "github-actions"
+    directory: "/.github/actions/install-dependencies"
+    schedule:
+      interval: "monthly"
