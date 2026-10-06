@@ -1,38 +1,179 @@
-name: Release (Canary)
+name: Canary
+# A snapshot of every push to main or development, published as
+# 0.0.0-<branch>.<timestamp> under the branch name as dist-tag, so
+# `npm i @deltadao/nautilus@main` or `@development` gives the latest build of that
+# branch. Releases are changeset.yml's job; this file exists separately because npm
+# allows one trusted publisher per workflow file.
 on:
   push:
     branches: [main, development]
-  workflow_dispatch:
+
+# Only `canary-publish` gets `id-token: write`, inside the `npm-canary` environment.
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  canary:
-    name: Release canary
+  verify:
+    name: Verify
+    uses: ./.github/workflows/verify.yml
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+    permissions:
+      contents: read
+
+  # Same decision changeset.yml makes: `publish` means this push to main is a release.
+  select-mode:
+    name: Select mode
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      mode: ${{ steps.select-mode.outputs.mode }}
 
     steps:
       - name: Clone repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
 
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
 
-      - name: Setup .npmrc file
-        uses: actions/setup-node@v5
-        with:
-          registry-url: 'https://registry.npmjs.org'
+      - name: Select Changesets mode
+        id: select-mode
+        uses: changesets/action/select-mode@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
 
+  # Built and packed without any credential; the publish happens in the minimal job
+  # below. Skipped when the same push to main is a real release (see select-mode), so a
+  # canary and a release never publish side by side.
+  canary-pack:
+    name: Pack canary
+    if: >-
+      github.ref == 'refs/heads/development' ||
+      (github.ref == 'refs/heads/main' && needs.select-mode.outputs.mode != 'publish')
+    needs: [verify, select-mode]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      node-version: ${{ steps.node.outputs.version }}
+
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install dependencies
+        uses: ./.github/actions/install-dependencies
+
+      # The publish job below has no checkout, so it cannot read .nvmrc itself.
+      - name: Read Node version
+        id: node
+        run: echo "version=$(tr -d '[:space:]' < .nvmrc)" >> "$GITHUB_OUTPUT"
+
+      # The branch name doubles as the dist-tag, reduced to what npm accepts in a tag.
+      # Names that would land on a release channel are refused outright.
+      # `--no-workspaces-update` keeps npm from rewriting the root lockfile while it
+      # bumps the workspace package; nothing here is committed, but it keeps the step
+      # to the one file it is about.
       - name: Set version
+        id: version
+        working-directory: src
+        env:
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          jq --arg prop "workspaces" 'del(.[$prop])' package.json > package.tmp.json && rm package.json && cp package.tmp.json package.json && rm package.tmp.json
-          cd src
-          npm --no-git-tag-version version 0.0.0
-          npm --no-git-tag-version version $(npm pkg get version | sed 's/"//g')-$(git branch --show-current | tr -cs '[:alnum:]-' '-' | tr '[:upper:]' '[:lower:]' | sed 's/-$//').$(date +'%Y%m%dT%H%M%S')
+          tag=$(printf '%s' "$REF_NAME" | tr -cs '[:alnum:]-' '-' | tr '[:upper:]' '[:lower:]' | sed 's/-$//')
+          case "$tag" in
+            ''|latest|beta|next|alpha|rc|canary)
+              echo "::error::refusing to publish a canary under dist-tag '$tag'"
+              exit 1
+              ;;
+          esac
+          version="0.0.0-$tag.$(date -u +%Y%m%dT%H%M%S)"
+          npm version --no-git-tag-version --no-workspaces-update "$version"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Build
         run: npm run build
 
-      - name: Publish to npm
-        run: cd src && npm publish --tag $(git branch --show-current | tr -cs '[:alnum:]-' '-' | tr '[:upper:]' '[:lower:]' | sed 's/-$//')
+      - name: Pack
+        working-directory: src
+        run: mkdir -p ../canary && npm pack --pack-destination ../canary
+
+      - name: Upload tarball
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: canary-tarball
+          path: canary/*.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  canary-publish:
+    name: Publish canary
+    needs: canary-pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Deployment branches: main and development. Registered on npm as the trusted
+    # publisher for canary.yml.
+    environment: npm-canary
+    permissions:
+      contents: read
+      # npm trusted publishing (OIDC), see `publish`.
+      id-token: write
+
+    steps:
+      # Same Node as everywhere else, taken from .nvmrc by the pack job: this job has
+      # no checkout on purpose.
+      - name: Set up npm
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: ${{ needs.canary-pack.outputs.node-version }}
+          package-manager-cache: false
+
+      - name: Check npm version
+        run: |
+          have=$(npm --version)
+          if ! printf '11.5.1\n%s\n' "$have" | sort -V -C; then
+            echo "::error::npm $have is older than 11.5.1, which trusted publishing requires"
+            exit 1
+          fi
+
+      - name: Download tarball
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.canary-pack.outputs.artifact-id }}
+          path: canary
+          merge-multiple: true
+
+      # No checkout and no install: the only input is the tarball built above, and
+      # provenance is attached automatically under trusted publishing.
+      - name: Publish
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TAG: ${{ needs.canary-pack.outputs.tag }}
+        run: npm publish canary/*.tgz --tag="$TAG"
+
+      - name: Verify provenance
+        env:
+          SPEC: '@deltadao/nautilus@${{ needs.canary-pack.outputs.version }}'
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            url=$(npm view "$SPEC" dist.attestations.url 2>/dev/null || true)
+            [ -n "$url" ] && break
+            sleep 10
+          done
+          if [ -z "$url" ]; then
+            echo "::error::$SPEC was published without a provenance attestation"
+            exit 1
+          fi
+          echo "$SPEC: $url"
