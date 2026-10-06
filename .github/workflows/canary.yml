@@ -170,11 +170,12 @@ jobs:
         # take minutes to show up in the registry metadata.
         run: |
           found=false
-          for attempt in $(seq 1 40); do
+          # Checks at 0s, 15s, ... 600s, without sleeping after the last one.
+          for attempt in $(seq 1 41); do
+            if [ "$attempt" -gt 1 ]; then sleep 15; fi
             # Exit status, not output: with --json a 404 is printed to stdout.
             if dist=$(npm view "$SPEC" dist --json 2>/dev/null); then found=true; break; fi
-            echo "$SPEC not visible on the registry yet (attempt $attempt/40)"
-            sleep 15
+            echo "$SPEC not visible on the registry yet (attempt $attempt/41)"
           done
           if [ "$found" != true ]; then
             echo "::error::$SPEC did not appear on the registry within 10 minutes"

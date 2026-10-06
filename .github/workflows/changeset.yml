@@ -174,11 +174,13 @@ jobs:
         run: |
           for spec in $(printf '%s' "$PUBLISHED" | jq -r '.[] | "\(.name)@\(.version)"'); do
             found=false
-            for attempt in $(seq 1 40); do
+            # Checks at 0s, 15s, ... 600s: the last one lands at the end of the window,
+            # and there is no pointless sleep after it.
+            for attempt in $(seq 1 41); do
+              if [ "$attempt" -gt 1 ]; then sleep 15; fi
               # Exit status, not output: with --json a 404 is printed to stdout.
               if dist=$(npm view "$spec" dist --json 2>/dev/null); then found=true; break; fi
-              echo "$spec not visible on the registry yet (attempt $attempt/40)"
-              sleep 15
+              echo "$spec not visible on the registry yet (attempt $attempt/41)"
             done
             if [ "$found" != true ]; then
               echo "::error::$spec did not appear on the registry within 10 minutes"
