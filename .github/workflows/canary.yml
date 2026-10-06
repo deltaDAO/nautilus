@@ -161,7 +161,7 @@ jobs:
       - name: Publish
         env:
           TAG: ${{ needs.canary-pack.outputs.tag }}
-        run: npm publish canary/*.tgz --tag="$TAG"
+        run: npm publish ./canary/*.tgz --tag="$TAG"
 
       - name: Verify provenance
         env:
