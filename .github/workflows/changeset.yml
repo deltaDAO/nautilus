@@ -113,7 +113,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     needs: pack
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     # Deployment branches: main only. Registered on npm as the release trusted publisher.
     environment: npm-release
     permissions:
@@ -168,13 +168,23 @@ jobs:
         if: steps.publish.outputs.published == 'true'
         env:
           PUBLISHED: ${{ steps.publish.outputs.published-packages }}
+        # A fresh version can take several minutes to show up in the registry metadata
+        # (2.0.0-beta.0 appeared about three minutes after publish returned). Wait for the
+        # version itself, and only fail on a missing attestation once the version is visible.
         run: |
           for spec in $(printf '%s' "$PUBLISHED" | jq -r '.[] | "\(.name)@\(.version)"'); do
-            for attempt in 1 2 3 4 5 6; do
-              url=$(npm view "$spec" dist.attestations.url 2>/dev/null || true)
-              [ -n "$url" ] && break
-              sleep 10
+            found=false
+            for attempt in $(seq 1 40); do
+              # Exit status, not output: with --json a 404 is printed to stdout.
+              if dist=$(npm view "$spec" dist --json 2>/dev/null); then found=true; break; fi
+              echo "$spec not visible on the registry yet (attempt $attempt/40)"
+              sleep 15
             done
+            if [ "$found" != true ]; then
+              echo "::error::$spec did not appear on the registry within 10 minutes"
+              exit 1
+            fi
+            url=$(printf '%s' "$dist" | jq -r '.attestations.url // empty')
             if [ -z "$url" ]; then
               echo "::error::$spec was published without a provenance attestation"
               exit 1
