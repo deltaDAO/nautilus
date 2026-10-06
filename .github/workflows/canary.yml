@@ -123,7 +123,7 @@ jobs:
     name: Publish canary
     needs: canary-pack
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     # Deployment branches: main and development. Registered on npm as the trusted
     # publisher for canary.yml.
     environment: npm-canary
@@ -166,12 +166,22 @@ jobs:
       - name: Verify provenance
         env:
           SPEC: '@deltadao/nautilus@${{ needs.canary-pack.outputs.version }}'
+        # Waits for the version to appear first, as in changeset.yml: fresh versions can
+        # take minutes to show up in the registry metadata.
         run: |
-          for attempt in 1 2 3 4 5 6; do
-            url=$(npm view "$SPEC" dist.attestations.url 2>/dev/null || true)
-            [ -n "$url" ] && break
-            sleep 10
+          found=false
+          # Checks at 0s, 15s, ... 600s, without sleeping after the last one.
+          for attempt in $(seq 1 41); do
+            if [ "$attempt" -gt 1 ]; then sleep 15; fi
+            # Exit status, not output: with --json a 404 is printed to stdout.
+            if dist=$(npm view "$SPEC" dist --json 2>/dev/null); then found=true; break; fi
+            echo "$SPEC not visible on the registry yet (attempt $attempt/41)"
           done
+          if [ "$found" != true ]; then
+            echo "::error::$SPEC did not appear on the registry within 10 minutes"
+            exit 1
+          fi
+          url=$(printf '%s' "$dist" | jq -r '.attestations.url // empty')
           if [ -z "$url" ]; then
             echo "::error::$SPEC was published without a provenance attestation"
             exit 1
