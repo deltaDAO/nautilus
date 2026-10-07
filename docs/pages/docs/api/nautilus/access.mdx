@@ -22,7 +22,12 @@ What happens in order:
 1. If the service is credential-gated, the configured
    [credential provider](/docs/guides/identity) satisfies the policy. This happens
    **before** any spend, so a failed presentation costs nothing.
-2. The node is asked for provider fees and whether a previous order can be reused.
+2. The node is asked for provider fees and whether a previous order can be reused. The
+   fee's signature is checked locally, exactly as the datatoken will check it: ocean-node
+   4.2 mis-signs about one fee in 256 (node bug B2), and an order with such a fee reverts.
+   nautilus then asks for a new fee, up to 3 times, and otherwise throws a
+   `ProviderFeeSignatureError` before anything is spent. See
+   [known ocean-node 4.2 issues](/docs/guides/ocean-node#known-ocean-node-42-issues).
 3. An existing order is reused where possible — extended if a new fee period is due, or
    used as-is if not. Otherwise a datatoken is bought and a new order placed.
 4. The download URL is built, carrying the verifier session if there was one.

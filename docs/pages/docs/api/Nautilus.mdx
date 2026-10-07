@@ -26,13 +26,12 @@ See [`create`](/docs/api/nautilus/create) for the full option reference.
 
 ### The two-step bootstrap
 
-Two options — `remoteStore` and `credentials` — need an `OceanNodeClient`, and the only way
-to get one is from an instance. So build a throwaway instance first, take its client, and
-pass it to the real one.
+The `credentials` option needs an `OceanNodeClient`, and the only way to get one is from an
+instance. So build a throwaway instance first, take its client, and pass it to the real one.
 
 ```ts twoslash
 import { JsonRpcProvider, Wallet } from 'ethers'
-import { Nautilus, NodePersistentRemoteStore } from '@deltadao/nautilus'
+import { IpfsRemoteStore, Nautilus, WaltIdCredentialProvider } from '@deltadao/nautilus'
 
 const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
 const config = { oceanNodeUri: 'https://ocean-node.dev.pontus-x.eu' }
@@ -41,14 +40,17 @@ const bootstrap = await Nautilus.create(signer, { config }) // [!code focus]
 
 const nautilus = await Nautilus.create(signer, {
   config,
-  remoteStore: new NodePersistentRemoteStore(bootstrap.getNodeClient()) // [!code focus]
+  remoteStore: new IpfsRemoteStore({ uploadUrl: 'http://127.0.0.1:5001/api/v0/add' }),
+  credentials: new WaltIdCredentialProvider(bootstrap.getNodeClient(), { // [!code focus]
+    walletApi: 'https://wallet.example.org' // [!code focus]
+  }) // [!code focus]
 })
 ```
 
 :::info
-The bootstrap instance is cheap — `create` resolves config and builds a client, it does not
-talk to the chain. You can reuse one bootstrap for both a remote store and a credential
-provider.
+The bootstrap instance is cheap — `create` reads the chain id from the RPC, resolves config
+and builds a client; it sends no transaction. The remote store needs no bootstrap: `IpfsRemoteStore` and
+`S3RemoteStore` take no node client.
 :::
 
 ## `NautilusOptions`
@@ -56,9 +58,10 @@ provider.
 | Option | Type | Purpose |
 | --- | --- | --- |
 | `config` | `Partial<Config>` | Overrides merged over the chain config resolved from the signer's network. `oceanNodeUri` is effectively required. |
-| `remoteStore` | `RemoteStore` | Where the signed DDO is stored. **Required to publish** — nautilus writes a `{remote}` pointer on chain, not the document. See [remote stores](/docs/guides/remote-stores). |
+| `remoteStore` | `RemoteStore` | Where the encrypted DDO envelope is stored. **Required to publish** — nautilus writes an encrypted `{remote}` pointer on chain, not the document. Use `IpfsRemoteStore` or `S3RemoteStore`; `NodePersistentRemoteStore` is rejected. See [remote stores](/docs/guides/remote-stores). |
 | `ddoSigner` | `DdoSigner` | Signs the DDO as a verifiable credential. Defaults to the Ethereum key (`ETH-EIP191`). See [signing](/docs/guides/signing). |
 | `credentials` | `CredentialProvider` | Satisfies credential-gated access. Omit to skip SSI entirely. See [credential-gated assets](/docs/guides/identity). |
+| `allowInsecureTransport` | `boolean` | Accept a plain `http://` `oceanNodeUri` on a host other than `localhost`, `127.0.0.1`, `::1` or `*.localhost`. Default `false`. See [`create`](/docs/api/nautilus/create#allowinsecuretransport). |
 
 ## `PublishOptions`
 
@@ -66,10 +69,14 @@ Accepted by both [`publish`](/docs/api/nautilus/publish) and [`edit`](/docs/api/
 
 | Option | Type | Default | Purpose |
 | --- | --- | --- | --- |
-| `encrypt` | `boolean` | `true` | Encrypt the on-chain pointer (flags `0x02`). |
-| `waitForIndexer` | `boolean` | `false` | Block until the indexer has the asset, so the result is immediately resolvable. |
+| `waitForIndexer` | `boolean \| { intervalMs?, timeoutMs? }` | `false` | Block until the indexer has the asset, so the result is immediately resolvable. Throws an `IndexingError` if the node records a failure, and an `OceanNodeError` on timeout. Defaults: 7 s interval (under the node's default rate limit), 5 min timeout. Either error carries the full response as `error.published`. |
 | `remoteStore` | `RemoteStore` | instance's | Override the remote store for this call. |
 | `ddoSigner` | `DdoSigner` | instance's | Override the DDO signer for this call. |
+| `checkIndexerNonce` | `boolean` | `true` | Before the first transaction, throw an `IndexerNonceStuckError` when the node's indexer is stuck on a nonce it cannot sign (ocean-node 4.2 bug B1). Skipped silently when the node does not answer. See [`publish`](/docs/api/nautilus/publish#checkindexernonce). |
+
+There is no `encrypt` option: the pointer and the stored envelope are always node-encrypted
+(flags `0x02`), and `encrypt: false` throws. Also accepted by
+[`completePublish`](/docs/api/nautilus/completePublish).
 
 ## Method reference
 
@@ -95,6 +102,7 @@ Accepted by both [`publish`](/docs/api/nautilus/publish) and [`edit`](/docs/api/
 ### Publishing and editing
 
 [`publish`](/docs/api/nautilus/publish) ·
+[`completePublish`](/docs/api/nautilus/completePublish) ·
 [`edit`](/docs/api/nautilus/edit) ·
 [`setServicePrice`](/docs/api/nautilus/setServicePrice) ·
 [`setAssetLifecycleState`](/docs/api/nautilus/setAssetLifecycleState)

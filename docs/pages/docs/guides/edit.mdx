@@ -6,15 +6,14 @@ you want, and write it back onto the same NFT.
 ## The pattern
 
 ```ts twoslash
-import { AssetBuilder, Nautilus, NodePersistentRemoteStore } from '@deltadao/nautilus'
+import { AssetBuilder, IpfsRemoteStore, Nautilus } from '@deltadao/nautilus'
 import { JsonRpcProvider, Wallet } from 'ethers'
 
 const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
 const config = { oceanNodeUri: 'https://ocean-node.dev.pontus-x.eu' }
-const bootstrap = await Nautilus.create(signer, { config })
 const nautilus = await Nautilus.create(signer, {
   config,
-  remoteStore: new NodePersistentRemoteStore(bootstrap.getNodeClient())
+  remoteStore: new IpfsRemoteStore({ uploadUrl: 'http://127.0.0.1:5001/api/v0/add' })
 })
 // ---cut---
 // 1. Fetch what is published.
@@ -29,8 +28,8 @@ const updated = new AssetBuilder(current) // [!code focus]
 const { ddo } = await nautilus.edit(updated) // [!code focus]
 ```
 
-Editing needs a `remoteStore`, exactly as publishing does — the DDO is signed and stored off
-chain either way.
+Editing needs a `remoteStore`, exactly as publishing does — the DDO is signed, encrypted
+and stored off chain either way, in the same envelope format.
 
 :::info
 The merge is **structural**. Setting `name` leaves every other field of the published
@@ -44,9 +43,9 @@ to merge over; passing a freshly built asset throws.
 
 ## What is stripped before signing
 
-`datatokens`, `event` and `stats` are derived by the indexer from chain state, and
-`accessDetails`, `views` and `offchain` are decorations some clients attach to a resolved
-asset. All of them are removed before the document is signed, so a republish cannot bake in a
+`datatokens`, `event` and `stats` are derived by the indexer from chain state, `proof` is the
+signature the node attaches to every indexed DDO, and `accessDetails`, `views` and
+`offchain` are decorations some clients attach to a resolved asset. All of them are removed before the document is signed, so a republish cannot bake in a
 stale snapshot. You do not have to remember to delete them.
 
 ## Editing metadata
@@ -133,6 +132,11 @@ const newFiles = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
 
 Consumers holding an order against the old service id keep it, but new orders go to the new
 one.
+
+The endpoint cannot change on its own: the files are encrypted for the node in the service's
+endpoint, so a loaded service whose `setServiceEndpoint` changed but which has no files added
+again fails with *"Cannot encrypt files: no files were added to this service. Its
+serviceEndpoint changed, …"*. Add the files again with `addFile()` in the same edit.
 
 ## Adding and removing services
 
@@ -228,9 +232,24 @@ const published = await nautilus.getAsset('did:ope:2a6ebce0af...')
 await nautilus.setAssetLifecycleState(published, LifecycleStates.ASSET_UNLISTED) // [!code focus]
 ```
 
-It returns `undefined` without sending anything when the asset is already in that state. If
-you are changing metadata anyway, set it on the builder instead with
-[`setLifecycleState`](/docs/api/assetbuilder/setLifecycleState).
+It resolves once the transaction is mined, and returns `undefined` without sending anything
+when the asset is already in that state. If you are changing metadata anyway, set it on the
+builder instead with [`setLifecycleState`](/docs/api/assetbuilder/setLifecycleState).
+
+:::warning[DEPRECATED and REVOKED are one-way]
+On ocean-node, moving an active asset to `DEPRECATED` (2) or `REVOKED_BY_PUBLISHER` (3)
+makes the indexer **replace the whole DDO with a stub** that keeps only the NFT state.
+Setting `ACTIVE` again does not bring it back, and the node will not decrypt or index new
+metadata for it either, so `edit()` refuses such an asset before spending anything. Use `END_OF_LIFE` (1), `ORDERING_DISABLED_TEMPORARILY` (4) or `ASSET_UNLISTED` (5)
+for anything you may want to undo.
+
+Assets cannot be deleted. `REVOKED_BY_PUBLISHER` is the strongest state a publisher can set,
+which makes it the way to retire test assets for good.
+:::
+
+A lifecycle change does not update the indexed transaction id, so
+`waitForIndexer(did, receipt.hash)` cannot wait for it. Poll `getAsset` and
+[`getLifecycleState`](/docs/api/ddo/getLifecycleState) instead.
 
 ## Waiting for the change to be visible
 
@@ -254,7 +273,44 @@ const indexed = await nautilus.waitForIndexer( // [!code focus]
 ```
 
 Passing the transaction hash matters here: without it, `waitForIndexer` is satisfied by the
-asset merely existing, which it already did.
+asset merely existing, which it already did. If the node rejects the update, the wait throws
+an `IndexingError` with the node's message rather than timing out.
+
+## One metadata event per block
+
+ocean-node indexes only the **first** `MetadataCreated` or `MetadataUpdated` event of an asset
+in a block and ignores the rest, and nothing on chain shows that it dropped one.
+
+Within one `Nautilus` instance this cannot happen. Its `publish()` (once the NFT is minted),
+`completePublish()`, `edit()` and `setAssetLifecycleState()` calls for one NFT run one after
+the other, and each waits for its receipt before the next one sends anything. `edit()` does
+**not** wait for the previous change to be indexed; pass `waitForIndexer` (or call
+[`waitForIndexer`](/docs/api/nautilus/waitForIndexer)) when you need to read it back.
+
+Separate instances or processes writing to the same asset can still land in one block. So
+after every metadata transaction, nautilus reads that block's logs, and if it finds another
+metadata event for the same NFT it throws a `MetadataConflictError`:
+
+```ts twoslash
+import { MetadataConflictError, Nautilus, type NautilusAsset } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+declare const edited: NautilusAsset
+// ---cut---
+try {
+  await nautilus.edit(edited)
+} catch (error) {
+  if (!(error instanceof MetadataConflictError)) throw error
+
+  error.published // the full PublishResponse: the transaction was mined // [!code focus]
+  error.conflictingTxIds // the other metadata transactions in that block // [!code focus]
+  error.indexedFirst // whether this one came first, so it is the one the node keeps // [!code focus]
+}
+```
+
+Write the metadata again with `edit()` to bring the chain and the index back in line. The
+check is best effort: when the logs cannot be read, nautilus logs a warning and returns
+normally.
 
 ## Try it
 
@@ -262,7 +318,10 @@ Each edit on this page is a command in [`examples/`](/docs/examples):
 
 ```sh
 npm start -- edit:metadata did:ope:… "New name"
+npm start -- edit:service did:ope:… first "New service name"      # keeps the service id
+npm start -- edit:service-files did:ope:… first https://…/v2.csv   # gives a new service id
+npm start -- edit:service-allow did:ope:… first 0x… 0x…            # service-level allowlist
 npm start -- edit:price did:ope:… 2.95
 npm start -- edit:trusted-algorithms <datasetDid> <algoDid> [...]
-npm start -- asset:unlist did:ope:…      # hide it from listings
+npm start -- asset:unlist did:ope:…      # hide it from listings (reversible)
 ```

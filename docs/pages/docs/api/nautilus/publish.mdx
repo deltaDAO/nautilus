@@ -9,8 +9,8 @@ import { JsonRpcProvider, Wallet } from 'ethers'
 import {
   AssetBuilder,
   FileTypes,
+  IpfsRemoteStore,
   Nautilus,
-  NodePersistentRemoteStore,
   ServiceBuilder,
   ServiceTypes
 } from '@deltadao/nautilus'
@@ -18,10 +18,9 @@ import {
 const signer = new Wallet('0x1234', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
 const config = { oceanNodeUri: 'https://node.example.org' }
 
-const bootstrap = await Nautilus.create(signer, { config })
 const nautilus = await Nautilus.create(signer, {
   config,
-  remoteStore: new NodePersistentRemoteStore(bootstrap.getNodeClient())
+  remoteStore: new IpfsRemoteStore({ uploadUrl: 'http://127.0.0.1:5001/api/v0/add' })
 })
 
 const service = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
@@ -47,19 +46,46 @@ const { ddo, nftAddress } = await nautilus.publish(asset) // [!code focus]
 
 What happens in order:
 
-1. Trusted algorithms are resolved to their container and file checksums. This hits the
-   network and can fail, so it happens before any NFT exists.
-2. The NFT, the first service's datatoken and that service's pricing are created in **one**
+1. The options and the requested lifecycle state are checked (`encrypt: false` and the
+   states `DEPRECATED`/`REVOKED_BY_PUBLISHER` throw), and the remote store is resolved
+   (`NodePersistentRemoteStore` throws).
+2. Trusted algorithms are resolved to their container and file checksums, the services are
+   checked, and the DDO is **validated locally** against the DDO v5 SHACL schema. All of this
+   happens before any NFT exists, so a missing field costs no gas.
+3. The remote store's `check()` runs, if it has one — for `IpfsRemoteStore` the configured
+   `probe`, for `S3RemoteStore` a write-and-read-back of both keys. A store that would refuse
+   the upload fails here, still before any transaction. nautilus also warns, once, when the
+   publisher's address is the node's own (`providerAddress`): the node's decrypt calls then
+   fail with 401 and the asset is never indexed.
+4. The NFT, the first service's datatoken and that service's pricing are created in **one**
    transaction. Each further service gets its own datatoken on the same NFT.
-3. Each service's file object is encrypted by the node.
-4. The DDO is built and **validated locally** against the DDO v5 SHACL schema. A missing
-   field fails here, before any metadata transaction — no gas wasted.
-5. The DDO is signed as a verifiable credential and stored in the remote store.
-6. The `{ remote }` pointer is encrypted and written onto the NFT.
+5. Each service's file object is encrypted by the node, and the final DDO is built. Its `id`
+   must be the NFT's `did:ope:` DID, and it is validated again.
+6. The DDO is signed as a verifiable credential. The node encrypts it into an envelope, the
+   metadata hash is computed as the sha256 of that envelope, and the envelope is stored with
+   the remote store's `put()`.
+7. The pointer `put()` returned is validated (type `ipfs`, `url`, `s3`, `arweave` or `ftp`;
+   for `ipfs` a CIDv0 or CIDv1), wrapped in `{ remote }` and encrypted by the node.
+8. The store's `verify()` runs, if it has one: it reads the stored envelope back the way the
+   node will and checks its hash. `S3RemoteStore` reads with the read key; `IpfsRemoteStore`
+   verifies when `gatewayUrl` is set.
+9. Right before the transaction, nautilus asserts that the pointer is node ciphertext under
+   flags `0x02`, that the node written on chain is the one that encrypted, and that neither
+   the requested state nor the NFT's state on chain is `DEPRECATED` or `REVOKED_BY_PUBLISHER`.
+   Then the pointer is written onto the NFT.
+10. After the receipt, nautilus checks that block for another metadata event of the same NFT
+    and throws a `MetadataConflictError` if there is one, because ocean-node indexes only the
+    first.
+11. With `waitForIndexer`, it waits until the node has indexed the asset.
+
+Everything that goes to the store or on chain is node-encrypted; there is no plaintext mode.
+See [how the node resolves your DDO](/docs/guides/remote-stores#how-the-node-resolves-your-ddo).
 
 :::warning
-Publishing requires a `remoteStore` on the instance — nautilus writes a pointer to the
-signed DDO, not the DDO itself. See [`create`](/docs/api/nautilus/create#remotestore).
+Publishing requires a `remoteStore` on the instance or in `options` — nautilus writes a
+pointer to the encrypted DDO, not the DDO itself. `NodePersistentRemoteStore` is rejected: ocean-node 4.2
+cannot read DDOs from its own bucket storage. See
+[`create`](/docs/api/nautilus/create#remotestore).
 :::
 
 ## Returns
@@ -82,10 +108,14 @@ Built with the [`AssetBuilder`](/docs/api/AssetBuilder).
 
 ##### waitForIndexer
 
-- Type: `boolean`
+- Type: `boolean | { intervalMs?: number; timeoutMs?: number }`
+- Default: `false`
 
 Block until ocean-node's indexer has the asset, so the result is immediately resolvable.
-Sets `indexed` on the response.
+Sets `indexed: true` on the response. Pass an object to tune the polling: `intervalMs`
+defaults to 7 seconds (at most 18 requests a minute, under ocean-node's default rate limit
+of 30), `timeoutMs` to 5 minutes. A rate-limited poll backs off instead of failing; see
+[waitForIndexer](/docs/api/nautilus/waitForIndexer#polling-rate-and-rate-limits).
 
 ```ts twoslash
 import { Nautilus, type NautilusAsset } from '@deltadao/nautilus'
@@ -94,16 +124,65 @@ const nautilus = await Nautilus.create(new Wallet('0x1234'))
 const asset = {} as NautilusAsset
 // ---cut---
 const { indexed } = await nautilus.publish(asset, { waitForIndexer: true }) // [!code focus]
+
+await nautilus.publish(asset, { // [!code focus]
+  waitForIndexer: { intervalMs: 5_000, timeoutMs: 600_000 } // [!code focus]
+}) // [!code focus]
 ```
 
-##### encrypt
-
-- Type: `boolean`
-- Default: `true`
-
-Encrypt the on-chain pointer (metadata flags `0x02`). Set `false` to write it in plaintext
-hex (flags `0x00`), which makes the pointer readable directly from chain.
+When the node records that it could not index the asset, this throws an `IndexingError`
+carrying the node's message. On timeout it throws an `OceanNodeError`. Either way, the asset
+is already on chain, and the error carries the full response as `error.published`. See
+[`waitForIndexer`](/docs/api/nautilus/waitForIndexer).
 
 ##### remoteStore / ddoSigner
 
 Override the instance's remote store or DDO signer for this call.
+
+##### checkIndexerNonce
+
+- Type: `boolean`
+- Default: `true`
+
+Before the first transaction, read the node's indexer nonce with
+[`getIndexerNonceState()`](/docs/api/node/OceanNodeClient#getindexernoncestate) (two `GET`s,
+nothing signed) and throw an `IndexerNonceStuckError` when the indexer is stuck on a nonce
+it cannot sign (ocean-node 4.2 bug B1): the asset would go on chain and never be indexed.
+A node that does not answer the check (P2P, an older node, a network error) is not an
+error: the check is skipped. It also logs a warning when this publish's own second decrypt
+call would be the one to hit such a nonce. `false` skips the check: use it on a node that
+runs the fix, where the check is computed the same way and so raises a false alarm about
+once in 256 publishes. See
+[known ocean-node 4.2 issues](/docs/guides/ocean-node#known-ocean-node-42-issues).
+
+:::info
+There is no `encrypt` option any more. The pointer and the stored envelope are always
+node-encrypted, and passing `encrypt: false` throws.
+:::
+
+## Throws
+
+- **Before any transaction:** `encrypt: false`, a `DEPRECATED` or `REVOKED_BY_PUBLISHER`
+  lifecycle state, an asset without services, a missing or unsupported remote store, a
+  failing store `check()`, an invalid DDO, a DDO too large for the node to decrypt (its
+  signed envelope would exceed ocean-node 4.2's 100 KB request limit), an unreachable
+  service endpoint or file, or an `IndexerNonceStuckError` (see
+  [`checkIndexerNonce`](#checkindexernonce)).
+- **`PublishIncompleteError`**, when something fails **after** the NFT was minted — a later
+  datatoken, the remote store's `put()` or `verify()`, the pointer validation, the node, the
+  RPC, or a signed DDO that turns out too large for the node to decrypt (checked before it is
+  stored). It carries
+  `nftAddress`, the `datatokens` created so far and the original error on `cause`. Pass
+  `nftAddress` and the same asset to
+  [`completePublish`](/docs/api/nautilus/completePublish) to finish the publish on that NFT.
+  When the envelope had already been stored, `stored` says what became of it: removed again
+  (the metadata transaction was never sent), left because the store could not remove it, or
+  kept because the transaction was sent and may still be mined — then wait for it before
+  completing. See [when a write fails](/docs/guides/remote-stores#when-a-write-fails-after-the-envelope-is-stored).
+- **`MetadataConflictError`**, when another metadata transaction for the NFT landed in the
+  same block, and **`IndexingError`** / **`OceanNodeError`**, from `waitForIndexer`, when the
+  node could not index the asset or did not within the timeout. These are not wrapped in a
+  `PublishIncompleteError`: the metadata is on chain by then, so there is nothing left to
+  complete. Each carries the full `PublishResponse` as `error.published` (type
+  `PublishedNotIndexed`) — see
+  [`PublishResponse`](/docs/api/PublishResponse#when-the-write-was-mined-but-the-call-throws).

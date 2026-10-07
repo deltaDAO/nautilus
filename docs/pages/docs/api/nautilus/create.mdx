@@ -17,13 +17,20 @@ const nautilus = await Nautilus.create(signer, { // [!code focus]
 ```
 
 The chain is read from the signer's provider, so there is no chain parameter. nautilus then
-merges `ConfigHelper`'s defaults for that chain with whatever you pass in `config`.
+merges `ConfigHelper`'s defaults for that chain with whatever you pass in `config`. A
+`config.chainId` that differs from the provider's chain throws, because the contract
+addresses would then belong to another chain than the transactions.
+
+`oceanNodeUri` must be `https://`, except on `localhost`, `127.0.0.1`, `::1` and
+`*.localhost`: the plaintext DDO pointer and the signed DDO go to the node for encryption.
+See [`allowInsecureTransport`](#allowinsecuretransport).
 
 :::warning
-`ConfigHelper` only ships a handful of networks, and for deltaDAO that means **Pontus-X
-devnet (chain 32456)**. On any other network, pass the contract addresses yourself —
-`nftFactoryAddress`, `fixedRateExchangeAddress` and `dispenserAddress` are all validated at
-construction, so a missing one fails immediately rather than mid-publish.
+ocean.js's `ConfigHelper` ships contract addresses for a set of chains, including
+**Pontus-X devnet (32456)** and **OP Sepolia (11155420)**. On a chain it does not know, pass
+the contract addresses yourself — `nftFactoryAddress`, `fixedRateExchangeAddress` and
+`dispenserAddress` are all validated at construction, so a missing one fails immediately
+rather than mid-publish.
 :::
 
 ## Returns
@@ -48,7 +55,8 @@ nautilus v2 requires ethers v6. A v5 `Signer` is not structurally compatible.
 
 - Type: `Partial<Config>`
 
-Overrides merged over `ConfigHelper`'s defaults.
+Overrides merged over `ConfigHelper`'s defaults. `chainId`, if you pass it, must be the
+chain the signer's provider is on.
 
 One `oceanNodeUri` now replaces v1's `metadataCacheUri` and `providerUri` — a single
 ocean-node serves metadata, provider services and the indexer. There is no `subgraphUri`:
@@ -73,40 +81,32 @@ const nautilus = await Nautilus.create(signer, {
 
 - Type: `RemoteStore`
 
-Where the signed DDO is stored. **Required to publish or edit**, because nautilus writes a
-`{ remote }` pointer on chain rather than the document itself.
+Where the encrypted DDO envelope is stored. **Required to publish or edit**, because nautilus
+writes an encrypted `{ remote }` pointer on chain rather than the document itself.
 
-Two implementations ship with nautilus. `NodePersistentRemoteStore` uses ocean-node's own
-storage, so no external service is involved:
+Use `IpfsRemoteStore`, which posts to any IPFS upload endpoint — a Kubo node, or a pinning
+service such as Pinata:
 
 ```ts twoslash
 import { JsonRpcProvider, Wallet } from 'ethers'
-import { Nautilus, NodePersistentRemoteStore } from '@deltadao/nautilus'
+import { IpfsRemoteStore, Nautilus } from '@deltadao/nautilus'
 const signer = new Wallet('0x1234', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
 const config = { oceanNodeUri: 'https://node.example.org' }
 // ---cut---
-// The store needs a node client, so build the instance in two steps.
-const bootstrap = await Nautilus.create(signer, { config })
-
 const nautilus = await Nautilus.create(signer, {
   config,
-  remoteStore: new NodePersistentRemoteStore(bootstrap.getNodeClient()) // [!code focus]
+  remoteStore: new IpfsRemoteStore({ // [!code focus]
+    uploadUrl: 'http://127.0.0.1:5001/api/v0/add', // [!code focus]
+    probe: 'upload' // [!code focus]
+  }) // [!code focus]
 })
 ```
 
-`IpfsRemoteStore` posts to any IPFS upload endpoint — a Kubo node, or a pinning service:
-
-```ts twoslash
-import { IpfsRemoteStore } from '@deltadao/nautilus'
-// ---cut---
-const remoteStore = new IpfsRemoteStore({
-  uploadUrl: 'http://127.0.0.1:5001/api/v0/add'
-})
-```
-
-ocean-node resolves the pointer through the same storage layer it uses for asset files, so
-`url`, `ipfs`, `arweave`, `s3`, `ftp` and `nodePersistentStorage` all work. Implement
-`RemoteStore` for anything else.
+ocean-node resolves the pointer through the same storage layer it uses for asset files, so a
+custom `RemoteStore` can also return a `url`, `s3`, `arweave` or `ftp` pointer, and nautilus
+ships an `S3RemoteStore` too. `NodePersistentRemoteStore` is **rejected**: ocean-node 4.2
+cannot read a DDO from its own bucket storage. See
+[remote stores](/docs/guides/remote-stores#storage-options).
 
 ##### ddoSigner
 
@@ -138,3 +138,24 @@ const nautilus = await Nautilus.create(signer, {
   }) // [!code focus]
 })
 ```
+
+##### allowInsecureTransport
+
+- Type: `boolean`
+- Default: `false`
+
+Accept a plain `http://` `oceanNodeUri` on a host other than `localhost`, `127.0.0.1`, `::1`
+or `*.localhost`, for example on a private network. Without it, `create` throws for such a
+URI. A peer id or multiaddr is not affected.
+
+`S3RemoteStore` and `IpfsRemoteStore` have their own `allowInsecureTransport` option for their
+endpoints.
+
+## Throws
+
+- When `config.chainId` differs from the chain of the signer's provider, or the signer has no
+  provider.
+- When `oceanNodeUri` is missing, or is plain `http://` on a non-loopback host without
+  `allowInsecureTransport`.
+- When `nftFactoryAddress`, `fixedRateExchangeAddress` or `dispenserAddress` is missing or not
+  an address.

@@ -42,7 +42,9 @@ See [Credential-gated assets](/docs/guides/identity).
 nautilus v2 targets the current Ocean stack: `@oceanprotocol/lib` 9.x, ethers v6,
 **ocean-node** in place of the separate Aquarius and Provider services, and **DDO v5** —
 where an asset is a W3C Verifiable Credential — with types and validation from
-`@oceanprotocol/ddo-js`.
+`@oceanprotocol/ddo-js`. It works with
+[OceanProtocolEnterprise ocean-node](https://github.com/OceanProtocolEnterprise/ocean-node)
+4.2.x.
 
 ```mermaid
 flowchart TD
@@ -52,15 +54,15 @@ flowchart TD
   ON --> IDX["indexer - metadata search"]
   ON --> C2D["compute-to-data"]
   ON -.->|gated assets| PS["policy server"]
-  NAUT -.->|DDO pointer| STORE["remote store - node storage or IPFS"]
+  NAUT -.->|encrypted DDO| STORE["remote store - IPFS or S3"]
 ```
 
 One **ocean-node** now serves metadata, provider services, the indexer and compute — replacing
 v1's separate Aquarius and Provider deployments.
 
 Two consequences are worth knowing up front. Validation is now entirely local, so a malformed
-asset fails before it costs any gas. And the DDO itself is signed and stored off chain, with
-only a pointer written on chain, which is why publishing needs a
+asset fails before it costs any gas. And the DDO itself is signed, encrypted and stored off
+chain, with only an encrypted pointer written on chain, which is why publishing needs a
 [remote store](/docs/api/nautilus/create#remotestore).
 
 If you are coming from nautilus v1, the

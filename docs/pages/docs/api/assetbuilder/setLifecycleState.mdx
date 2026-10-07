@@ -21,3 +21,11 @@ assetBuilder.setLifecycleState(LifecycleStates.ASSET_UNLISTED) // [!code focus]
 - Type: [`AssetBuilder`](/docs/api/AssetBuilder)
 
 The asset builder instance, to chain further calls with.
+
+:::warning
+`DEPRECATED` and `REVOKED_BY_PUBLISHER` are one-way on ocean-node: the indexer replaces the
+DDO with a stub, and setting `ACTIVE` again does not restore it. `publish()` and `edit()`
+refuse to write metadata in either state, so set them with
+[`nautilus.setAssetLifecycleState`](/docs/api/nautilus/setAssetLifecycleState) instead. See
+[lifecycle states](/docs/api/nautilus/setAssetLifecycleState#states).
+:::

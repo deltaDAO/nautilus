@@ -1,29 +1,35 @@
 # NodePersistentRemoteStore
 
-Store the signed DDO in ocean-node's own persistent storage. The default choice — it needs no
-external infrastructure.
+Store a payload in an ocean-node persistent-storage bucket.
+
+:::danger[Not usable as the DDO store]
+ocean-node 4.2 resolves a remote DDO without a consumer address, and a bucket refuses any read
+without one, so a DDO stored here would go on chain and never be indexed.
+[`publish`](/docs/api/nautilus/publish), [`completePublish`](/docs/api/nautilus/completePublish)
+and [`edit`](/docs/api/nautilus/edit) therefore reject this store before any transaction. Use
+[`IpfsRemoteStore`](/docs/api/remote/IpfsRemoteStore) or
+[`S3RemoteStore`](/docs/api/remote/S3RemoteStore) for the DDO.
+:::
+
+The class still works as a plain bucket uploader, for example for files you then reference
+with a `nodePersistentStorage` file object.
 
 ## Usage
 
 ```ts twoslash
-import { JsonRpcProvider, Wallet } from 'ethers'
 import { Nautilus, NodePersistentRemoteStore } from '@deltadao/nautilus'
-
-const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
-const config = { oceanNodeUri: 'https://ocean-node.dev.pontus-x.eu' }
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
 // ---cut---
-const bootstrap = await Nautilus.create(signer, { config })
+const store = new NodePersistentRemoteStore(nautilus.getNodeClient(), { // [!code focus]
+  bucketId: 'my-bucket-id' // [!code focus]
+}) // [!code focus]
 
-const nautilus = await Nautilus.create(signer, {
-  config,
-  remoteStore: new NodePersistentRemoteStore(bootstrap.getNodeClient()) // [!code focus]
-})
+const fileObject = await store.put('hello', { did: 'notes' })
 ```
 
-:::info
-It takes a node client, and the only way to get one is from an instance — hence the two-step
-construction. See [remote stores](/docs/guides/remote-stores).
-:::
+Without `bucketId`, each store instance creates a **new** bucket on first use, and there is no
+nautilus call to delete one. Pass `bucketId` to reuse a bucket.
 
 ## Parameters
 

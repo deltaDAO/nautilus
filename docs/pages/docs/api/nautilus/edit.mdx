@@ -35,6 +35,30 @@ merged over the published services by id. A service whose files or endpoint chan
 new id, because the id is the hash of the encrypted file object; nautilus removes the old
 entry so the two do not linger side by side.
 
+Like [`publish`](/docs/api/nautilus/publish), the edited DDO is signed, node-encrypted into
+an envelope and stored in the remote store, and only the encrypted pointer is written on
+chain.
+
+Before any datatoken is minted, `edit()` runs the remote store's `check()`, like `publish()`.
+After `put()` and right before the metadata transaction it runs the store's `verify()`, when
+the store has one, which reads the stored envelope back and checks its hash. A store that
+still fails during an edit leaves the published version in place, but any datatokens already
+created for re-priced services stay behind.
+
+Within one instance, `edit()` waits for any `publish()`, `completePublish()`, `edit()` or
+`setAssetLifecycleState()` of the same NFT still running, but it does **not** wait for the
+previous change to be indexed. ocean-node indexes only the first metadata event of an asset
+per block, so when another metadata transaction for the NFT landed in the same block (from
+another instance or process), `edit()` throws a `MetadataConflictError` — see
+[one metadata event per block](/docs/guides/edit#one-metadata-event-per-block).
+
+`edit()` refuses `encrypt: false` and, before anything is spent, an asset whose NFT is `DEPRECATED` or
+`REVOKED_BY_PUBLISHER`, and an edit that sets either state through
+[`setLifecycleState`](/docs/api/assetbuilder/setLifecycleState): ocean-node does not decrypt or
+index metadata for such an asset, and both states are one-way. Use
+[`setAssetLifecycleState`](/docs/api/nautilus/setAssetLifecycleState) to move an asset there.
+See [lifecycle states](/docs/api/nautilus/setAssetLifecycleState#states).
+
 To change a price without touching the DDO, use
 [`setServicePrice`](/docs/api/nautilus/setServicePrice) instead.
 
@@ -57,3 +81,22 @@ Built from an `AssetBuilder` constructed with a resolved asset.
 - Type: `PublishOptions`
 
 Same as [`publish`](/docs/api/nautilus/publish#options-optional).
+
+## Throws
+
+- **Before any transaction:** an asset not built from a resolved DDO, `encrypt: false`, a
+  `DEPRECATED` or `REVOKED_BY_PUBLISHER` state (requested or on chain), a missing or
+  unsupported remote store, an invalid DDO, a DDO too large for the node to decrypt, an
+  unreachable service endpoint or file, a failing store `check()`, or an
+  `IndexerNonceStuckError` (see [`checkIndexerNonce`](/docs/api/nautilus/publish#checkindexernonce)).
+- **After a datatoken was minted but before the metadata transaction:** a signed DDO too
+  large for the node to decrypt (checked before it is stored), a failing `put()`, pointer
+  validation or `verify()`. The error is thrown as is. Once the envelope was stored it
+  carries `error.stored` (type `StoredBeforeFailure`): the redacted pointer, the hash, and
+  whether nautilus removed the unused object again (`cleanup: 'removed'`), could not
+  (`'not-removed'`), or kept it because the metadata transaction had been sent and may be
+  mined (`'kept'`). See [when a write fails](/docs/guides/remote-stores#when-a-write-fails-after-the-envelope-is-stored).
+- **After the metadata transaction was mined:** a `MetadataConflictError`, or the
+  `IndexingError` / `OceanNodeError` of `waitForIndexer`. Each carries the full
+  `PublishResponse` as `error.published` (type `PublishedNotIndexed`) — see
+  [`PublishResponse`](/docs/api/PublishResponse#when-the-write-was-mined-but-the-call-throws).

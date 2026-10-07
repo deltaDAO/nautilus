@@ -70,7 +70,7 @@ declared issuer to match.
 ## What you get back
 
 [`publish`](/docs/api/nautilus/publish) returns the credential alongside the rest of the
-result.
+result, and `stored` says what went to the remote store.
 
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'
@@ -79,11 +79,18 @@ import type { NautilusAsset } from '@deltadao/nautilus'
 const nautilus = await Nautilus.create(new Wallet('0x1234'))
 declare const asset: NautilusAsset
 // ---cut---
-const { credential } = await nautilus.publish(asset)
+const { credential, stored } = await nautilus.publish(asset)
 
-credential?.jwt // the compact JWT that was stored
+credential?.jwt // the compact JWT that was signed
 credential?.issuer // the DID or address that signed it
+stored.pointer // where the encrypted envelope is, e.g. { type: 'ipfs', hash }
+stored.metadataHash // the on-chain hash: sha256 of that envelope
 ```
+
+The JWT is not stored as is. nautilus has the node encrypt it into an envelope, and that
+envelope is what the store holds and what the on-chain hash covers — see
+[what is stored](/docs/guides/remote-stores#what-is-stored). ocean-node stores the signature
+with the indexed DDO but does not verify it.
 
 ## Inspecting a credential
 

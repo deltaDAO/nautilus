@@ -193,7 +193,16 @@ export const sidebar = {
                 }
               ]
             },
-            { text: 'publish', link: '/docs/api/nautilus/publish' },
+            {
+              text: 'publish',
+              link: '/docs/api/nautilus/publish',
+              items: [
+                {
+                  text: 'completePublish',
+                  link: '/docs/api/nautilus/completePublish'
+                }
+              ]
+            },
             {
               text: 'Metadata',
               items: [
@@ -492,12 +501,16 @@ export const sidebar = {
               link: '/docs/api/remote/RemoteStore'
             },
             {
-              text: 'NodePersistentRemoteStore',
-              link: '/docs/api/remote/NodePersistentRemoteStore'
-            },
-            {
               text: 'IpfsRemoteStore',
               link: '/docs/api/remote/IpfsRemoteStore'
+            },
+            {
+              text: 'S3RemoteStore',
+              link: '/docs/api/remote/S3RemoteStore'
+            },
+            {
+              text: 'NodePersistentRemoteStore',
+              link: '/docs/api/remote/NodePersistentRemoteStore'
             },
             {
               text: 'Eip191VcSigner',

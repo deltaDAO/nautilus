@@ -1,0 +1,100 @@
+# completePublish
+
+Finish a publish that stopped after its NFT was minted.
+
+## Usage
+
+```ts twoslash
+import { Nautilus, PublishIncompleteError, type NautilusAsset } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+const asset = {} as NautilusAsset
+// ---cut---
+try {
+  await nautilus.publish(asset)
+} catch (error) {
+  if (!(error instanceof PublishIncompleteError)) throw error
+
+  console.warn(error.message, error.cause)
+
+  const { ddo } = await nautilus.completePublish(error.nftAddress, asset) // [!code focus]
+}
+```
+
+The DID derives from the NFT address, so [`publish`](/docs/api/nautilus/publish) has to mint
+the NFT before it can store the DDO. If anything fails after the mint — the remote store, the
+node, the RPC — `publish()` throws a `PublishIncompleteError` instead of a bare error, and
+the NFT exists without metadata.
+
+`completePublish` picks up from there, on the same NFT. Before any transaction it:
+
+1. refuses an NFT that already has metadata — use [`edit`](/docs/api/nautilus/edit) for
+   that;
+2. checks that the **signer owns the NFT** and that the configured ERC721 factory
+   (`nftFactoryAddress`) **created it**, so it never writes a DDO onto someone else's NFT;
+3. matches the services to the NFT's datatokens (`getTokensList`, in creation order). A
+   service that already names a datatoken must name one of the NFT's. The NFT's other
+   datatokens — the one bundled at mint first — go, in service order, to the services without
+   one. If the NFT has more unclaimed datatokens than there are services without one, it
+   refuses, because it cannot tell which belongs where: set `datatokenAddress` on each
+   service then;
+4. runs the same checks as `publish()` — options and lifecycle state, the remote store,
+   trusted algorithms, services, local validation and the store's `check()`.
+
+Then it prices a reused datatoken whose pricing was never created, creates datatokens only for
+the services still without one, stores the DDO, reads it back with the store's `verify()`
+when it has one, and writes the pointer exactly as `publish()` would have, including
+`waitForIndexer` if you pass it.
+
+A failure inside `completePublish` is thrown as is, not as another `PublishIncompleteError`.
+Call it again once the cause is fixed: the datatokens it created are on the NFT and are
+reused the next time.
+
+Pass the asset `publish()` was given, or one rebuilt the same way. Because the datatokens are
+read from the NFT, a rebuilt asset whose services carry no `datatokenAddress` works too. Fix
+the cause first — for example, a remote store with the wrong credentials.
+
+As after `publish()`, a `MetadataConflictError` or a failed `waitForIndexer` carries the full
+result as `error.published` — see
+[`PublishResponse`](/docs/api/PublishResponse#when-the-write-was-mined-but-the-call-throws).
+
+## Returns
+
+- Type: [`PublishResponse`](/docs/api/PublishResponse)
+
+`services` lists every service of the asset. A datatoken that was already on the NFT has
+`reused: true`, and its `tx` is the pricing transaction when one had to be created, or absent.
+
+## Parameters
+
+### nftAddress
+
+- Type: `string`
+
+From `PublishIncompleteError.nftAddress`.
+
+### asset
+
+- Type: `NautilusAsset`
+
+The asset `publish()` was called with, or one rebuilt the same way.
+
+### options (optional)
+
+- Type: `PublishOptions`
+
+Same as [`publish`](/docs/api/nautilus/publish#options-optional).
+
+## `PublishIncompleteError`
+
+| Property | Type | |
+| --- | --- | --- |
+| `nftAddress` | `string` | The NFT that was minted. |
+| `datatokens` | `string[]` | The datatokens created before the failure, including one whose pricing then failed. |
+| `cause` | `unknown` | The original error (native `Error.cause`). |
+| `stored` | `StoredBeforeFailure \| undefined` | Set when the envelope had been stored: its redacted `pointer`, `metadataHash`, and `cleanup` — `'removed'` (the transaction was never sent, so nautilus removed the object), `'not-removed'` (never sent, but the store could not remove it; `removeError` says why) or `'kept'` (the transaction was sent and may be mined). See [when a write fails](/docs/guides/remote-stores#when-a-write-fails-after-the-envelope-is-stored). |
+
+With `stored.cleanup === 'kept'` the NFT may get its metadata after all, and the message says
+so instead of claiming it has none. Wait until the transaction is mined or dropped before
+calling `completePublish`: it refuses an NFT that already has metadata, but cannot see a
+transaction that is still pending.

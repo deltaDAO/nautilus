@@ -1,0 +1,233 @@
+# S3RemoteStore
+
+Store the encrypted DDO envelope in an S3 bucket — AWS S3, Exoscale SOS, MinIO or any other
+S3-compatible store.
+
+## Usage
+
+Exoscale SOS, with both key pairs from the environment:
+
+```ts twoslash
+import { S3RemoteStore } from '@deltadao/nautilus'
+
+declare const process: { env: Record<string, string | undefined> }
+// ---cut---
+const store = new S3RemoteStore({ // [!code focus]
+  endpoint: 'https://sos-de-fra-1.exo.io', // https://sos-<zone>.exo.io // [!code focus]
+  region: 'de-fra-1', // the zone // [!code focus]
+  bucket: 'my-ddos', // [!code focus]
+  prefix: 'ddo/', // [!code focus]
+  writeCredentials: { // [!code focus]
+    accessKeyId: process.env.S3_WRITE_KEY!, // [!code focus]
+    secretAccessKey: process.env.S3_WRITE_SECRET! // [!code focus]
+  }, // [!code focus]
+  readCredentials: { // [!code focus]
+    accessKeyId: process.env.S3_READ_KEY!, // [!code focus]
+    secretAccessKey: process.env.S3_READ_SECRET! // [!code focus]
+  } // [!code focus]
+}) // [!code focus]
+```
+
+A MinIO server that you reach on `127.0.0.1:9000` and the node reaches as `minio:9000`.
+`endpoint` may be plain `http://` here because it is a loopback host; `nodeEndpoint` may
+always be `http://`, because only the node connects to it:
+
+```ts twoslash
+import { S3RemoteStore } from '@deltadao/nautilus'
+
+declare const process: { env: Record<string, string | undefined> }
+// ---cut---
+const store = new S3RemoteStore({
+  endpoint: 'http://127.0.0.1:9000', // where you upload // [!code focus]
+  nodeEndpoint: 'http://minio:9000', // what the node is told // [!code focus]
+  forcePathStyle: true, // MinIO uses path-style addressing // [!code focus]
+  bucket: 'ddos',
+  prefix: 'ddo/',
+  writeCredentials: {
+    accessKeyId: process.env.S3_WRITE_KEY!,
+    secretAccessKey: process.env.S3_WRITE_SECRET!
+  },
+  readCredentials: {
+    accessKeyId: process.env.S3_READ_KEY!,
+    secretAccessKey: process.env.S3_READ_SECRET!
+  }
+})
+```
+
+It needs no node client and no AWS SDK: requests are signed with SigV4 over `fetch` and
+WebCrypto. See [remote stores](/docs/guides/remote-stores#s3) for the setup checklist.
+
+:::danger[The read key goes on chain, forever]
+ocean-node reads S3 only with a key pair — there is no anonymous read — so the
+`readCredentials` are written, node-encrypted, into every on-chain pointer. Whoever holds the
+node's key can read them, and they can never be removed.
+
+- Use a **read-only** key scoped to `prefix`. Never put the write key in the pointer.
+- **Rotating or deleting the read key breaks re-indexing** of every asset that points at it.
+:::
+
+## Parameters
+
+### options
+
+- Type: `S3RemoteStoreOptions`
+
+| Option | Type | Default | Purpose |
+| --- | --- | --- | --- |
+| `endpoint` | `string` | — | Where this store uploads, e.g. `https://sos-de-fra-1.exo.io`. No scheme means `https://`. Plain `http://` only on `localhost`, `127.0.0.1`, `::1` and `*.localhost`, or with `allowInsecureTransport`. Required. |
+| `nodeEndpoint` | `string` | `endpoint` | The endpoint written into the pointer, for when the node reaches the bucket differently than you do. May be `http://` (e.g. `http://minio:9000` inside Docker): nautilus never connects to it. |
+| `region` | `string` | `'us-east-1'` | As on the node. For Exoscale, the zone. |
+| `bucket` | `string` | — | Required. |
+| `prefix` | `string` | `''` | Prepended to every object key as is, e.g. `'ddo/'` (without the `/`, `'ddo'` gives `ddo<DID hash>/…`). Scope the read key to it. |
+| `forcePathStyle` | `boolean` | `false` | Path-style addressing (`endpoint/bucket/key`) for uploads. `true` for MinIO, and required when `endpoint` is an IP address or `localhost`. |
+| `nodeForcePathStyle` | `boolean` | `forcePathStyle` | The addressing style written into the pointer. Required to be `true` (directly or through `forcePathStyle`) when `nodeEndpoint` is an IP address or `localhost`. |
+| `writeCredentials` | `{ accessKeyId, secretAccessKey }` | — | Uploads and removes. Never written anywhere. Required. |
+| `readCredentials` | `{ accessKeyId, secretAccessKey }` | — | Written, node-encrypted, into the on-chain pointer. Must be read-only. Required. |
+| `allowSharedCredentials` | `boolean` | `false` | Accept one key pair for both. The write key then sits in every pointer, forever, and a one-time `console.warn` says so. |
+| `allowWritableReadKey` | `boolean` | `false` | Let `check()` pass, with a warning, although the read key can write or delete. |
+| `allowInsecureTransport` | `boolean` | `false` | Accept a plain `http://` `endpoint` on a non-loopback host. |
+| `requestTimeoutMs` | `number` | `30000` | Timeout of each request, body included. A network error or a 500/502/503/504 is retried once, freshly signed; a timeout is not. |
+| `fetchImpl` | `typeof fetch` | `fetch` | Inject a custom fetch. |
+| `now` | `() => Date` | `() => new Date()` | The clock used for signing. For tests only. |
+
+Both credential options are `S3Credentials`, `{ accessKeyId: string; secretAccessKey: string }`.
+
+The constructor throws when:
+
+- a required option is missing or blank (naming it);
+- the read and write access key ids are the same, unless `allowSharedCredentials` is set;
+- `endpoint` is plain `http://` on a non-loopback host, unless `allowInsecureTransport` is
+  set;
+- `prefix` has an empty, `.` or `..` segment, starts with `/` or contains a backslash (it may
+  end in `/`). S3 does not normalise keys but URL handling does, so the upload and the node's
+  read would reach different objects;
+- `endpoint` or `nodeEndpoint` is an IP address or `localhost` and the matching addressing
+  style is virtual-host, which cannot work there (`bucket.127.0.0.1`). The message names the
+  option to set: `forcePathStyle: true`, or `nodeForcePathStyle: true`.
+
+## put
+
+Uploads the envelope with the write key to `<prefix><DID hash>/<envelope sha256>.json` and
+returns an `S3Pointer`, the same shape as ocean.js's `S3FileObject`:
+
+```ts twoslash
+import type { S3Pointer } from '@deltadao/nautilus'
+// ---cut---
+const pointer: S3Pointer = {
+  type: 's3',
+  s3Access: {
+    endpoint: 'http://minio:9000', // nodeEndpoint, or endpoint // [!code focus]
+    region: 'us-east-1',
+    bucket: 'ddos',
+    objectKey: 'ddo/<DID hash>/<envelope sha256>.json',
+    accessKeyId: '<read key>', // readCredentials, never the write key // [!code focus]
+    secretAccessKey: '<read secret>', // [!code focus]
+    forcePathStyle: true // nodeForcePathStyle, or forcePathStyle
+  }
+}
+```
+
+The `<DID hash>` is the hex part of the `did:ope:` DID. Object keys are deterministic, and an edit writes a sibling object instead of overwriting: the object an
+on-chain pointer refers to never changes, so its hash keeps matching, and a failed edit
+leaves the live version intact.
+
+## check
+
+Called by [`publish`](/docs/api/nautilus/publish),
+[`completePublish`](/docs/api/nautilus/completePublish) and [`edit`](/docs/api/nautilus/edit)
+before their first transaction. It:
+
+1. uploads a small probe under a random key, `<prefix>nautilus-store-check-<uuid>.json`, with
+   the **write** key;
+2. reads it back with the **read** key, as the node will (though through `endpoint`, not
+   `nodeEndpoint`), and fails if the content differs;
+3. makes sure the read key can **neither PUT nor DELETE**: it tries both with the read key.
+   Only an explicit `403` (`AccessDenied`, or no error code) counts as "cannot"; any other
+   answer fails the check, because it says nothing about the key. If the read key can write
+   or delete, the check fails — or, with `allowWritableReadKey`, warns. Skipped when both keys
+   are the same (`allowSharedCredentials`);
+4. deletes every probe it wrote with the write key, also when a step above failed. A failed
+   cleanup never hides the first error: both are thrown together as an `AggregateError`. A
+   cleanup failure on its own fails the check too, since `remove()` would not work either.
+
+S3 errors are turned into actionable messages: a signature mismatch (check the secret,
+`region` and `forcePathStyle`), an unknown access key, a missing bucket, or access denied with
+the permission the key needs (`s3:GetObject` for the read key, `s3:PutObject` and
+`s3:DeleteObject` for the write key). Network errors and timeouts name the method, bucket,
+key, the key's role and the origin.
+
+## verify
+
+```ts twoslash
+import type { S3RemoteStore } from '@deltadao/nautilus'
+import type { StorageObject } from '@oceanprotocol/lib'
+declare const store: S3RemoteStore
+declare const pointer: StorageObject
+declare const expectedHash: string
+// ---cut---
+await store.verify(pointer, expectedHash) // [!code focus]
+```
+
+Called by `publish`, `completePublish` and `edit` right before the metadata transaction. It
+reads the stored envelope back with the **read** key, which also proves the key in the
+pointer can read the object, and throws unless it hashes, the way the node hashes it, to the
+on-chain metadata hash. It reads through `endpoint`, not `nodeEndpoint`. Only pointers into
+this store's bucket and under its `prefix` are accepted.
+
+## remove
+
+```ts twoslash
+import { Nautilus, S3RemoteStore, type NautilusAsset } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+declare const store: S3RemoteStore
+const nautilus = await Nautilus.create(new Wallet('0x1234'), { remoteStore: store })
+declare const asset: NautilusAsset
+// ---cut---
+const { stored } = await nautilus.publish(asset)
+
+// later, once the asset is revoked for good: a live asset needs this creation envelope
+await store.remove(stored.pointer) // [!code focus]
+```
+
+Deletes the object behind a pointer this store returned, with the write key — for example
+[`PublishResponse.stored.pointer`](/docs/api/PublishResponse#stored), whose secret is
+redacted (only `bucket` and `objectKey` are used), or an older version after an edit. Throws
+for anything but an `s3` pointer with an `objectKey` under this store's `prefix` in this
+store's bucket, and for an object key with an empty, `.` or `..` segment, a leading `/` or a
+backslash.
+
+nautilus calls it itself only for an envelope whose metadata transaction was never sent; see
+[`RemoteStore.remove`](/docs/api/remote/RemoteStore#remove-optional).
+
+:::warning
+Never remove the **creation** envelope (from `publish()`) or the **current** one of an asset
+that should stay indexed. A node reindex replays the asset from its creation event: without
+that envelope the asset vanishes from the index, and without the current one it falls back
+to an older version. Only intermediate versions, envelopes a failed write left behind, and
+those of assets retired for good are safe to remove. See
+[cleaning up](/docs/guides/remote-stores#cleaning-up).
+:::
+
+## In the browser
+
+Every request is a signed `fetch` with `authorization`, `content-type`, `x-amz-content-sha256`
+and `x-amz-date` headers, so the browser sends a CORS preflight and the bucket must allow your
+app's origin for `GET`, `PUT` and `DELETE` with those headers. The `host` header is signed too;
+browsers set it themselves, to the same value, so the signature still matches. A minimal rule
+set for AWS S3:
+
+```json
+{
+  "CORSRules": [
+    {
+      "AllowedOrigins": ["https://app.example.com"],
+      "AllowedMethods": ["GET", "PUT", "DELETE"],
+      "AllowedHeaders": ["authorization", "content-type", "x-amz-content-sha256", "x-amz-date"],
+      "MaxAgeSeconds": 3600
+    }
+  ]
+}
+```
+
+See [browser use](/docs/guides/remote-stores#browser-use-cors) for how to apply it on AWS,
+Exoscale SOS and MinIO, and why the write key must not ship in a public web app.

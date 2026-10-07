@@ -1,6 +1,7 @@
 # PublishResponse
 
-What [`publish`](/docs/api/nautilus/publish) and [`edit`](/docs/api/nautilus/edit) return.
+What [`publish`](/docs/api/nautilus/publish), [`completePublish`](/docs/api/nautilus/completePublish)
+and [`edit`](/docs/api/nautilus/edit) return.
 
 ## Properties
 
@@ -14,8 +15,8 @@ The data NFT holding the asset's metadata.
 
 - Type: `PublishedService[]`
 
-One entry per service that got a **new datatoken** in this call — every service on publish,
-and only re-priced services on edit.
+On `publish` and `completePublish`, one entry per service of the asset. On `edit`, only the
+re-priced services, which got a new datatoken.
 
 ```ts twoslash
 import type { PublishedService } from '@deltadao/nautilus'
@@ -24,8 +25,13 @@ declare const published: PublishedService
 
 published.service // the builder object, with its datatoken filled in
 published.datatokenAddress
-published.tx // the transaction that created it
+published.tx // the transaction that created the datatoken, or undefined
+published.reused // true for a datatoken completePublish() found on the NFT
 ```
+
+`tx` is optional. `completePublish` reuses datatokens that already exist on the NFT and marks
+them `reused: true`; for those, `tx` is the transaction that created the missing pricing, or
+absent when the datatoken was already priced.
 
 :::info
 On publish, the first service's datatoken and pricing are created **in the same transaction
@@ -43,11 +49,52 @@ helpers (`getMetadata`, `getServices`, …) rather than indexing into `credentia
 
 - Type: `{ jwt: string; issuer: string } | undefined`
 
-The signed verifiable credential the on-chain pointer refers to. `issuer` is the holder DID
+The signed verifiable credential behind the on-chain pointer. `issuer` is the holder DID
 when signing through walt.id, or the signer's address when using the default
 `Eip191VcSigner`.
 
+`jwt` is the compact JWS as signed. It is **not** what the remote store holds: the store gets
+a node-encrypted envelope around it — see [`stored`](#stored).
+
 New in v2: v1 wrote the DDO itself on chain and had nothing to sign.
+
+### stored
+
+- Type: `{ pointer: StorageObject; metadataHash: string }`
+
+What went to the remote store, so you can verify it or clean it up:
+
+- `pointer` is what the store returned — for IPFS `{ type: 'ipfs', hash }`, which
+  [`IpfsRemoteStore.remove`](/docs/api/remote/IpfsRemoteStore#remove) unpins; for S3
+  `{ type: 's3', s3Access }`, which
+  [`S3RemoteStore.remove`](/docs/api/remote/S3RemoteStore#remove) takes.
+- `metadataHash` is the on-chain metadata hash: `0x` + sha256 of the stored envelope.
+
+The pointer is **redacted**, because results get logged and passed around while the on-chain
+copy is node-encrypted: an S3 `secretAccessKey`, every header value of a `url` pointer and
+the password in a URL read `'<redacted>'`. The bucket, object key, CID and URL stay, which is
+all `remove()` needs.
+
+Keep it from every publish and edit: each edit stores a new envelope and leaves the previous
+one, and the pointer is the only handle for removing a superseded version later. Do not
+remove the envelope of the **publish** (the creation envelope) or of the latest edit while
+the asset should stay indexed: a node reindex replays the asset from its creation event, and
+drops it when that envelope is gone. See
+[cleaning up](/docs/guides/remote-stores#cleaning-up).
+
+```ts twoslash
+import { Nautilus, type NautilusAsset } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+declare const asset: NautilusAsset
+// ---cut---
+const { stored } = await nautilus.publish(asset)
+
+stored.pointer // e.g. { type: 'ipfs', hash: 'Qm…' } // [!code focus]
+stored.metadataHash // '0x…', sha256 of the stored envelope // [!code focus]
+```
+
+See [what is stored](/docs/guides/remote-stores#what-is-stored).
 
 ### setMetadataTxReceipt
 
@@ -59,5 +106,38 @@ The `setMetadata` transaction that wrote the pointer.
 
 - Type: `boolean | undefined`
 
-Present only when you passed `{ waitForIndexer: true }`. `true` means the asset is
-resolvable now.
+Present only when you passed `waitForIndexer`. `true` means the asset is resolvable now. It is
+never `false`: when the node fails to index the asset, or does not within the timeout, the
+call throws instead (`IndexingError` or `OceanNodeError`).
+
+## When the write was mined but the call throws
+
+Two failures happen after the metadata transaction was mined: the wait for the indexer
+(`IndexingError`, `OceanNodeError`), and a `MetadataConflictError`. The asset is on chain
+then, so `publish`, `completePublish` and `edit` attach the whole response to the error as
+`error.published`, typed `PublishedNotIndexed` (`Error & { published: PublishResponse }`):
+
+```ts twoslash
+import { Nautilus, type NautilusAsset, type PublishedNotIndexed } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+declare const asset: NautilusAsset
+// ---cut---
+try {
+  await nautilus.publish(asset, { waitForIndexer: true })
+} catch (error) {
+  const { published } = error as Partial<PublishedNotIndexed>
+  if (!published) throw error
+
+  // Not indexed (yet), but on chain: keep the DID, the NFT and the stored pointer.
+  console.warn(published.ddo.id, published.nftAddress, published.stored.pointer) // [!code focus]
+}
+```
+
+For the wait errors, the message also says that the metadata transaction was mined.
+
+`MetadataConflictError` is thrown when another `MetadataCreated` or `MetadataUpdated` for the
+same NFT landed in the same block: ocean-node indexes only the first of them. Besides
+`published` it carries `conflictingTxIds`, the other metadata transactions in that block, and
+`indexedFirst`, whether this transaction came first and is therefore the one the node keeps.
+Write the metadata again with [`edit`](/docs/api/nautilus/edit) to resolve it.
