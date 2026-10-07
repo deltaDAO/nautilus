@@ -34,7 +34,8 @@ const nautilus = await Nautilus.create(signer, { // [!code ++]
   remoteStore: new IpfsRemoteStore({ // [!code ++]
     uploadUrl: 'https://api.pinata.cloud/pinning/pinFileToIPFS', // [!code ++]
     headers: { Authorization: `Bearer ${process.env.PINATA_JWT}` }, // [!code ++]
-    probe: 'upload' // [!code ++]
+    probe: 'upload', // [!code ++]
+    gatewayUrl: 'https://gateway.pinata.cloud' // [!code ++]
   }) // [!code ++]
 }) // [!code ++]
 ```
@@ -82,8 +83,15 @@ await nautilus.publish(asset, { waitForIndexer: { timeoutMs: 600_000 } }) // [!c
 - `signS3Request` is not exported (unreleased builds of this change exported it); SigV4 is an
   internal detail of `S3RemoteStore`.
 - `PublishResponse.stored.pointer` (and `prepareMetadata`'s `pointer`/`stored`) is
-  **redacted**: an S3 `secretAccessKey`, `url` header values and URL passwords read
+  **redacted**: an S3 `secretAccessKey`, `url` header values, and a URL's user name,
+  password, query values (all of them; the parameter names stay) and fragment read
   `'<redacted>'`. `S3RemoteStore.remove()` works with the redacted pointer.
+- `IpfsRemoteStore` reads every envelope back before the metadata transaction, and refuses
+  to publish when it cannot: through `gatewayUrl` when set, otherwise, for a Kubo `uploadUrl`
+  (`…/api/v0/add`), through the same node's `/api/v0/cat`. Any other `uploadUrl` (Pinata,
+  your own uploader) needs `gatewayUrl`, or the new `verify: false` to publish without the
+  read-back; without either, `check()` throws before anything is minted and `verify()`
+  throws instead of passing without a read.
 - Plain `http://` is refused for `oceanNodeUri`, the `S3RemoteStore` `endpoint` and the
   `IpfsRemoteStore` `uploadUrl`/`gatewayUrl`/`probe.url`, except on `localhost`,
   `127.0.0.1`, `::1` and `*.localhost`. Opt out with `allowInsecureTransport: true` on
@@ -98,16 +106,26 @@ await nautilus.publish(asset, { waitForIndexer: { timeoutMs: 600_000 } }) // [!c
 - A custom `RemoteStore`'s `remove()` is now called by nautilus in one case: `publish()`,
   `completePublish()` or `edit()` stored the envelope and then failed before the metadata
   transaction was sent. It is never called once that transaction may have been sent.
-- The JWS a custom `DdoSigner` returns is decoded before it is stored: its payload (`vc`
-  unwrapped) must carry the validated DDO's `id` and `version`.
+- The JWS a custom `DdoSigner` returns is decoded before it is stored, and its payload (`vc`
+  unwrapped, as the node does) must be the validated DDO. Allowed on top: the JWT registered
+  claims (`iss`, `sub`, `aud`, `exp`, `nbf`, `iat`, `jti`), `type: ['VerifiableCredential']`,
+  an `issuer` that differs only in the case of an Ethereum address (or any issuer when the DDO
+  declares none), and any claim outside a `vc` wrapper. Anything else that differs is refused
+  before the envelope is stored. The built-in signers already sign exactly this.
 - `publish()`, `completePublish()` and `edit()` check the node before their first
   transaction and throw an `IndexerNonceStuckError` when the node would not accept its
   indexer's next decrypt call, since the asset would not be indexed. Opt out with
   `checkIndexerNonce: false`; a node that does not answer the check is skipped.
 - They also refuse a DDO whose signed envelope the node could not decrypt: the node accepts
   decrypt requests up to 100 KB, so the JWS must stay under about 24 000 characters.
-  Checked from the DDO before the first transaction, and exactly before the envelope is
-  stored.
+  Checked before the first transaction from an upper bound of the signed DDO (encrypted
+  files and credential claims at their real size, plus 1024 characters for the JWS header
+  and signature), and exactly before the envelope is stored.
+- The pointer a `RemoteStore` returns must carry what the node needs for its type: `url` an
+  absolute `http(s)` `url` and a `GET`/`POST` `method` (and string `headers`, if any); `s3` an
+  `s3Access` with non-empty `bucket`, `objectKey`, `endpoint`, `accessKeyId` and
+  `secretAccessKey`; `arweave` a `transactionId` that is not a URL or path; `ftp` an
+  `ftp://`/`ftps://` `url`. Others are refused before the pointer is encrypted.
 - `access()`, `compute()`, `order()` and `reuseOrder()` throw a `ProviderFeeSignatureError`,
   before any approval or order, for a provider fee whose signature does not recover to
   `providerFeeAddress` the way the datatoken contract verifies it. `access` and `compute`
@@ -135,8 +153,9 @@ await nautilus.publish(asset, { waitForIndexer: { timeoutMs: 600_000 } }) // [!c
 - `ProviderFeeSignatureError` — the provider-fee pre-check above, with the fee, the address
   `ecrecover` would return and the number of attempts.
 - `RemoteStore.check()` and `IpfsRemoteStore`'s `probe` option — the store is tested before
-  anything is minted. `RemoteStore.verify()` and `IpfsRemoteStore`'s `gatewayUrl` — the
-  stored envelope is read back before the metadata transaction.
+  anything is minted. `RemoteStore.verify()` and `IpfsRemoteStore`'s `gatewayUrl` (or a
+  Kubo node's `/api/v0/cat`) — the stored envelope is read back before the metadata
+  transaction; `IpfsRemoteStore`'s `verify: false` opts out explicitly.
 - `PublishIncompleteError` and `nautilus.completePublish(nftAddress, asset)` — finish a
   publish that failed after the NFT was minted. `completePublish` checks that the signer owns
   the NFT and that the configured factory created it, and reuses the NFT's datatokens.

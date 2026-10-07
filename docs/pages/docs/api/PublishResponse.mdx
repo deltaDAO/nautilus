@@ -71,9 +71,12 @@ What went to the remote store, so you can verify it or clean it up:
 - `metadataHash` is the on-chain metadata hash: `0x` + sha256 of the stored envelope.
 
 The pointer is **redacted**, because results get logged and passed around while the on-chain
-copy is node-encrypted: an S3 `secretAccessKey`, every header value of a `url` pointer and
-the password in a URL read `'<redacted>'`. The bucket, object key, CID and URL stay, which is
-all `remove()` needs.
+copy is node-encrypted: an S3 `secretAccessKey` and every header value of a `url` pointer
+read `'<redacted>'`, and so does everything in a URL that can carry a credential — the user
+name and password, the value of every query parameter (whatever its name, so
+`X-Amz-Signature`, `sig` or `token` alike; the names stay) and the fragment. The bucket,
+object key, CID, and a URL's scheme, host and path stay, which is all `remove()` needs. A
+credential inside a URL path is not recognised: pass it in a header or the query instead.
 
 Keep it from every publish and edit: each edit stores a new envelope and leaves the previous
 one, and the pointer is the only handle for removing a superseded version later. Do not

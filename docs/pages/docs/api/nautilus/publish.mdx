@@ -52,8 +52,8 @@ What happens in order:
 2. Trusted algorithms are resolved to their container and file checksums, the services are
    checked, and the DDO is **validated locally** against the DDO v5 SHACL schema. All of this
    happens before any NFT exists, so a missing field costs no gas.
-3. The remote store's `check()` runs, if it has one — for `IpfsRemoteStore` the configured
-   `probe`, for `S3RemoteStore` a write-and-read-back of both keys. A store that would refuse
+3. The remote store's `check()` runs, if it has one — for `IpfsRemoteStore` that `verify()`
+   will be able to read the envelope back, and the configured `probe`, for `S3RemoteStore` a write-and-read-back of both keys. A store that would refuse
    the upload fails here, still before any transaction. nautilus also warns, once, when the
    publisher's address is the node's own (`providerAddress`): the node's decrypt calls then
    fail with 401 and the asset is never indexed.
@@ -61,14 +61,18 @@ What happens in order:
    transaction. Each further service gets its own datatoken on the same NFT.
 5. Each service's file object is encrypted by the node, and the final DDO is built. Its `id`
    must be the NFT's `did:ope:` DID, and it is validated again.
-6. The DDO is signed as a verifiable credential. The node encrypts it into an envelope, the
-   metadata hash is computed as the sha256 of that envelope, and the envelope is stored with
-   the remote store's `put()`.
-7. The pointer `put()` returned is validated (type `ipfs`, `url`, `s3`, `arweave` or `ftp`;
-   for `ipfs` a CIDv0 or CIDv1), wrapped in `{ remote }` and encrypted by the node.
+6. The DDO is signed as a verifiable credential, and the signed payload is compared with
+   the validated DDO (see [writing your own signer](/docs/guides/signing#writing-your-own-signer)).
+   The node encrypts it into an envelope, the metadata hash is computed as the sha256 of that
+   envelope, and the envelope is stored with the remote store's `put()`.
+7. The pointer `put()` returned is validated (type `ipfs`, `url`, `s3`, `arweave` or `ftp`,
+   with the fields the node needs for that type, e.g. a CIDv0 or CIDv1 `hash` for `ipfs`),
+   wrapped in `{ remote }` and encrypted by the node.
 8. The store's `verify()` runs, if it has one: it reads the stored envelope back the way the
    node will and checks its hash. `S3RemoteStore` reads with the read key; `IpfsRemoteStore`
-   verifies when `gatewayUrl` is set.
+   through its `gatewayUrl`, or a Kubo node's `/api/v0/cat`, and skips it only with an
+   explicit `verify: false` (its `check()` in step 3 refuses a store that could not read
+   back).
 9. Right before the transaction, nautilus asserts that the pointer is node ciphertext under
    flags `0x02`, that the node written on chain is the one that encrypted, and that neither
    the requested state nor the NFT's state on chain is `DEPRECATED` or `REVOKED_BY_PUBLISHER`.
@@ -163,7 +167,8 @@ node-encrypted, and passing `encrypt: false` throws.
 - **Before any transaction:** `encrypt: false`, a `DEPRECATED` or `REVOKED_BY_PUBLISHER`
   lifecycle state, an asset without services, a missing or unsupported remote store, a
   failing store `check()`, an invalid DDO, a DDO too large for the node to decrypt (its
-  signed envelope would exceed the node's 100 KB decrypt request limit), an unreachable
+  signed envelope could exceed the node's 100 KB decrypt request limit, counting the
+  encrypted files and up to 1024 characters of JWS header and signature), an unreachable
   service endpoint or file, or an `IndexerNonceStuckError` (see
   [`checkIndexerNonce`](#checkindexernonce)).
 - **`PublishIncompleteError`**, when something fails **after** the NFT was minted — a later

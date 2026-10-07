@@ -50,7 +50,9 @@ const nautilus = await Nautilus.create(signer, {
 })
 ```
 
-`uploadUrl` is the Kubo RPC add endpoint. Add `headers` for an authenticated gateway, and
+`uploadUrl` is the Kubo RPC add endpoint. nautilus reads every envelope back from the same
+node (`/api/v0/cat`) before the metadata transaction; see
+[reading it back](#reading-it-back-before-the-transaction). Add `headers` for an authenticated gateway, and
 `extractCid` if your gateway returns the CID under a key other than the usual
 `Hash`/`cid`/`IpfsHash`. Whatever it returns must be a CIDv0 (`Qm…`) or a base32/base36 CIDv1
 (`b…`/`k…`).
@@ -81,13 +83,16 @@ declare const process: { env: Record<string, string | undefined> }
 const remoteStore = new IpfsRemoteStore({
   uploadUrl: 'https://api.pinata.cloud/pinning/pinFileToIPFS', // [!code focus]
   headers: { Authorization: `Bearer ${process.env.PINATA_JWT}` }, // [!code focus]
-  probe: 'upload' // [!code focus]
+  probe: 'upload', // [!code focus]
+  gatewayUrl: 'https://gateway.pinata.cloud' // [!code focus]
 })
 ```
 
 The API key needs the **pin** scope (`pinFileToIPFS`) to publish, and the **unpin** scope for
 [`remove()`](#cleaning-up). The CID is read from Pinata's `IpfsHash` key without any
-configuration.
+configuration. `gatewayUrl` is how nautilus reads the envelope back before the metadata
+transaction; Pinata (like any upload endpoint other than Kubo) needs it, or `verify: false`
+(see [reading it back](#reading-it-back-before-the-transaction)).
 
 :::warning[Use `pinFileToIPFS`, not `pinJSONToIPFS`]
 `pinJSONToIPFS` wraps the body in its own JSON, so the stored bytes are no longer the
@@ -134,7 +139,8 @@ declare const asset: NautilusAsset
 // ---cut---
 const remoteStore = new IpfsRemoteStore({
   uploadUrl: 'https://api.pinata.cloud/pinning/pinFileToIPFS',
-  headers: { Authorization: `Bearer ${process.env.PINATA_JWT}` }
+  headers: { Authorization: `Bearer ${process.env.PINATA_JWT}` },
+  gatewayUrl: 'https://gateway.pinata.cloud'
 })
 const nautilus = await Nautilus.create(new Wallet('0x1234'), { remoteStore })
 
@@ -156,7 +162,9 @@ minted. A store that fails only then would leave an NFT without metadata behind.
 `publish()`, `completePublish()` and `edit()` call the store's optional `check()` before their
 first transaction.
 
-`IpfsRemoteStore` runs whatever `probe` you configured:
+`IpfsRemoteStore` first makes sure it will be able to [read the envelope
+back](#reading-it-back-before-the-transaction) (a `gatewayUrl`, a Kubo `uploadUrl`, or
+`verify: false`), and then runs whatever `probe` you configured:
 
 | `probe` | What `check()` does |
 | --- | --- |
@@ -174,8 +182,18 @@ already exists. What happens to an envelope that was already stored is described
 After `put()` and right before the metadata transaction, nautilus calls the store's optional
 `verify()`: it reads the stored envelope back the way the node will and checks the hash, so
 a store that changed the bytes, or a pointer the node cannot read, fails here, before
-anything is on chain. `IpfsRemoteStore` verifies when
-you give it a gateway — ideally the node's own `IPFS_GATEWAY`:
+anything is on chain.
+
+`IpfsRemoteStore` reads the CID back:
+
+| Configuration | How |
+| --- | --- |
+| `gatewayUrl` | `GET <gatewayUrl>/ipfs/<cid>`, as the node does. Ideally the node's own `IPFS_GATEWAY`: then it also proves the node can fetch it. |
+| a Kubo `uploadUrl` (`…/api/v0/add`) without `gatewayUrl` | `POST /api/v0/cat?arg=<cid>` on the same node, with the upload `headers`. It proves the node you uploaded to holds the exact bytes, not that the ocean-node's gateway reaches them. |
+| any other `uploadUrl` (Pinata, your own uploader) without `gatewayUrl` | None: `check()` throws before anything is minted. Set `gatewayUrl`, or opt out with `verify: false`. |
+| `verify: false` | None, by your choice. Nothing checks the stored bytes before the metadata transaction. |
+
+With a gateway:
 
 ```ts twoslash
 import { IpfsRemoteStore } from '@deltadao/nautilus'
@@ -187,6 +205,21 @@ const remoteStore = new IpfsRemoteStore({
   headers: { Authorization: `Bearer ${process.env.PINATA_JWT}` },
   probe: 'upload',
   gatewayUrl: 'https://gateway.pinata.cloud' // fetches <gatewayUrl>/ipfs/<cid> // [!code focus]
+})
+```
+
+Without one, publishing unverified is an explicit choice:
+
+```ts twoslash
+import { IpfsRemoteStore } from '@deltadao/nautilus'
+
+declare const process: { env: Record<string, string | undefined> }
+// ---cut---
+const remoteStore = new IpfsRemoteStore({
+  uploadUrl: 'https://uploader.example.com/files',
+  headers: { Authorization: `Bearer ${process.env.UPLOADER_TOKEN}` },
+  probe: 'upload',
+  verify: false // nothing reads the envelope back before the metadata transaction // [!code focus]
 })
 ```
 
@@ -442,6 +475,8 @@ only the node reads from it, server to server.
   `DELETE` for unpinning, and read the warning above before putting its key in a web app.
 - **The gateway** for `gatewayUrl` (`verify()`) must allow `GET` from your origin. Public
   gateways usually send `Access-Control-Allow-Origin: *`; a private one may need configuring.
+  Without `gatewayUrl`, a Kubo store's `verify()` calls `/api/v0/cat` on the RPC API, which the
+  Kubo CORS settings above cover.
 
 Apart from the stores, the publish path itself still needs Node's `crypto` and `Buffer`
 (envelope hashing and signing), as before, so a bundler must provide them for browser
@@ -552,7 +587,8 @@ same bytes back, so the hash still holds if a store or gateway adds whitespace.
 
 [`PublishResponse.stored`](/docs/api/PublishResponse#stored) returns the pointer (redacted:
 secrets read `'<redacted>'`) and the hash, so you can verify what was stored, or unpin it
-later.
+later. In a `url` pointer that means the user name and password, every query value (the
+parameter names stay) and the fragment; scheme, host and path stay.
 
 ## Storage options
 
@@ -619,10 +655,12 @@ The contract:
   Return the plain storage object, not one already wrapped in `{ remote }`. An `ipfs` pointer's
   `hash` must be a CIDv0 or CIDv1.
 - **`remove()`, if you implement it, must accept the redacted pointer** from
-  `PublishResponse.stored`: secrets in it read `'<redacted>'`.
+  `PublishResponse.stored`: secrets in it read `'<redacted>'`. For a `url` pointer, work from
+  the host and path: the user info, every query value and the fragment are redacted.
 
 nautilus checks every pointer, custom stores included, before anything goes on chain. It
-rejects `nodePersistentStorage`, any other unknown type (matched case-insensitively), and a
+rejects `nodePersistentStorage`, any other unknown type (matched case-insensitively),
+a pointer missing what its type's storage class needs (a `url` without an absolute http(s) `url` or a GET/POST `method`, or with non-string `headers`; an `s3` without non-empty `bucket`, `objectKey`, `endpoint`, `accessKeyId` and `secretAccessKey`; an `arweave` `transactionId` that is a URL or path; an `ftp` `url` that is not `ftp://`/`ftps://`), and a
 pointer that is not a plain JSON object or is already wrapped in `{ remote }`; the rest it
 wraps in `{ remote }` and has the node encrypt. On `publish()`, a rejected pointer surfaces as
 a `PublishIncompleteError`, because the NFT already exists by then.
@@ -632,7 +670,9 @@ a `PublishIncompleteError`, because the NFT already exists by then.
 `check()` runs before the first transaction of a `publish()`, `completePublish()` or
 `edit()`. Implement it whenever your store can tell up front that it will fail. `verify()`
 runs right before the metadata transaction, with the unredacted pointer `put()` returned;
-implement it when you can read the object back the way the node will.
+implement it when you can read the object back the way the node will. Resolve only after
+that read: if a configuration leaves no way to read back, throw (and say so in `check()`)
+rather than resolve, unless the user opted out explicitly.
 
 ## Overriding per call
 

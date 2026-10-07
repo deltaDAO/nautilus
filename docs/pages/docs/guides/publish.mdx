@@ -37,12 +37,15 @@ const nautilus = await Nautilus.create(signer, {
   remoteStore: new IpfsRemoteStore({ // [!code focus]
     uploadUrl: 'https://api.pinata.cloud/pinning/pinFileToIPFS', // [!code focus]
     headers: { Authorization: `Bearer ${process.env.PINATA_JWT}` }, // [!code focus]
-    probe: 'upload' // [!code focus]
+    probe: 'upload', // [!code focus]
+    gatewayUrl: 'https://gateway.pinata.cloud' // [!code focus]
   }) // [!code focus]
 })
 ```
 
-`probe: 'upload'` makes `publish()` test the store before it sends any transaction. For a
+`probe: 'upload'` makes `publish()` test the store before it sends any transaction, and
+`gatewayUrl` is where it reads the stored envelope back before the metadata transaction
+(Pinata needs one; a Kubo node is read back without). For a
 Kubo node, other pinning services, S3, and why the node's own storage cannot hold DDOs, see
 [remote stores](/docs/guides/remote-stores).
 

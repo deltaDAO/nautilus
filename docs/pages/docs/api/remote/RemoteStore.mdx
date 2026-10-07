@@ -61,7 +61,7 @@ nautilus validates the pointer before anything goes on chain, for every store (t
 matched case-insensitively). It rejects a `nodePersistentStorage` pointer — ocean-node 4.2 cannot read a remote DDO from its own bucket
 storage, see [`NodePersistentRemoteStore`](/docs/api/remote/NodePersistentRemoteStore) — any
 other type not in the table, an `ipfs` pointer whose `hash` is not a CIDv0 (`Qm…`) or a
-base32/base36 CIDv1 (`b…`/`k…`), and a pointer that is not a plain JSON object or is already
+base32/base36 CIDv1 (`b…`/`k…`), a pointer missing what its type's storage class needs (a `url` without an absolute http(s) `url` or a GET/POST `method`, or with non-string `headers`; an `s3` without non-empty `bucket`, `objectKey`, `endpoint`, `accessKeyId` and `secretAccessKey`; an `arweave` `transactionId` that is a URL or path; an `ftp` `url` that is not `ftp://`/`ftps://`), and a pointer that is not a plain JSON object or is already
 wrapped in `{ remote }`. See [storage options](/docs/guides/remote-stores#storage-options) for
 what each type needs on the node.
 
@@ -108,9 +108,11 @@ carries — and throw unless `"0x" + sha256(JSON.stringify(JSON.parse(body)))` e
 
 nautilus cannot repair a `MetadataCreated` the node could not index — `completePublish`
 refuses an NFT that has metadata, and `edit` needs the indexed asset — so catching a store that alters bytes, or a key the node
-cannot read with, before the transaction is worth the round trip. Stores without `verify` are
-not verified. `S3RemoteStore` implements it with the read key; `IpfsRemoteStore` does when
-its `gatewayUrl` is set.
+cannot read with, before the transaction is worth the round trip. Resolve only after that
+read: a store with no way to read back should throw, and say so in `check()`, unless its user
+opted out explicitly. Stores without `verify` are not verified. `S3RemoteStore` implements it
+with the read key; `IpfsRemoteStore` through its `gatewayUrl`, or a Kubo node's `/api/v0/cat`
+(see [verify](/docs/api/remote/IpfsRemoteStore#verify)).
 
 ## remove (optional)
 
@@ -118,7 +120,8 @@ its `gatewayUrl` is set.
 
 Deletes what a pointer from `put()` refers to, for cleanup. It must work with the
 **redacted** pointer from [`PublishResponse.stored`](/docs/api/PublishResponse#stored), whose
-secrets read `'<redacted>'`.
+secrets read `'<redacted>'`: in a `url`, the user info, every query value and the fragment
+(scheme, host and path stay).
 [`S3RemoteStore`](/docs/api/remote/S3RemoteStore#remove) deletes the object;
 [`IpfsRemoteStore`](/docs/api/remote/IpfsRemoteStore#remove) unpins the CID.
 

@@ -4,7 +4,7 @@ Store the encrypted DDO envelope on IPFS. The store to use with ocean-node 4.2.
 
 ## Usage
 
-A Kubo node:
+A Kubo node, which [`verify()`](#verify) reads back through its own `/api/v0/cat`:
 
 ```ts twoslash
 import { IpfsRemoteStore } from '@deltadao/nautilus'
@@ -30,6 +30,10 @@ const store = new IpfsRemoteStore({ // [!code focus]
 }) // [!code focus]
 ```
 
+Pinata, or any other upload endpoint that is not Kubo, needs a `gatewayUrl` for `verify()`,
+or `verify: false` to publish without reading the envelope back. Without either,
+[`check()`](#check) throws before anything is minted.
+
 The Pinata key needs the pin scope to publish, and the unpin scope to clean up. Use
 `pinFileToIPFS`, not `pinJSONToIPFS`: the latter re-wraps the body, so the stored bytes are no
 longer the envelope and the asset cannot be indexed.
@@ -54,15 +58,16 @@ reach will publish fine and then fail to index. See
 | `uploadUrl` | `string` | — | The upload endpoint: Kubo's `/api/v0/add`, Pinata's `pinFileToIPFS`, or your own. Required. |
 | `headers` | `Record<string, string>` | — | For an authenticated endpoint, e.g. `{ Authorization: 'Bearer <JWT>' }`. |
 | `probe` | `'upload' \| { url: string; method?: string; headers?: Record<string, string> }` | — | What [`check()`](#check) does. Omit to skip the check. |
-| `gatewayUrl` | `string` | — | An IPFS gateway for [`verify()`](#verify), ideally the one the node uses (`IPFS_GATEWAY`). Without it, `verify()` checks nothing. |
+| `gatewayUrl` | `string` | — | An IPFS gateway for [`verify()`](#verify), ideally the one the node uses (`IPFS_GATEWAY`). Without it, a Kubo `uploadUrl` is read back through the same node's `/api/v0/cat`; any other `uploadUrl` needs `gatewayUrl` or `verify: false`. |
+| `verify` | `false` | — | Publish without reading the envelope back: `verify()` resolves without a request. Only for a store with neither `gatewayUrl` nor a Kubo `uploadUrl`; not together with `gatewayUrl`. |
 | `unpin` | `false \| { url: string; method?: string; headers?: Record<string, string> }` | derived from `uploadUrl` | How [`remove()`](#remove) unpins. `url` contains `{cid}`; `method` defaults to `DELETE`. `false` turns `remove()` off. |
 | `extractCid` | `(response: unknown) => string \| undefined` | `Hash`/`cid`/`Cid`/`IpfsHash`/`hash` | Override CID extraction. |
 | `allowInsecureTransport` | `boolean` | `false` | Allow a plain `http://` `uploadUrl`, `gatewayUrl`, `probe.url` or `unpin.url` on a host other than `localhost`, `127.0.0.1`, `::1` or `*.localhost`. |
 | `requestTimeoutMs` | `number` | `60000` | Timeout of each request, body included. |
 | `fetchImpl` | `typeof fetch` | `fetch` | Inject a custom fetch. |
 
-The constructor throws without an `uploadUrl`, for an `unpin.url` without `{cid}`, and for a
-plain `http://` `uploadUrl`, `gatewayUrl`, `probe.url` or `unpin.url` on a non-loopback host
+The constructor throws without an `uploadUrl`, for an `unpin.url` without `{cid}`, for
+`gatewayUrl` together with `verify: false`, and for a plain `http://` `uploadUrl`, `gatewayUrl`, `probe.url` or `unpin.url` on a non-loopback host
 unless `allowInsecureTransport` is set.
 
 The payload is uploaded unchanged, as a multipart `file` field (`application/json`, named
@@ -79,7 +84,9 @@ message: the configured header values and anything that looks like a token read
 
 Called by [`publish`](/docs/api/nautilus/publish),
 [`completePublish`](/docs/api/nautilus/completePublish) and [`edit`](/docs/api/nautilus/edit)
-before their first transaction, and runs the configured `probe`:
+before their first transaction. It first throws when [`verify()`](#verify) would have no way to
+read the envelope back (no `gatewayUrl`, an `uploadUrl` that is not Kubo, and no
+`verify: false`), then runs the configured `probe`:
 
 - `'upload'` uploads a fixed probe of a few bytes, always the same CID (so it stays pinned,
   once). This is the only check that catches a pinning-service key without upload scope.
@@ -93,11 +100,16 @@ Throws if the store would refuse an upload, so nothing is spent.
 
 ## verify
 
-Called by `publish`, `completePublish` and `edit` right before the metadata transaction.
-With `gatewayUrl` set, it fetches `<gatewayUrl>/ipfs/<cid>`, as the node does, and throws
-unless the content hashes, the way the node hashes it, to the on-chain metadata hash — or
-when the gateway does not answer 2xx, since the node may not be able to fetch it either.
-Without `gatewayUrl` it checks nothing.
+Called by `publish`, `completePublish` and `edit` right before the metadata transaction. It
+reads the CID back and throws unless the content hashes, the way the node hashes it, to the
+on-chain metadata hash, or when the read does not answer 2xx:
+
+| Configuration | Read-back |
+| --- | --- |
+| `gatewayUrl` set | `GET <gatewayUrl>/ipfs/<cid>`, as the node does, without the upload `headers`. A failure here means the node may not be able to fetch it either. |
+| Kubo `uploadUrl` (`…/api/v0/add`), no `gatewayUrl` | `POST <same base>/api/v0/cat?arg=<cid>`, with the upload `headers`. This proves your node holds the exact bytes, not that the node's gateway can reach them; set `gatewayUrl` for that. |
+| anything else | Throws (and so does `check()`, before anything is minted). Set `gatewayUrl`, or `verify: false`. |
+| `verify: false` | Resolves without reading anything: the envelope is not checked before the metadata transaction. |
 
 ## remove
 

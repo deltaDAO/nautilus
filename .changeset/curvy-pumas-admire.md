@@ -32,10 +32,13 @@ written, and the DDO never goes on chain.
   `{"encryptedData": node.encrypt({ encryptedData: hexlify(JSON.stringify(jws)) })}`. The
   on-chain metadata hash is `sha256` of exactly that string. Custom `RemoteStore`s must
   store it unchanged, and the pointer they return is validated: `type` must be `ipfs`,
-  `url`, `s3`, `arweave` or `ftp`, and an IPFS `hash` must be a CIDv0 or CIDv1.
+  `url`, `s3`, `arweave` or `ftp`, with the fields the node needs for that type (an IPFS
+  CIDv0/CIDv1 `hash`; an absolute http(s) `url` and GET/POST `method`; the five non-empty
+  `s3Access` strings; an Arweave `transactionId` that is not a URL or path; an
+  `ftp://`/`ftps://` `url`).
 - **`PublishResponse.stored.pointer` (and `prepareMetadata`'s `pointer`/`stored`) is
-  redacted**: an S3 `secretAccessKey`, `url` header values and URL passwords read
-  `'<redacted>'`. `S3RemoteStore.remove()` works with the redacted pointer.
+  redacted**: an S3 `secretAccessKey`, `url` header values, and a URL's user name,
+  password, every query value (parameter names stay) and fragment read `'<redacted>'`. `S3RemoteStore.remove()` works with the redacted pointer.
 - **Plain `http://` is refused** for `oceanNodeUri`, the `S3RemoteStore` `endpoint` and the
   `IpfsRemoteStore` `uploadUrl`/`gatewayUrl`/`probe.url`, except on `localhost`,
   `127.0.0.1`, `::1` and `*.localhost`. Opt out with `allowInsecureTransport: true`
@@ -57,7 +60,9 @@ written, and the DDO never goes on chain.
   this publish's own second decrypt call would use a nonce the node does not accept.
 - **DDOs too large for the node to decrypt are refused.** The node accepts decrypt requests
   up to 100 KB, so the signed JWS may be at most about 24 000 characters.
-  `publish`/`completePublish`/`edit` check from the DDO before the first transaction, and
+  `publish`/`completePublish`/`edit` check before the first transaction from an upper bound
+  of the signed DDO (encrypted files and credential claims at their real size, plus 1024
+  characters for the JWS header and signature), and
   again from the exact request size before anything is encrypted or stored (4 KB margin).
 - **Provider fees are signature-checked before ordering.** Before ordering, nautilus checks
   that the provider fee signature recovers to `providerFeeAddress` the way the datatoken
@@ -79,7 +84,16 @@ written, and the DDO never goes on chain.
   Nothing points at that object, so it is removed, best effort. Never once the transaction
   may have been sent.
 - **A `DdoSigner`'s output is checked**: the returned JWS must decode, and its payload (`vc`
-  unwrapped, as the node does) must carry the validated DDO's `id` and `version`.
+  unwrapped, as the node does) must be the validated DDO. Allowed on top: the JWT
+  registered claims, `type: ['VerifiableCredential']`, an `issuer` differing only in the
+  case of an Ethereum address (or any issuer when the DDO declares none), and claims
+  outside a `vc` wrapper. Anything else is refused before the envelope is stored. The
+  built-in signers and walt.id already sign exactly this.
+- **`IpfsRemoteStore` reads every envelope back, or refuses to publish.** `verify()` reads
+  through `gatewayUrl` when set, otherwise, for a Kubo `uploadUrl` (`…/api/v0/add`), through
+  the same node's `/api/v0/cat`. Any other `uploadUrl` (Pinata, custom uploaders) needs
+  `gatewayUrl` or the new `verify: false`; without either, `check()` throws before anything
+  is minted, and `verify()` throws instead of passing without a read.
 
 **New**
 
@@ -87,8 +101,8 @@ written, and the DDO never goes on chain.
   `publish`, `completePublish` and `edit`: it reads the stored object back and checks
   `"0x" + sha256(JSON.stringify(JSON.parse(body)))`, exactly as the node does, so a store
   that alters bytes or a key the node cannot read with now fails before the transaction.
-  `S3RemoteStore` verifies with the read key; `IpfsRemoteStore` does when its new
-  `gatewayUrl` option is set.
+  `S3RemoteStore` verifies with the read key; `IpfsRemoteStore` through `gatewayUrl` or a
+  Kubo node's `/api/v0/cat`; `verify: false` opts out explicitly.
 - **New optional `RemoteStore.check()`** (run before the first transaction of `publish`,
   `completePublish` and `edit`) and **`RemoteStore.remove(pointer)`**.
 - **New `S3RemoteStore`** for AWS S3, Exoscale SOS or MinIO, with no AWS SDK dependency
@@ -106,7 +120,7 @@ written, and the DDO never goes on chain.
 - **`IpfsRemoteStore`**: works with Pinata's `pinFileToIPFS`; `probe` (`'upload'` or
   `{ url, method?, headers? }`) catches a bad key before anything is minted, and the upload
   headers only go to a probe URL on the upload origin unless `probe.headers` is given;
-  `gatewayUrl` enables `verify()`; error bodies are cut to 300 characters and scrubbed of
+  `gatewayUrl` (or a Kubo `uploadUrl`) drives `verify()`, `verify: false` opts out; error bodies are cut to 300 characters and scrubbed of
   tokens; returned CIDs are validated; `requestTimeoutMs` (default 60 s).
 - **Encrypted-only guards against the known plaintext.** Every ciphertext the node returns
   (envelope and pointer) must be at least plaintext + 97 bytes (ECIES on ocean-node 4.2) and
