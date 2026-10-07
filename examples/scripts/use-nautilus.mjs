@@ -5,7 +5,7 @@
  *   npm run nautilus:which           -> report which is in effect
  *   npm run use:local                -> "@deltadao/nautilus": "file:../src"
  *   npm run use:npm                  -> "@deltadao/nautilus": "^<version in src/>"
- *   npm run use:npm -- --spec 1.1.0  -> "@deltadao/nautilus": "1.1.0"
+ *   npm run use:npm -- --spec beta   -> "@deltadao/nautilus": the exact version tagged beta
  *
  * A dependency rewrite, deliberately — not `npm link`, which writes into the host's
  * global npm prefix. Everything here stays inside this repository.
@@ -49,19 +49,30 @@ if (!['local', 'npm'].includes(mode))
 
 /**
  * The version the local package declares, so `npm` mode tracks it by default. A caret
- * range over a prerelease — `^2.0.0-beta.0` — also matches later betas of the same
+ * range over a prerelease — `^2.0.0-beta.1` — also matches later betas of the same
  * release, which is what you want while 2.0.0 is unstable.
+ *
+ * Read only when it is needed — `npm` mode without `--spec` — so `--spec` works in a
+ * copy of examples/ that has no ../src next to it.
  */
-const localVersion = JSON.parse(
-  readFileSync(resolve(nautilus, 'src/package.json'), 'utf8')
-).version
+function localVersion() {
+  const path = resolve(nautilus, 'src/package.json')
 
-const target = mode === 'local' ? LOCAL : (spec ?? `^${localVersion}`)
+  if (!existsSync(path))
+    throw new Error(
+      `${path} does not exist, so there is no local version to track. Pass the version explicitly: npm run use:npm -- --spec <version>.`
+    )
 
-if (mode === 'npm' && !spec && Number.parseInt(localVersion, 10) < 2)
+  return JSON.parse(readFileSync(path, 'utf8')).version
+}
+
+const tracked = mode === 'npm' && !spec ? localVersion() : undefined
+const target = mode === 'local' ? LOCAL : (spec ?? `^${tracked}`)
+
+if (tracked && Number.parseInt(tracked, 10) < 2)
   console.warn(
-    `Warning: src/package.json is still ${localVersion}, so this resolves to ` +
-      `^${localVersion} — a v1 range. These examples target v2. Either run ` +
+    `Warning: src/package.json is still ${tracked}, so this resolves to ` +
+      `^${tracked} — a v1 range. These examples target v2. Either run ` +
       '`changeset version` first, or pass an explicit `--spec`.'
   )
 

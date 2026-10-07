@@ -1,6 +1,12 @@
 import * as dotenv from 'dotenv'
-import { COMMANDS, type Context, formatHelp } from './commands'
-import { setup } from './nautilus'
+import {
+  COMMANDS,
+  formatCommandHelp,
+  formatHelp,
+  formatUsage,
+  requiredArgs,
+  runCommand
+} from './commands'
 
 /**
  * Runnable nautilus v2 examples.
@@ -16,9 +22,12 @@ import { setup } from './nautilus'
  * Note the `did:ope:` prefix on every DID — that is DDO v5. v4 assets used
  * `did:op:`.
  *
- * To run against a local deployment rather than a public network, set
- * `NETWORK=LOCAL` and export the addresses it produced — `example.env` lists
- * every variable that network reads.
+ * `NETWORK=LOCAL` is the local docker stack (chain 8996) and reads its contract
+ * addresses from the environment; `NETWORK=CUSTOM` is any other chain, from
+ * `CHAIN_ID`, `RPC_URL` and `OCEAN_NODE_URI`. `example.env` lists every variable.
+ *
+ * `npm start -- <command> --help` prints what a command needs without connecting
+ * to anything.
  */
 
 // Loads .env if present. Variables already exported into the environment win,
@@ -42,28 +51,30 @@ async function main() {
     return
   }
 
-  const required = (command.args ?? []).filter(
-    (a) => !a.endsWith('?') && !a.startsWith('...')
-  )
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(formatCommandHelp(name, command))
+    return
+  }
 
-  if (args.length < required.length) {
-    const usage = [name, ...(command.args ?? []).map((a) => `<${a}>`)].join(' ')
-
-    console.error(`Usage: npm start -- ${usage}`)
+  if (args.length < requiredArgs(command).length) {
+    console.error(`Usage: npm start -- ${formatUsage(name, command)}`)
+    console.error(`       npm start -- ${name} --help`)
     process.exitCode = 1
     return
   }
 
-  // `setup()` reads NETWORK and PRIVATE_KEY from the environment, resolves the
-  // chain config and wires up a remote store for the signed DDO. Identity
-  // commands build their own instance on top of this one.
-  const ctx = (await setup({
+  const result = await runCommand(name, command, args, {
     verbose: process.env.VERBOSE === 'true'
-  })) as Context
+  })
 
-  const result = await command.run(ctx, ...args)
+  // A publish or edit has printed its own summary; the raw response is the whole DDO, and
+  // its store pointer is better not dumped to a terminal.
+  const printed =
+    typeof result === 'object' &&
+    result !== null &&
+    'setMetadataTxReceipt' in result
 
-  if (result !== undefined) console.log(result)
+  if (result !== undefined && !printed) console.log(result)
 }
 
 main().catch((error) => {
@@ -71,5 +82,14 @@ main().catch((error) => {
     '\nExample failed:',
     error instanceof Error ? error.message : error
   )
+
+  // nautilus wraps node and store failures; the underlying reason is on `cause`.
+  const cause = error instanceof Error ? error.cause : undefined
+  const reason =
+    cause instanceof Error ? cause.message : cause ? String(cause) : ''
+
+  if (reason && !String(error?.message).includes(reason))
+    console.error('  cause:', reason)
+
   process.exitCode = 1
 })

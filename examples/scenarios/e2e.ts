@@ -12,8 +12,15 @@
  *
  *   cd examples && npm run scenario:e2e
  *
- * It needs a funded account and, for the compute steps, a node advertising a
- * compute environment.
+ * It needs a funded account, a DDO store (DDO_STORE, see example.env) and, for
+ * the compute steps, a node advertising a compute environment. With
+ * CONSUMER_PRIVATE_KEY set, the access and compute steps run as that second
+ * account, against assets whose allowlist includes it.
+ *
+ * Every asset it publishes is revoked at the end, so a run leaves nothing listed
+ * behind; set E2E_KEEP_ASSETS=true to keep them. Revoking is one-way. Set
+ * PUBLISH_LOG to keep a JSON line per publish and edit, with the store pointers
+ * to unpin or delete.
  *
  * SSI examples are excluded. The gating path through ocean-node works, but
  * walt.id's wallet endpoints cannot consume the ktor-authnz token its own web3
@@ -23,6 +30,7 @@
 import * as dotenv from 'dotenv'
 import { COMMANDS, type Context } from '../commands'
 import { setup } from '../nautilus'
+import { publishSession } from '../publish'
 
 dotenv.config()
 
@@ -95,6 +103,9 @@ async function run(
 
   process.stdout.write(`\n${CYAN}▸ ${label(command, args)}${RESET}\n`)
 
+  // For PUBLISH_LOG: which command published or edited what.
+  publishSession.command = command
+
   try {
     const result = await entry.run(ctx, ...args)
 
@@ -124,10 +135,16 @@ const didOf = (result: unknown): string =>
   (result as { ddo?: { id?: string } })?.ddo?.id ?? ''
 
 async function main() {
-  const ctx = (await setup({ verbose: false })) as Context
+  const ctx = (await setup({
+    verbose: false,
+    withRemoteStore: true
+  })) as Context
 
-  // ── the node itself ────────────────────────────────────────────────────────
+  publishSession.chainId = ctx.networkConfig.chainId
+
+  // ── the node and the store ────────────────────────────────────────────────
   await run(ctx, 'check:node')
+  await run(ctx, 'store:check')
   await run(ctx, 'compute:envs')
 
   // ── publish ────────────────────────────────────────────────────────────────
@@ -142,13 +159,14 @@ async function main() {
 
   // ── read back ──────────────────────────────────────────────────────────────
   await run(ctx, 'asset:inspect', state.access)
+  await run(ctx, 'asset:indexing-state', state.access)
   await run(ctx, 'access:price', state.access)
 
-  // ── consume ────────────────────────────────────────────────────────────────
+  // ── consume (as the consumer, when CONSUMER_PRIVATE_KEY is set) ────────────
   await run(ctx, 'access:order', state.access)
   await run(ctx, 'access:download', state.access)
   await run(ctx, 'access:service', state.multi)
-  await run(ctx, 'access:userdata', state.access)
+  await run(ctx, 'access:userdata', state.access, '{"rows":5}')
 
   // ── edit ───────────────────────────────────────────────────────────────────
   await run(ctx, 'edit:metadata', state.access, 'Renamed by scenario:e2e')
@@ -159,8 +177,22 @@ async function main() {
     'Edited by scenario:e2e',
     'en'
   )
-  // Priced in OCEAN locally, so there is a fixed-rate exchange to reprice.
-  await run(ctx, 'edit:price', state.paidAlgorithm, '2')
+  await run(
+    ctx,
+    'edit:service',
+    state.access,
+    'first',
+    'Data Access Service (edited)',
+    'Edited by scenario:e2e',
+    '900'
+  )
+
+  // Only a fixed-rate service has an exchange to reprice. Without a fixed pricing config
+  // (PRICING_TOKEN_*, or the network's EURAU/OCEAN one) the algorithm was published free.
+  const hasFixedPricing = ['FIXED', 'FIXED_EURAU', 'FIXED_OCEAN'].some(
+    (key) => key in ctx.pricingConfig
+  )
+  await run(ctx, 'edit:price', hasFixedPricing ? state.paidAlgorithm : '', '2')
   await run(ctx, 'edit:trusted-algorithms', state.compute, state.algorithm)
   await run(
     ctx,
@@ -184,9 +216,25 @@ async function main() {
   await run(ctx, 'compute:wait', state.job)
   await run(ctx, 'compute:result', state.job)
 
-  // ── lifecycle, last: these take the asset out of circulation ───────────────
+  // ── lifecycle, last: these take the assets out of circulation ──────────────
   await run(ctx, 'asset:unlist', state.saas)
-  await run(ctx, 'asset:revoke', state.saas)
+
+  if (process.env.E2E_KEEP_ASSETS === 'true') {
+    console.log(
+      '\nE2E_KEEP_ASSETS=true: leaving the published assets as they are.'
+    )
+  } else {
+    // Every asset this run published, not just one: revoking is the on-chain cleanup.
+    for (const key of [
+      'saas',
+      'access',
+      'compute',
+      'algorithm',
+      'paidAlgorithm',
+      'multi'
+    ])
+      await run(ctx, 'asset:revoke', state[key])
+  }
 
   report()
 }

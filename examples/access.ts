@@ -125,24 +125,64 @@ export async function checkPrice(nautilus: Nautilus, assetDid: string) {
   return { pricing, price }
 }
 
-/** Passes values for a service's consumer parameters. */
-export async function accessWithUserdata(nautilus: Nautilus, assetDid: string) {
+/**
+ * Passes values for a service's consumer parameters.
+ *
+ * Reads what the access service declares and sends a value for each: from `userdataJson`
+ * if given (e.g. `'{"rows":5}'`), otherwise the parameter's default. The access dataset from
+ * `publish:access-dataset` declares `rows`; the compute dataset's `myNumberParam` belongs to
+ * a compute service, so it goes into `compute:*` as `userdata`, not here.
+ */
+export async function accessWithUserdata(
+  nautilus: Nautilus,
+  assetDid: string,
+  userdataJson?: string
+) {
   const asset = await nautilus.getAsset(assetDid)
-  const parameters = getServices(asset)[0].consumerParameters ?? []
+  const service = getServiceByType(asset, 'access')
+
+  if (!service) throw new Error(`Asset ${assetDid} has no access service.`)
+
+  const parameters = service.consumerParameters ?? []
+  let given: { [key: string]: unknown } = {}
+
+  if (userdataJson) {
+    try {
+      given = JSON.parse(userdataJson)
+    } catch {
+      throw new Error(
+        `userdata must be a JSON object, e.g. '{"rows":5}', not ${userdataJson}`
+      )
+    }
+  }
 
   if (parameters.length === 0) {
-    console.log('This service declares no consumer parameters.')
+    console.log(
+      `Service ${service.name} declares no consumer parameters. Publish one with publish:access-dataset.`
+    )
   } else {
-    console.log('This service expects:')
+    console.log(`Service ${service.name} expects:`)
     for (const parameter of parameters)
       console.log(
         `  ${parameter.name} (${parameter.type}${parameter.required ? ', required' : ''}) default=${parameter.default}`
       )
   }
 
+  const userdata: { [key: string]: unknown } = {}
+
+  for (const parameter of parameters)
+    userdata[parameter.name] = given[parameter.name] ?? parameter.default
+
+  for (const name of Object.keys(given))
+    if (!(name in userdata))
+      console.log(`  ignoring '${name}': the service does not declare it`)
+
+  console.log('Sending:', JSON.stringify(userdata))
+
   const result = await nautilus.access({
     assetDid,
-    userdata: { myNumberParam: 8 }
+    serviceId: service.id,
+    userdata: parameters.length ? userdata : undefined
   })
 
   console.log('Download URL:', result.url)

@@ -1,4 +1,8 @@
-import type { Config, PricingConfigWithoutOwner } from '@deltadao/nautilus'
+import {
+  type Config,
+  getOceanConfig,
+  type PricingConfigWithoutOwner
+} from '@deltadao/nautilus'
 
 /**
  * Networks these examples can run against.
@@ -10,23 +14,32 @@ export enum Network {
   PONTUSXTEST = 'PONTUSXTEST',
   OASISSAPPHIRE = 'OASISSAPPHIRE',
   /**
-   * A stack you run yourself — chain 8996 plus an ocean-node. Unlike the other
-   * networks, every address here comes from the environment, because a local
-   * deployment mints fresh ones each time it comes up. `example.env` lists the
-   * variables this network reads.
+   * OP Sepolia (11155420), a public testnet. The contract addresses come from ocean.js's
+   * `ConfigHelper`, which ships this chain; only the ocean-node has to come from the
+   * environment. No payment token is assumed: set `PRICING_TOKEN_*` for fixed prices.
    */
-  LOCAL = 'LOCAL'
+  OPSEPOLIA = 'OPSEPOLIA',
+  /**
+   * The local docker stack — chain 8996 plus an ocean-node, both on this machine. Every
+   * contract address comes from the environment, because a local deployment mints fresh
+   * ones each time it comes up. Only for chain 8996: use CUSTOM for anything else.
+   */
+  LOCAL = 'LOCAL',
+  /**
+   * Any other chain, entirely from the environment: `CHAIN_ID`, `RPC_URL` and
+   * `OCEAN_NODE_URI`, plus the contract addresses wherever ocean.js's `ConfigHelper` does
+   * not ship them for that chain.
+   */
+  CUSTOM = 'CUSTOM'
 }
 
-/** Reads a variable that only the LOCAL network needs, with a pointed error. */
-function fromLocalEnv(name: string): string {
-  const value = process.env[name]
+/** Reads a variable the selected network cannot do without, with a pointed error. */
+function requireEnv(network: Network, name: string, why = ''): string {
+  const value = process.env[name]?.trim()
 
   if (!value)
     throw new Error(
-      `NETWORK=LOCAL needs ${name}. Export the addresses your local deployment ` +
-        'produced — see example.env for the full list — or set NETWORK to one of ' +
-        'the hosted networks instead.'
+      `NETWORK=${network} needs ${name}${why ? ` (${why})` : ''}. See example.env for every variable this network reads.`
     )
 
   return value
@@ -65,7 +78,13 @@ export type NetworkConfig = Partial<Config> & {
   oceanNodeUri: string
 }
 
-export const NETWORK_CONFIGS: { [key in Network]: NetworkConfig } = {
+/** The networks whose addresses are fixed, so they can be listed here. */
+type HostedNetwork =
+  | Network.PONTUSXDEV
+  | Network.PONTUSXTEST
+  | Network.OASISSAPPHIRE
+
+export const NETWORK_CONFIGS: { [key in HostedNetwork]: NetworkConfig } = {
   [Network.PONTUSXDEV]: {
     chainId: 32456,
     network: 'pontusxdev',
@@ -107,35 +126,6 @@ export const NETWORK_CONFIGS: { [key in Network]: NetworkConfig } = {
     // Oasis Sapphire is a confidential EVM. ocean.js wraps the signer with the Sapphire
     // paratime and uses datatoken template 4 when this is set.
     sdk: 'oasis'
-  },
-  // Populated lazily by resolveNetwork(), so that merely importing this module
-  // does not require a local stack to be running.
-  [Network.LOCAL]: {
-    chainId: 8996,
-    network: 'development',
-    nodeUri: 'http://127.0.0.1:8545',
-    oceanNodeUri: 'http://127.0.0.1:8001',
-    oceanTokenSymbol: 'OCEAN',
-    sdk: 'evm'
-  }
-}
-
-/**
- * Fills the LOCAL entry from the environment.
- *
- * Kept separate from NETWORK_CONFIGS so importing this file never throws for
- * someone using a remote network.
- */
-function localNetworkConfig(): NetworkConfig {
-  return {
-    ...NETWORK_CONFIGS[Network.LOCAL],
-    chainId: Number(process.env.CHAIN_ID || 8996),
-    nodeUri: fromLocalEnv('RPC_URL'),
-    oceanNodeUri: fromLocalEnv('OCEAN_NODE_URI'),
-    oceanTokenAddress: fromLocalEnv('OCEAN_TOKEN_ADDRESS'),
-    fixedRateExchangeAddress: fromLocalEnv('FIXED_RATE_EXCHANGE_ADDRESS'),
-    dispenserAddress: fromLocalEnv('DISPENSER_ADDRESS'),
-    nftFactoryAddress: fromLocalEnv('NFT_FACTORY_ADDRESS')
   }
 }
 
@@ -145,7 +135,7 @@ function localNetworkConfig(): NetworkConfig {
  * To change a price, edit `fixedRate` — it is a decimal string, e.g. `'2.95'`.
  */
 export type PricingConfigs = {
-  [key in Network]: { [key: string]: PricingConfigWithoutOwner }
+  [key in HostedNetwork]: { [key: string]: PricingConfigWithoutOwner }
 }
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
@@ -241,10 +231,6 @@ export const PRICING_CONFIGS: PricingConfigs = {
       }
     }
   },
-  // Filled in by resolveNetwork() — see localPricingConfig().
-  [Network.LOCAL]: {
-    FREE: { type: 'free' }
-  },
   [Network.OASISSAPPHIRE]: {
     FREE: { type: 'free' },
     FIXED_LOGGING: {
@@ -263,24 +249,179 @@ export const PRICING_CONFIGS: PricingConfigs = {
   }
 }
 
+type Pricing = { [key: string]: PricingConfigWithoutOwner }
+
+const CONTRACT_ENV = {
+  nftFactoryAddress: 'NFT_FACTORY_ADDRESS',
+  fixedRateExchangeAddress: 'FIXED_RATE_EXCHANGE_ADDRESS',
+  dispenserAddress: 'DISPENSER_ADDRESS'
+} as const
+
 /**
- * Pricing for the local stack.
- *
- * deploy-contracts.js deploys an Ocean token and MockDAI/MockUSDC on chain
- * 8996; Ocean is the one every dev account already holds (100k each for
- * accounts 1-9, 1M for account 0), so it is the only sensible payment token
- * here. EUROe/EURAU/PTX simply do not exist locally.
+ * The contract addresses for a chain configured from the environment: each one from its
+ * variable if set, otherwise from ocean.js's `ConfigHelper` defaults for that chain. Throws,
+ * naming every missing variable, when neither has it.
  */
-function localPricingConfig(config: NetworkConfig): {
-  [key: string]: PricingConfigWithoutOwner
-} {
+function contractAddresses(
+  network: Network,
+  chainId: number,
+  options: { defaults: Config | null | false }
+): Pick<NetworkConfig, keyof typeof CONTRACT_ENV> {
+  const defaults = options.defaults || null
+  const resolved: Partial<Record<keyof typeof CONTRACT_ENV, string>> = {}
+  const missing: string[] = []
+
+  for (const [field, variable] of Object.entries(CONTRACT_ENV) as [
+    keyof typeof CONTRACT_ENV,
+    string
+  ][]) {
+    const value = process.env[variable]?.trim() || defaults?.[field]
+
+    if (value) resolved[field] = value
+    else missing.push(variable)
+  }
+
+  if (missing.length)
+    throw new Error(
+      `NETWORK=${network} needs ${missing.join(', ')}${
+        options.defaults !== false
+          ? `: ocean.js ships no contract addresses for chain ${chainId}`
+          : ': export the addresses your local deployment produced'
+      }. See example.env.`
+    )
+
+  return resolved
+}
+
+/**
+ * OP Sepolia: ocean.js's `ConfigHelper` defaults, which `Nautilus.create` merges in by chain
+ * id, plus the ocean-node you use.
+ *
+ * Deliberately **no** payment token. `ConfigHelper` lists an OCEAN `oceanTokenAddress` for
+ * this chain; nautilus does not read it, and nothing here prices in it. Fixed prices use the
+ * token you name in `PRICING_TOKEN_ADDRESS`.
+ */
+function opSepoliaConfig(): NetworkConfig {
+  const chainId = 11155420
+  const defaults = getOceanConfig(chainId)
+
   return {
-    FREE: { type: 'free' },
+    chainId,
+    network: defaults?.network ?? 'optimism_sepolia',
+    nodeUri: process.env.RPC_URL?.trim() || 'https://sepolia.optimism.io',
+    // ConfigHelper's default here is 127.0.0.1:8001, which is never what you want.
+    oceanNodeUri: requireEnv(
+      Network.OPSEPOLIA,
+      'OCEAN_NODE_URI',
+      'the ocean-node you publish to and consume from'
+    ),
+    ...contractAddresses(Network.OPSEPOLIA, chainId, { defaults })
+  }
+}
+
+/** The local docker stack: chain 8996, fresh contract addresses from the environment. */
+function localNetworkConfig(): NetworkConfig {
+  const chainId = Number(process.env.CHAIN_ID || 8996)
+
+  if (chainId !== 8996)
+    throw new Error(
+      `NETWORK=LOCAL is the local docker stack on chain 8996, but CHAIN_ID is ${chainId}. For another chain use NETWORK=CUSTOM (or NETWORK=OPSEPOLIA for 11155420).`
+    )
+
+  const oceanTokenAddress = process.env.OCEAN_TOKEN_ADDRESS?.trim()
+
+  return {
+    chainId,
+    network: 'development',
+    nodeUri: process.env.RPC_URL?.trim() || 'http://127.0.0.1:8545',
+    oceanNodeUri: process.env.OCEAN_NODE_URI?.trim() || 'http://127.0.0.1:8001',
+    ...(oceanTokenAddress
+      ? { oceanTokenAddress, oceanTokenSymbol: 'OCEAN' }
+      : {}),
+    sdk: 'evm',
+    ...contractAddresses(Network.LOCAL, chainId, { defaults: false })
+  }
+}
+
+/** Any chain, from the environment. */
+function customNetworkConfig(): NetworkConfig {
+  const chainId = Number(
+    requireEnv(Network.CUSTOM, 'CHAIN_ID', 'the chain id of your RPC')
+  )
+
+  if (!Number.isInteger(chainId) || chainId <= 0)
+    throw new Error(`CHAIN_ID must be a positive integer, not '${chainId}'.`)
+
+  const nodeUri = requireEnv(Network.CUSTOM, 'RPC_URL', 'the chain RPC')
+  const oceanNodeUri = requireEnv(Network.CUSTOM, 'OCEAN_NODE_URI')
+  const defaults = getOceanConfig(chainId)
+
+  return {
+    chainId,
+    network: defaults?.network ?? `custom-${chainId}`,
+    nodeUri,
+    oceanNodeUri,
+    ...contractAddresses(Network.CUSTOM, chainId, { defaults })
+  }
+}
+
+/**
+ * A fixed price in a token you choose, on any network: `PRICING_TOKEN_ADDRESS` and
+ * `PRICING_TOKEN_DECIMALS` (both required together), optionally `PRICING_FIXED_RATE`
+ * (default `'1'`). Added to the pricing configs as `FIXED`, which the paid examples
+ * prefer — see `paidPricing()`.
+ *
+ * The decimals are not read from chain on purpose: getting them wrong misprices by orders
+ * of magnitude, so they have to be stated. EURAU, for example, has 6.
+ */
+function pricingTokenOverride(fixedRateAddress: string | undefined): Pricing {
+  const address = process.env.PRICING_TOKEN_ADDRESS?.trim()
+
+  if (!address) return {}
+
+  const decimals = Number(process.env.PRICING_TOKEN_DECIMALS)
+
+  if (
+    !process.env.PRICING_TOKEN_DECIMALS ||
+    !Number.isInteger(decimals) ||
+    decimals < 0 ||
+    decimals > 36
+  )
+    throw new Error(
+      'PRICING_TOKEN_ADDRESS is set, so PRICING_TOKEN_DECIMALS must be too (an integer, e.g. 6 for EURAU, 18 for most ERC-20s).'
+    )
+
+  if (!fixedRateAddress)
+    throw new Error(
+      'PRICING_TOKEN_ADDRESS is set, but this network has no fixed-rate exchange address. Set FIXED_RATE_EXCHANGE_ADDRESS.'
+    )
+
+  return {
+    FIXED: {
+      type: 'fixed',
+      freCreationParams: {
+        fixedRateAddress,
+        baseTokenAddress: address,
+        baseTokenDecimals: decimals,
+        datatokenDecimals: 18,
+        fixedRate: process.env.PRICING_FIXED_RATE?.trim() || '1',
+        marketFee: '0',
+        marketFeeCollector: ZERO_ADDRESS
+      }
+    }
+  }
+}
+
+/** Fixed pricing in OCEAN on the local stack, where every dev account holds OCEAN. */
+function localOceanPricing(config: NetworkConfig): Pricing {
+  if (!config.oceanTokenAddress || !config.fixedRateExchangeAddress) return {}
+
+  return {
     FIXED_OCEAN: {
       type: 'fixed',
       freCreationParams: {
-        fixedRateAddress: config.fixedRateExchangeAddress as string,
-        baseTokenAddress: config.oceanTokenAddress as string,
+        fixedRateAddress: config.fixedRateExchangeAddress,
+        baseTokenAddress: config.oceanTokenAddress,
         baseTokenDecimals: 18,
         datatokenDecimals: 18,
         fixedRate: '1',
@@ -291,18 +432,38 @@ function localPricingConfig(config: NetworkConfig): {
   }
 }
 
+/**
+ * The pricing the paid examples use: your `PRICING_TOKEN_*` token if set, otherwise the
+ * network's ready-made EURAU or OCEAN config, otherwise free (with a note, so a "paid"
+ * example that publishes for free does not go unnoticed).
+ */
+export function paidPricing(pricingConfig: Pricing): PricingConfigWithoutOwner {
+  const paid =
+    pricingConfig.FIXED ??
+    pricingConfig.FIXED_EURAU ??
+    pricingConfig.FIXED_OCEAN
+
+  if (paid) return paid
+
+  console.log(
+    'No fixed pricing on this network; publishing for free. Set PRICING_TOKEN_ADDRESS and PRICING_TOKEN_DECIMALS for a fixed price.'
+  )
+
+  return pricingConfig.FREE
+}
+
 /** Reads NETWORK from the environment and returns its configs. */
 export function resolveNetwork(): {
   name: Network
   networkConfig: NetworkConfig
-  pricingConfig: { [key: string]: PricingConfigWithoutOwner }
+  pricingConfig: Pricing
 } {
   const supported = Object.values(Network).join(', ')
 
   if (!process.env.NETWORK)
     throw new Error(`Set NETWORK in your .env file. Supported: ${supported}.`)
 
-  const selected = process.env.NETWORK.toUpperCase()
+  const selected = process.env.NETWORK.trim().toUpperCase()
 
   if (!(selected in Network))
     throw new Error(
@@ -311,21 +472,41 @@ export function resolveNetwork(): {
 
   const name = Network[selected as keyof typeof Network]
 
-  if (name === Network.LOCAL) {
-    const networkConfig = localNetworkConfig()
+  let networkConfig: NetworkConfig
+  let pricingConfig: Pricing
 
-    return {
-      name,
-      networkConfig,
-      pricingConfig: localPricingConfig(networkConfig)
-    }
+  switch (name) {
+    case Network.OPSEPOLIA:
+      networkConfig = opSepoliaConfig()
+      pricingConfig = { FREE: { type: 'free' } }
+      break
+    case Network.LOCAL:
+      networkConfig = localNetworkConfig()
+      pricingConfig = {
+        FREE: { type: 'free' },
+        ...localOceanPricing(networkConfig)
+      }
+      break
+    case Network.CUSTOM:
+      networkConfig = customNetworkConfig()
+      pricingConfig = { FREE: { type: 'free' } }
+      break
+    default:
+      networkConfig = { ...NETWORK_CONFIGS[name] }
+      pricingConfig = { ...PRICING_CONFIGS[name] }
+
+      // The usual case for now, since the public endpoints are still legacy Provider.
+      if (process.env.OCEAN_NODE_URI)
+        networkConfig.oceanNodeUri = process.env.OCEAN_NODE_URI
+      if (process.env.RPC_URL) networkConfig.nodeUri = process.env.RPC_URL
   }
 
-  const networkConfig = { ...NETWORK_CONFIGS[name] }
-
-  // The usual case for now, since the public endpoints are still legacy Provider.
-  if (process.env.OCEAN_NODE_URI)
-    networkConfig.oceanNodeUri = process.env.OCEAN_NODE_URI
-
-  return { name, networkConfig, pricingConfig: PRICING_CONFIGS[name] }
+  return {
+    name,
+    networkConfig,
+    pricingConfig: {
+      ...pricingConfig,
+      ...pricingTokenOverride(networkConfig.fixedRateExchangeAddress)
+    }
+  }
 }

@@ -46,14 +46,25 @@ the one in this checkout. You can point them at the published package instead; s
 
    | Variable | Value |
    | --- | --- |
-   | `NETWORK` | `PONTUSXDEV` (rapid testing), `PONTUSXTEST` (staging), `OASISSAPPHIRE` (production MVP), `LOCAL` (a stack you run yourself) |
-   | `PRIVATE_KEY` | Private key of your account — export it from MetaMask |
+   | `NETWORK` | `PONTUSXDEV` (rapid testing), `PONTUSXTEST` (staging), `OASISSAPPHIRE` (production MVP), `OPSEPOLIA` (OP Sepolia testnet), `LOCAL` (the local docker stack, chain 8996), `CUSTOM` (any other chain, from the environment) |
+   | `PRIVATE_KEY` | Private key of the publishing account — export it from MetaMask |
+   | `OCEAN_NODE_URI` | The ocean-node to use. Required for `OPSEPOLIA` and `CUSTOM`, and in practice everywhere (see step 3) |
+   | `DDO_STORE` | `ipfs` or `s3` — where the encrypted DDO goes. Required to publish or edit (an `IPFS_UPLOAD_URL` on its own also selects `ipfs`); see [the DDO store](#publishing-needs-a-ddo-store) |
+   | `CONSUMER_PRIVATE_KEY` | Optional. A second account that orders, downloads and runs compute; see [publisher and consumer](#publisher-and-consumer) |
 
    Your account needs funds for gas, and for any non-free asset it buys. On Pontus-X that
    means EURAU; on Oasis Sapphire, `ROSE` for gas and `PTX` for after-payment logging. Contact
    deltaDAO at contact@delta-dao.com for tokens and onboarding.
 
    Every other variable is optional and documented inline in `example.env`.
+
+   **Which network?** `OPSEPOLIA` takes the contract addresses from ocean.js's
+   `ConfigHelper`, so it needs only `OCEAN_NODE_URI` (and optionally `RPC_URL`). It assumes no
+   payment token: set `PRICING_TOKEN_ADDRESS` and `PRICING_TOKEN_DECIMALS` for fixed prices
+   (see [pricing](#pricing)). `LOCAL` is only the local docker stack on chain 8996; for any
+   other chain use `CUSTOM` with `CHAIN_ID`, `RPC_URL` and `OCEAN_NODE_URI`, plus the contract
+   addresses where ocean.js ships none. `setup()` checks that the RPC is on the chain
+   `NETWORK` expects.
 
 3. **Check your ocean-node** — do this before anything else:
 
@@ -82,10 +93,22 @@ the one in this checkout. You can point them at the published package instead; s
    > Without one, publishing gets as far as encrypting files and then fails with
    > *"does not answer as an ocean-node"*.
 
-4. **Run an example:**
+4. **Check your DDO store** — before your first publish:
+
+   ```sh
+   npm start -- store:check
+   ```
+
+   It runs the store's `check()`, the same preflight `publish()` runs before it mints
+   anything, with no key and no transaction. For IPFS it uploads a fixed probe of a few
+   bytes; for S3 it writes with the write key, reads back with the read key, and checks the
+   read key can neither write nor delete.
+
+5. **Run an example:**
 
    ```sh
    npm start -- help                      # every command, grouped
+   npm start -- publish:access-dataset --help
    npm start -- publish:access-dataset
    npm start -- access:download did:ope:…
    ```
@@ -99,14 +122,17 @@ npm start -- <command> [args...]
 ```
 
 `npm start -- help` is the authoritative list — it is generated from the command table in
-`commands.ts`, so it cannot drift. The groups are:
+`commands.ts`, so it cannot drift. It marks the commands that need a DDO store (`S`) and the
+ones that act as the consumer (`C`). `npm start -- <command> --help` prints one command's
+usage and requirements without connecting to anything. The groups are:
 
 | Group | What it covers |
 | --- | --- |
 | `check:` | Diagnostics. `check:node` is the one to run first. |
-| `publish:` | Datasets, algorithms, SaaS offers, multi-service assets, local validation. |
-| `asset:` | Inspecting, unlisting and revoking a published asset. |
-| `edit:` | Metadata, descriptions, prices, services, trusted algorithms, lifecycle. |
+| `store:` | `store:check` — the DDO store's preflight, without a transaction. `store:remove <cid\|objectKey> [force]` — unpin or delete one stored envelope: an intermediate version, a revoked asset's, or one a failed write left. Refuses the creation or latest envelope `PUBLISH_LOG` lists unless `force`. |
+| `publish:` | Datasets, algorithms, SaaS offers, multi-service assets, local validation, and `publish:resume` for a publish that stopped after the mint. |
+| `asset:` | Inspecting, unlisting and revoking a published asset, and `asset:indexing-state` — why the node did or did not index it. |
+| `edit:` | Metadata, descriptions, a service's name/description/timeout, files, endpoint and allowlist, prices, trusted algorithms. |
 | `access:` | Price checks, ordering, downloading, service selection, consumer parameters. |
 | `compute:` | Environments, free and paid jobs, status, logs, results, multi-dataset jobs. |
 | `ssi:` | **New in v2.** Credential-gated publishing and consuming with walt.id. |
@@ -114,9 +140,12 @@ npm start -- <command> [args...]
 End-to-end scenarios chain several commands together:
 
 ```sh
-npm run scenario:e2e             # publish → order → download → compute
+npm run scenario:e2e             # publish → order → download → compute → revoke
 npm start -- ssi:round-trip      # the credential-gated round trip
 ```
+
+`scenario:e2e` revokes every asset it published when it is done (revoking is one-way); set
+`E2E_KEEP_ASSETS=true` to keep them.
 
 ## What is in each file
 
@@ -124,14 +153,16 @@ npm start -- ssi:round-trip      # the credential-gated round trip
 | --- | --- |
 | `index.ts` | Argument parsing and dispatch. |
 | `commands.ts` | The command catalogue and the help output. |
-| `nautilus.ts` | Shared setup: the signer, the chain config, the remote store, and `checkNode()`. |
-| `config.ts` | Per-network addresses and ready-made pricing configs. |
+| `nautilus.ts` | Shared setup: the signers, the DDO store, the allowlist, indexer timing, `checkNode()` and `store:check`. |
+| `config.ts` | Per-network addresses, the env-driven networks (`OPSEPOLIA`, `LOCAL`, `CUSTOM`) and pricing configs. |
+| `indexing.ts` | What to do when a publish stops after the mint, or the node does not index a change; `asset:indexing-state`. |
+| `ledger.ts` | The `PUBLISH_LOG` record of everything published and edited. |
 | `assets.ts` | Where the example files are fetched from, and the algorithm container. |
 | `publish.ts` | Datasets, algorithms, SaaS offers, multi-service assets, local validation. |
-| `edit.ts` | Metadata, prices, services, trusted algorithms, lifecycle. |
+| `edit.ts` | Metadata, a service's general fields, files and allowlist, prices, trusted algorithms, lifecycle. |
 | `access.ts` | Downloading, service selection, consumer parameters, price checks. |
 | `compute.ts` | Environments, free and paid jobs, status, logs, results. |
-| `identity.ts` | Credential-gated publishing and consuming with walt.id. |
+| `identity.ts` | Credential-gated publishing (access and compute) and consuming with walt.id. |
 | `scenarios/e2e.ts` | Runs every non-SSI command in order and reports what passed. |
 
 ## Choosing your nautilus
@@ -160,32 +191,131 @@ Two things to know:
 
 - **Switching rewrites `package.json` and `package-lock.json`.** That churn is not meant to be
   committed — run `npm run use:local` before you commit, or check out the two files.
-- **`use:npm` needs a published v2.** Until `2.0.0-beta.0` is on npm, a bare `npm run use:npm`
-  warns that `src/package.json` is still on a v1 version and the install will fail. That is
-  expected, not a bug.
+- **These examples need the release they were written for.** They use `S3RemoteStore`,
+  `completePublish`, `getIndexingState` and the throwing `waitForIndexer`, which are not in
+  `2.0.0-beta.0`. Pin a version that has them (`--spec`), or stay on `use:local`.
+
+A bare `use:npm` reads the version from `../src/package.json`; with `--spec` nothing outside
+`examples/` is read, so it also works in a copy of this directory.
 
 It is a dependency rewrite rather than `npm link`, deliberately: nothing is written to your
 global npm prefix, so the two modes cannot leak into unrelated projects.
 
-## Three things that changed, and will surprise you
+## What changed, and will surprise you
 
-### Publishing needs a remote store
+### Publishing needs a DDO store
 
-nautilus signs the DDO as a verifiable credential, stores it **off chain**, and writes only a
-`{ remote }` pointer on chain. So `Nautilus.create` takes a `RemoteStore`, and because the
-store itself needs an ocean-node client, the instance is built in two steps:
+nautilus signs the DDO as a verifiable credential, has the node encrypt it into an envelope,
+stores that **off chain**, and writes only a node-encrypted `{ remote }` pointer on chain. So
+publishing and editing need a `RemoteStore`. There is no plaintext mode any more: the
+`encrypt` option is gone, and `encrypt: false` throws.
+
+`nautilus.ts` builds it from `DDO_STORE`, and there is **no default**: the ocean-node's own
+bucket storage (`NodePersistentRemoteStore`) cannot hold DDOs on ocean-node 4.2, because the
+node resolves a DDO without a consumer address and a bucket refuses that read. nautilus
+rejects it before any transaction.
+
+**IPFS** (`DDO_STORE=ipfs`) — any endpoint taking a multipart file upload:
+
+```sh
+DDO_STORE="ipfs"
+IPFS_UPLOAD_URL="http://127.0.0.1:5001/api/v0/add"                 # a Kubo node
+# or Pinata, with a JWT whose key has the pin (pinFileToIPFS) and unpin scopes:
+IPFS_UPLOAD_URL="https://api.pinata.cloud/pinning/pinFileToIPFS"   # not pinJSONToIPFS
+IPFS_JWT="your-pinata-jwt"
+```
 
 ```ts
-const bootstrap = await Nautilus.create(signer, { config })
-
-const nautilus = await Nautilus.create(signer, {
-  config,
-  remoteStore: new NodePersistentRemoteStore(bootstrap.getNodeClient())
+new IpfsRemoteStore({
+  uploadUrl: process.env.IPFS_UPLOAD_URL,
+  headers: { Authorization: `Bearer ${process.env.IPFS_JWT}` },
+  probe: 'upload' // check() uploads a tiny probe before anything is minted
 })
 ```
 
-`nautilus.ts` does this for you. It defaults to the ocean-node's own persistent storage, so
-the examples need no external service. Set `IPFS_UPLOAD_URL` in `.env` to use IPFS instead.
+The ocean-node fetches the CID through **its own** IPFS gateway, so the content has to be
+reachable from there. The examples set no `gatewayUrl`, so an IPFS envelope is not read back
+before the metadata transaction; an S3 one is, with the read key.
+
+**S3** (`DDO_STORE=s3`) — AWS S3, Exoscale SOS or MinIO, with two key pairs:
+
+```sh
+DDO_STORE="s3"
+S3_ENDPOINT="https://sos-de-fra-1.exo.io"   # MinIO: http://127.0.0.1:9000
+S3_REGION="de-fra-1"                        # Exoscale: the zone. Default us-east-1
+S3_BUCKET="my-ddos"
+S3_PREFIX="ddo/"
+# S3_NODE_ENDPOINT="http://minio:9000"      # if the node reaches the bucket differently
+# S3_FORCE_PATH_STYLE="true"                # MinIO; defaults to true for IP/localhost endpoints
+S3_WRITE_ACCESS_KEY_ID="..."                # uploads; never leaves this machine
+S3_WRITE_SECRET_ACCESS_KEY="..."
+S3_READ_ACCESS_KEY_ID="..."                 # read-only, scoped to S3_PREFIX
+S3_READ_SECRET_ACCESS_KEY="..."
+```
+
+The read key is written, node-encrypted, into **every on-chain pointer, forever** — ocean-node
+has no anonymous S3 read. Make it read-only and scoped to the prefix; rotating it breaks
+re-indexing of the assets that point at it.
+
+nautilus requires `https://` for `OCEAN_NODE_URI`, `S3_ENDPOINT` and `IPFS_UPLOAD_URL`, except
+on `localhost`, `127.0.0.1`, `::1` and `*.localhost`; the examples have no switch to relax
+that. `S3_NODE_ENDPOINT` may stay `http://` (e.g. `http://minio:9000`), because only the node
+connects to it.
+
+Run `npm start -- store:check` to test either store without a transaction. Each publish
+prints where the envelope went (the CID, or the S3 object key), and `PUBLISH_LOG` keeps it.
+
+Every edit stores a new envelope and leaves the old one in place, so the pointer on chain
+keeps working until the edit lands. To clean up an intermediate version, or the envelopes of
+a revoked asset, pass the CID or object key to `npm start -- store:remove`. It unpins on
+Pinata (the key needs the unpin scope) or Kubo, or deletes the S3 object with the write key.
+
+**Keep the creation envelope** (the one the publish stored) **and the current one** of every
+asset that should stay indexed. A node reindex replays each asset from its creation event:
+without that envelope the asset disappears from the index, even if its current version is
+still stored, and without the current one it rolls back to an older version. When
+`PUBLISH_LOG` lists the envelope as an asset's creation or latest one, `store:remove`
+refuses unless you add `force` (for an asset you have revoked for good).
+
+A publish or edit that fails before its metadata transaction is sent removes the envelope it
+stored itself; the error's `stored` says what happened.
+
+### When a publish or an edit does not end indexed
+
+The DID derives from the NFT address, so `publish()` mints the NFT before it can store the
+DDO. If anything fails after the mint, it throws a `PublishIncompleteError`, and the examples
+print how to finish it on the **same** NFT instead of minting a second one:
+
+```sh
+npm start -- publish:resume publish:access-dataset 0xNFT… 0xDatatoken…
+```
+
+That re-runs the publish command — so use the same command, arguments and `.env` — and calls
+`completePublish(nftAddress, asset)` with the datatokens the failed run created.
+`completePublish` checks that you own the NFT and that the configured factory created it, and
+reuses the datatokens already on it. In your own code, pass the same asset object (or one
+rebuilt the same way) to `completePublish()`.
+
+Once the metadata is on chain, the node still has to index it. `waitForIndexer` (and
+`publish`/`edit` with `waitForIndexer`) now **throws** rather than returning `undefined`:
+an `IndexingError` carrying the node's own message as soon as the node records that it could
+not index the transaction, or an `OceanNodeError` after `INDEXER_TIMEOUT_MS` (default 5
+minutes). The examples explain both. Either way the change is on chain, and in your own code
+the error carries the full result as `error.published`. The node's record is the only place
+that says why:
+
+```sh
+npm start -- asset:indexing-state 0xTxHash…   # failures are filed by transaction
+npm start -- asset:indexing-state did:ope:…   # successes by DID
+```
+
+Two rules on edits. ocean-node indexes only the **first** metadata event of an asset in a
+block: one `Nautilus` instance runs its writes to an asset one after the other, and when a
+write from another process lands in the same block, nautilus throws a
+`MetadataConflictError` (edit again to fix it). `edit()` does not wait for the previous change
+to be indexed, but the edit examples wait for the indexer before they return, so running them
+back to back is safe. And `DEPRECATED` and `REVOKED` are final — `publish()` and `edit()`
+refuse them.
 
 ### One ocean-node replaces two URLs
 
@@ -244,6 +374,11 @@ VC policies check each credential; VP policies check the presentation as a whole
 works per service, so an asset can offer an open preview alongside a gated full dataset — see
 `npm start -- ssi:publish-partial`.
 
+Gating applies to compute too: `npm start -- ssi:publish-gated-compute <algorithmDid>`
+publishes a gated compute dataset that trusts that algorithm, and
+`npm start -- ssi:compute <datasetDid> <algorithmDid>` runs a job on it, presenting the
+credential before anything is ordered.
+
 **On the consuming side**, nothing changes at the call site. Configure a credential provider
 once and `access()` looks exactly as it does for an open asset. Credentials are resolved
 **before** any order is placed, so a policy you cannot satisfy costs nothing.
@@ -274,18 +409,44 @@ C2D v2 is a different model, and `compute.ts` shows it:
 - **All datasets travel in one array**, so `additionalDatasets` is assembled for you.
 - `getComputeStatus` and `getComputeResult` no longer take a `providerUri`.
 
+## Publisher and consumer
+
+`PRIVATE_KEY` publishes and edits. Set `CONSUMER_PRIVATE_KEY` and the access and compute
+commands (marked `C` in `help`), `ssi:consume` and `ssi:compute` run as that second account.
+Its address is added to the allowlist of every allowlisted example asset, together with any
+addresses in `CONSUMER_ADDRESSES` (comma separated — e.g. a consumer on another machine).
+Without either, the assets are allowlisted to the publisher only, as before.
+
+For credential-gated assets, the consumer logs in to walt.id with its own key; pin its wallet
+with `CONSUMER_SSI_WALLET_ID` and `CONSUMER_SSI_WALLET_DID` (`npm start -- ssi:connect consumer`
+lists them).
+
 ## Pricing
 
 `config.ts` holds ready-made pricing configs per network, with the payment-token addresses
 filled in. To change a price, edit `fixedRate` — a decimal string, e.g. `'2.95'`.
+
+To price in a token of your choice on any network — including `OPSEPOLIA` and `CUSTOM`,
+which have no ready-made token — set:
+
+```sh
+PRICING_TOKEN_ADDRESS="0x..."   # the ERC-20 to price in
+PRICING_TOKEN_DECIMALS="6"      # required: a wrong value misprices by orders of magnitude
+PRICING_FIXED_RATE="1"          # optional, default 1
+```
+
+The paid examples (`publish:access-algorithm`, `publish:saas`) use it ahead of the
+network's EURAU/OCEAN configs; without any fixed config they publish for free and say so.
 
 To check what an asset costs before buying it, run `npm start -- access:price <did>`.
 
 ## Checks
 
 ```sh
-npm run typecheck          # tsc --noEmit, from this directory
-npm --prefix .. run lint   # biome, from the repo root — it covers examples/ too
+npm run typecheck              # tsc --noEmit, from this directory
+npm --prefix .. run lint       # biome, from the repo root — it covers examples/ too
+npm start -- help              # offline: no key, no chain, no node
+npm start -- <command> --help  # offline as well
 ```
 
 CI runs both on every pull request, building the library first so the examples typecheck
