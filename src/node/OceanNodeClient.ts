@@ -46,8 +46,18 @@ import {
   type StorageObject,
   type UserCustomParameters
 } from '@oceanprotocol/lib'
-import type { Signer } from 'ethers'
+import {
+  getAddress,
+  isAddress,
+  isHexString,
+  keccak256,
+  type Signer,
+  toUtf8Bytes
+} from 'ethers'
 import type { PolicyServerPayload } from '../ddo/types.js'
+import { errorMessage, type FetchedText, fetchText } from '../utils/http.js'
+import { assertSecureTransport } from '../utils/transport.js'
+import { warnOnce } from '../utils/warn.js'
 import { isSigner, type NodeAuth, resolveConsumerAddress } from './auth.js'
 
 /** Payload accepted by the `policyServer` slots: one entry, or one per compute asset. */
@@ -65,6 +75,14 @@ export interface OceanNodeClientOptions {
   auth: NodeAuth
   /** Required when `auth` is a JWT, which nautilus cannot decode. */
   consumerAddress?: string
+  /**
+   * Accept a plain `http://` `nodeUri` on a host other than `localhost`, `127.0.0.1`,
+   * `::1` or `*.localhost`. Default `false`, the same rule as `Nautilus.create`: node auth
+   * travels with every request, and the plaintext DDO pointer goes to the node for
+   * encryption. Carried over to `forEndpoint` clients. A libp2p peer id or multiaddr is
+   * not an HTTP URL and is not affected.
+   */
+  allowInsecureTransport?: boolean
 }
 
 /** Thrown when ocean-node rejects a request or answers unusably. */
@@ -78,6 +96,349 @@ export class OceanNodeError extends Error {
     this.operation = operation
     this.cause = cause
   }
+}
+
+/** Thrown when the node has recorded that it could not index an asset. */
+export class IndexingError extends OceanNodeError {
+  readonly did: string
+  readonly txId?: string
+  /** The node's record, including its `error` message. */
+  readonly state: IndexingState
+
+  constructor(did: string, state: IndexingState, txId?: string) {
+    const error = state.error?.trim() || 'marked invalid without a message'
+    const hint = indexingErrorHint(error)
+
+    super(
+      'waitForIndexer',
+      `the node could not index ${did}${txId ? ` (tx ${txId})` : ''}: ${error}${hint ? `. Hint: ${hint}` : ''}`
+    )
+    this.name = 'IndexingError'
+    this.did = did
+    this.txId = txId
+    this.state = state
+  }
+}
+
+/**
+ * A known ocean-node fault (4.2.0 and later, see `nonceHandler.verifySignatureForConsumer`
+ * and `RawPrivateKeyProvider.signMessage`): the indexer signs the 32-byte message hash,
+ * but the node verifies it with leading zero bytes stripped (`toBeArray`). For the roughly
+ * one nonce in 256 whose hash starts with `0x00` its own decrypt call is refused, the
+ * stored nonce does not advance, and every retry and every later asset reuses that nonce.
+ * Nothing on the publisher's side can fix it; the node operator can, by advancing the
+ * node address's stored nonce once (any command signed ocean.js-style with the node key).
+ */
+const STUCK_INDEXER_NONCE_HINT =
+  "If the node logs 'consumer address and nonce signature mismatch' for its own address, its indexer is stuck on a nonce it cannot sign (an ocean-node bug that hits about one nonce in 256) and every later asset fails the same way until the operator advances the stored nonce of the node's address; OceanNodeClient.getIndexerNonceState() tells you"
+
+/**
+ * Whether the node's own indexer can get a decrypt call signed with `nonce` accepted, i.e.
+ * whether `keccak256(address + nonce + "decryptDDO")` does not start with a zero byte. See
+ * `STUCK_INDEXER_NONCE_HINT`. The address is the checksummed form the node signs with.
+ */
+export function isIndexerNonceSignable(
+  nodeAddress: string,
+  nonce: number | bigint | string
+): boolean {
+  const message = `${getAddress(nodeAddress)}${String(nonce)}decryptDDO`
+
+  return !keccak256(toUtf8Bytes(message)).startsWith('0x00')
+}
+
+/** What `getIndexerNonceState` reports. */
+export interface IndexerNonceState {
+  /** The node's own address (`providerAddress`), which signs the indexer's decrypt calls. */
+  nodeAddress: string
+  /** The nonce the node has stored for that address. */
+  storedNonce: number
+  /** The nonce the indexer signs its next decrypt call with: `storedNonce + 1`. */
+  nextNonce: number
+  /**
+   * `true` when the node will refuse that call (`401 consumer address and nonce signature
+   * mismatch`). Since the stored nonce only advances on success, the indexer then stays
+   * stuck: every later encrypted DDO fails to index until the operator advances the nonce.
+   */
+  stuck: boolean
+}
+
+/**
+ * Thrown by `publish()`, `completePublish()` and `edit()` before any transaction when the
+ * node's indexer is stuck on a nonce it cannot sign (`IndexerNonceState.stuck`): the asset
+ * would go on chain and never be indexed.
+ */
+export class IndexerNonceStuckError extends OceanNodeError {
+  readonly state: IndexerNonceState
+
+  constructor(state: IndexerNonceState) {
+    super(
+      'indexer preflight',
+      `refusing to publish: the indexer of this node is stuck. Its address ${state.nodeAddress} has stored nonce ${state.storedNonce}, and the node refuses its own decrypt call signed with nonce ${state.nextNonce} (ocean-node 4.2 bug B1: it signs the 32-byte hash and verifies it with the leading zero byte stripped). Every encrypted DDO published to this node stays unindexed until the operator advances that stored nonce or runs a node with the fix. Nothing was spent. Pass { checkIndexerNonce: false } to publish anyway, e.g. on a node that runs the fix, where this check is a false alarm about once in 256 publishes.`
+    )
+    this.name = 'IndexerNonceStuckError'
+    this.state = state
+  }
+}
+
+/**
+ * What a node error means, when it is the known symptom of something else.
+ *
+ * The indexer decrypts the stored envelope with a second decrypt call. If that call fails,
+ * it silently treats the ciphertext as plaintext, and the error it records is a UTF-8 or
+ * hex decoding error that says nothing about the cause.
+ */
+function indexingErrorHint(error: string): string | undefined {
+  if (/invalid codepoint|UNEXPECTED_CONTINUE|invalid BytesLike/i.test(error))
+    return "the node could not decrypt the envelope (its own decrypt call failed: a 401 nonce or authorization error, a 413 for an envelope over its 100 KB request limit, or a 429/403 from its rate limiter), so it misread the ciphertext as plaintext; check the node's logs, AUTHORIZED_DECRYPTERS and MAX_REQ_PER_MINUTE"
+
+  if (/401|Unauthorized/i.test(error) && /decrypt/i.test(error))
+    return `the node's decrypt call was refused (401 Unauthorized); check the node's logs, its nonce handling and AUTHORIZED_DECRYPTERS. ${STUCK_INDEXER_NONCE_HINT}`
+
+  return undefined
+}
+
+/**
+ * One record of the node's DDO indexing state (`GET /api/aquarius/state/ddo`).
+ *
+ * ocean-node 4.2 keeps two kinds of record per asset, under different ids:
+ *
+ *   - a **success** under the asset's `did:ope:` DID, with no `nft` and a blank `txId`
+ *     (`" "`). Look it up by `{ did }`.
+ *   - a **failure** under the `did:op:` form of the id, with `nft` and the real `txId`.
+ *     Look it up by `{ txId }`. A later success does not clear it, so a lookup by
+ *     `{ nft }` can return a failure from an earlier transaction.
+ */
+export interface IndexingState {
+  /** The id the node filed it under: `did:ope:` for a success, `did:op:` for a failure. */
+  did?: string
+  chainId?: number
+  /** Only on failure records. */
+  nft?: string
+  /** The transaction, on failure records. A single space on success records. */
+  txId?: string
+  valid: boolean
+  /** The node's error message. A single space when there is none. */
+  error?: string
+}
+
+export type IndexingStateQuery =
+  | { did: string }
+  | { nft: string }
+  | { txId: string }
+
+export interface WaitForIndexerOptions {
+  /**
+   * Delay between polls. Default 7 s: each poll is up to two requests (the asset, and the
+   * indexing state when there is a `txid`), so one wait stays at or below 18 requests a
+   * minute, under ocean-node's default `MAX_REQ_PER_MINUTE` of 30 per IP. When the node
+   * answers 429 (or 403 "Too many active connections"), the next poll waits longer: as
+   * long as the node says, or twice as long each time, up to 60 s.
+   */
+  intervalMs?: number
+  /** How long to wait before throwing. Default 5 minutes. */
+  timeoutMs?: number
+  /** Timeout for each request to the node, capped by what is left of `timeoutMs`. Default 15 s. */
+  requestTimeoutMs?: number
+  /**
+   * How many asset lookups in a row may fail (network error, timeout, an HTTP status other
+   * than 2xx or 404) before this throws an `OceanNodeError` carrying the last error,
+   * instead of waiting out the timeout. Default 5.
+   */
+  maxConsecutiveFailures?: number
+  /** Aborting rejects with the signal's reason. */
+  signal?: AbortSignal
+}
+
+const DEFAULT_INDEXER_INTERVAL_MS = 7_000
+/** The longest wait after a rate-limit answer. */
+const MAX_RATE_LIMIT_BACKOFF_MS = 60_000
+const DEFAULT_INDEXER_TIMEOUT_MS = 300_000
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000
+const DEFAULT_MAX_CONSECUTIVE_FAILURES = 5
+
+/**
+ * 2.0.0-beta.0's `waitForIndexer` took `{ interval, maxRetries }`. They are not part of
+ * the options any more, but code passing them must not silently get a different wait: map
+ * them (when the new names are absent) and say so.
+ */
+function resolveIndexerOptions(
+  options: WaitForIndexerOptions
+): WaitForIndexerOptions {
+  const legacy = options as WaitForIndexerOptions & {
+    interval?: unknown
+    maxRetries?: unknown
+  }
+
+  if (legacy.interval === undefined && legacy.maxRetries === undefined)
+    return options
+
+  warnOnce(
+    'waitForIndexer-legacy-options',
+    'waitForIndexer: the options `interval` and `maxRetries` were replaced by `intervalMs` and `timeoutMs` in 2.0.0-beta.1. They are mapped for now (intervalMs = interval, timeoutMs = interval × maxRetries) but will be removed; rename them.'
+  )
+
+  const interval =
+    typeof legacy.interval === 'number' && legacy.interval >= 0
+      ? legacy.interval
+      : undefined
+  const intervalMs = options.intervalMs ?? interval
+  const retries =
+    typeof legacy.maxRetries === 'number' && legacy.maxRetries > 0
+      ? legacy.maxRetries
+      : undefined
+
+  return {
+    ...options,
+    intervalMs,
+    timeoutMs:
+      options.timeoutMs ??
+      (retries !== undefined
+        ? retries * (intervalMs ?? DEFAULT_INDEXER_INTERVAL_MS)
+        : undefined)
+  }
+}
+
+/**
+ * Whether a state record is a failure: `valid: false`, or any real error message. The 4.2
+ * node records a DDO it dropped at the database write as `valid: true` plus an error.
+ */
+function isIndexingFailure(state: IndexingState): boolean {
+  return (
+    state.valid === false ||
+    (typeof state.error === 'string' && state.error.trim() !== '')
+  )
+}
+
+/** Whether a state record is about this transaction. Success records carry `" "`. */
+function isRecordFor(state: IndexingState, txid: string): boolean {
+  return state.txId?.trim().toLowerCase() === txid.toLowerCase()
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason)
+
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(signal?.reason)
+    }
+
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/** One poll's lookup: the asset, "not yet", a rate-limit answer, or a failed request. */
+type Lookup =
+  | { kind: 'indexed'; asset: AssetV5 }
+  | { kind: 'pending' }
+  | { kind: 'rate-limited'; error: NodeRateLimitedError }
+  | { kind: 'failed'; error: unknown }
+
+/**
+ * The node turned a request away for its rate limit: `429` ("Rate limit exceeded. Try
+ * again in N seconds.", `MAX_REQ_PER_MINUTE` per IP) or `403` ("Too many active
+ * connections", `MAX_CONNECTIONS_PER_MINUTE` across all IPs). Internal.
+ */
+class NodeRateLimitedError extends OceanNodeError {
+  /** How long the node asked to wait, when it said. */
+  readonly retryAfterMs?: number
+
+  constructor(operation: string, response: FetchedText) {
+    super(
+      operation,
+      `the node rate-limited the request: ${response.status} ${response.statusText} ${boundedNodeMessage(response.body)}`.trim()
+    )
+    this.name = 'NodeRateLimitedError'
+    this.retryAfterMs = retryAfterMs(response)
+  }
+}
+
+/** Whether a response is the node's rate limiter rather than an answer. */
+function isRateLimited(response: FetchedText): boolean {
+  if (response.status === 429) return true
+
+  return (
+    response.status === 403 &&
+    /too many active connections|rate limit/i.test(response.body)
+  )
+}
+
+/** The wait the node asked for: `Retry-After`, or ocean-node's "Try again in N seconds". */
+function retryAfterMs(response: FetchedText): number | undefined {
+  const header = response.retryAfter?.trim()
+  if (header && /^\d+$/.test(header)) return Number(header) * 1000
+
+  const seconds = /try again in (\d+) seconds?/i.exec(response.body)?.[1]
+  return seconds ? Number(seconds) * 1000 : undefined
+}
+
+function isHttpUri(uri: string): boolean {
+  return /^https?:\/\//i.test(uri)
+}
+
+/**
+ * The query as the node stores it: ES maps `nft` and `txId` as exact keywords, and the node
+ * files `nft` checksummed and `txId` lower-case. `did` must be a `did:op:`/`did:ope:` id.
+ */
+function normalizeStateQuery(query: IndexingStateQuery): [string, string] {
+  const [key, raw] =
+    'txId' in query
+      ? ['txId', query.txId]
+      : 'did' in query
+        ? ['did', query.did]
+        : ['nft', (query as { nft: string }).nft]
+
+  const value = typeof raw === 'string' ? raw.trim() : ''
+
+  if (!value)
+    throw new OceanNodeError('getIndexingState', 'pass a did, an nft or a txId')
+
+  if (key === 'nft') {
+    if (!isAddress(value))
+      throw new OceanNodeError(
+        'getIndexingState',
+        `nft ${JSON.stringify(value)} is not an address`
+      )
+    return [key, getAddress(value)]
+  }
+
+  if (key === 'txId') {
+    if (!/^0x[0-9a-fA-F]{64}$/.test(value))
+      throw new OceanNodeError(
+        'getIndexingState',
+        `txId ${JSON.stringify(value)} is not a 32-byte 0x hex transaction hash`
+      )
+    return [key, value.toLowerCase()]
+  }
+
+  if (!/^did:ope?:/.test(value))
+    throw new OceanNodeError(
+      'getIndexingState',
+      `did ${JSON.stringify(value)} is not a did:op: or did:ope: id`
+    )
+
+  return [key, value]
+}
+
+/** The node's answer when a signed command reuses a nonce it has already seen. */
+const NONCE_REJECTED = /not a valid nonce/i
+
+/** How much of a node's error body goes into an error message. */
+const MAX_NODE_MESSAGE_LENGTH = 200
+
+function boundedNodeMessage(value: unknown): string {
+  const text = (
+    typeof value === 'string' ? value : (JSON.stringify(value) ?? String(value))
+  ).trim()
+
+  return text.length > MAX_NODE_MESSAGE_LENGTH
+    ? `${text.slice(0, MAX_NODE_MESSAGE_LENGTH)}…`
+    : text
 }
 
 async function attempt<T>(operation: string, fn: () => Promise<T>): Promise<T> {
@@ -99,12 +460,35 @@ export class OceanNodeClient {
   private readonly aquarius: Aquarius
   private auth: NodeAuth
   private consumerAddressOverride?: string
+  private readonly allowInsecureTransport: boolean
+
+  /**
+   * Tail of this client's signed commands, see `serializeSigned`. One client has one auth,
+   * so this is a queue per address.
+   */
+  private signedQueue: Promise<unknown> = Promise.resolve()
 
   /** Memoized `isValidProvider` probes, keyed by URI. Service endpoints are re-checked
    * once per service on every publish, and the answer does not change mid-run. */
   private static readonly validityCache = new Map<string, Promise<boolean>>()
 
+  /**
+   * Throws an `OceanNodeError` for a plain `http://` `nodeUri` on a non-loopback host,
+   * unless `allowInsecureTransport` (see `OceanNodeClientOptions`).
+   */
   constructor(options: OceanNodeClientOptions) {
+    this.allowInsecureTransport = options.allowInsecureTransport === true
+
+    try {
+      assertSecureTransport(
+        options.nodeUri,
+        'nodeUri',
+        this.allowInsecureTransport
+      )
+    } catch (error) {
+      throw new OceanNodeError('create', errorMessage(error), error)
+    }
+
     this.nodeUri = options.nodeUri
     this.chainId = options.chainId
     this.auth = options.auth
@@ -123,6 +507,10 @@ export class OceanNodeClient {
    *
    * The JWT caveat from `encrypt` applies here too: a token minted for one node is
    * rejected by another, so cross-node consume needs Signer auth.
+   *
+   * The transport rule applies to the other node as well: a plain `http://` endpoint on a
+   * non-loopback host throws an `OceanNodeError` unless this client was created with
+   * `allowInsecureTransport: true`, since this client's auth would travel to it.
    */
   forEndpoint(uri: string): OceanNodeClient {
     const normalize = (value: string) => value.replace(/\/+$/, '')
@@ -133,7 +521,8 @@ export class OceanNodeClient {
       nodeUri: normalize(uri),
       chainId: this.chainId,
       auth: this.auth,
-      consumerAddress: this.consumerAddressOverride
+      consumerAddress: this.consumerAddressOverride,
+      allowInsecureTransport: this.allowInsecureTransport
     })
   }
 
@@ -177,28 +566,390 @@ export class OceanNodeClient {
 
   /**
    * Blocks until the indexer has picked up the asset, or the update identified by `txid`.
-   * Returns `undefined` on timeout rather than throwing, so callers can decide.
+   *
+   * With a `txid` (publish and edit always have one), each round also reads the node's
+   * failure record for that transaction (`getIndexingState({ txId })`). When there is one,
+   * this throws an `IndexingError` with the node's message instead of waiting out the
+   * timeout. Only a record whose `txId` is this transaction counts: the node never clears
+   * old failure records, so anything not tied to the transaction may be stale. The state
+   * endpoint is optional: when it fails, only the early exit is lost.
+   *
+   * Polls every `intervalMs` (default 7 s, so at most 18 requests a minute: ocean-node
+   * rate-limits each IP to `MAX_REQ_PER_MINUTE`, default 30). A rate-limit answer (429, or
+   * 403 "Too many active connections") is not a failure: the next poll waits as long as the
+   * node asks, or twice as long as the last one, up to 60 s.
+   *
+   * Each request has its own timeout (`requestTimeoutMs`). After `maxConsecutiveFailures`
+   * failed asset lookups in a row this throws an `OceanNodeError` with the last error, so a
+   * wrong node URL or a node that answers 500 is reported as such rather than as "not
+   * indexed". Throws an `OceanNodeError` on timeout, and rejects with the signal's reason
+   * when `signal` aborts.
    */
   async waitForIndexer(
     did: string,
     txid?: string,
-    options: {
-      interval?: number
-      maxRetries?: number
-      signal?: AbortSignal
-    } = {}
-  ): Promise<AssetV5 | undefined> {
-    const asset = await attempt('waitForIndexer', () =>
-      this.aquarius.waitForIndexer(
+    options: WaitForIndexerOptions = {}
+  ): Promise<AssetV5> {
+    const resolved = resolveIndexerOptions(options)
+    const { signal } = resolved
+    const intervalMs = resolved.intervalMs ?? DEFAULT_INDEXER_INTERVAL_MS
+    const timeoutMs = resolved.timeoutMs ?? DEFAULT_INDEXER_TIMEOUT_MS
+    const requestTimeoutMs =
+      resolved.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
+    const maxFailures =
+      resolved.maxConsecutiveFailures ?? DEFAULT_MAX_CONSECUTIVE_FAILURES
+    const deadline = Date.now() + timeoutMs
+    const what = `${did}${txid ? ` (tx ${txid})` : ''}`
+
+    let failures = 0
+    let rateLimits = 0
+    let lastLookupError: unknown
+    let lastStateError: unknown
+    let lastRateLimit: NodeRateLimitedError | undefined
+
+    const requestBudget = () =>
+      Math.max(1, Math.min(requestTimeoutMs, deadline - Date.now()))
+
+    for (;;) {
+      if (signal?.aborted) throw signal.reason
+
+      const lookup = await this.lookupIndexed(
         did,
         txid,
-        options.signal,
-        options.interval,
-        options.maxRetries
+        signal,
+        requestBudget()
       )
+
+      if (lookup.kind === 'indexed') return lookup.asset
+
+      // A rate-limit answer is not a failure of the node: wait longer and ask again.
+      let rateLimited: NodeRateLimitedError | undefined =
+        lookup.kind === 'rate-limited' ? lookup.error : undefined
+
+      if (lookup.kind === 'failed') {
+        if (signal?.aborted) throw signal.reason
+
+        failures++
+        lastLookupError = lookup.error
+
+        if (failures >= maxFailures)
+          throw new OceanNodeError(
+            'waitForIndexer',
+            `${failures} lookups of ${what} in a row failed; the last one: ${errorMessage(lookup.error)}. Check the node URI and that the node is up.`,
+            lookup.error
+          )
+      } else if (lookup.kind === 'pending') failures = 0
+
+      if (!rateLimited && txid && isHttpUri(this.nodeUri)) {
+        try {
+          const state = await this.readIndexingState(
+            { txId: txid },
+            signal,
+            requestBudget()
+          )
+
+          if (state && isRecordFor(state, txid) && isIndexingFailure(state))
+            throw new IndexingError(did, state, txid)
+        } catch (error) {
+          if (error instanceof IndexingError) throw error
+          if (signal?.aborted) throw signal.reason
+
+          if (error instanceof NodeRateLimitedError) rateLimited = error
+          else lastStateError = error
+        }
+      }
+
+      let delay = intervalMs
+      if (rateLimited) {
+        rateLimits++
+        lastRateLimit = rateLimited
+        const backoff = Math.min(
+          MAX_RATE_LIMIT_BACKOFF_MS,
+          Math.max(intervalMs, 1) * 2 ** Math.min(rateLimits, 10)
+        )
+        delay = Math.max(
+          backoff,
+          rateLimited.retryAfterMs !== undefined
+            ? rateLimited.retryAfterMs + 1_000
+            : 0
+        )
+        LoggerInstance.debug(
+          `[waitForIndexer] ${this.nodeUri} rate-limited the lookup of ${what}; next try in ${Math.round(delay / 1000)}s`
+        )
+      } else rateLimits = 0
+
+      const remaining = deadline - Date.now()
+      if (rateLimited ? remaining <= 0 : delay > remaining) {
+        if (signal?.aborted) throw signal.reason
+
+        const last = lastLookupError ?? lastStateError ?? lastRateLimit
+        const limited = lastRateLimit
+          ? ' The node rate-limited some of these lookups (its MAX_REQ_PER_MINUTE), so they were spaced out; a longer intervalMs avoids that.'
+          : ''
+        throw new OceanNodeError(
+          'waitForIndexer',
+          `${what} was not indexed within ${Math.round(timeoutMs / 1000)}s. The node may be behind; getIndexingState() shows what it recorded.${limited}${last ? ` Last request error: ${errorMessage(last)}` : ''}`,
+          last
+        )
+      }
+
+      await sleep(Math.min(delay, remaining), signal)
+    }
+  }
+
+  /**
+   * One lookup: the asset, if it is indexed (at `txid`, when given).
+   *
+   * Over HTTP this reads `GET /api/aquarius/assets/ddo/<did>` itself, so a failing request
+   * is told apart from a 404 ("not indexed yet"). Over P2P it falls back to ocean.js's
+   * `waitForIndexer` with one retry and no delay, which cannot tell the two apart.
+   */
+  private async lookupIndexed(
+    did: string,
+    txid: string | undefined,
+    signal: AbortSignal | undefined,
+    timeoutMs: number
+  ): Promise<Lookup> {
+    if (!isHttpUri(this.nodeUri)) {
+      const asset = await this.aquarius
+        .waitForIndexer(did, txid, signal, 0, 1)
+        .catch(() => null)
+
+      return asset
+        ? { kind: 'indexed', asset: asset as unknown as AssetV5 }
+        : { kind: 'pending' }
+    }
+
+    const url = `${this.nodeUri.replace(/\/+$/, '')}/api/aquarius/assets/ddo/${encodeURIComponent(did)}`
+
+    try {
+      const response = await fetchText(
+        fetch,
+        url,
+        { method: 'GET', headers: { Accept: 'application/json' } },
+        { timeoutMs, signal }
+      )
+
+      if (response.status === 404) return { kind: 'pending' }
+      if (isRateLimited(response))
+        return {
+          kind: 'rate-limited',
+          error: new NodeRateLimitedError('waitForIndexer', response)
+        }
+      if (!response.ok)
+        return {
+          kind: 'failed',
+          error: new Error(
+            `GET ${url} answered ${response.status} ${response.statusText} ${response.body.slice(0, 200)}`.trim()
+          )
+        }
+
+      const asset = JSON.parse(response.body) as AssetV5
+
+      if (!txid) return { kind: 'indexed', asset }
+
+      // v5 keeps the event under `indexedMetadata`; v4 had it at the top level.
+      const fields = asset as unknown as {
+        indexedMetadata?: { event?: { txid?: unknown } }
+        event?: { txid?: unknown }
+      }
+      const indexedTx =
+        fields?.indexedMetadata?.event?.txid ?? fields?.event?.txid
+
+      return typeof indexedTx === 'string' &&
+        indexedTx.toLowerCase() === txid.toLowerCase()
+        ? { kind: 'indexed', asset }
+        : { kind: 'pending' }
+    } catch (error) {
+      if (signal?.aborted) throw signal.reason
+
+      return { kind: 'failed', error }
+    }
+  }
+
+  /**
+   * The node's own address (`providerAddress` in `GET /`), or `undefined` when the node
+   * does not say or is reached over P2P. The indexer signs its decrypt calls with this key.
+   *
+   * Throws an `OceanNodeError` when the request fails (network error, timeout, a non-2xx
+   * status) or the body is not JSON. Rejects with the signal's reason when `signal` aborts.
+   */
+  async getNodeAddress(signal?: AbortSignal): Promise<string | undefined> {
+    if (!isHttpUri(this.nodeUri)) return undefined
+
+    let response: Awaited<ReturnType<typeof fetchText>>
+    try {
+      response = await fetchText(
+        fetch,
+        `${this.nodeUri.replace(/\/+$/, '')}/`,
+        { method: 'GET', headers: { Accept: 'application/json' } },
+        { timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS, signal }
+      )
+    } catch (error) {
+      if (signal?.aborted) throw error
+      throw new OceanNodeError('getNodeAddress', errorMessage(error), error)
+    }
+
+    if (!response.ok)
+      throw new OceanNodeError(
+        'getNodeAddress',
+        `${response.status} ${response.statusText} ${boundedNodeMessage(response.body)}`.trim()
+      )
+
+    let info: unknown
+    try {
+      info = JSON.parse(response.body)
+    } catch (error) {
+      throw new OceanNodeError(
+        'getNodeAddress',
+        `the node answered with something that is not JSON: ${boundedNodeMessage(response.body)}`,
+        error
+      )
+    }
+
+    const address =
+      info && typeof info === 'object'
+        ? (info as { providerAddress?: unknown }).providerAddress
+        : undefined
+
+    return typeof address === 'string' && isAddress(address)
+      ? getAddress(address)
+      : undefined
+  }
+
+  /**
+   * Read-only check for the ocean-node fault where the indexer gets stuck on a nonce it
+   * cannot sign (see `IndexerNonceState.stuck`). Two GETs: the node's root and
+   * `/api/services/nonce` for the node's own address. Nothing is signed or sent.
+   *
+   * `undefined` over P2P or when the node reports no address. Throws an `OceanNodeError`
+   * when a request fails or the nonce answer is unusable.
+   */
+  async getIndexerNonceState(
+    signal?: AbortSignal
+  ): Promise<IndexerNonceState | undefined> {
+    const nodeAddress = await this.getNodeAddress(signal)
+    if (!nodeAddress) return undefined
+
+    let response: Awaited<ReturnType<typeof fetchText>>
+    try {
+      response = await fetchText(
+        fetch,
+        `${this.nodeUri.replace(/\/+$/, '')}/api/services/nonce?userAddress=${nodeAddress}`,
+        { method: 'GET', headers: { Accept: 'application/json' } },
+        { timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS, signal }
+      )
+    } catch (error) {
+      if (signal?.aborted) throw error
+      throw new OceanNodeError(
+        'getIndexerNonceState',
+        errorMessage(error),
+        error
+      )
+    }
+
+    if (!response.ok)
+      throw new OceanNodeError(
+        'getIndexerNonceState',
+        `${response.status} ${response.statusText} ${boundedNodeMessage(response.body)}`.trim()
+      )
+
+    let raw: unknown
+    try {
+      raw = (JSON.parse(response.body) as { nonce?: unknown } | null)?.nonce
+    } catch (error) {
+      throw new OceanNodeError(
+        'getIndexerNonceState',
+        `the node answered with something that is not JSON: ${boundedNodeMessage(response.body)}`,
+        error
+      )
+    }
+
+    // The node answers `{ nonce: "<n>" }`, and `{}`/`null` for an address it has not seen.
+    const storedNonce =
+      raw === undefined || raw === null || raw === '' ? 0 : Number(raw)
+
+    if (!Number.isSafeInteger(storedNonce) || storedNonce < 0)
+      throw new OceanNodeError(
+        'getIndexerNonceState',
+        `the node answered with an unusable nonce: ${boundedNodeMessage(response.body)}`
+      )
+
+    const nextNonce = storedNonce + 1
+
+    return {
+      nodeAddress,
+      storedNonce,
+      nextNonce,
+      stuck: !isIndexerNonceSignable(nodeAddress, nextNonce)
+    }
+  }
+
+  /**
+   * The indexer's record for an asset or a transaction, or `undefined` if it has none.
+   * HTTP nodes only: the endpoint (`GET /api/aquarius/state/ddo`) has no P2P command.
+   *
+   * See `IndexingState` for how ocean-node 4.2 files them: `{ did }` (the `did:ope:` DID)
+   * finds the success record, `{ txId }` the failure record of that transaction. `{ nft }`
+   * finds failure records only, possibly from an earlier transaction. A failure is
+   * `valid: false`, or `valid: true` with an error (a DDO dropped at the database write),
+   * so treat any non-blank `error` as a failure too.
+   */
+  async getIndexingState(
+    query: IndexingStateQuery,
+    signal?: AbortSignal
+  ): Promise<IndexingState | undefined> {
+    return this.readIndexingState(query, signal, DEFAULT_REQUEST_TIMEOUT_MS)
+  }
+
+  private async readIndexingState(
+    query: IndexingStateQuery,
+    signal: AbortSignal | undefined,
+    timeoutMs: number
+  ): Promise<IndexingState | undefined> {
+    if (!isHttpUri(this.nodeUri))
+      throw new OceanNodeError(
+        'getIndexingState',
+        'the indexing state is only served over HTTP; this client uses a P2P node URI'
+      )
+
+    const [key, value] = normalizeStateQuery(query)
+
+    const url = `${this.nodeUri.replace(/\/+$/, '')}/api/aquarius/state/ddo?${key}=${encodeURIComponent(value)}`
+
+    const response = await attempt('getIndexingState', () =>
+      fetchText(fetch, url, { method: 'GET' }, { timeoutMs, signal })
     )
 
-    return (asset as unknown as AssetV5) || undefined
+    if (response.status === 404) return undefined
+
+    if (isRateLimited(response))
+      throw new NodeRateLimitedError('getIndexingState', response)
+
+    if (!response.ok)
+      throw new OceanNodeError(
+        'getIndexingState',
+        `${response.status} ${response.statusText} ${response.body.slice(0, 200)}`.trim()
+      )
+
+    let state: IndexingState
+    try {
+      state = JSON.parse(response.body) as IndexingState
+    } catch (error) {
+      throw new OceanNodeError(
+        'getIndexingState',
+        'the node answered with something that is not JSON',
+        error
+      )
+    }
+
+    if (!state || typeof state !== 'object' || typeof state.valid !== 'boolean')
+      throw new OceanNodeError(
+        'getIndexingState',
+        `the node answered with something that is not an indexing state record: ${JSON.stringify(state)?.slice(0, 200)}`
+      )
+
+    return state
   }
 
   /** Raw metadata query. Note the endpoint-path caveat in the module docs of `../index`. */
@@ -327,6 +1078,9 @@ export class OceanNodeClient {
    *
    * When `auth` is a JWT rather than a Signer it was minted for one node and another will
    * reject it; pass a Signer if services point at nodes other than the configured one.
+   *
+   * Throws an `OceanNodeError` unless the node answers with `0x`-prefixed hex ciphertext,
+   * after one retry when the node rejected the nonce. Calls are serialized per client.
    */
   async encrypt(
     data: unknown,
@@ -334,8 +1088,42 @@ export class OceanNodeClient {
     signal?: AbortSignal,
     nodeUri: string = this.nodeUri
   ): Promise<string> {
-    const encrypted = await attempt('encrypt', () =>
-      ProviderInstance.encrypt(
+    return this.serializeSigned(async () => {
+      const first = await this.encryptOnce(data, policyServer, signal, nodeUri)
+      if ('ciphertext' in first) return first.ciphertext
+
+      // ocean.js reads a fresh nonce on every call, so one retry gets past a nonce another
+      // request for this address used in between. A pre-computed signature carries a fixed
+      // nonce and a JWT carries none: retrying either would fail the same way.
+      if (
+        !isSigner(this.auth) ||
+        signal?.aborted ||
+        !NONCE_REJECTED.test(first.error.message)
+      )
+        throw first.error
+
+      const second = await this.encryptOnce(data, policyServer, signal, nodeUri)
+      if ('ciphertext' in second) return second.ciphertext
+
+      throw second.error
+    })
+  }
+
+  /**
+   * One encrypt call, with its result checked. ocean.js 9.2 returns the HTTP body without
+   * looking at the status, so a rejection (`401 nonce: 1 is not a valid nonce`) comes back
+   * as if it were ciphertext. On success ocean-node answers `0x` + the hex of the
+   * ciphertext (`EncryptHandler`), so anything else is the node's error message.
+   */
+  private async encryptOnce(
+    data: unknown,
+    policyServer: PolicyServerArg,
+    signal: AbortSignal | undefined,
+    nodeUri: string
+  ): Promise<{ ciphertext: string } | { error: OceanNodeError }> {
+    let result: unknown
+    try {
+      result = await ProviderInstance.encrypt(
         data,
         this.chainId,
         nodeUri,
@@ -343,15 +1131,51 @@ export class OceanNodeClient {
         policyServer ?? undefined,
         signal
       )
-    )
+    } catch (error) {
+      return {
+        error: new OceanNodeError(
+          'encrypt',
+          error instanceof Error ? error.message : String(error),
+          error
+        )
+      }
+    }
 
-    if (!encrypted)
-      throw new OceanNodeError(
+    if (!result || result === '0x')
+      return {
+        error: new OceanNodeError(
+          'encrypt',
+          'the node returned an empty ciphertext'
+        )
+      }
+
+    if (typeof result === 'string' && isHexString(result, true))
+      return { ciphertext: result }
+
+    return {
+      error: new OceanNodeError(
         'encrypt',
-        'the node returned an empty ciphertext'
+        `the node did not return ciphertext: ${boundedNodeMessage(result)}`
       )
+    }
+  }
 
-    return encrypted
+  /**
+   * Runs signed commands of this client one at a time.
+   *
+   * With a Signer, ocean.js reads the address's nonce from the node and signs nonce + 1 on
+   * every call. Two calls in flight read the same nonce, and the node rejects the second
+   * (`nonce: N is not a valid nonce`). Publishing an asset encrypts all its services' files
+   * at once, so this happens on every multi-service publish. JWT and pre-computed
+   * signature auth need no queue.
+   */
+  private serializeSigned<T>(fn: () => Promise<T>): Promise<T> {
+    if (!isSigner(this.auth)) return fn()
+
+    const run = this.signedQueue.then(() => fn())
+    this.signedQueue = run.catch(() => undefined)
+
+    return run
   }
 
   // #endregion
