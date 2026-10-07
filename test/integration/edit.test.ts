@@ -4,6 +4,7 @@ import type { AssetV5 } from '../../src/ddo/index.js'
 import { fromLanguageValue } from '../../src/ddo/language.js'
 import {
   getCredentials,
+  getIndexedMetadata,
   getLifecycleState,
   getMetadata,
   getServices
@@ -25,7 +26,8 @@ import {
   freeAlgorithm,
   freeDataset,
   integrationEnabled,
-  publishAndIndex
+  publishAndIndex,
+  settledIndexingState
 } from './helpers.js'
 
 /**
@@ -99,6 +101,33 @@ describe('edit', () => {
 
     asset = await nautilus.getAsset(published.ddo.id as string)
     serviceId = getServices(asset)[0].id
+  })
+
+  describe('indexing', () => {
+    it('resolves the edit through getAsset, with a valid indexing state', async () => {
+      const result = await nautilus.edit(
+        new AssetBuilder(asset).setName('Indexed Edit').build(),
+        { waitForIndexer: true }
+      )
+
+      expect(result.indexed).to.equal(true)
+
+      const resolved = await nautilus.getAsset(result.ddo.id as string)
+      expect(getMetadata(resolved).name).to.equal('Indexed Edit')
+      expect(getIndexedMetadata(resolved)?.event?.txid).to.equal(
+        result.setMetadataTxReceipt.hash
+      )
+
+      const state = await settledIndexingState(nautilus, {
+        did: result.ddo.id as string,
+        txId: result.setMetadataTxReceipt.hash
+      })
+      expect(state.did).to.equal(result.ddo.id)
+      expect(state.valid).to.equal(true)
+      expect((state.error ?? '').trim()).to.equal('')
+
+      asset = resolved
+    })
   })
 
   describe('metadata', () => {

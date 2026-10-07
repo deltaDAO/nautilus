@@ -1,18 +1,32 @@
 import { beforeAll, describe, expect, it } from 'vitest'
-import { getCredentials, getServices, getVersion } from '../../src/ddo/read.js'
+import {
+  getCredentials,
+  getIndexedMetadata,
+  getServices,
+  getVersion
+} from '../../src/ddo/read.js'
 import { CredentialListTypes } from '../../src/ddo/types.js'
 import { validate } from '../../src/ddo/validate.js'
-import { AssetBuilder, Nautilus } from '../../src/index.js'
+import {
+  AssetBuilder,
+  IndexingError,
+  Nautilus,
+  NodePersistentRemoteStore,
+  type PublishedNotIndexed,
+  type RemoteStore
+} from '../../src/index.js'
 import { datasetMetadata } from '../fixtures/AssetConfig.js'
 import { getConsumerParameters } from '../fixtures/ConsumerParameters.js'
 import {
   accessService,
   computeService,
   createPublisher,
+  createTestRemoteStore,
   freeAlgorithm,
   freeDataset,
   integrationEnabled,
-  publishAndIndex
+  publishAndIndex,
+  settledIndexingState
 } from './helpers.js'
 
 describe('publish', () => {
@@ -38,6 +52,99 @@ describe('publish', () => {
     expect(getVersion(result.ddo)).to.equal('5.0.0')
     expect(result.ddo.id).to.match(/^did:ope:/)
     expect(result.indexed).to.equal(true)
+  })
+
+  it('resolves through getAsset, and the node records the event as valid', async () => {
+    const result = await publishAndIndex(nautilus, freeDataset())
+
+    const asset = await nautilus.getAsset(result.ddo.id as string)
+    expect(asset.id).to.equal(result.ddo.id)
+    expect(getIndexedMetadata(asset)?.event?.txid).to.equal(
+      result.setMetadataTxReceipt.hash
+    )
+
+    const state = await settledIndexingState(nautilus, {
+      did: result.ddo.id as string,
+      txId: result.setMetadataTxReceipt.hash
+    })
+    expect(state.did).to.equal(result.ddo.id)
+    expect(state.valid).to.equal(true)
+    expect((state.error ?? '').trim()).to.equal('')
+
+    // ocean-node 4.2's success record: filed under the did:ope: DID, no nft, blank txId.
+    expect(state.nft).to.equal(undefined)
+    expect((state.txId ?? '').trim()).to.equal('')
+
+    // What went to the store is what the chain hashes, and the pointer handed back carries
+    // no secret.
+    const store = (process.env.DDO_STORE || 'ipfs').toLowerCase()
+    expect(result.stored.pointer.type).to.equal(store)
+    expect(result.stored.metadataHash).to.match(/^0x[0-9a-f]{64}$/)
+    if (store === 's3')
+      expect(
+        (result.stored.pointer as { s3Access: { secretAccessKey: string } })
+          .s3Access.secretAccessKey
+      ).to.equal('<redacted>')
+  })
+
+  it("fails fast with the node's IndexingError when the stored DDO is broken", async () => {
+    // A store that changes what it is given: the node's hash check rejects it. The
+    // failure must surface from the node's state record, well before the timeout.
+    const inner = createTestRemoteStore()
+    const tampering: RemoteStore = {
+      put: (payload, hint) =>
+        inner.put(
+          JSON.stringify({ ...JSON.parse(payload), tampered: true }),
+          hint
+        )
+    }
+
+    const timeoutMs = 600_000
+    const started = Date.now()
+
+    let error: unknown
+    try {
+      await nautilus.publish(freeDataset(), {
+        remoteStore: tampering,
+        waitForIndexer: { timeoutMs }
+      })
+    } catch (thrown) {
+      error = thrown
+    }
+
+    expect(error).to.be.instanceOf(IndexingError)
+    expect((error as Error).message).to.match(/Hash check failed/)
+    expect(Date.now() - started).to.be.lessThan(timeoutMs)
+
+    // ocean-node 4.2's failure record for a MetadataCreated: the tx is in it.
+    const failure = (error as IndexingError).state
+    expect(failure.valid).to.equal(false)
+    expect(failure.txId?.toLowerCase()).to.equal(
+      (error as IndexingError).txId?.toLowerCase()
+    )
+
+    // The metadata is on chain, so the result is not lost.
+    const { published } = error as PublishedNotIndexed
+    expect(published.nftAddress).to.be.a('string')
+    expect(published.setMetadataTxReceipt.hash).to.equal(
+      (error as IndexingError).txId
+    )
+  })
+
+  it('refuses NodePersistentRemoteStore for DDOs before any transaction', async () => {
+    const before = await nautilus.getSigner().getNonce()
+
+    let message = ''
+    try {
+      await nautilus.publish(freeDataset(), {
+        remoteStore: new NodePersistentRemoteStore(nautilus.getNodeClient())
+      })
+    } catch (error) {
+      message = (error as Error).message
+    }
+
+    expect(message).to.match(/Use an IpfsRemoteStore or an S3RemoteStore/)
+    expect(await nautilus.getSigner().getNonce()).to.equal(before)
   })
 
   it('signs the DDO as a verifiable credential', async () => {
