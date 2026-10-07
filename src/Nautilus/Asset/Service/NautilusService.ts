@@ -312,7 +312,9 @@ export class NautilusService<
     if (this.needsEncryption()) {
       if (!this.files.length)
         throw new Error(
-          'Cannot encrypt files: no files were added to this service.'
+          this.editExistingService && this.serviceEndpointEdited
+            ? "Cannot encrypt files: no files were added to this service. Its serviceEndpoint changed, and a service's files are encrypted for the node in its serviceEndpoint, so the endpoint can only change together with the files: add them again with addFile()."
+            : 'Cannot encrypt files: no files were added to this service.'
         )
 
       await this.assertFilesReadable(node)

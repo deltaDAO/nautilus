@@ -1,8 +1,10 @@
+import { createHash } from 'node:crypto'
 import { Wallet } from 'ethers'
 import { describe, expect, it, vi } from 'vitest'
 import { AssetBuilder } from '../../src/Nautilus/Asset/AssetBuilder.js'
 import { Nautilus } from '../../src/Nautilus/Nautilus.js'
 import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
+import { type PreparedWrite, writeMetadata } from '../../src/publish/index.js'
 import type { RemoteStore } from '../../src/remote/RemoteStore.js'
 import type { DdoSigner } from '../../src/signing/vc.js'
 import {
@@ -13,7 +15,7 @@ import {
   OWNER_ADDRESS
 } from '../fixtures/Asset.js'
 import { expectThrowsAsync } from '../helpers.js'
-import { createNodeMock } from '../mocks/node.js'
+import { createNodeMock, mockDecrypt, type NodeMock } from '../mocks/node.js'
 
 /**
  * Who a republished DDO is issued by — the `writeAsset()` issuer rules.
@@ -30,6 +32,20 @@ vi.mock('../../src/publish/index.js', async (importOriginal) => {
     ...actual,
     writeMetadata: vi.fn(async () => ({ hash: '0xsetmetadata' })),
     waitForMetadataPermission: vi.fn(async () => undefined)
+  }
+})
+
+// The NFT's on-chain state, read before an edit: ACTIVE, with metadata.
+vi.mock('@oceanprotocol/lib', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>()
+
+  return {
+    ...actual,
+    Nft: class {
+      async getMetadata() {
+        return ['https://node.test.invalid', '0x', 0, true]
+      }
+    }
   }
 })
 
@@ -74,12 +90,16 @@ async function createNautilus(options: { ddoSigner?: DdoSigner } = {}) {
     getNetwork: async () => ({ chainId: BigInt(CHAIN_ID) })
   } as never)
 
+  const stored: string[] = []
   const remoteStore = {
-    put: async () => ({
-      type: 'url',
-      url: 'https://store.test.invalid/ddo',
-      method: 'GET'
-    })
+    put: async (payload: string) => {
+      stored.push(payload)
+      return {
+        type: 'url',
+        url: 'https://store.test.invalid/ddo',
+        method: 'GET'
+      }
+    }
   } as unknown as RemoteStore
 
   const nautilus = await Nautilus.create(signer, {
@@ -94,10 +114,10 @@ async function createNautilus(options: { ddoSigner?: DdoSigner } = {}) {
   })
 
   // The node client is the only network seam left; swap in the mock behind it.
-  ;(nautilus as unknown as { node: OceanNodeClient }).node =
-    createNodeMock().client
+  const node: NodeMock = createNodeMock()
+  ;(nautilus as unknown as { node: OceanNodeClient }).node = node.client
 
-  return { nautilus, wallet }
+  return { nautilus, wallet, node, stored }
 }
 
 describe('writeAsset issuer rules', () => {
@@ -154,5 +174,43 @@ describe('writeAsset issuer rules', () => {
 
     expect(response.ddo.issuer).to.equal(wallet.address)
     expect(response.credential?.issuer).to.equal(wallet.address)
+  })
+
+  it('writes the node-encrypted envelope it hashed, under flags 0x02', async () => {
+    const { nautilus, wallet, node, stored } = await createNautilus()
+
+    const asset = new AssetBuilder(
+      getAssetFixture({ issuer: wallet.address })
+    ).build()
+
+    const response = await nautilus.edit(asset)
+    const [params] = vi.mocked(writeMetadata).mock.lastCall ?? []
+    if (!params) throw new Error('writeMetadata was not called')
+    const prepared = (params.prepared as PreparedWrite).written
+
+    // One stored object: the envelope, with a single node-encrypted field.
+    expect(stored).to.have.length(1)
+    const envelope = JSON.parse(stored[0])
+    expect(Object.keys(envelope)).to.deep.equal(['encryptedData'])
+
+    // Its content decrypts to the hex of the JSON-quoted JWS.
+    const content = JSON.parse(mockDecrypt(envelope.encryptedData))
+    expect(
+      Buffer.from(content.encryptedData.slice(2), 'hex').toString()
+    ).to.equal(JSON.stringify(response.credential?.jwt))
+
+    expect(prepared.flags).to.equal(0x02)
+    expect(prepared.metadataHash).to.equal(
+      `0x${createHash('sha256').update(stored[0]).digest('hex')}`
+    )
+    expect(JSON.parse(mockDecrypt(prepared.metadata))).to.deep.equal({
+      remote: {
+        type: 'url',
+        url: 'https://store.test.invalid/ddo',
+        method: 'GET'
+      }
+    })
+    expect(node.calls.metadataEncrypt).to.have.length(2)
+    expect(response.stored).to.deep.equal(prepared.stored)
   })
 })
