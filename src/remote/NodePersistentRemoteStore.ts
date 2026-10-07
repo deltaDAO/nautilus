@@ -1,9 +1,11 @@
 /**
- * Stores the signed DDO in an ocean-node persistent-storage bucket.
+ * Stores a payload in an ocean-node persistent-storage bucket.
  *
- * Worth preferring where it is available: the node already hosts the storage, so publishing
- * needs no external IPFS or S3 at all, and the pointer resolves over the same connection
- * the node uses for everything else.
+ * **Not usable as the DDO store with ocean-node 4.2.** The node resolves a remote DDO
+ * without a consumer address, and a bucket refuses any read without one, so a DDO stored
+ * here is never indexed. `publish()`, `completePublish()` and `edit()` therefore reject
+ * this store; use an `IpfsRemoteStore` or an `S3RemoteStore` for the DDO. The class still
+ * works as a plain bucket uploader.
  */
 import type { StorageObject } from '@oceanprotocol/lib'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
