@@ -13,7 +13,6 @@ import {
   type Config,
   Datatoken,
   Nft,
-  type ProviderFees,
   ZERO_ADDRESS
 } from '@oceanprotocol/lib'
 import { parseUnits, type Signer } from 'ethers'
@@ -26,6 +25,7 @@ import type {
 import { createDatatokenForService } from '../../src/publish/index.js'
 import { order } from '../../src/utils/order.js'
 import type { OrderPrice, PricingInfo } from '../../src/utils/pricing.js'
+import { signedProviderFee } from '../fixtures/ProviderFee.js'
 
 vi.mock('@oceanprotocol/lib', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@oceanprotocol/lib')>()
@@ -109,7 +109,7 @@ describe('order approveSpend', () => {
       pricing,
       price,
       serviceIndex: 0,
-      providerFees: {} as ProviderFees,
+      providerFees: signedProviderFee(),
       consumer: '0x5555555555555555555555555555555555555555',
       payer: '0x6666666666666666666666666666666666666666'
     })

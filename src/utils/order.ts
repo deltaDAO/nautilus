@@ -26,6 +26,7 @@ import {
 import { Decimal } from 'decimal.js'
 import type { Signer, TransactionReceipt, TransactionResponse } from 'ethers'
 import type { ConsumeMarketFee, OrderPrice, PricingInfo } from './pricing.js'
+import { assertProviderFeeSignature } from './providerFee.js'
 
 /** Templates that settle the purchase and the order in a single transaction. */
 const ATOMIC_ORDER_TEMPLATES = new Set([2, 4])
@@ -68,6 +69,9 @@ export interface OrderResult {
  *
  * Much cheaper than a fresh order: no datatoken is bought, the previous order is simply
  * extended for another provider-fee period.
+ *
+ * Throws a `ProviderFeeSignatureError`, before sending anything, for a fee whose signature
+ * the datatoken would reject.
  */
 export async function reuseOrder(params: {
   signer: Signer
@@ -76,6 +80,10 @@ export async function reuseOrder(params: {
   validOrderTx: string
   providerFees: ProviderFees
 }): Promise<OrderResult> {
+  // The datatoken checks the fee's signature on chain; a fee it would reject (ocean-node
+  // bug B2) is refused here, before the transaction.
+  assertProviderFeeSignature(params.providerFees)
+
   const datatoken = new Datatoken(
     params.signer,
     params.config.chainId,
@@ -93,9 +101,19 @@ export async function reuseOrder(params: {
   return { transferTxId: receipt.hash, reused: true }
 }
 
-/** Buys one datatoken and starts an order for the given service. */
+/**
+ * Buys one datatoken and starts an order for the given service.
+ *
+ * Throws a `ProviderFeeSignatureError`, before any approval or purchase, for a fee whose
+ * signature the datatoken would reject.
+ */
 export async function order(request: OrderRequest): Promise<OrderResult> {
   const { signer, config, pricing, price, providerFees, serviceIndex } = request
+
+  // Before any approval or purchase: a fee the datatoken would reject (ocean-node bug B2)
+  // makes the order revert after the buy.
+  assertProviderFeeSignature(providerFees)
+
   const payer = request.payer || (await signer.getAddress())
 
   const datatoken = new Datatoken(signer, config.chainId, config)
@@ -455,7 +473,9 @@ async function approveSpend(params: {
  * Waits for a transaction and fails loudly if it did not land.
  *
  * ocean.js's `sendPreparedTransaction` swallows send failures and returns `null`, so
- * without this a failed transaction looks like a successful call returning nothing.
+ * without this a failed transaction looks like a successful call returning nothing. It
+ * awaits the receipt inside the same `try`, so `null` can also mean the transaction was
+ * broadcast and then reverted or timed out.
  */
 async function confirm(
   operation: string,
@@ -463,7 +483,7 @@ async function confirm(
 ): Promise<TransactionReceipt> {
   if (!response)
     throw new Error(
-      `${operation} was not submitted; the node or RPC rejected it.`
+      `${operation} failed: ocean.js returned no transaction. The wallet or RPC rejected it, or it was sent and then reverted or timed out; ocean.js does not say which, so check the account's latest transactions before retrying.`
     )
 
   const tx = response as TransactionResponse

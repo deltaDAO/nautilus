@@ -15,9 +15,11 @@ import type {
 import type { Signer } from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComputeConfig } from '../../src/@types/Compute.js'
+import { settleOrder } from '../../src/access/index.js'
 import { compute } from '../../src/compute/index.js'
 import type { AssetV5 } from '../../src/ddo/index.js'
 import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
+import { ProviderFeeSignatureError } from '../../src/utils/providerFee.js'
 import {
   ASSET_DID,
   CHAIN_ID,
@@ -25,6 +27,10 @@ import {
   getComputeAssetFixture,
   SERVICE_ID
 } from '../fixtures/Asset.js'
+import {
+  poisonedProviderFee,
+  signedProviderFee
+} from '../fixtures/ProviderFee.js'
 import { expectThrowsAsync } from '../helpers.js'
 
 // Ordering runs against the chain; stub it so each order returns a tx id derived from the
@@ -77,8 +83,12 @@ interface ComputeStartCall {
   algorithm: ComputeAlgorithm
 }
 
-function createComputeNodeMock(assets: Record<string, AssetV5>) {
-  const calls: { computeStart: ComputeStartCall[] } = { computeStart: [] }
+function createComputeNodeMock(
+  assets: Record<string, AssetV5>,
+  initializeAnswers: unknown[] = [{ datasets: [], algorithm: {} }]
+) {
+  const calls: { computeStart: ComputeStartCall[]; initializeCompute: number } =
+    { computeStart: [], initializeCompute: 0 }
 
   const client = {
     nodeUri: 'https://node.test.invalid',
@@ -96,7 +106,10 @@ function createComputeNodeMock(assets: Record<string, AssetV5>) {
     // No `payment` in the quote, so `ensureEscrow` skips funding — escrow is not what
     // these tests are about.
     async initializeCompute() {
-      return { datasets: [], algorithm: {} }
+      calls.initializeCompute++
+      return initializeAnswers.length > 1
+        ? initializeAnswers.shift()
+        : initializeAnswers[0]
     },
 
     async computeStart(params: ComputeStartCall) {
@@ -238,5 +251,64 @@ describe('compute() order bookkeeping', () => {
       `tx-${asset.credentialSubject.services[0].datatokenAddress}`
     )
     expect(start.algorithm.transferTxId).to.equal(`tx-${SECOND_DATATOKEN}`)
+  })
+})
+
+describe('compute() provider-fee signature pre-check (ocean-node bug B2)', () => {
+  const config: ComputeConfig = {
+    dataset: { did: ASSET_DID },
+    algorithm: { did: ALGO_DID }
+  }
+  const assets = () => ({
+    [ASSET_DID]: getComputeAssetFixture(),
+    [ALGO_DID]: accessOnlyAlgorithm()
+  })
+
+  it('refuses before escrow and orders when the node re-signs the same bad fee', async () => {
+    // On ocean-node 4.2 a compute fee's validUntil is the service timeout, so asking again
+    // returns the same hash: nothing helps, and nothing may be spent.
+    vi.useFakeTimers()
+    try {
+      const { client, calls } = createComputeNodeMock(assets(), [
+        { datasets: [], algorithm: { providerFee: poisonedProviderFee() } }
+      ])
+
+      const running = compute(config, computeContext(client)).catch(
+        (caught) => caught
+      )
+      await vi.advanceTimersByTimeAsync(5_000)
+
+      const thrown = await running
+      expect(thrown).to.be.instanceOf(ProviderFeeSignatureError)
+      expect(thrown.message).to.match(/same fee again/)
+      expect(calls.initializeCompute).to.equal(2)
+      expect(vi.mocked(settleOrder)).not.toHaveBeenCalled()
+      expect(calls.computeStart).to.have.length(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('goes on with a fresh answer whose fees are all good', async () => {
+    vi.useFakeTimers()
+    try {
+      const good = signedProviderFee()
+      const { client, calls } = createComputeNodeMock(assets(), [
+        {
+          datasets: [{ providerFee: poisonedProviderFee() }],
+          algorithm: { providerFee: good }
+        },
+        { datasets: [{ providerFee: good }], algorithm: { providerFee: good } }
+      ])
+
+      const running = compute(config, computeContext(client))
+      await vi.advanceTimersByTimeAsync(5_000)
+      await running
+
+      expect(calls.initializeCompute).to.equal(2)
+      expect(calls.computeStart).to.have.length(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

@@ -30,6 +30,13 @@ import {
   getPricingInfo,
   hasReusableOrder
 } from '../utils/pricing.js'
+import {
+  assertProviderFeeSignature,
+  initializeWithValidProviderFee,
+  isFeeDue,
+  type ProviderFeeLike,
+  providerFeeToSend
+} from '../utils/providerFee.js'
 
 export interface AccessContext {
   node: OceanNodeClient
@@ -97,12 +104,17 @@ export async function access(
   })
 
   // 2. Ask the service's node for provider fees and whether a previous order can be
-  //    reused.
-  const initialized = await serviceNode.initialize(asset.id, service.id, {
-    fileIndex: config.fileIndex,
-    consumerAddress,
-    userdata: config.userdata
-  })
+  //    reused. ocean-node 4.2 mis-signs about one fee in 256 (node bug B2), and the order
+  //    would revert on it, so the signature is checked locally and a bad fee re-requested.
+  const initialized = await initializeWithValidProviderFee(
+    () =>
+      serviceNode.initialize(asset.id, service.id, {
+        fileIndex: config.fileIndex,
+        consumerAddress,
+        userdata: config.userdata
+      }),
+    (result) => [providerFeeToSend(result)]
+  )
 
   const datatokenAddress =
     getDatatokenForService(asset, service.id) || initialized.datatoken
@@ -149,6 +161,9 @@ export async function access(
 /**
  * Reuses a valid order when the node says one exists and no new provider fee is due;
  * otherwise extends it, or places a fresh order.
+ *
+ * Throws a `ProviderFeeSignatureError` before any transaction when the fee to send carries
+ * a signature the datatoken would reject (ocean-node bug B2).
  */
 export async function settleOrder(params: {
   signer: Signer
@@ -166,13 +181,15 @@ export async function settleOrder(params: {
     | { providerFeeAmount?: string; providerFeeToken?: string }
     | undefined
 
-  const feeDue = Boolean(
-    providerFee?.providerFeeAmount && providerFee.providerFeeAmount !== '0'
-  )
+  const feeDue = isFeeDue(providerFee as ProviderFeeLike | undefined)
 
   // Nothing to pay and an order already in force: reuse the transaction as it stands.
   if (hasReusableOrder(initialized) && !feeDue)
     return { transferTxId: initialized.validOrder as string, reused: true }
+
+  // Both remaining paths send the fee to the datatoken, which checks its signature first:
+  // refuse a fee it would reject (ocean-node bug B2) before the approval spends anything.
+  assertProviderFeeSignature(providerFeeToSend(initialized))
 
   // Both remaining paths hand the fee to the datatoken, whose `_checkProviderFee` settles
   // it with `transferFrom` — and neither `startOrder` nor `reuseOrder` approves anything,

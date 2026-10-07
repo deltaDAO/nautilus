@@ -20,7 +20,6 @@ import {
   type Config,
   Datatoken,
   FixedRateExchange,
-  type ProviderFees,
   unitsToAmount,
   ZERO_ADDRESS
 } from '@oceanprotocol/lib'
@@ -33,6 +32,10 @@ import {
   type OrderPrice,
   type PricingInfo
 } from '../../src/utils/pricing.js'
+import {
+  poisonedProviderFee,
+  signedProviderFee
+} from '../fixtures/ProviderFee.js'
 import { expectThrowsAsync } from '../helpers.js'
 
 vi.mock('@oceanprotocol/lib', async (importOriginal) => {
@@ -348,10 +351,39 @@ describe('order fee routing', () => {
       pricing,
       price: orderPrice,
       serviceIndex: 0,
-      providerFees: {} as ProviderFees,
+      providerFees: signedProviderFee(),
       consumer: CONSUMER
     })
   }
+
+  it('refuses a mis-signed provider fee before any approval (ocean-node bug B2)', async () => {
+    vi.mocked(Datatoken).mockClear()
+
+    await expectThrowsAsync(
+      () =>
+        order({
+          signer,
+          config: chainConfig,
+          pricing: {
+            schema: 'fixed',
+            templateId: 2,
+            datatokenAddress: DATATOKEN,
+            exchangeId: '0xlive',
+            baseTokenAddress: BASE_TOKEN,
+            baseTokenDecimals: 18,
+            publishMarketFee
+          },
+          price,
+          serviceIndex: 0,
+          providerFees: poisonedProviderFee(),
+          consumer: CONSUMER
+        }),
+      /ProviderFeeSignatureError|would fail the datatoken's signature check/
+    )
+
+    expect(vi.mocked(approve)).not.toHaveBeenCalled()
+    expect(vi.mocked(Datatoken)).not.toHaveBeenCalled()
+  })
 
   it('pays the swap fee to the consume market, not the publish market', async () => {
     // The publish market's collector used to be handed the caller's own cut.
@@ -488,7 +520,7 @@ describe('publish-market fee approval', () => {
       pricing,
       price,
       serviceIndex: 0,
-      providerFees: {} as ProviderFees,
+      providerFees: signedProviderFee(),
       consumer: CONSUMER
     })
   }

@@ -54,6 +54,11 @@ import {
   shouldResolveCredentials
 } from '../identity/policy.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
+import {
+  initializeWithValidProviderFee,
+  type ProviderFeeLike,
+  providerFeeToSend
+} from '../utils/providerFee.js'
 
 export interface ComputeContext {
   node: OceanNodeClient
@@ -132,19 +137,25 @@ export async function compute(
     config.algorithm
   )
 
-  // 2. Ask the node what the job costs and which orders can be reused.
-  const initializeResults = await node.initializeCompute({
-    datasets,
-    algorithm,
-    computeEnv: environment.id,
-    paymentToken,
-    validUntil,
-    resources,
-    consumerAddress,
-    policyServer,
-    output: config.output,
-    queueMaxWaitTime: config.queueMaxWaitTime
-  })
+  // 2. Ask the node what the job costs and which orders can be reused. Every provider fee
+  //    is signature-checked here, before escrow or any order spends gas: ocean-node 4.2
+  //    mis-signs about one fee in 256 (node bug B2) and the order would revert on it.
+  const initializeResults = await initializeWithValidProviderFee(
+    () =>
+      node.initializeCompute({
+        datasets,
+        algorithm,
+        computeEnv: environment.id,
+        paymentToken,
+        validUntil,
+        resources,
+        consumerAddress,
+        policyServer,
+        output: config.output,
+        queueMaxWaitTime: config.queueMaxWaitTime
+      }),
+    providerFeesOf
+  )
 
   // 3. Fund and authorise escrow for the amount the node quoted.
   await ensureEscrow(signer, environment, initializeResults, paymentToken)
@@ -601,6 +612,15 @@ async function placeOrders(params: {
   }
 
   return orders
+}
+
+/** Every provider fee in a compute initialize answer: the datasets' and the algorithm's. */
+function providerFeesOf(
+  results: ProviderComputeInitializeResults
+): (ProviderFeeLike | undefined)[] {
+  return [...(results.datasets || []), results.algorithm].map((result) =>
+    result ? providerFeeToSend(result) : undefined
+  )
 }
 
 /** The key of one order in `ComputeResult.orders`: a DID URL naming the exact service. */
