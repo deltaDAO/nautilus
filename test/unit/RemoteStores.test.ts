@@ -67,6 +67,7 @@ describe('IpfsRemoteStore', () => {
 
     await new IpfsRemoteStore({
       uploadUrl: 'https://ipfs.test',
+      verify: false,
       fetchImpl
     }).check()
 
@@ -82,6 +83,7 @@ describe('IpfsRemoteStore', () => {
       uploadUrl: 'https://api.pinata.cloud/pinning/pinFileToIPFS',
       headers: { Authorization: 'Bearer test' },
       probe: 'upload',
+      gatewayUrl: 'https://gateway.test',
       fetchImpl
     })
 
@@ -94,6 +96,7 @@ describe('IpfsRemoteStore', () => {
       uploadUrl: 'https://ipfs.test/add',
       headers: { Authorization: 'Bearer test' },
       probe: { url: 'https://ipfs.test/auth' },
+      verify: false,
       fetchImpl
     })
 
@@ -114,6 +117,7 @@ describe('IpfsRemoteStore', () => {
       uploadUrl: 'https://ipfs.test/add',
       headers: { Authorization: 'Bearer test' },
       probe: { url: 'https://other.test/auth' },
+      verify: false,
       fetchImpl
     }).check()
 
@@ -130,6 +134,7 @@ describe('IpfsRemoteStore', () => {
         url: 'https://other.test/auth',
         headers: { Authorization: 'Bearer probe' }
       },
+      verify: false,
       fetchImpl
     }).check()
 
@@ -190,15 +195,107 @@ describe('IpfsRemoteStore', () => {
     const envelope = '{"encryptedData":"0x0102"}'
     const hash = `0x${createHash('sha256').update(envelope).digest('hex')}`
 
-    it('without a gatewayUrl checks nothing', async () => {
+    it('without a gatewayUrl reads a Kubo upload back through the same node', async () => {
       const fetchImpl = fetchAnswering(200, envelope)
 
       await new IpfsRemoteStore({
-        uploadUrl: 'https://ipfs.test/add',
+        uploadUrl: 'http://127.0.0.1:5001/kubo/api/v0/add?cid-version=1',
+        headers: { Authorization: 'Basic kubo' },
         fetchImpl
       }).verify({ type: 'ipfs', hash: CID_V1 } as never, hash)
 
-      expect(fetchImpl).not.toHaveBeenCalled()
+      const [url, init] = callOf(fetchImpl)
+      expect(url).to.equal(
+        `http://127.0.0.1:5001/kubo/api/v0/cat?arg=${CID_V1}`
+      )
+      expect(init).to.deep.include({
+        method: 'POST',
+        headers: { Authorization: 'Basic kubo' }
+      })
+
+      await expectThrowsAsync(
+        () =>
+          new IpfsRemoteStore({
+            uploadUrl: 'http://127.0.0.1:5001/api/v0/add',
+            fetchImpl: fetchAnswering(200, '{"encryptedData":"0x03"}')
+          }).verify({ type: 'ipfs', hash: CID_V1 } as never, hash),
+        /via the Kubo node http:\/\/127\.0\.0\.1:5001 failed: it hashes to 0x[0-9a-f]{64}, not 0x/
+      )
+      await expectThrowsAsync(
+        () =>
+          new IpfsRemoteStore({
+            uploadUrl: 'http://127.0.0.1:5001/api/v0/add',
+            fetchImpl: fetchAnswering(
+              500,
+              '{"Message":"block was not found locally","Code":0}'
+            )
+          }).verify({ type: 'ipfs', hash: CID_V1 } as never, hash),
+        /the Kubo node answered 500/
+      )
+    })
+
+    it('prefers the gateway over a Kubo node', async () => {
+      const fetchImpl = fetchAnswering(200, envelope)
+
+      await new IpfsRemoteStore({
+        uploadUrl: 'http://127.0.0.1:5001/api/v0/add',
+        gatewayUrl: 'http://127.0.0.1:8080',
+        fetchImpl
+      }).verify({ type: 'ipfs', hash: CID_V1 } as never, hash)
+
+      expect(callOf(fetchImpl)[0]).to.equal(
+        `http://127.0.0.1:8080/ipfs/${CID_V1}`
+      )
+    })
+
+    it('refuses to pass without a way to read back, in check() and verify()', async () => {
+      for (const uploadUrl of [
+        'https://api.pinata.cloud/pinning/pinFileToIPFS',
+        'https://uploader.test/files'
+      ]) {
+        const fetchImpl = fetchAnswering(200, JSON.stringify({ Hash: CID_V1 }))
+        const store = new IpfsRemoteStore({
+          uploadUrl,
+          probe: 'upload',
+          fetchImpl
+        })
+
+        // check() runs before anything is minted, so this is where publish() stops.
+        await expectThrowsAsync(
+          () => store.check(),
+          /cannot read the envelope back .*Set gatewayUrl .*verify: false/
+        )
+        await expectThrowsAsync(
+          () => store.verify({ type: 'ipfs', hash: CID_V1 } as never, hash),
+          /cannot read the envelope back/
+        )
+        expect(fetchImpl).not.toHaveBeenCalled()
+      }
+    })
+
+    it('verify: false is an explicit opt-out, and excludes gatewayUrl', async () => {
+      const fetchImpl = fetchAnswering(200, JSON.stringify({ Hash: CID_V1 }))
+      const store = new IpfsRemoteStore({
+        uploadUrl: 'https://api.pinata.cloud/pinning/pinFileToIPFS',
+        probe: 'upload',
+        verify: false,
+        fetchImpl
+      })
+
+      await store.check()
+      expect(fetchImpl).toHaveBeenCalledOnce() // the probe upload only
+
+      await store.verify({ type: 'ipfs', hash: CID_V1 } as never, hash)
+      expect(fetchImpl).toHaveBeenCalledOnce()
+
+      expect(
+        () =>
+          new IpfsRemoteStore({
+            uploadUrl: 'https://api.pinata.cloud/pinning/pinFileToIPFS',
+            gatewayUrl: 'https://gateway.pinata.cloud',
+            verify: false
+          })
+      ).to.throw(/cannot be combined with verify: false/)
     })
 
     it('reads <gatewayUrl>/ipfs/<cid> like the node, and checks the hash', async () => {
@@ -237,7 +334,7 @@ describe('IpfsRemoteStore', () => {
             gatewayUrl: 'https://gateway.test',
             fetchImpl: fetchAnswering(504, 'Gateway Timeout')
           }).verify({ type: 'ipfs', hash: CID_V1 } as never, hash),
-        /the gateway answered 504/
+        /the gateway answered 504 .*\(https:\/\/gateway\.test\); the node may not/
       )
       await expectThrowsAsync(
         () =>

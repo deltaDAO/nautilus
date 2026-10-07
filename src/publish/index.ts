@@ -444,7 +444,8 @@ export interface WrittenMetadata {
   credential: { jwt: string; issuer: string }
   /**
    * The `{ remote }` pointer the node decrypts, **redacted**: an S3 `secretAccessKey`,
-   * `url` header values and URL passwords read `'<redacted>'`.
+   * `url` header values, and a URL's user name, password, query values and fragment read
+   * `'<redacted>'`.
    */
   pointer: ReturnType<typeof toRemotePointer>
   /**

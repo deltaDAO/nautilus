@@ -36,9 +36,10 @@ export const integrationEnabled = hasIntegrationEnv()
  *
  * - `ipfs`: `IPFS_UPLOAD_URL` and an optional `IPFS_JWT` (sent as a Bearer token). Any
  *   endpoint that takes a multipart `file` works: a local Kubo `/api/v0/add`, or Pinata's
- *   `pinFileToIPFS`. The node must fetch the CID through its own IPFS gateway. With
- *   `IPFS_GATEWAY_URL` the envelope is read back through that gateway before each
- *   metadata transaction.
+ *   `pinFileToIPFS`. The node must fetch the CID through its own IPFS gateway. Before each
+ *   metadata transaction the envelope is read back through `IPFS_GATEWAY_URL`, or, for
+ *   Kubo without it, through the same node's `/api/v0/cat`. Pinata needs
+ *   `IPFS_GATEWAY_URL`: without it the store's `check()` fails before anything is minted.
  * - `s3`: `S3_ENDPOINT`, `S3_BUCKET`, the `S3_WRITE_*` and `S3_READ_*` key pairs, and
  *   optionally `S3_NODE_ENDPOINT`, `S3_REGION`, `S3_PREFIX`, `S3_FORCE_PATH_STYLE`. An IP or
  *   `localhost` endpoint needs `S3_FORCE_PATH_STYLE=true`. The envelope is read back with

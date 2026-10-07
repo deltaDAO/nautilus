@@ -19,6 +19,11 @@
  * missing scope only on a real upload, which is what `probe: 'upload'` is for. Do not use
  * `pinJSONToIPFS`: it re-wraps the body, so the stored bytes are no longer the envelope.
  *
+ * `verify()` reads the envelope back before the metadata transaction: through `gatewayUrl`
+ * when set, otherwise, for a Kubo `uploadUrl` (`…/api/v0/add`), through the same node's
+ * `/api/v0/cat`. Any other store needs a `gatewayUrl`, or `verify: false` to publish without
+ * the read-back; `check()` and `verify()` refuse to go on without one of them.
+ *
  * `remove(pointer)` unpins a CID. For Pinata (`…/pinning/pinFileToIPFS`) and Kubo
  * (`…/api/v0/add`) the unpin endpoint is derived from `uploadUrl`; for anything else pass
  * `unpin: { url }`. Unpinning releases this service's copy: IPFS has no delete, so nodes or
@@ -66,9 +71,18 @@ export interface IpfsRemoteStoreOptions {
   /**
    * An IPFS gateway to read the envelope back from before the metadata transaction, e.g.
    * the one the node uses (`IPFS_GATEWAY`). nautilus fetches `<gatewayUrl>/ipfs/<cid>`, as
-   * the node does, and checks the hash. Without it `verify()` checks nothing.
+   * the node does, and checks the hash. Without it, a Kubo `uploadUrl` (`…/api/v0/add`) is
+   * read back through the same node's `/api/v0/cat`; any other `uploadUrl` needs this, or
+   * `verify: false`.
    */
   gatewayUrl?: string
+  /**
+   * `false` publishes without reading the envelope back: `verify()` then resolves without
+   * a request, and nothing checks the stored bytes before the metadata transaction. Only for
+   * a store with neither a `gatewayUrl` nor a Kubo `uploadUrl`; it cannot be combined with
+   * `gatewayUrl`. Without it, such a store's `check()` and `verify()` throw.
+   */
+  verify?: false
   /**
    * How `remove()` unpins a CID. By default it is derived from `uploadUrl`:
    *
@@ -127,6 +141,10 @@ export class IpfsRemoteStore implements RemoteStore {
       'IpfsRemoteStore uploadUrl',
       options.allowInsecureTransport
     )
+    if (options.verify === false && options.gatewayUrl)
+      throw new Error(
+        'IpfsRemoteStore: gatewayUrl is only used to verify, so it cannot be combined with verify: false.'
+      )
     if (options.gatewayUrl)
       assertSecureTransport(
         options.gatewayUrl,
@@ -155,9 +173,21 @@ export class IpfsRemoteStore implements RemoteStore {
     this.fetchImpl = options.fetchImpl || fetch
   }
 
-  /** Runs the configured `probe`, if any. Throws if the store would refuse an upload. */
+  /**
+   * Throws when `verify()` would have no way to read the envelope back (see `gatewayUrl`
+   * and `verify`), then runs the configured `probe`, if any. Throws if the store would
+   * refuse an upload.
+   */
   async check(): Promise<void> {
     const { probe } = this.options
+
+    // Before anything is minted: verify() runs only right before the metadata transaction.
+    if (
+      this.options.verify !== false &&
+      !this.options.gatewayUrl &&
+      !kuboApiBase(this.options.uploadUrl)
+    )
+      throw cannotReadBack(this.options.uploadUrl)
 
     if (!probe) return
 
@@ -225,12 +255,13 @@ export class IpfsRemoteStore implements RemoteStore {
   }
 
   /**
-   * With `gatewayUrl`, reads `<gatewayUrl>/ipfs/<cid>` and checks it hashes, as the node
-   * hashes it, to `expectedHash`. Without it, checks nothing.
+   * Reads the CID back and checks it hashes, as the node hashes it, to `expectedHash`:
+   * `GET <gatewayUrl>/ipfs/<cid>` when `gatewayUrl` is set, otherwise, for a Kubo
+   * `uploadUrl`, `POST <same base>/api/v0/cat?arg=<cid>` with the upload headers. Throws
+   * when it has neither. With `verify: false` it resolves without reading anything.
    */
   async verify(pointer: StorageObject, expectedHash: string): Promise<void> {
-    const { gatewayUrl } = this.options
-    if (!gatewayUrl) return
+    if (this.options.verify === false) return
 
     const hash = (pointer as { hash?: unknown }).hash
 
@@ -239,19 +270,52 @@ export class IpfsRemoteStore implements RemoteStore {
         'IpfsRemoteStore.verify: not an IPFS pointer with a valid CID.'
       )
 
-    const url = `${gatewayUrl.replace(/\/+$/, '')}/ipfs/${hash}`
-    const response = await this.send('IPFS verify', url, { method: 'GET' })
+    const readBack = this.readBackRequest(hash)
+    const response = await this.send('IPFS verify', readBack.url, {
+      method: readBack.method,
+      headers: readBack.headers
+    })
 
     if (!response.ok)
       throw new Error(
-        `IPFS verify: the gateway answered ${response.status} ${response.statusText} for ${hash}; the node may not be able to fetch it either. ${this.scrub(response.body)}`.trim()
+        `IPFS verify: the ${readBack.source} answered ${response.status} ${response.statusText} for ${hash} (${originOf(readBack.url)})${readBack.source === 'gateway' ? '; the node may not be able to fetch it either' : ''}. ${this.scrub(response.body)}`.trim()
       )
 
     await assertStoredHash(
-      `${hash} via ${gatewayUrl}`,
+      `${hash} via the ${readBack.source} ${originOf(readBack.url)}`,
       response.body,
       expectedHash
     )
+  }
+
+  /** How `verify()` reads `cid` back: through `gatewayUrl`, or a Kubo node's `cat`. */
+  private readBackRequest(cid: string): {
+    url: string
+    method: string
+    headers?: Record<string, string>
+    source: 'gateway' | 'Kubo node'
+  } {
+    const { gatewayUrl, uploadUrl } = this.options
+
+    if (gatewayUrl)
+      return {
+        url: `${gatewayUrl.replace(/\/+$/, '')}/ipfs/${cid}`,
+        method: 'GET',
+        source: 'gateway'
+      }
+
+    const kubo = kuboApiBase(uploadUrl)
+
+    if (kubo)
+      return {
+        // Same origin as the upload, so it gets the upload headers. Kubo's RPC takes POST.
+        url: `${kubo}/cat?arg=${encodeURIComponent(cid)}`,
+        method: 'POST',
+        headers: this.options.headers,
+        source: 'Kubo node'
+      }
+
+    throw cannotReadBack(uploadUrl)
   }
 
   /**
@@ -414,13 +478,35 @@ function deriveUnpin(
       method: 'DELETE'
     }
 
-  if (/\/api\/v0\/add$/.test(path))
-    return {
-      url: `${url.origin}${path.replace(/\/add$/, '')}/pin/rm?arg=${arg}`,
-      method: 'POST'
-    }
+  const kubo = kuboApiBase(uploadUrl)
+  if (kubo) return { url: `${kubo}/pin/rm?arg=${arg}`, method: 'POST' }
 
   return undefined
+}
+
+function cannotReadBack(uploadUrl: string): Error {
+  return new Error(
+    `IpfsRemoteStore cannot read the envelope back from ${originOf(uploadUrl)} before the metadata transaction: without a gatewayUrl, only a Kubo uploadUrl (…/api/v0/add) can be read back. Set gatewayUrl (ideally the gateway the node uses, its IPFS_GATEWAY), or pass verify: false to publish without that check.`
+  )
+}
+
+/**
+ * `<origin><prefix>/api/v0` for a Kubo `uploadUrl` (`…/api/v0/add`, query dropped), or
+ * `undefined`.
+ */
+function kuboApiBase(uploadUrl: string): string | undefined {
+  let url: URL
+  try {
+    url = new URL(uploadUrl)
+  } catch {
+    return undefined
+  }
+
+  const path = url.pathname.replace(/\/+$/, '')
+
+  return /\/api\/v0\/add$/.test(path)
+    ? `${url.origin}${path.replace(/\/add$/, '')}`
+    : undefined
 }
 
 /**

@@ -28,6 +28,7 @@ import type {
   RemoteObject
 } from '../../../ddo/types.js'
 import type { OceanNodeClient } from '../../../node/OceanNodeClient.js'
+import { nodeCiphertextLength } from '../../../publish/envelope.js'
 import { params as datatokenDefaults } from '../constants/datatoken.constants.js'
 
 /**
@@ -171,17 +172,11 @@ export class NautilusService<
 
     let encryptedFiles: string
     if (this.needsEncryption()) {
-      const assetFiles: AssetFiles = {
-        datatokenAddress,
-        nftAddress,
-        files: this.files as unknown as StorageObject[]
-      }
-
       // Encrypt on the node this service advertises, not on the configured one. The keys
       // are node-local: ciphertext from a different node is undecryptable by the node
       // consumers will actually talk to, which makes the published service dead on arrival.
       encryptedFiles = await node.encrypt(
-        assetFiles,
+        this.assetFiles(nftAddress, datatokenAddress),
         undefined,
         undefined,
         this.serviceEndpoint
@@ -193,6 +188,15 @@ export class NautilusService<
     return this.project(encryptedFiles, datatokenAddress, language)
   }
 
+  /** The file object the node encrypts into the service's `files`. */
+  private assetFiles(nftAddress: string, datatokenAddress: string): AssetFiles {
+    return {
+      datatokenAddress,
+      nftAddress,
+      files: this.files as unknown as StorageObject[]
+    }
+  }
+
   /**
    * The same projection with a stand-in for the ciphertext, for validating a service
    * before anything is on chain.
@@ -202,19 +206,31 @@ export class NautilusService<
    * looks at outside `files` is the real thing, which is what makes the check worth
    * running; and doing it this way costs no node round trip, so validating first does not
    * mean encrypting twice.
+   *
+   * The stand-in is `seed` in hex, padded to the length of the node's ciphertext for this
+   * file object (`nodeCiphertextLength`; the stand-in addresses are as long as the real
+   * ones), so the pre-transaction document is as large as the published one and the
+   * envelope size check before the mint is an upper bound.
    */
   projectForValidation(
-    placeholderFiles: string,
+    seed: string,
+    nftAddress: string,
     dtAddress: string,
     language: LanguageOptions = {}
   ): ServiceV5 {
-    return this.project(
-      this.needsEncryption()
-        ? placeholderFiles
-        : (this.existingEncryptedFiles as string),
-      dtAddress,
-      language
+    if (!this.needsEncryption())
+      return this.project(
+        this.existingEncryptedFiles as string,
+        dtAddress,
+        language
+      )
+
+    const length = nodeCiphertextLength(
+      JSON.stringify(this.assetFiles(nftAddress, dtAddress))
     )
+    const hex = `0x${Buffer.from(seed, 'utf8').toString('hex')}`
+
+    return this.project(hex.padEnd(length, '0'), dtAddress, language)
   }
 
   private project(

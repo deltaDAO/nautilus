@@ -1023,8 +1023,9 @@ export class Nautilus {
     await assertValid(preflight)
 
     // The node accepts decrypt requests up to 100 KB, so a DDO whose envelope does not fit
-    // would go on chain without being indexed.
-    assertDdoFitsDecryptLimit(preflight)
+    // would go on chain without being indexed. The preflight document is as large as the
+    // published one, so this checks the largest envelope its signature can give.
+    assertDdoFitsDecryptLimit(preflight, params.issuer)
   }
 
   /**

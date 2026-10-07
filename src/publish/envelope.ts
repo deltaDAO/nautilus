@@ -12,6 +12,7 @@ import type { Nft, StorageObject } from '@oceanprotocol/lib'
 import { getAddress, getBytes, isHexString, toBeHex } from 'ethers'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
 import { isCid } from '../remote/cid.js'
+import { CREDENTIAL_TYPE, credentialClaims } from '../signing/claims.js'
 import { decodeCredential } from '../signing/vc.js'
 
 /** The metadata flags nautilus writes: always `0x02`, ECIES-encrypted by the node. */
@@ -162,18 +163,67 @@ export function assertEnvelopeDecryptable(ciphertextLength: number): void {
 }
 
 /**
- * Before any transaction: throws when even the smallest JWS of `ddo` (its JSON in
- * base64url, without the header and signature) gives an envelope the node cannot decrypt.
- * The pre-transaction DDO has placeholder files, which are shorter than the encrypted
- * ones, so this underestimates and never refuses a DDO that would fit;
- * `buildEnvelope` checks the real size.
+ * What nautilus allows, in characters, for the parts of a compact JWS that are not the
+ * credential payload: the two dots, the base64url header and the base64url signature,
+ * plus anything a custom signer adds to the payload beyond `credentialClaims`.
+ *
+ * The built-in signers stay below it: `Eip191VcSigner` adds 221 characters (a fixed
+ * header and the base64url of the `0x`-hex 65-byte signature), and walt.id's
+ * `POST /wallet/{wallet}/keys/{keyId}/sign` signs the posted credential unchanged under a
+ * `{ typ, kid, alg }` header, with signatures of at most 683 characters (RS512, a 4096-bit
+ * RSA key), which leaves room for a key id of about 200 characters.
  */
-export function assertDdoFitsDecryptLimit(ddo: Record<string, unknown>): void {
-  const payloadLength = Buffer.from(JSON.stringify(ddo), 'utf8').toString(
-    'base64url'
-  ).length
+export const JWS_SIGNING_ALLOWANCE = 1024
 
-  assertEnvelopeDecryptable(envelopeCiphertextLengthFor(payloadLength + 2))
+/**
+ * The longest compact JWS a signer can return for `ddo` issued by `issuer`, within
+ * `JWS_SIGNING_ALLOWANCE`: the base64url of `credentialClaims(ddo, issuer)` plus the
+ * allowance.
+ */
+export function maxJwsLengthFor(
+  ddo: Record<string, unknown>,
+  issuer: string
+): number {
+  const payload = Buffer.byteLength(
+    JSON.stringify(credentialClaims(ddo, issuer)),
+    'utf8'
+  )
+
+  // Unpadded base64url: 4 characters per 3 bytes, rounded up.
+  return Math.ceil((payload * 4) / 3) + JWS_SIGNING_ALLOWANCE
+}
+
+/**
+ * Before any transaction: throws unless the envelope of `ddo`, signed by `issuer`, fits
+ * the node's decrypt limit even at its largest.
+ *
+ * An upper bound for every signer within `JWS_SIGNING_ALLOWANCE`, the built-in ones
+ * included. `ddo` must be the pre-transaction document, whose placeholder files have the
+ * length of the node's ciphertext (`nodeCiphertextLength`): every other field already has
+ * its final length, since the stand-in addresses and DID are as long as the real ones. The
+ * JWS is then at most `maxJwsLengthFor`. So a DDO this passes stays within the limit after
+ * the mint, unless a custom signer adds more than the allowance; `buildEnvelope` checks
+ * the real size before anything is stored either way.
+ */
+export function assertDdoFitsDecryptLimit(
+  ddo: Record<string, unknown>,
+  issuer: string
+): void {
+  const jwsLength = maxJwsLengthFor(ddo, issuer)
+  const body = envelopeDecryptBodyBytes(envelopeCiphertextLengthFor(jwsLength))
+
+  if (body > MAX_DECRYPT_BODY_BYTES)
+    throw new Error(
+      `The DDO is too large for the node to index: signed, its JWS can be up to ${jwsLength} characters (the credential plus ${JWS_SIGNING_ALLOWANCE} for the header and signature), and the indexer would send its envelope back in a decrypt request of up to ${body} bytes. The node accepts decrypt requests up to ${NODE_DECRYPT_BODY_LIMIT_BYTES} bytes (a larger request gets 413 and the asset is not indexed), so nautilus refuses above ${MAX_DECRYPT_BODY_BYTES} bytes, a JWS of at most ${maxDecryptableJwsLength()} characters. Checked before any transaction. Shorten the DDO: descriptions, address lists in credentials, policies, services, files.`
+    )
+}
+
+/**
+ * The length, in hex characters with `0x`, of ocean-node 4.2's ciphertext for
+ * `plaintext`: ECIES adds `ECIES_OVERHEAD_BYTES`, and the node answers in hex.
+ */
+export function nodeCiphertextLength(plaintext: string): number {
+  return 2 + 2 * (ECIES_OVERHEAD_BYTES + Buffer.byteLength(plaintext, 'utf8'))
 }
 
 /** `0x` + sha256 of the exact envelope string: what the node compares on chain. */
@@ -314,13 +364,129 @@ export function assertEncryptedMetadata(
  */
 const DDO_STORAGE_TYPES = ['ipfs', 'url', 's3', 'arweave', 'ftp']
 
+/** A non-empty string, after trimming. */
+function isFilled(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== ''
+}
+
+/**
+ * The storage classes' own path test (`isFilePath` in `UrlStorage`, `IpfsStorage` and
+ * `ArweaveStorage`): a `/` with at least one character before it.
+ */
+const PATH_LIKE = /^(.+)\/([^/]*)$/
+
+/** Whether `value` parses as a URL with one of `protocols`. */
+function hasProtocol(value: string, protocols: string[]): boolean {
+  try {
+    return protocols.includes(new URL(value).protocol)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * What each storage class of ocean-node 4.2 needs to fetch the object
+ * (`src/components/storage/*Storage.ts`: the constructor's `validate()` and
+ * `getReadableStream()`), as a description of the first missing piece, or `undefined`.
+ * Node configuration (`IPFS_GATEWAY`, `ARWEAVE_GATEWAY`, `UNSAFE_URLS`) is not visible
+ * from here.
+ */
+const POINTER_CHECKS: Record<
+  string,
+  (pointer: Record<string, unknown>) => string | undefined
+> = {
+  // `IpfsStorage` joins the hash under `/ipfs/` on its gateway, so it must be a CID and
+  // nothing path-like.
+  ipfs: ({ hash }) =>
+    typeof hash === 'string' && isCid(hash)
+      ? undefined
+      : `its hash ${JSON.stringify(hash)} is not a CIDv0 (Qm…) or CIDv1 (b…/k…)`,
+
+  // `UrlStorage` requires `url` and a GET or POST `method`, treats anything not starting
+  // with `http://` or `https://` that contains a `/` as a file path, and fetches the URL
+  // with `headers`.
+  url: ({ url, method, headers }) => {
+    if (!isFilled(url)) return '`url` is missing'
+    if (
+      !(url.startsWith('http://') || url.startsWith('https://')) ||
+      !hasProtocol(url, ['http:', 'https:'])
+    )
+      return '`url` must be an absolute http:// or https:// URL'
+    if (
+      typeof method !== 'string' ||
+      !['get', 'post'].includes(method.toLowerCase())
+    )
+      return "`method` must be 'GET' or 'POST'"
+    if (
+      headers !== undefined &&
+      (!isPlainObject(headers) ||
+        Object.values(headers).some((value) => typeof value !== 'string'))
+    )
+      return '`headers` must be an object of string values'
+    return undefined
+  },
+
+  // `S3Storage` requires these five `s3Access` strings, prefixes an `endpoint` that does
+  // not start with `http` with `https://`, and passes `region` (default `us-east-1`) and
+  // `forcePathStyle` to the AWS SDK.
+  s3: ({ s3Access }) => {
+    if (!isPlainObject(s3Access)) return '`s3Access` is missing'
+    for (const field of [
+      'bucket',
+      'objectKey',
+      'endpoint',
+      'accessKeyId',
+      'secretAccessKey'
+    ])
+      if (!isFilled(s3Access[field])) return `\`s3Access.${field}\` is missing`
+    const endpoint = s3Access.endpoint as string
+    if (
+      !hasProtocol(
+        endpoint.startsWith('http') ? endpoint : `https://${endpoint}`,
+        ['http:', 'https:']
+      )
+    )
+      return '`s3Access.endpoint` is not a host or an http(s) URL'
+    // The node defaults both with `??`, so `null` counts as unset.
+    if (s3Access.region != null && !isFilled(s3Access.region))
+      return '`s3Access.region` must be a non-empty string when set'
+    if (
+      s3Access.forcePathStyle != null &&
+      typeof s3Access.forcePathStyle !== 'boolean'
+    )
+      return '`s3Access.forcePathStyle` must be a boolean when set'
+    return undefined
+  },
+
+  // `ArweaveStorage` joins `transactionId` onto its gateway; it refuses a URL or a path.
+  arweave: ({ transactionId }) => {
+    if (!isFilled(transactionId)) return '`transactionId` is missing'
+    if (
+      transactionId.startsWith('http://') ||
+      transactionId.startsWith('https://') ||
+      PATH_LIKE.test(transactionId)
+    )
+      return '`transactionId` must be a transaction id, not a URL or a path'
+    return undefined
+  },
+
+  // `FTPStorage` requires an `ftp://` or `ftps://` `url`.
+  ftp: ({ url }) => {
+    if (!isFilled(url)) return '`url` is missing'
+    if (!hasProtocol(url, ['ftp:', 'ftps:']))
+      return '`url` must be an ftp:// or ftps:// URL'
+    return undefined
+  }
+}
+
 /**
  * Throws for a pointer ocean-node 4.2 cannot dereference as a DDO. Applies to every
  * `RemoteStore`, custom ones included.
  *
- * Steps 8–9: the pointer must be a plain JSON object with a known `type`. The decrypt
- * handler resolves it without a consumer address, and node persistent storage requires
- * one, so a bucket-backed DDO is not indexed.
+ * Steps 8–9: the pointer must be a plain JSON object with a known `type`, carrying the
+ * fields that type's storage class needs (`POINTER_CHECKS`). The decrypt handler resolves
+ * it without a consumer address, and node persistent storage requires one, so a
+ * bucket-backed DDO is not indexed.
  */
 export function assertDdoPointer(pointer: StorageObject): void {
   if (!pointer || typeof pointer !== 'object' || Array.isArray(pointer))
@@ -346,15 +512,13 @@ export function assertDdoPointer(pointer: StorageObject): void {
       `The remote store returned a pointer of type ${JSON.stringify(type)}; ocean-node 4.2 reads DDOs only from ${DDO_STORAGE_TYPES.join(', ')}.`
     )
 
-  // The node joins an IPFS hash under `/ipfs/` on its gateway, so it must be a CID and
-  // nothing path-like.
-  if (type.toLowerCase() === 'ipfs') {
-    const hash = (pointer as { hash?: unknown }).hash
-    if (typeof hash !== 'string' || !isCid(hash))
-      throw new Error(
-        `The remote store returned an IPFS pointer whose hash ${JSON.stringify(hash)} is not a CIDv0 (Qm…) or CIDv1 (b…/k…).`
-      )
-  }
+  const problem = POINTER_CHECKS[type.toLowerCase()](
+    pointer as unknown as Record<string, unknown>
+  )
+  if (problem)
+    throw new Error(
+      `The remote store returned a '${type}' pointer that ocean-node 4.2 cannot read a DDO from: ${problem}.`
+    )
 
   // The node receives the pointer as JSON, so it must survive the round trip unchanged.
   // An already wrapped `{ remote }` would make the node follow a second hop (step 11).
@@ -384,10 +548,29 @@ export function pointerPlaintext(pointer: StorageObject): {
 }
 
 /**
+ * The JWT registered claims (RFC 7519 §4.1). A signer may add them to the payload: the
+ * built-in signers set `iss`, `sub` and `jti`, and a custom one may set the others. They
+ * are not compared with the DDO unless the DDO itself has them.
+ */
+const REGISTERED_CLAIMS = ['iss', 'sub', 'aud', 'exp', 'nbf', 'iat', 'jti']
+
+/**
  * Steps 14 and 16 on the signer's output: whatever a `DdoSigner` returned (a walt.id wallet,
  * a custom service) must be a compact JWS whose payload, `vc` unwrapped as the node does, is
- * the DDO that was validated: same `id` and `version`. nautilus never sees the document the
- * store will hold otherwise.
+ * the DDO that was validated. That payload is the document the node indexes, and nautilus
+ * never sees it otherwise.
+ *
+ * Every field is compared with the validated DDO as JSON (key order aside), except:
+ *
+ *   - the registered claims (`REGISTERED_CLAIMS`) the DDO does not have itself;
+ *   - `type`, which may also be `['VerifiableCredential']`, as the built-in signers write it;
+ *   - `issuer`, which may differ from the DDO's in the case of an Ethereum address, as the
+ *     signer's own checksummed address; or be any non-empty string when the DDO declares
+ *     none;
+ *   - with a `vc` wrapper, every claim outside `vc`: the node does not index them.
+ *
+ * The built-in signers pass by construction: `Eip191VcSigner` signs `credentialClaims`, and
+ * walt.id signs the credential it is posted unchanged.
  */
 export function assertSignedDdo(
   jwt: string,
@@ -402,16 +585,100 @@ export function assertSignedDdo(
     )
   }
 
-  const payload =
-    claims.vc && typeof claims.vc === 'object'
-      ? (claims.vc as Record<string, unknown>)
-      : claims
+  // The node's test (`getDataFromProof`): any truthy `vc` replaces the payload.
+  const payload = claims.vc ? claims.vc : claims
+
+  if (!isPlainObject(payload))
+    throw new Error(
+      'The DDO signer signed a `vc` claim that is not a JSON object; the node would index it as the DDO.'
+    )
 
   for (const field of ['id', 'version'] as const)
     if (payload[field] !== ddo[field])
       throw new Error(
         `The DDO signer signed a document with ${field} ${JSON.stringify(payload[field])}, not the validated DDO's ${JSON.stringify(ddo[field])}.`
       )
+
+  // As the signer received it: `undefined` fields dropped.
+  const expected = JSON.parse(JSON.stringify(ddo)) as Record<string, unknown>
+
+  for (const key of new Set([
+    ...Object.keys(payload),
+    ...Object.keys(expected)
+  ])) {
+    if (!has(expected, key) && REGISTERED_CLAIMS.includes(key)) continue
+
+    if (key === 'type' && jsonEqual(payload.type, CREDENTIAL_TYPE)) continue
+
+    if (key === 'issuer' && isAcceptedIssuer(payload.issuer, expected.issuer))
+      continue
+
+    const difference = firstDifference(payload[key], expected[key], key)
+    if (difference !== undefined)
+      throw new Error(
+        `The DDO signer signed a document that differs from the validated DDO at ${difference}. The signed payload is what the node indexes, so nautilus stores only the document it validated.`
+      )
+  }
+}
+
+function has(object: object, key: string): boolean {
+  return Object.hasOwn(object, key)
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isAcceptedIssuer(signed: unknown, declared: unknown): boolean {
+  if (typeof signed !== 'string' || !signed) return false
+  if (typeof declared !== 'string' || !declared) return true
+
+  const isAddress = (value: string) => /^0x[0-9a-fA-F]{40}$/.test(value)
+
+  return (
+    signed === declared ||
+    (isAddress(signed) &&
+      isAddress(declared) &&
+      signed.toLowerCase() === declared.toLowerCase())
+  )
+}
+
+function jsonEqual(a: unknown, b: unknown): boolean {
+  return firstDifference(a, b, '') === undefined
+}
+
+/** The path of the first place `a` and `b` differ as JSON values, or `undefined`. */
+function firstDifference(
+  a: unknown,
+  b: unknown,
+  path: string
+): string | undefined {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length)
+      return path
+
+    for (let i = 0; i < a.length; i++) {
+      const difference = firstDifference(a[i], b[i], `${path}[${i}]`)
+      if (difference !== undefined) return difference
+    }
+
+    return undefined
+  }
+
+  if (isPlainObject(a) || isPlainObject(b)) {
+    if (!isPlainObject(a) || !isPlainObject(b)) return path
+
+    for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+      if (!has(a, key) || !has(b, key)) return `${path}.${key}`
+
+      const difference = firstDifference(a[key], b[key], `${path}.${key}`)
+      if (difference !== undefined) return difference
+    }
+
+    return undefined
+  }
+
+  return a === b ? undefined : path
 }
 
 /** Step 16: `did:ope:` + sha256(checksummed NFT address + decimal chain id). */

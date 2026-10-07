@@ -510,6 +510,138 @@ describe('what nautilus may write', () => {
       await expectThrowsAsync(() => putReturning(pointer), message)
   })
 
+  const S3_ACCESS = {
+    endpoint: 'https://sos-ch-gva-2.exo.io',
+    bucket: 'b',
+    objectKey: 'k.json',
+    accessKeyId: 'id',
+    secretAccessKey: 'secret'
+  }
+
+  it('accepts every pointer shape the node’s storage classes read', async () => {
+    for (const pointer of [
+      {
+        type: 'url',
+        url: 'http://ddo.test.invalid/x.json',
+        method: 'post',
+        headers: { Authorization: 'Bearer t' }
+      },
+      {
+        type: 's3',
+        s3Access: {
+          ...S3_ACCESS,
+          endpoint: 'minio.test.invalid:9000',
+          region: 'eu-central-1',
+          forcePathStyle: true
+        }
+      },
+      // The node defaults `region` and `forcePathStyle` with `??`.
+      {
+        type: 's3',
+        s3Access: { ...S3_ACCESS, region: null, forcePathStyle: null }
+      },
+      {
+        type: 'arweave',
+        transactionId: 'bNbA3TEQVL60xlgCcqdz4ZPHFZ711cZ3hmkpGttDt_U'
+      },
+      { type: 'ftp', url: 'ftps://user:pw@ddo.test.invalid/x.json' }
+    ]) {
+      const { node } = await putReturning(pointer)
+      expect(node.calls.metadataEncrypt[1]).to.deep.equal({ remote: pointer })
+    }
+  })
+
+  it('refuses a pointer missing what its storage class needs, before encrypting it', async () => {
+    for (const [pointer, problem] of [
+      [{ type: 'url' }, '`url` is missing'],
+      [
+        { type: 'url', url: 'https://ddo.test.invalid/x.json' },
+        "`method` must be 'GET' or 'POST'"
+      ],
+      [
+        { type: 'url', url: 'https://ddo.test.invalid/x.json', method: 'PUT' },
+        "`method` must be 'GET' or 'POST'"
+      ],
+      [
+        { type: 'url', url: 'ddo.test.invalid/x.json', method: 'GET' },
+        '`url` must be an absolute http:// or https:// URL'
+      ],
+      [
+        { type: 'URL', url: 'file:///etc/ddo.json', method: 'GET' },
+        '`url` must be an absolute http:// or https:// URL'
+      ],
+      [
+        {
+          type: 'url',
+          url: 'https://ddo.test.invalid/x.json',
+          method: 'GET',
+          headers: { Authorization: 1 }
+        },
+        '`headers` must be an object of string values'
+      ],
+      [{ type: 's3' }, '`s3Access` is missing'],
+      [{ type: 's3', s3Access: {} }, '`s3Access.bucket` is missing'],
+      [
+        { type: 's3', s3Access: { ...S3_ACCESS, secretAccessKey: ' ' } },
+        '`s3Access.secretAccessKey` is missing'
+      ],
+      [
+        { type: 's3', s3Access: { ...S3_ACCESS, objectKey: 7 } },
+        '`s3Access.objectKey` is missing'
+      ],
+      [
+        { type: 's3', s3Access: { ...S3_ACCESS, endpoint: 'http//bad host' } },
+        '`s3Access.endpoint` is not a host or an http(s) URL'
+      ],
+      [
+        { type: 's3', s3Access: { ...S3_ACCESS, region: '' } },
+        '`s3Access.region` must be a non-empty string when set'
+      ],
+      [
+        { type: 's3', s3Access: { ...S3_ACCESS, forcePathStyle: 'true' } },
+        '`s3Access.forcePathStyle` must be a boolean when set'
+      ],
+      [{ type: 'arweave' }, '`transactionId` is missing'],
+      [
+        { type: 'arweave', transactionId: 'https://arweave.net/tx' },
+        '`transactionId` must be a transaction id, not a URL or a path'
+      ],
+      [
+        { type: 'arweave', transactionId: 'tx/path' },
+        '`transactionId` must be a transaction id, not a URL or a path'
+      ],
+      [{ type: 'ftp' }, '`url` is missing'],
+      [
+        { type: 'ftp', url: 'https://ddo.test.invalid/x.json' },
+        '`url` must be an ftp:// or ftps:// URL'
+      ],
+      [
+        { type: 'ipfs' },
+        'its hash undefined is not a CIDv0 (Qm…) or CIDv1 (b…/k…)'
+      ]
+    ] as const) {
+      const node = createNodeMock()
+
+      await expectThrowsAsync(
+        () =>
+          prepareMetadata({
+            node: node.client,
+            ddo: signableDdo(),
+            signer: new Eip191VcSigner(new Wallet(PRIVATE_KEY)),
+            remoteStore: {
+              put: async () => pointer as unknown as StorageObject
+            },
+            did: ASSET_DID
+          }),
+        new RegExp(
+          `^The remote store returned a '${pointer.type}' pointer that ocean-node 4\\.2 cannot read a DDO from: ${problem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.`
+        )
+      )
+      // The envelope was encrypted; the pointer never was.
+      expect(node.calls.metadataEncrypt).to.have.length(1)
+    }
+  })
+
   it('derives the DID from the checksummed NFT address and the decimal chain id', () => {
     // ASSET_DID is ddo-js's `makeDid` output for the fixture.
     expect(expectedDid(NFT_ADDRESS.toLowerCase(), CHAIN_ID)).to.equal(ASSET_DID)
@@ -584,7 +716,12 @@ describe('golden envelope', () => {
 
     const prepared = await prepareMetadata({
       node: goldenNode,
-      ddo: { id: ASSET_DID, version: '5.0.0' },
+      // The document `JWT` signs: the signer's payload must be the validated DDO.
+      ddo: {
+        id: ASSET_DID,
+        version: '5.0.0',
+        credentialSubject: { id: ASSET_DID }
+      },
       signer: {
         getIssuer: async () => 'golden',
         sign: async () => ({ jwt: JWT, issuer: 'golden' })
@@ -901,7 +1038,7 @@ describe('redaction', () => {
     expect(prepared.storedPointer).to.deep.equal(pointer)
   })
 
-  it('redacts url header values and URL passwords', async () => {
+  it('redacts url header values and URL credentials', async () => {
     for (const [pointer, expected] of [
       [
         {
@@ -921,7 +1058,19 @@ describe('redaction', () => {
         { type: 'ftp', url: 'ftp://user:hunter2@ddo.test.invalid/x.json' },
         {
           type: 'ftp',
-          url: 'ftp://user:%3Credacted%3E@ddo.test.invalid/x.json'
+          url: 'ftp://%3Credacted%3E:%3Credacted%3E@ddo.test.invalid/x.json'
+        }
+      ],
+      [
+        {
+          type: 'url',
+          url: 'https://ddo.test.invalid/x.json?X-Amz-Signature=deadbeef&X-Amz-Credential=AKIA%2F1',
+          method: 'GET'
+        },
+        {
+          type: 'url',
+          url: 'https://ddo.test.invalid/x.json?X-Amz-Signature=%3Credacted%3E&X-Amz-Credential=%3Credacted%3E',
+          method: 'GET'
         }
       ]
     ]) {
@@ -1023,14 +1172,150 @@ describe('what nautilus takes from stores, signers and the chain', () => {
     )
     expect(stored).to.have.length(0)
 
-    // A `vc`-wrapped payload is unwrapped, as the node does.
+    // A `vc`-wrapped payload is unwrapped, as the node does; claims outside it are not
+    // indexed.
     await prepareMetadata({
       node: node.client,
       ddo,
-      signer: signing({ vc: { id: ddo.id, version: ddo.version } }),
+      signer: signing({ vc: ddo, iss: 'x', iat: 1, foo: 'ignored' }),
       remoteStore: store,
       did: ASSET_DID
     })
+    expect(stored).to.have.length(1)
+  })
+
+  it('refuses a signer that changed anything else in the document', async () => {
+    const ddo = signableDdo()
+    const subject = ddo.credentialSubject as Record<string, unknown>
+    const services = subject.services as Record<string, unknown>[]
+    const signing = (payload: unknown) => ({
+      getIssuer: async () => 'x',
+      sign: async () => ({
+        jwt: `${base64url({ alg: 'ES256' })}.${base64url(payload)}.sig`,
+        issuer: 'x'
+      })
+    })
+
+    for (const [payload, path] of [
+      [
+        {
+          ...ddo,
+          credentialSubject: {
+            ...subject,
+            services: [{ ...services[0], serviceEndpoint: 'https://evil.test' }]
+          }
+        },
+        'credentialSubject.services[0].serviceEndpoint'
+      ],
+      [
+        {
+          ...ddo,
+          credentialSubject: { ...subject, credentials: { allow: [] } }
+        },
+        'credentialSubject.credentials'
+      ],
+      [{ ...ddo, issuer: 'did:web:someone-else' }, 'issuer'],
+      [{ ...ddo, '@context': ['https://example.test'] }, '@context'],
+      [{ ...ddo, type: ['Other'] }, 'type'],
+      [{ ...ddo, indexedMetadata: { nft: { state: 0 } } }, 'indexedMetadata'],
+      [{ ...ddo, proof: {} }, 'proof'],
+      [
+        {
+          vc: { ...ddo, credentialSubject: { ...subject, nftAddress: '0x0' } }
+        },
+        'credentialSubject.nftAddress'
+      ]
+    ] as const) {
+      const { store, stored } = capturingStore()
+
+      await expectThrowsAsync(
+        () =>
+          prepareMetadata({
+            node: createNodeMock().client,
+            ddo,
+            signer: signing(payload),
+            remoteStore: store,
+            did: ASSET_DID
+          }),
+        // The path of the first difference, or one below it.
+        new RegExp(
+          `differs from the validated DDO at ${path.replace(/[.[\]]/g, '\\$&')}[.[ ]`
+        )
+      )
+      expect(stored).to.have.length(0)
+    }
+
+    const { store } = capturingStore()
+    await expectThrowsAsync(
+      () =>
+        prepareMetadata({
+          node: createNodeMock().client,
+          ddo,
+          signer: signing({ vc: 'not-an-object' }),
+          remoteStore: store,
+          did: ASSET_DID
+        }),
+      /`vc` claim that is not a JSON object/
+    )
+  })
+
+  it('accepts what the built-in signers and walt.id add, and nothing more', async () => {
+    const ddo = signableDdo()
+    const issuer = ddo.issuer as string
+    const signing = (payload: unknown) => ({
+      getIssuer: async () => issuer,
+      sign: async () => ({
+        jwt: `${base64url({ typ: 'JWT', kid: 'k', alg: 'ES256' })}.${base64url(payload)}.sig`,
+        issuer
+      })
+    })
+
+    for (const [validated, payload] of [
+      // What `Eip191VcSigner` and `WaltIdVcSigner` sign (walt.id signs the posted
+      // credential unchanged): `type` forced, registered claims added.
+      [
+        ddo,
+        {
+          ...ddo,
+          type: ['VerifiableCredential'],
+          iss: issuer,
+          sub: ddo.id,
+          jti: ddo.id
+        }
+      ],
+      // Key order does not matter; the other registered claims may be added.
+      [
+        ddo,
+        Object.fromEntries(
+          Object.entries({
+            ...ddo,
+            iat: 1,
+            nbf: 1,
+            exp: 2,
+            aud: ['x']
+          }).reverse()
+        )
+      ],
+      // The signer's checksummed address for a lower-case declared one.
+      [{ ...ddo, issuer: issuer.toLowerCase() }, ddo],
+      // A DDO that declares no issuer gets the signer's.
+      [{ ...ddo, issuer: '' }, ddo],
+      // `undefined` fields are not part of the signed JSON.
+      [{ ...ddo, extra: undefined }, ddo]
+    ]) {
+      const { store, stored } = capturingStore()
+      await prepareMetadata({
+        node: createNodeMock().client,
+        ddo: validated,
+        signer: signing(payload),
+        remoteStore: store,
+        did: ASSET_DID
+      })
+      expect(stored).to.have.length(1)
+    }
+
+    // The built-in signer itself, end to end.
+    const { stored } = await prepare()
     expect(stored).to.have.length(1)
   })
 

@@ -16,6 +16,7 @@
  */
 import type { Signer } from 'ethers'
 import type { WaltIdWallet } from '../identity/waltid/client.js'
+import { credentialClaims } from './claims.js'
 
 export interface SignedCredential {
   /** The compact JWT. */
@@ -87,14 +88,7 @@ function toCredential(
       `The DDO declares issuer "${declared}" but it is being signed by "${issuer}". Either remove setIssuer(), or sign with the identity you declared.`
     )
 
-  return {
-    ...ddo,
-    type: ['VerifiableCredential'],
-    issuer,
-    iss: issuer,
-    sub: ddo.id,
-    jti: ddo.id
-  }
+  return credentialClaims(ddo, issuer)
 }
 
 /** Signs with a walt.id wallet key. The issuer is the holder DID. */

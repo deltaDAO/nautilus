@@ -27,7 +27,10 @@ import type {
  */
 export const PLACEHOLDER_ADDRESS = '0x0000000000000000000000000000000000000001'
 
-/** Stand-in for a file object that cannot be encrypted until the datatoken exists. */
+/**
+ * Seed of the stand-in for a file object that cannot be encrypted until the datatoken
+ * exists (see `NautilusService.projectForValidation`).
+ */
 const PLACEHOLDER_FILES = 'preflight-placeholder'
 
 /**
@@ -143,7 +146,9 @@ export class NautilusDDO {
    * For validating before the first transaction. The addresses are stand-ins — they cannot
    * be anything else, since a DDO is derived from an NFT that does not exist yet — so this
    * document is for checking, never for publishing. Nothing here mutates builder state, and
-   * the placeholder ciphertext means no service is encrypted twice.
+   * the placeholder ciphertext means no service is encrypted twice. Each placeholder is as
+   * long as the node's ciphertext of that service's file object will be, so the document
+   * is as large as the published one.
    */
   getPreflightDDO(options: {
     create: boolean
@@ -157,6 +162,7 @@ export class NautilusDDO {
         // Distinct per service: the id is the hash of this value, and one shared
         // placeholder would collapse every service in the document onto one id.
         `${PLACEHOLDER_FILES}-${index}`,
+        options.nftAddress,
         service.datatokenAddress || options.datatokenAddress,
         this.language
       )

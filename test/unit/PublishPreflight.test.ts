@@ -15,6 +15,7 @@ import { Wallet } from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PublishedNotIndexed } from '../../src/@types/Publish.js'
 import { AssetBuilder } from '../../src/Nautilus/Asset/AssetBuilder.js'
+import { PLACEHOLDER_ADDRESS } from '../../src/Nautilus/Asset/NautilusDDO.js'
 import {
   type FileTypes,
   ServiceTypes
@@ -28,6 +29,10 @@ import {
   type OceanNodeClient,
   OceanNodeError
 } from '../../src/node/OceanNodeClient.js'
+import {
+  maxDecryptableJwsLength,
+  maxJwsLengthFor
+} from '../../src/publish/envelope.js'
 import {
   createDatatokenForService,
   createNftWithService,
@@ -312,6 +317,54 @@ describe('publish before the first transaction', () => {
 
     expect(vi.mocked(createNftWithService)).not.toHaveBeenCalled()
     expect(node.calls.metadataEncrypt).to.have.length(0)
+  })
+
+  it('checks the largest envelope the signed DDO can give, not the DDO alone', async () => {
+    const asset = validAsset()
+    const preflight = (length: number) => {
+      asset.ddo.metadata.description = 'x'.repeat(length)
+      const ddo = asset.ddo.getPreflightDDO({
+        create: true,
+        chainId: CHAIN_ID,
+        nftAddress: PLACEHOLDER_ADDRESS,
+        datatokenAddress: PLACEHOLDER_ADDRESS
+      })
+      ddo.issuer = SIGNER_ADDRESS
+      return ddo
+    }
+
+    // The longest description whose largest signed JWS still fits.
+    let low = 0
+    let high = 30_000
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2)
+      if (
+        maxJwsLengthFor(preflight(mid), SIGNER_ADDRESS) <=
+        maxDecryptableJwsLength()
+      )
+        low = mid
+      else high = mid - 1
+    }
+
+    // One character more is refused before the mint, although the DDO's own JSON in
+    // base64url is well within the limit.
+    const tooLarge = preflight(low + 1)
+    expect(
+      Buffer.from(JSON.stringify(tooLarge)).toString('base64url').length
+    ).to.be.below(maxDecryptableJwsLength() - 1_000)
+
+    const { nautilus, node } = await createNautilus()
+    await expectThrowsAsync(
+      () => nautilus.publish(asset),
+      /too large for the node to index/
+    )
+    expect(vi.mocked(createNftWithService)).not.toHaveBeenCalled()
+    expect(node.calls.encrypt).to.have.length(0)
+
+    // At the bound itself, it publishes.
+    preflight(low)
+    await nautilus.publish(asset)
+    expect(vi.mocked(createNftWithService)).toHaveBeenCalledTimes(1)
   })
 
   it('rejects encrypt: false', async () => {

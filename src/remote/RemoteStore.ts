@@ -25,8 +25,8 @@
  * implement the interface for anything else.
  *
  * The pointer goes on chain only node-encrypted. The copy nautilus returns in
- * `PublishResponse.stored.pointer` is redacted: an S3 `secretAccessKey`, `url` header values
- * and URL passwords read `'<redacted>'`.
+ * `PublishResponse.stored.pointer` is redacted: an S3 `secretAccessKey`, `url` header values,
+ * and a URL's user name, password, query values and fragment read `'<redacted>'`.
  */
 import type { StorageObject } from '@oceanprotocol/lib'
 
@@ -59,7 +59,8 @@ export interface RemoteStore {
    * pointer carries) and throw unless `"0x" + sha256(JSON.stringify(JSON.parse(body)))`
    * equals `expectedHash`, which is exactly the node's check. This catches a store that
    * alters bytes, or a key the node cannot read with, before anything goes on chain.
-   * Stores without it are not verified.
+   * Resolve only after that read: a store with no way to read back should throw (and say so
+   * in `check()`), unless its user opted out explicitly. Stores without it are not verified.
    */
   verify?(pointer: StorageObject, expectedHash: string): Promise<void>
 
