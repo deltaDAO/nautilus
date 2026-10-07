@@ -147,13 +147,22 @@ export async function accessWithUserdata(
   let given: { [key: string]: unknown } = {}
 
   if (userdataJson) {
+    const notAnObject = new Error(
+      `userdata must be a JSON object, e.g. '{"rows":5}', not ${userdataJson}`
+    )
+    let parsed: unknown
+
     try {
-      given = JSON.parse(userdataJson)
+      parsed = JSON.parse(userdataJson)
     } catch {
-      throw new Error(
-        `userdata must be a JSON object, e.g. '{"rows":5}', not ${userdataJson}`
-      )
+      throw notAnObject
     }
+
+    // Valid JSON is not necessarily an object: null, arrays and primitives parse fine.
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+      throw notAnObject
+
+    given = parsed as { [key: string]: unknown }
   }
 
   if (parameters.length === 0) {

@@ -137,6 +137,11 @@ const STORE_HELP = `Publishing and editing need a DDO store. Set DDO_STORE in .e
                   IPFS_JWT          optional, sent as "Authorization: Bearer <IPFS_JWT>"
                                     (Pinata: a key with the pin and unpin scopes; the
                                     unpin scope is what store:remove needs)
+                  IPFS_GATEWAY_URL  the gateway each envelope is read back from before the
+                                    metadata transaction, ideally the node's IPFS_GATEWAY.
+                                    Needed for anything but Kubo (Kubo is read back through
+                                    its own /api/v0/cat), unless IPFS_VERIFY=false
+                  IPFS_VERIFY       false to publish without that read-back
 
   DDO_STORE=s3    S3_ENDPOINT, S3_BUCKET, S3_WRITE_ACCESS_KEY_ID/_SECRET_ACCESS_KEY and
                   S3_READ_ACCESS_KEY_ID/_SECRET_ACCESS_KEY (a separate read-only key: it
@@ -218,7 +223,10 @@ function selectedStore(): 'ipfs' | 's3' | undefined {
  * - **IPFS** (`IpfsRemoteStore`): any upload endpoint taking a multipart file. `IPFS_JWT`, if
  *   set, goes in as a Bearer token, which is what Pinata needs. `probe: 'upload'` makes
  *   `check()` do a real upload of a tiny fixed probe before `publish()` mints anything —
- *   the only check that catches a Pinata key without the pin scope.
+ *   the only check that catches a Pinata key without the pin scope. The envelope is read
+ *   back before the metadata transaction: through `IPFS_GATEWAY_URL` when set, otherwise
+ *   from a Kubo node's `/api/v0/cat`. Pinata needs `IPFS_GATEWAY_URL` (or `IPFS_VERIFY=false`
+ *   to publish without the read-back); `check()` says so before anything is minted.
  * - **S3** (`S3RemoteStore`): AWS S3, Exoscale SOS, MinIO. Two key pairs: the write key
  *   uploads and never leaves this machine; the read key is written, node-encrypted, into
  *   every on-chain pointer, so it must be read-only and scoped to `S3_PREFIX`.
@@ -242,11 +250,16 @@ export function getRemoteStore(): RemoteStore {
       )
 
     const jwt = process.env.IPFS_JWT?.trim()
+    const gatewayUrl = process.env.IPFS_GATEWAY_URL?.trim() || undefined
 
     return new IpfsRemoteStore({
       uploadUrl,
       headers: jwt ? { Authorization: `Bearer ${jwt}` } : undefined,
-      probe: 'upload'
+      probe: 'upload',
+      // Reads each envelope back before the metadata transaction. A Kubo uploadUrl needs
+      // neither: it is read back through the same node's /api/v0/cat.
+      ...(gatewayUrl ? { gatewayUrl } : {}),
+      ...(envFlag('IPFS_VERIFY') === false ? { verify: false as const } : {})
     })
   }
 

@@ -223,19 +223,25 @@ IPFS_UPLOAD_URL="http://127.0.0.1:5001/api/v0/add"                 # a Kubo node
 # or Pinata, with a JWT whose key has the pin (pinFileToIPFS) and unpin scopes:
 IPFS_UPLOAD_URL="https://api.pinata.cloud/pinning/pinFileToIPFS"   # not pinJSONToIPFS
 IPFS_JWT="your-pinata-jwt"
+IPFS_GATEWAY_URL="https://gateway.pinata.cloud"                     # needed for anything but Kubo
+# IPFS_VERIFY="false"                                              # or: publish without the read-back
 ```
 
 ```ts
 new IpfsRemoteStore({
   uploadUrl: process.env.IPFS_UPLOAD_URL,
   headers: { Authorization: `Bearer ${process.env.IPFS_JWT}` },
-  probe: 'upload' // check() uploads a tiny probe before anything is minted
+  probe: 'upload', // check() uploads a tiny probe before anything is minted
+  gatewayUrl: process.env.IPFS_GATEWAY_URL // only when set
 })
 ```
 
 The ocean-node fetches the CID through **its own** IPFS gateway, so the content has to be
-reachable from there. The examples set no `gatewayUrl`, so an IPFS envelope is not read back
-before the metadata transaction; an S3 one is, with the read key.
+reachable from there. Every envelope is read back before the metadata transaction: through
+`IPFS_GATEWAY_URL` when set (ideally the node's own `IPFS_GATEWAY`), otherwise, for a Kubo
+node, through its `/api/v0/cat`. Pinata needs `IPFS_GATEWAY_URL`, or `IPFS_VERIFY=false` to
+publish without the read-back; `store:check` says so before anything is minted. An S3
+envelope is read back with the read key.
 
 **S3** (`DDO_STORE=s3`) — AWS S3, Exoscale SOS or MinIO, with two key pairs:
 
