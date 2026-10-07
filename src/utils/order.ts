@@ -80,8 +80,8 @@ export async function reuseOrder(params: {
   validOrderTx: string
   providerFees: ProviderFees
 }): Promise<OrderResult> {
-  // The datatoken checks the fee's signature on chain; a fee it would reject (ocean-node
-  // bug B2) is refused here, before the transaction.
+  // The datatoken checks the fee's signature on chain; a fee it would reject is refused
+  // here, before the transaction.
   assertProviderFeeSignature(params.providerFees)
 
   const datatoken = new Datatoken(
@@ -110,8 +110,8 @@ export async function reuseOrder(params: {
 export async function order(request: OrderRequest): Promise<OrderResult> {
   const { signer, config, pricing, price, providerFees, serviceIndex } = request
 
-  // Before any approval or purchase: a fee the datatoken would reject (ocean-node bug B2)
-  // makes the order revert after the buy.
+  // Before any approval or purchase: a fee the datatoken would reject makes the order
+  // revert after the buy.
   assertProviderFeeSignature(providerFees)
 
   const payer = request.payer || (await signer.getAddress())

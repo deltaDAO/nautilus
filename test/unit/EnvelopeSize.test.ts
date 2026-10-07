@@ -1,10 +1,10 @@
 /**
- * The envelope size check (NODE-FAILURE-CASES case 4).
+ * The envelope size check.
  *
- * ocean-node 4.2 parses every JSON request with express's default 100 KB limit, including
- * the indexer's own `POST /api/services/decrypt` that carries the envelope ciphertext back
- * to the node. A larger envelope gets a 413 and the asset is never indexed, so nautilus
- * refuses it before the metadata transaction (and, from the DDO, before the mint).
+ * The node accepts JSON requests up to 100 KB (express's default), including the indexer's
+ * `POST /api/services/decrypt` that carries the envelope ciphertext back to the node. A
+ * larger envelope gets a 413 and the asset is not indexed, so nautilus refuses it before
+ * the metadata transaction (and, from the DDO, before the mint).
  */
 import { describe, expect, it } from 'vitest'
 import {
@@ -98,9 +98,7 @@ describe('buildEnvelope', () => {
 
     await expect(
       buildEnvelope(node.client, jwsOfLength(maxDecryptableJwsLength() + 1))
-    ).rejects.toThrow(
-      /too large for ocean-node 4\.2 to index.*102400 bytes.*413/
-    )
+    ).rejects.toThrow(/too large for the node to index.*102400 bytes.*413/)
     expect(node.calls.encrypt).to.have.length(0)
   })
 })
@@ -118,6 +116,6 @@ describe('assertDdoFitsDecryptLimit', () => {
         id: 'did:ope:x',
         description: 'x'.repeat(20_000)
       })
-    ).toThrow(/too large for ocean-node 4\.2 to index/)
+    ).toThrow(/too large for the node to index/)
   })
 })

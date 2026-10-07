@@ -101,9 +101,9 @@ When ocean-node re-indexes (a full reindex deletes the chain's assets and replay
 event; operators run it, and it runs by itself on an upgrade that raises the node's database
 version), it replays an asset from its `MetadataCreated` event,
 which needs the envelope stored by **`publish()`**. If that envelope is gone, the creation
-event fails, the node ignores every later `MetadataUpdated` of an asset it has no DDO for,
-and the asset disappears from the index, even though its current version is still in the
-store. Failed events are not retried.
+event cannot be indexed, a later `MetadataUpdated` applies only to an asset the node already
+has a DDO for, and so the asset is no longer in the index, even though its current version
+is still in the store.
 
 So, for an asset that should stay indexed, keep:
 
@@ -172,9 +172,9 @@ already exists. What happens to an envelope that was already stored is described
 ### Reading it back before the transaction
 
 After `put()` and right before the metadata transaction, nautilus calls the store's optional
-`verify()`: it reads the stored envelope back the way the node will and checks the hash. A
-`MetadataCreated` the node cannot index is permanent on 4.2, so a store that changed the
-bytes, or a pointer the node cannot read, fails here instead. `IpfsRemoteStore` verifies when
+`verify()`: it reads the stored envelope back the way the node will and checks the hash, so
+a store that changed the bytes, or a pointer the node cannot read, fails here, before
+anything is on chain. `IpfsRemoteStore` verifies when
 you give it a gateway — ideally the node's own `IPFS_GATEWAY`:
 
 ```ts twoslash
@@ -547,7 +547,8 @@ same bytes back, so the hash still holds if a store or gateway adds whitespace.
   `IndexingError` with the node's message, and
   [`getIndexingState`](/docs/guides/ocean-node#indexing-state) returns the raw record. A
   failure is filed under the old `did:op:` id with the `nft` and `txId` — query `?txId=` —
-  and is never removed; a success is filed under the `did:ope:` DID — query `?did=`.
+  and stays after a later success; a success is filed under the `did:ope:` DID — query
+  `?did=`.
 
 [`PublishResponse.stored`](/docs/api/PublishResponse#stored) returns the pointer (redacted:
 secrets read `'<redacted>'`) and the hash, so you can verify what was stored, or unpin it

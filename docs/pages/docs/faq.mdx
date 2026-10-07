@@ -21,8 +21,8 @@ chain; it records a failure in its indexing state, under the transaction:
 curl "https://<your-node>/api/aquarius/state/ddo?txId=<setMetadata tx hash, lower-case>"
 ```
 
-`?nft=<nftAddress>` finds failures too, but the node never removes them, so it can return an
-old error from an earlier transaction. A **success** is filed under the DID instead
+`?nft=<nftAddress>` finds failures too, but a later success does not remove them, so it can
+return an old error from an earlier transaction. A **success** is filed under the DID instead
 (`?did=did:ope:…`). From nautilus, use
 [`getIndexingState`](/docs/guides/ocean-node#indexing-state). With
 `waitForIndexer`, nautilus reads it for you and throws an `IndexingError` with the node's
@@ -65,14 +65,12 @@ Credential gating is enforced on **consumption**, not on publication.
 
 ## Why am I paying twice for the same asset?
 
-A known limitation of the current node, not of nautilus. ocean-node's access `initialize`
-returns `{ providerFee, datatoken, nonce, computeAddress }` and **no `validOrder`**, so
-`hasReusableOrder()` is always false and every [`access`](/docs/api/nautilus/access) buys a
-fresh datatoken — even inside the service timeout, where you already hold a valid order.
+ocean-node's access `initialize` returns `{ providerFee, datatoken, nonce, computeAddress }`
+and **no `validOrder`**, so `hasReusableOrder()` is false and every
+[`access`](/docs/api/nautilus/access) buys a fresh datatoken — even inside the service
+timeout, where you already hold a valid order.
 
-The v4 Provider returned that field; 3.2.21 does not. On a paid asset this is repeated
-payment for access you already have. Until it is restored, cache the download URL you get
-back rather than calling `access` again.
+On a paid asset, cache the download URL you get back rather than calling `access` again.
 
 ## Never put `127.0.0.1` in a DDO
 

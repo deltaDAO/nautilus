@@ -146,14 +146,12 @@ Override the instance's remote store or DDO signer for this call.
 
 Before the first transaction, read the node's indexer nonce with
 [`getIndexerNonceState()`](/docs/api/node/OceanNodeClient#getindexernoncestate) (two `GET`s,
-nothing signed) and throw an `IndexerNonceStuckError` when the indexer is stuck on a nonce
-it cannot sign (ocean-node 4.2 bug B1): the asset would go on chain and never be indexed.
-A node that does not answer the check (P2P, an older node, a network error) is not an
-error: the check is skipped. It also logs a warning when this publish's own second decrypt
-call would be the one to hit such a nonce. `false` skips the check: use it on a node that
-runs the fix, where the check is computed the same way and so raises a false alarm about
-once in 256 publishes. See
-[known ocean-node 4.2 issues](/docs/guides/ocean-node#known-ocean-node-42-issues).
+nothing signed) and throw an `IndexerNonceStuckError` when the node would not accept its
+indexer's next decrypt call (`stuck: true`): the asset would go on chain without being
+indexed. Ask the node operator to advance the stored nonce of the node's address. A node
+that does not answer the check (P2P, an older node, a network error) is not an error: the
+check is skipped. It also logs a warning when this publish's own second decrypt call would
+use a nonce the node does not accept. `false` skips the check.
 
 :::info
 There is no `encrypt` option any more. The pointer and the stored envelope are always
@@ -165,7 +163,7 @@ node-encrypted, and passing `encrypt: false` throws.
 - **Before any transaction:** `encrypt: false`, a `DEPRECATED` or `REVOKED_BY_PUBLISHER`
   lifecycle state, an asset without services, a missing or unsupported remote store, a
   failing store `check()`, an invalid DDO, a DDO too large for the node to decrypt (its
-  signed envelope would exceed ocean-node 4.2's 100 KB request limit), an unreachable
+  signed envelope would exceed the node's 100 KB decrypt request limit), an unreachable
   service endpoint or file, or an `IndexerNonceStuckError` (see
   [`checkIndexerNonce`](#checkindexernonce)).
 - **`PublishIncompleteError`**, when something fails **after** the NFT was minted — a later

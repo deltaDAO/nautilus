@@ -280,7 +280,7 @@ describe('waitForIndexer', () => {
   })
 
   it('ignores a stale failure record from another transaction', async () => {
-    // The node never clears failure records, so one from an earlier tx must not fail
+    // A failure record stays after a later success, so one from an earlier tx must not fail
     // this wait.
     stubNode({
       lookups: [
@@ -723,7 +723,7 @@ describe('getIndexerNonceState', () => {
     return fetch
   }
 
-  it('knows which nonces the node cannot verify for its own address', () => {
+  it('knows which indexer nonces the node does not accept for its own address', () => {
     expect(isIndexerNonceSignable(NODE_ADDRESS, 264)).to.equal(true)
     expect(isIndexerNonceSignable(NODE_ADDRESS, 265)).to.equal(false)
     expect(isIndexerNonceSignable(NODE_ADDRESS.toLowerCase(), 265)).to.equal(
@@ -733,7 +733,7 @@ describe('getIndexerNonceState', () => {
     expect(isIndexerNonceSignable(NODE_ADDRESS, 399)).to.equal(false)
   })
 
-  it('reports a stuck indexer when the next nonce cannot be verified', async () => {
+  it('reports a stuck indexer nonce when the next nonce is not accepted', async () => {
     const fetch = stubNonce('{"nonce":"264"}')
 
     expect(await client().getIndexerNonceState()).to.deep.equal({
@@ -786,7 +786,7 @@ describe('IndexingError', () => {
   const failure = (error: string) =>
     new IndexingError(ASSET_DID, { ...RECORDS.failureBeforeDid, error }, TX)
 
-  it('explains a misread envelope', () => {
+  it('explains an envelope decoding error', () => {
     for (const error of [
       'invalid codepoint at offset 1; unexpected continuation byte',
       'UNEXPECTED_CONTINUE',
@@ -805,7 +805,7 @@ describe('IndexingError', () => {
     ).to.match(/Hint: the node's decrypt call was refused \(401 Unauthorized\)/)
   })
 
-  it('names the stuck-indexer nonce fault of ocean-node in the 401 hint', () => {
+  it('points to the stuck indexer nonce in the 401 hint', () => {
     const message = failure(
       'Provider exception on decrypt DDO. Status: 401, Unauthorized'
     ).message

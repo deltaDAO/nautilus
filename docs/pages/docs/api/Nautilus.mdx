@@ -72,7 +72,7 @@ Accepted by both [`publish`](/docs/api/nautilus/publish) and [`edit`](/docs/api/
 | `waitForIndexer` | `boolean \| { intervalMs?, timeoutMs? }` | `false` | Block until the indexer has the asset, so the result is immediately resolvable. Throws an `IndexingError` if the node records a failure, and an `OceanNodeError` on timeout. Defaults: 7 s interval (under the node's default rate limit), 5 min timeout. Either error carries the full response as `error.published`. |
 | `remoteStore` | `RemoteStore` | instance's | Override the remote store for this call. |
 | `ddoSigner` | `DdoSigner` | instance's | Override the DDO signer for this call. |
-| `checkIndexerNonce` | `boolean` | `true` | Before the first transaction, throw an `IndexerNonceStuckError` when the node's indexer is stuck on a nonce it cannot sign (ocean-node 4.2 bug B1). Skipped silently when the node does not answer. See [`publish`](/docs/api/nautilus/publish#checkindexernonce). |
+| `checkIndexerNonce` | `boolean` | `true` | Before the first transaction, throw an `IndexerNonceStuckError` when the node would not accept its indexer's next decrypt call, so the asset would not be indexed. Skipped silently when the node does not answer. See [`publish`](/docs/api/nautilus/publish#checkindexernonce). |
 
 There is no `encrypt` option: the pointer and the stored envelope are always node-encrypted
 (flags `0x02`), and `encrypt: false` throws. Also accepted by

@@ -138,8 +138,8 @@ export async function compute(
   )
 
   // 2. Ask the node what the job costs and which orders can be reused. Every provider fee
-  //    is signature-checked here, before escrow or any order spends gas: ocean-node 4.2
-  //    mis-signs about one fee in 256 (node bug B2) and the order would revert on it.
+  //    is signature-checked here, before escrow or any order spends gas, the way the
+  //    datatoken verifies it, so an order is never sent with a fee it would reject.
   const initializeResults = await initializeWithValidProviderFee(
     () =>
       node.initializeCompute({

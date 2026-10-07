@@ -254,7 +254,7 @@ describe('compute() order bookkeeping', () => {
   })
 })
 
-describe('compute() provider-fee signature pre-check (ocean-node bug B2)', () => {
+describe('compute() provider-fee signature pre-check', () => {
   const config: ComputeConfig = {
     dataset: { did: ASSET_DID },
     algorithm: { did: ALGO_DID }
@@ -264,9 +264,9 @@ describe('compute() provider-fee signature pre-check (ocean-node bug B2)', () =>
     [ALGO_DID]: accessOnlyAlgorithm()
   })
 
-  it('refuses before escrow and orders when the node re-signs the same bad fee', async () => {
-    // On ocean-node 4.2 a compute fee's validUntil is the service timeout, so asking again
-    // returns the same hash: nothing helps, and nothing may be spent.
+  it('refuses before escrow and orders when the node returns the same fee again', async () => {
+    // A compute fee's validUntil is the service timeout, so asking again returns the same
+    // hash: the error is thrown at once, and nothing may be spent.
     vi.useFakeTimers()
     try {
       const { client, calls } = createComputeNodeMock(assets(), [

@@ -9,12 +9,9 @@
  *   digest      = keccak256("\x19Ethereum Signed Message:\n32" ++ messageHash)
  *   require(ecrecover(digest, v, r, s) == providerFeeAddress, "Invalid provider fee")
  *
- * ocean-node 4.2 signs `toBeArray(messageHash)` (`core/utils/feesHandler.ts:108, 329`),
- * which drops leading zero bytes. For the roughly one fee in 256 whose `messageHash`
- * starts with `0x00` it signs 31 bytes under a `\n31` prefix, so `ecrecover` finds some
- * other address and `startOrder`/`reuseOrder` revert on chain (node bug B2). This module
- * rebuilds the contract's digest exactly and recovers the signer locally: no RPC call, no
- * transaction.
+ * A fee whose signature does not recover to `providerFeeAddress` this way makes
+ * `startOrder`/`reuseOrder` revert on chain. This module rebuilds the contract's digest
+ * exactly and recovers the signer locally: no RPC call, no transaction.
  *
  * Not exported from the package, apart from `ProviderFeeSignatureError`.
  */
@@ -61,7 +58,7 @@ export class ProviderFeeSignatureError extends Error {
     details: { recovered?: string; attempts: number; reason: string }
   ) {
     super(
-      `Refusing to order: the provider fee signed by ${String(providerFee.providerFeeAddress)} would fail the datatoken's signature check (ecrecover gives ${details.recovered ?? 'no address'}), so startOrder/reuseOrder would revert and spend gas. ${details.reason} This is an ocean-node bug (B2: core/utils/feesHandler.ts signs toBeArray(messageHash), which drops the leading zero byte of about one fee hash in 256; ERC20Template checks the "\\x19Ethereum Signed Message:\\n32" digest of all 32 bytes). Nothing was spent. The node fix is to sign getBytes(messageHash).`
+      `Refusing to order: the provider fee signed by ${String(providerFee.providerFeeAddress)} would fail the datatoken's signature check (ecrecover gives ${details.recovered ?? 'no address'}), so startOrder/reuseOrder would revert and spend gas. ${details.reason} The datatoken checks the "\\x19Ethereum Signed Message:\\n32" digest of the 32-byte fee hash. Nothing was spent.`
     )
     this.name = 'ProviderFeeSignatureError'
     this.providerFee = providerFee
@@ -144,8 +141,7 @@ export function assertProviderFeeSignature(
   throw new ProviderFeeSignatureError(fee, {
     recovered: recoverProviderFeeSigner(fee),
     attempts,
-    reason:
-      'Ask the node for a new fee (initialize again), or use a node with the fix.'
+    reason: 'Ask the node for a new fee (initialize again).'
   })
 }
 
@@ -184,7 +180,7 @@ function hashOrUndefined(fee: ProviderFeeLike): string | undefined {
  * datatoken accepts, up to `attempts` times, and returns that answer.
  *
  * A new fee normally has a new `validUntil` and so a new hash. When the node answers with
- * the same hash again (a compute fee on ocean-node 4.2 is `validUntil = service.timeout`,
+ * the same hash again (a compute fee has `validUntil = service.timeout`,
  * and a download fee for a service with `timeout: 0` has `validUntil = 0`), asking again
  * cannot help, and this throws at once.
  */

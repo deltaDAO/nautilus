@@ -217,8 +217,8 @@ export interface PublishOptions {
   /**
    * Before the first transaction, read the node's indexer nonce
    * (`OceanNodeClient.getIndexerNonceState()`, two GETs, nothing signed) and throw an
-   * `IndexerNonceStuckError` when the indexer is stuck (ocean-node 4.2 bug B1), since the
-   * asset would never be indexed. A node that does not answer is not an error: the check is
+   * `IndexerNonceStuckError` when the indexer nonce is stuck, since the asset would not be
+   * indexed. A node that does not answer is not an error: the check is
    * skipped. Default `true`; `false` skips it.
    */
   checkIndexerNonce?: boolean
@@ -915,14 +915,15 @@ export class Nautilus {
   }
 
   /**
-   * Refuses to publish onto a node whose indexer is stuck on a nonce it cannot sign
-   * (ocean-node 4.2 bug B1, `IndexerNonceState.stuck`), before the first transaction.
+   * Refuses to publish onto a node whose indexer nonce is stuck
+   * (`IndexerNonceState.stuck`), before the first transaction.
    * Best effort: when the node does not answer (P2P, no `providerAddress`, an older node,
    * a network error) it goes on silently. `{ checkIndexerNonce: false }` skips it.
    *
    * Indexing a nautilus asset takes two decrypt calls, with the next two nonces. When only
-   * the second is unsignable, the node is not stuck yet but this publish will make it so,
-   * and the asset will not be indexed; that is warned about, not refused.
+   * the second is not accepted (`isIndexerNonceSignable`), the nonce is not stuck yet but
+   * will be after this publish, and the asset will not be indexed; that is warned about,
+   * not refused.
    */
   private async assertIndexerNotStuck(options: PublishOptions): Promise<void> {
     if (options.checkIndexerNonce === false) return
@@ -942,7 +943,7 @@ export class Nautilus {
 
     if (!isIndexerNonceSignable(state.nodeAddress, state.nextNonce + 1))
       LoggerInstance.warn(
-        `[publish] the indexer of ${this.node.nodeUri} will sign its second decrypt call for this asset with nonce ${state.nextNonce + 1}, which ocean-node 4.2 refuses (bug B1): unless another decrypt moves the nonce first, this asset will not be indexed and the indexer will be stuck from then on.`
+        `[publish] the indexer of ${this.node.nodeUri} will sign its second decrypt call for this asset with nonce ${state.nextNonce + 1}, which the node does not accept: unless another decrypt moves the nonce first, this asset will not be indexed and the indexer nonce will be stuck until the operator advances it.`
       )
   }
 
@@ -961,11 +962,11 @@ export class Nautilus {
         'Publishing needs a remote store for the signed DDO. Pass `remoteStore` to Nautilus.create(), for example an IpfsRemoteStore or an S3RemoteStore.'
       )
 
-    // ocean-node 4.2 resolves a remote DDO without a consumer address, and a bucket refuses
-    // that read, so a DDO stored there would go on chain and never be indexed.
+    // ocean-node 4.2 resolves a remote DDO without a consumer address, and a bucket requires
+    // one, so a DDO stored there would go on chain without being indexed.
     if (remoteStore instanceof NodePersistentRemoteStore)
       throw new Error(
-        'NodePersistentRemoteStore cannot hold DDOs: ocean-node 4.2 cannot read a remote DDO from its own bucket storage, so the asset would never be indexed. Use an IpfsRemoteStore or an S3RemoteStore instead.'
+        'NodePersistentRemoteStore cannot hold DDOs: ocean-node 4.2 does not read remote DDOs from its bucket storage, so the asset would not be indexed. Use an IpfsRemoteStore or an S3RemoteStore instead.'
       )
 
     return remoteStore
@@ -1021,8 +1022,8 @@ export class Nautilus {
 
     await assertValid(preflight)
 
-    // ocean-node 4.2 cannot decrypt an envelope over ~100 KB of request, so a DDO that
-    // large would go on chain and never be indexed.
+    // The node accepts decrypt requests up to 100 KB, so a DDO whose envelope does not fit
+    // would go on chain without being indexed.
     assertDdoFitsDecryptLimit(preflight)
   }
 
@@ -1088,8 +1089,8 @@ export class Nautilus {
     let sent = false
     let setMetadataTxReceipt: TransactionReceipt
     try {
-      // Read the stored object back the way the node will, before the transaction: on 4.2
-      // a failed MetadataCreated cannot be repaired by publishing again onto the same NFT.
+      // Read the stored object back the way the node will, before the transaction, so an
+      // unreadable or altered object is caught while nothing is on chain yet.
       await remoteStore.verify?.(
         prepared.storedPointer,
         prepared.written.metadataHash

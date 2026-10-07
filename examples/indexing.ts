@@ -31,7 +31,7 @@ export function explainIndexingFailure(error: unknown): boolean {
     if (error.txId) console.error(`  tx:    ${error.txId}`)
     console.error(`  node:  ${error.state.error?.trim() || '(no message)'}`)
     console.error(
-      '  The transactions succeeded, so the change is on chain, but the node will not retry it.'
+      '  The transactions succeeded, so the change is on chain, but it is not indexed.'
     )
     console.error(
       '  Fix the cause (often the DDO store: the node must be able to fetch what was stored) and edit or republish.'
@@ -156,8 +156,8 @@ export function indexingQuery(reference: string): IndexingStateQuery {
  *
  *   - a **success** under the `did:ope:` DID, with a blank `txId` — query the DID;
  *   - a **failure** under the old `did:op:` id, with the `nft` and the real `txId` — query
- *     the transaction hash. Failure records are never removed, so a lookup by NFT can
- *     return an error from an earlier transaction.
+ *     the transaction hash. A failure record stays after a later success, so a lookup by
+ *     NFT can return an error from an earlier transaction.
  */
 export async function showIndexingState(nautilus: Nautilus, reference: string) {
   const query = indexingQuery(reference)
@@ -188,7 +188,7 @@ export async function showIndexingState(nautilus: Nautilus, reference: string) {
 
   if (failed && key === 'nft')
     console.log(
-      '  Failure records are never removed: check that the tx above is the one you care about.'
+      '  Failure records stay after a later success: check that the tx above is the one you care about.'
     )
 
   return state

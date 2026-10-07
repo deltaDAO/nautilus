@@ -42,8 +42,8 @@ describe('compute', () => {
      * compares the trusted-publisher list against the algorithm's **nftAddress**
      * (compute/utils.ts, validateAlgoForDataset), not the publisher's wallet, so
      * trusting an address that actually published the algorithm still fails.
-     * That looks like a node bug given the field name; the wildcard sidesteps it
-     * and says what this fixture means anyway — any algorithm may run here.
+     * The wildcard does not depend on that, and says what this fixture means
+     * anyway — any algorithm may run here.
      *
      * Note `freeCompute` does *not* enforce any of this, so the free-compute
      * tests pass either way. Only the paid path checks it.

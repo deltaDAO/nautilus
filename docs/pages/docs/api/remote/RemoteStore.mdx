@@ -106,9 +106,8 @@ Read the object behind `pointer` the way the node will — with the credentials 
 carries — and throw unless `"0x" + sha256(JSON.stringify(JSON.parse(body)))` equals
 `expectedHash`, which is exactly the node's check.
 
-On ocean-node 4.2 a `MetadataCreated` the node could not index cannot be repaired by
-nautilus — `completePublish` refuses an NFT that has metadata, and `edit` needs the indexed
-asset — so catching a store that alters bytes, or a key the node
+nautilus cannot repair a `MetadataCreated` the node could not index — `completePublish`
+refuses an NFT that has metadata, and `edit` needs the indexed asset — so catching a store that alters bytes, or a key the node
 cannot read with, before the transaction is worth the round trip. Stores without `verify` are
 not verified. `S3RemoteStore` implements it with the read key; `IpfsRemoteStore` does when
 its `gatewayUrl` is set.

@@ -115,8 +115,8 @@ function indexAsOceanNode42(
     flags: number,
     documentHash?: string
   ): string {
-    // Step 7 (`ddoHandler.ts:391-403`): ECIES only with flags & 2. The other branch
-    // lzma-decompresses an undefined buffer, so it always fails.
+    // Step 7 (`ddoHandler.ts:391-403`): ECIES only with flags & 2; without it this path
+    // ends here.
     if ((flags & 2) === 0)
       throw new Error('Decrypt DDO: Failed to lzma decompress')
 
@@ -224,7 +224,7 @@ function indexAsOceanNode42(
     let { encryptedData } = ddo
 
     // Step 12 (`MetadataEventProcessor.ts:141-165`): the second decrypt, no tx, no hash.
-    // On failure the node silently keeps the stored value as plaintext.
+    // If it does not succeed, the node goes on with the value as stored.
     if (isEncryptedMetadata) {
       try {
         const decryptedIpfsPayload = decryptDDO(
@@ -234,7 +234,7 @@ function indexAsOceanNode42(
         )
         encryptedData = decryptedIpfsPayload.encryptedData || encryptedData
       } catch {
-        // logged, then the plaintext fallback
+        // logged; the value stays as stored
       }
     }
 
@@ -515,15 +515,15 @@ describe('what nautilus may write', () => {
     expect(expectedDid(NFT_ADDRESS.toLowerCase(), CHAIN_ID)).to.equal(ASSET_DID)
   })
 
-  it('never produces a plaintext envelope, so the node fallback is never what works', async () => {
-    // Step 12: if the second decrypt fails, the node treats `encryptedData` as plaintext.
-    // The stored value must be ciphertext, so that fallback can never yield the DDO.
+  it('never produces an envelope that decodes without the second decrypt', async () => {
+    // Step 12: if the second decrypt does not succeed, the node goes on with `encryptedData`
+    // as stored. The stored value must be ciphertext, so that path can never yield the DDO.
     const { prepared, stored } = await prepare()
     const { encryptedData } = JSON.parse(stored[0])
 
     expect(() => JSON.parse(toUtf8String(getBytes(encryptedData)))).to.throw()
 
-    // A node that cannot decrypt the envelope does not index it, fallback or not.
+    // A node that cannot decrypt the envelope does not index it.
     let decrypts = 0
     expect(() =>
       indexAsOceanNode42(

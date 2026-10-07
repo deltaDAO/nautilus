@@ -151,8 +151,9 @@ simply has not indexed it within the timeout, it throws an `OceanNodeError`. Pas
 Before anything is written, nautilus validates the DDO **locally** against the DDO v5 SHACL
 schema, and runs the remote store's `check()`. A missing required field or a store that would
 refuse the upload fails here, having spent no gas. Local validation did not exist in v1. It
-also refuses a DDO too large for the node to decrypt again, and a node whose indexer is stuck
-(see [known ocean-node 4.2 issues](/docs/guides/ocean-node#known-ocean-node-42-issues)).
+also refuses a DDO too large for the node to decrypt again (see
+[`publish`](/docs/api/nautilus/publish#throws)), and a node whose indexer nonce is stuck (see
+[`checkIndexerNonce`](/docs/api/nautilus/publish#checkindexernonce)).
 Right before the metadata transaction it also runs the store's `verify()`, which reads the
 stored envelope back and checks its hash.
 :::

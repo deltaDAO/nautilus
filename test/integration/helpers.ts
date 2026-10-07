@@ -177,7 +177,7 @@ export function freeAlgorithm(): NautilusAsset {
  * The node's success record for an asset, after checking it filed no failure for `txId`.
  *
  * ocean-node 4.2 files a success under the `did:ope:` DID (no `nft`, blank `txId`) and a
- * failure under `did:op:` with the real `txId`, and never clears the latter. So success is
+ * failure under `did:op:` with the real `txId`, which stays after a later success. So success is
  * read by `{ did }` and failure by `{ txId }`. The node writes the DDO first and the state
  * record right after, so on a fast local chain the asset can resolve a moment before its
  * record exists; hence the polling.

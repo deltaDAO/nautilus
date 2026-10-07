@@ -74,10 +74,10 @@ export async function buildEnvelope(
 }
 
 /**
- * ocean-node 4.2's JSON body limit, which applies to `POST /api/services/decrypt`:
- * `fileInfoRoute.use(express.json())` (`httpRoutes/fileInfo.ts:13`) has no path and is
- * mounted before the provider routes, so express's default `'100kb'` (102 400 bytes)
- * applies to every JSON request. A larger body gets a 413 and the asset is never indexed.
+ * The largest JSON request body ocean-node 4.2 accepts, including the indexer's
+ * `POST /api/services/decrypt`: express's default `'100kb'` (102 400 bytes, set by
+ * `express.json()` in `httpRoutes/fileInfo.ts:13`). A larger body gets a 413 and the asset
+ * is not indexed.
  */
 export const NODE_DECRYPT_BODY_LIMIT_BYTES = 100 * 1024
 
@@ -149,15 +149,15 @@ export function maxDecryptableJwsLength(): number {
 
 /**
  * Throws when the indexer's decrypt request for an envelope of this ciphertext length
- * would exceed `MAX_DECRYPT_BODY_BYTES`: ocean-node 4.2 would answer 413 and never index
- * the asset.
+ * would exceed `MAX_DECRYPT_BODY_BYTES`: the node would answer 413 and not index the
+ * asset.
  */
 export function assertEnvelopeDecryptable(ciphertextLength: number): void {
   const body = envelopeDecryptBodyBytes(ciphertextLength)
 
   if (body > MAX_DECRYPT_BODY_BYTES)
     throw new Error(
-      `The signed DDO is too large for ocean-node 4.2 to index: the indexer would send its envelope back in a ${body}-byte decrypt request, and the node's JSON body limit is ${NODE_DECRYPT_BODY_LIMIT_BYTES} bytes (express.json's default; larger requests get 413 and the asset is never indexed). nautilus refuses above ${MAX_DECRYPT_BODY_BYTES} bytes, which is a signed JWS of at most ${maxDecryptableJwsLength()} characters (about ${Math.floor((maxDecryptableJwsLength() * 3) / 4 / 1024)} KB of DDO JSON). Shorten the DDO: descriptions, address lists in credentials, policies, services.`
+      `The signed DDO is too large for the node to index: the indexer would send its envelope back in a ${body}-byte decrypt request, and the node accepts decrypt requests up to ${NODE_DECRYPT_BODY_LIMIT_BYTES} bytes (a larger request gets 413 and the asset is not indexed). nautilus refuses above ${MAX_DECRYPT_BODY_BYTES} bytes, which is a signed JWS of at most ${maxDecryptableJwsLength()} characters (about ${Math.floor((maxDecryptableJwsLength() * 3) / 4 / 1024)} KB of DDO JSON). Shorten the DDO: descriptions, address lists in credentials, policies, services.`
     )
 }
 
@@ -320,7 +320,7 @@ const DDO_STORAGE_TYPES = ['ipfs', 'url', 's3', 'arweave', 'ftp']
  *
  * Steps 8–9: the pointer must be a plain JSON object with a known `type`. The decrypt
  * handler resolves it without a consumer address, and node persistent storage requires
- * one, so a bucket-backed DDO is never indexed.
+ * one, so a bucket-backed DDO is not indexed.
  */
 export function assertDdoPointer(pointer: StorageObject): void {
   if (!pointer || typeof pointer !== 'object' || Array.isArray(pointer))
@@ -335,7 +335,7 @@ export function assertDdoPointer(pointer: StorageObject): void {
     type.toLowerCase() === 'nodepersistentstorage'
   )
     throw new Error(
-      `A '${type}' pointer cannot hold a DDO: ocean-node 4.2 resolves remote DDOs without a consumer address, so it cannot read them from its own bucket storage. Use an IpfsRemoteStore or S3RemoteStore instead.`
+      `A '${type}' pointer cannot hold a DDO: ocean-node 4.2 resolves remote DDOs without a consumer address, and its bucket storage requires one. Use an IpfsRemoteStore or S3RemoteStore instead.`
     )
 
   if (

@@ -300,14 +300,14 @@ describe('publish pre-transaction validation', () => {
 
 describe('publish before the first transaction', () => {
   it('mints nothing for a DDO too large for the node to decrypt', async () => {
-    // ocean-node 4.2's 100 KB JSON body limit on its own decrypt route (case 4).
+    // The node accepts decrypt requests up to 100 KB.
     const { nautilus, node } = await createNautilus()
     const asset = validAsset()
     asset.ddo.metadata.description = 'x'.repeat(30_000)
 
     await expectThrowsAsync(
       () => nautilus.publish(asset),
-      /too large for ocean-node 4\.2 to index/
+      /too large for the node to index/
     )
 
     expect(vi.mocked(createNftWithService)).not.toHaveBeenCalled()
@@ -867,10 +867,10 @@ describe('lifecycle state', () => {
   })
 })
 
-describe('indexer nonce preflight (ocean-node bug B1)', () => {
+describe('indexer nonce preflight', () => {
   const NODE_ADDRESS = '0x00000000000000000000000000000000000b1b1b'
 
-  /** The node's state with `nextNonce` the first one from `from` that it refuses. */
+  /** The node's state with `nextNonce` the first one from `from` that it does not accept. */
   function nonceState(from = 0, stuck = true) {
     let next = from + 1
     while (isIndexerNonceSignable(NODE_ADDRESS, next) === stuck) next++
@@ -882,7 +882,7 @@ describe('indexer nonce preflight (ocean-node bug B1)', () => {
     }
   }
 
-  /** A state that is not stuck now, but whose next-but-one nonce is refused. */
+  /** A state that is not stuck now, but whose next-but-one nonce is not accepted. */
   function oneAwayState() {
     for (let stored = 0; ; stored++)
       if (
@@ -907,7 +907,9 @@ describe('indexer nonce preflight (ocean-node bug B1)', () => {
       .catch((caught) => caught)
 
     expect(thrown).to.be.instanceOf(IndexerNonceStuckError)
-    expect(thrown.message).to.match(/stuck.*bug B1.*Nothing was spent/s)
+    expect(thrown.message).to.match(
+      /stuck.*Nothing was spent.*checkIndexerNonce: false/s
+    )
     expect(thrown.state.stuck).to.equal(true)
     expect(node.calls.getIndexerNonceState).to.equal(1)
     expect(vi.mocked(createNftWithService)).not.toHaveBeenCalled()
@@ -920,18 +922,18 @@ describe('indexer nonce preflight (ocean-node bug B1)', () => {
 
     await expectThrowsAsync(
       () => nautilus.edit(new AssetBuilder(getAssetFixture()).build()),
-      /indexer of this node is stuck/
+      /indexer nonce of this node is stuck/
     )
     await expectThrowsAsync(
       () => nautilus.completePublish(NFT_ADDRESS, validAsset()),
-      /indexer of this node is stuck/
+      /indexer nonce of this node is stuck/
     )
 
     expect(vi.mocked(createDatatokenForService)).not.toHaveBeenCalled()
     expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
   })
 
-  it('publishes when the indexer can sign its next nonces', async () => {
+  it('publishes when the node accepts the next indexer nonces', async () => {
     const { nautilus, node } = await createNautilus({
       node: { indexerNonce: nonceState(0, false) }
     })

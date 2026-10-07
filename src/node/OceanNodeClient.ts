@@ -121,20 +121,19 @@ export class IndexingError extends OceanNodeError {
 }
 
 /**
- * A known ocean-node fault (4.2.0 and later, see `nonceHandler.verifySignatureForConsumer`
- * and `RawPrivateKeyProvider.signMessage`): the indexer signs the 32-byte message hash,
- * but the node verifies it with leading zero bytes stripped (`toBeArray`). For the roughly
- * one nonce in 256 whose hash starts with `0x00` its own decrypt call is refused, the
- * stored nonce does not advance, and every retry and every later asset reuses that nonce.
- * Nothing on the publisher's side can fix it; the node operator can, by advancing the
- * node address's stored nonce once (any command signed ocean.js-style with the node key).
+ * The node accepts the indexer's decrypt call only when the signed message hash
+ * (`keccak256(address + nonce + "decryptDDO")`) does not start with a zero byte (see
+ * `nonceHandler.verifySignatureForConsumer` and `RawPrivateKeyProvider.signMessage`).
+ * The stored nonce advances only on success, so once the next nonce is such a nonce,
+ * later decrypt calls use it again. The node operator resolves it by advancing the node
+ * address's stored nonce once (any command signed ocean.js-style with the node key).
  */
 const STUCK_INDEXER_NONCE_HINT =
-  "If the node logs 'consumer address and nonce signature mismatch' for its own address, its indexer is stuck on a nonce it cannot sign (an ocean-node bug that hits about one nonce in 256) and every later asset fails the same way until the operator advances the stored nonce of the node's address; OceanNodeClient.getIndexerNonceState() tells you"
+  "If the node logs 'consumer address and nonce signature mismatch' for its own address, its indexer nonce is stuck and later assets fail the same way until the operator advances the stored nonce of the node's address; OceanNodeClient.getIndexerNonceState() reports it"
 
 /**
- * Whether the node's own indexer can get a decrypt call signed with `nonce` accepted, i.e.
- * whether `keccak256(address + nonce + "decryptDDO")` does not start with a zero byte. See
+ * Whether the node accepts its indexer's decrypt call signed with `nonce`, i.e. whether
+ * `keccak256(address + nonce + "decryptDDO")` does not start with a zero byte. See
  * `STUCK_INDEXER_NONCE_HINT`. The address is the checksummed form the node signs with.
  */
 export function isIndexerNonceSignable(
@@ -155,17 +154,17 @@ export interface IndexerNonceState {
   /** The nonce the indexer signs its next decrypt call with: `storedNonce + 1`. */
   nextNonce: number
   /**
-   * `true` when the node will refuse that call (`401 consumer address and nonce signature
-   * mismatch`). Since the stored nonce only advances on success, the indexer then stays
-   * stuck: every later encrypted DDO fails to index until the operator advances the nonce.
+   * `true` when the node will not accept that call (`401 consumer address and nonce
+   * signature mismatch`). Since the stored nonce only advances on success, encrypted DDOs
+   * are not indexed until the operator advances the nonce.
    */
   stuck: boolean
 }
 
 /**
  * Thrown by `publish()`, `completePublish()` and `edit()` before any transaction when the
- * node's indexer is stuck on a nonce it cannot sign (`IndexerNonceState.stuck`): the asset
- * would go on chain and never be indexed.
+ * node's indexer nonce is stuck (`IndexerNonceState.stuck`): the asset would go on chain
+ * without being indexed.
  */
 export class IndexerNonceStuckError extends OceanNodeError {
   readonly state: IndexerNonceState
@@ -173,7 +172,7 @@ export class IndexerNonceStuckError extends OceanNodeError {
   constructor(state: IndexerNonceState) {
     super(
       'indexer preflight',
-      `refusing to publish: the indexer of this node is stuck. Its address ${state.nodeAddress} has stored nonce ${state.storedNonce}, and the node refuses its own decrypt call signed with nonce ${state.nextNonce} (ocean-node 4.2 bug B1: it signs the 32-byte hash and verifies it with the leading zero byte stripped). Every encrypted DDO published to this node stays unindexed until the operator advances that stored nonce or runs a node with the fix. Nothing was spent. Pass { checkIndexerNonce: false } to publish anyway, e.g. on a node that runs the fix, where this check is a false alarm about once in 256 publishes.`
+      `refusing to publish: the indexer nonce of this node is stuck. Its address ${state.nodeAddress} has stored nonce ${state.storedNonce}, and the node does not accept a decrypt call signed with nonce ${state.nextNonce}, so an encrypted DDO published to this node would not be indexed until the operator advances that stored nonce. Nothing was spent. Ask the node operator to advance it, or pass { checkIndexerNonce: false } to publish anyway.`
     )
     this.name = 'IndexerNonceStuckError'
     this.state = state
@@ -181,15 +180,15 @@ export class IndexerNonceStuckError extends OceanNodeError {
 }
 
 /**
- * What a node error means, when it is the known symptom of something else.
+ * A hint for node errors whose message does not name their cause.
  *
- * The indexer decrypts the stored envelope with a second decrypt call. If that call fails,
- * it silently treats the ciphertext as plaintext, and the error it records is a UTF-8 or
- * hex decoding error that says nothing about the cause.
+ * The indexer decrypts the stored envelope with a second decrypt call. When that call does
+ * not succeed, the error the node records is a UTF-8 or hex decoding error, so the hint
+ * lists the likely causes.
  */
 function indexingErrorHint(error: string): string | undefined {
   if (/invalid codepoint|UNEXPECTED_CONTINUE|invalid BytesLike/i.test(error))
-    return "the node could not decrypt the envelope (its own decrypt call failed: a 401 nonce or authorization error, a 413 for an envelope over its 100 KB request limit, or a 429/403 from its rate limiter), so it misread the ciphertext as plaintext; check the node's logs, AUTHORIZED_DECRYPTERS and MAX_REQ_PER_MINUTE"
+    return "the node could not decrypt the envelope (its decrypt call returned a 401 nonce or authorization error, a 413 for an envelope over its 100 KB request limit, or a 429/403 rate-limit answer); check the node's logs, AUTHORIZED_DECRYPTERS and MAX_REQ_PER_MINUTE"
 
   if (/401|Unauthorized/i.test(error) && /decrypt/i.test(error))
     return `the node's decrypt call was refused (401 Unauthorized); check the node's logs, its nonce handling and AUTHORIZED_DECRYPTERS. ${STUCK_INDEXER_NONCE_HINT}`
@@ -570,8 +569,8 @@ export class OceanNodeClient {
    * With a `txid` (publish and edit always have one), each round also reads the node's
    * failure record for that transaction (`getIndexingState({ txId })`). When there is one,
    * this throws an `IndexingError` with the node's message instead of waiting out the
-   * timeout. Only a record whose `txId` is this transaction counts: the node never clears
-   * old failure records, so anything not tied to the transaction may be stale. The state
+   * timeout. Only a record whose `txId` is this transaction counts: a later success does
+   * not remove an earlier failure record, so a record for another transaction is ignored. The state
    * endpoint is optional: when it fails, only the early exit is lost.
    *
    * Polls every `intervalMs` (default 7 s, so at most 18 requests a minute: ocean-node
@@ -818,8 +817,8 @@ export class OceanNodeClient {
   }
 
   /**
-   * Read-only check for the ocean-node fault where the indexer gets stuck on a nonce it
-   * cannot sign (see `IndexerNonceState.stuck`). Two GETs: the node's root and
+   * Read-only check whether the node's indexer nonce is stuck (see
+   * `IndexerNonceState.stuck`). Two GETs: the node's root and
    * `/api/services/nonce` for the node's own address. Nothing is signed or sent.
    *
    * `undefined` over P2P or when the node reports no address. Throws an `OceanNodeError`

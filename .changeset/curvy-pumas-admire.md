@@ -49,24 +49,23 @@ written, and the DDO never goes on chain.
   and rejecting with the raw error otherwise.
 - **`Nautilus.create` refuses a `config.chainId` that differs from the signer's chain.**
 - **`PublishedService.tx` is optional**: absent for a datatoken `completePublish()` reused.
-- **`publish`, `completePublish` and `edit` refuse a stuck indexer** before their first
-  transaction: they read `OceanNodeClient.getIndexerNonceState()` (two GETs, nothing signed)
-  and throw the new `IndexerNonceStuckError` when the node's indexer is stuck on a nonce it
-  cannot sign (ocean-node 4.2 bug B1). A node that does not answer is skipped; opt out with
-  `PublishOptions.checkIndexerNonce: false`. They warn when this publish's own second
-  decrypt would hit such a nonce.
-- **DDOs too large for the node to decrypt are refused.** ocean-node 4.2 parses its own
-  decrypt route with express's 100 KB JSON limit, so a signed JWS over about 24 000
-  characters gets a 413 and never indexes. `publish`/`completePublish`/`edit` check from the
-  DDO before the first transaction, and again from the exact request size
-  before anything is encrypted or stored (4 KB margin).
-- **Provider fees are signature-checked before ordering.** ocean-node 4.2 signs
-  `toBeArray(messageHash)` (bug B2), so about one fee in 256 makes `startOrder`/`reuseOrder`
-  revert. `access()` and `compute()` rebuild the datatoken's `\n32` digest, recover the
-  signer and, on a mismatch, ask the node for a new fee (up to 3 times, a second apart);
-  `order()`, `reuseOrder()` and `settleOrder` refuse such a fee. All throw the new
-  `ProviderFeeSignatureError` before any approval or transaction. Compute fees and
-  download fees of a `timeout: 0` service are the same on every request on 4.2, so those
+- **`publish`, `completePublish` and `edit` check the node's indexer nonce** before their
+  first transaction: they read `OceanNodeClient.getIndexerNonceState()` (two GETs, nothing
+  signed) and throw the new `IndexerNonceStuckError` when the node would not accept its
+  indexer's next decrypt call, so the asset would not be indexed. A node that does not
+  answer is skipped; opt out with `PublishOptions.checkIndexerNonce: false`. They warn when
+  this publish's own second decrypt call would use a nonce the node does not accept.
+- **DDOs too large for the node to decrypt are refused.** The node accepts decrypt requests
+  up to 100 KB, so the signed JWS may be at most about 24 000 characters.
+  `publish`/`completePublish`/`edit` check from the DDO before the first transaction, and
+  again from the exact request size before anything is encrypted or stored (4 KB margin).
+- **Provider fees are signature-checked before ordering.** Before ordering, nautilus checks
+  that the provider fee signature recovers to `providerFeeAddress` the way the datatoken
+  contract verifies it (the `\n32` digest), since `startOrder`/`reuseOrder` revert
+  otherwise. On a mismatch, `access()` and `compute()` ask the node for a new fee (up to 3
+  times, a second apart); `order()`, `reuseOrder()` and `settleOrder` refuse such a fee.
+  All throw the new `ProviderFeeSignatureError` before any approval or transaction. Compute
+  fees and download fees of a `timeout: 0` service are the same on every request, so those
   are refused at once.
 - **`waitForIndexer` polls every 7 s by default** (at most 18 requests a minute, under
   ocean-node's default `MAX_REQ_PER_MINUTE` of 30) and backs off on `429` or `403` "Too many
@@ -86,10 +85,10 @@ written, and the DDO never goes on chain.
 
 - **`RemoteStore.verify?(pointer, expectedHash)`**, called right before `setMetaData` by
   `publish`, `completePublish` and `edit`: it reads the stored object back and checks
-  `"0x" + sha256(JSON.stringify(JSON.parse(body)))`, exactly as the node does. A failed
-  `MetadataCreated` is permanent on 4.2, so a store that alters bytes or a key the node
-  cannot read with now fails before the transaction. `S3RemoteStore` verifies with the
-  read key; `IpfsRemoteStore` does when its new `gatewayUrl` option is set.
+  `"0x" + sha256(JSON.stringify(JSON.parse(body)))`, exactly as the node does, so a store
+  that alters bytes or a key the node cannot read with now fails before the transaction.
+  `S3RemoteStore` verifies with the read key; `IpfsRemoteStore` does when its new
+  `gatewayUrl` option is set.
 - **New optional `RemoteStore.check()`** (run before the first transaction of `publish`,
   `completePublish` and `edit`) and **`RemoteStore.remove(pointer)`**.
 - **New `S3RemoteStore`** for AWS S3, Exoscale SOS or MinIO, with no AWS SDK dependency
@@ -171,10 +170,6 @@ written, and the DDO never goes on chain.
   remote-stores guide, the `remove()` docs and the examples' `store:remove` (which now
   refuses a creation or latest envelope listed in `PUBLISH_LOG` unless given `force`) say
   so.
-- **Docs: known ocean-node 4.2 issues** in the ocean-node guide: the stuck indexer nonce,
-  mis-signed provider fees, the 100 KB decrypt limit, the node rate-limiting its own
-  indexer, failed events not being retried, UNLISTED/END_OF_LIFE ordering on 4.2.0 (fixed in
-  4.2.1), and a C2D engine stall seen in local tests.
 - **`PublishResponse.stored`** (`{ pointer, metadataHash }`, pointer redacted) records where
   the envelope went and the hash written on chain, so callers can verify or clean up.
   `PublishedService.reused` marks a datatoken `completePublish()` reused.
@@ -183,12 +178,11 @@ written, and the DDO never goes on chain.
   when the transaction was not submitted or reverted.
 - **`OceanNodeClient.getIndexerNonceState()`** (`{ nodeAddress, storedNonce, nextNonce,
   stuck }`, two GETs, nothing signed) and **`isIndexerNonceSignable(nodeAddress, nonce)`**
-  report whether the node's indexer is stuck on a nonce it cannot sign (ocean-node 4.2 bug
-  B1).
-- **`IndexingError` messages carry a hint** for the node's known decrypt failures: a 401
-  from the stuck indexer nonce, a 413 from the 100 KB decrypt limit, a 429/403 from the
-  node rate-limiting its own indexer, and the "invalid codepoint" error from the node's
-  plaintext fallback.
+  report whether the node will accept its indexer's next decrypt call.
+- **`IndexingError` messages carry a hint** when the node's decrypt call during indexing
+  failed: a 401 (with a pointer to `getIndexerNonceState()`), a 413 from the 100 KB decrypt
+  limit, a 429/403 rate-limit answer, and the "invalid codepoint" decoding error the node
+  records when that decrypt call did not succeed.
 - **Clearer edit error:** editing a loaded service's `serviceEndpoint` without adding its
   files again now explains that files are encrypted for the node in the endpoint, so both
   must change together.

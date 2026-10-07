@@ -2,8 +2,8 @@
  * Stores a payload in an ocean-node persistent-storage bucket.
  *
  * **Not usable as the DDO store with ocean-node 4.2.** The node resolves a remote DDO
- * without a consumer address, and a bucket refuses any read without one, so a DDO stored
- * here is never indexed. `publish()`, `completePublish()` and `edit()` therefore reject
+ * without a consumer address, and a bucket requires one for every read, so a DDO stored
+ * here is not indexed. `publish()`, `completePublish()` and `edit()` therefore reject
  * this store; use an `IpfsRemoteStore` or an `S3RemoteStore` for the DDO. The class still
  * works as a plain bucket uploader.
  */

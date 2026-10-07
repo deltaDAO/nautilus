@@ -30,10 +30,10 @@ What happens in order:
    nothing spent — the reason this comes first.
 3. `initializeCompute` quotes the job: provider fees, reusable orders and the escrow amount.
    Every provider fee's signature is checked locally, as for
-   [`access`](/docs/api/nautilus/access): a fee the datatoken would reject (ocean-node bug
-   B2) throws a `ProviderFeeSignatureError` before escrow or any order. On ocean-node 4.2 a
-   compute fee is the same on every request, so asking again does not help: such a service
-   cannot be ordered for compute on that node until the node is fixed.
+   [`access`](/docs/api/nautilus/access): a fee the datatoken would reject throws a
+   `ProviderFeeSignatureError` before escrow or any order. A compute fee is the same on
+   every request, so it is not requested again; contact the node operator if this
+   happens.
 4. Escrow is funded and the environment authorised to draw the quoted amount.
 5. Each input is ordered — reusing an existing order where the node says one is valid.
 6. The job starts.

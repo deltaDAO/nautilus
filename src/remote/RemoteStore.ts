@@ -16,7 +16,7 @@
  *   | `ftp`                  | `{ type, url }`            |
  *
  * `nodePersistentStorage` is the exception: ocean-node 4.2 resolves a remote DDO without a
- * consumer address, and a bucket refuses that read. So it cannot hold DDOs, and nautilus
+ * consumer address, and a bucket requires one. So it cannot hold DDOs, and nautilus
  * refuses it.
  *
  * What gets stored is not the DDO in clear but the encrypted envelope
@@ -57,9 +57,8 @@ export interface RemoteStore {
    *
    * Read the object behind `pointer` the way the node will (with the credentials the
    * pointer carries) and throw unless `"0x" + sha256(JSON.stringify(JSON.parse(body)))`
-   * equals `expectedHash`, which is exactly the node's check. On ocean-node 4.2 a failed
-   * `MetadataCreated` cannot be repaired by nautilus, so catching a store that alters bytes
-   * or a key the node cannot read with before the transaction is worth a round trip.
+   * equals `expectedHash`, which is exactly the node's check. This catches a store that
+   * alters bytes, or a key the node cannot read with, before anything goes on chain.
    * Stores without it are not verified.
    */
   verify?(pointer: StorageObject, expectedHash: string): Promise<void>

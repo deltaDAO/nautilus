@@ -356,7 +356,7 @@ describe('order fee routing', () => {
     })
   }
 
-  it('refuses a mis-signed provider fee before any approval (ocean-node bug B2)', async () => {
+  it('refuses a provider fee the datatoken would reject before any approval', async () => {
     vi.mocked(Datatoken).mockClear()
 
     await expectThrowsAsync(

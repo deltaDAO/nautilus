@@ -3,9 +3,9 @@
  * chain. Kept out of the package's exports.
  *
  * The node `JSON.parse`s the fetched body and compares `"0x" + sha256(JSON.stringify(obj))`
- * with the on-chain hash (`BaseProcessor.decryptDDO`). A failed `MetadataCreated` is
- * permanent on 4.2, so a store that alters bytes, or a key the node cannot read with, is
- * better caught before the transaction.
+ * with the on-chain hash (`BaseProcessor.decryptDDO`). Checking this before the
+ * transaction catches a store that alters bytes, or a key the node cannot read with, while
+ * nothing is on chain yet.
  */
 
 /** `"0x" + sha256(JSON.stringify(JSON.parse(body)))`, or throws when the body is not JSON. */

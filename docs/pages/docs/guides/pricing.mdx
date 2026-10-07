@@ -124,8 +124,8 @@ if (hasReusableOrder(initialize)) {
 ocean-node 3.2.21's access `initialize` returns `{ providerFee, datatoken, nonce, computeAddress }`
 and **no `validOrder`**, so this is always `false` and every
 [`access`](/docs/api/nautilus/access) buys a fresh datatoken — even within the timeout. On a
-paid asset that is repeated payment for access you already hold. The v4 Provider returned the
-field; until it comes back, cache the download URL rather than re-calling `access`.
+paid asset that is repeated payment for access you already hold, so cache the download URL
+rather than re-calling `access`.
 :::
 
 ## Coming from v1

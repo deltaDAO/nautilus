@@ -101,17 +101,17 @@ await nautilus.publish(asset, { waitForIndexer: { timeoutMs: 600_000 } }) // [!c
 - The JWS a custom `DdoSigner` returns is decoded before it is stored: its payload (`vc`
   unwrapped) must carry the validated DDO's `id` and `version`.
 - `publish()`, `completePublish()` and `edit()` check the node before their first
-  transaction and throw an `IndexerNonceStuckError` when its indexer is stuck on a nonce it
-  cannot sign (ocean-node 4.2 bug B1), since the asset would never be indexed. Opt out with
+  transaction and throw an `IndexerNonceStuckError` when the node would not accept its
+  indexer's next decrypt call, since the asset would not be indexed. Opt out with
   `checkIndexerNonce: false`; a node that does not answer the check is skipped.
-- They also refuse a DDO whose signed envelope the node could not decrypt: ocean-node 4.2's
-  decrypt route takes at most 100 KB, so the JWS must stay under about 24 000 characters.
+- They also refuse a DDO whose signed envelope the node could not decrypt: the node accepts
+  decrypt requests up to 100 KB, so the JWS must stay under about 24 000 characters.
   Checked from the DDO before the first transaction, and exactly before the envelope is
   stored.
 - `access()`, `compute()`, `order()` and `reuseOrder()` throw a `ProviderFeeSignatureError`,
-  before any approval or order, for a provider fee whose signature the datatoken would reject
-  (ocean-node 4.2 bug B2, about one fee in 256). `access` and `compute` first ask the node for
-  a new fee, up to 3 times.
+  before any approval or order, for a provider fee whose signature does not recover to
+  `providerFeeAddress` the way the datatoken contract verifies it. `access` and `compute`
+  first ask the node for a new fee, up to 3 times.
 - `waitForIndexer` polls every 7 s by default (at most 18 requests a minute, under the node's
   default rate limit of 30) and backs off on a `429` or a `403` "Too many active
   connections" instead of counting it as a failed request.
@@ -125,13 +125,13 @@ await nautilus.publish(asset, { waitForIndexer: { timeoutMs: 600_000 } }) // [!c
   CID to unpin), redacted, and the on-chain hash.
 - `OceanNodeClient.getIndexingState({ did } | { nft } | { txId })` — the node's indexing
   record, the only place it says why an asset was not indexed. Failures are filed by
-  transaction (query `{ txId }`) and never removed; successes by DID (`{ did }`).
+  transaction (query `{ txId }`); successes by DID (`{ did }`).
 - `OceanNodeClient.getNodeAddress()` — the node's `providerAddress`. `publish`,
   `completePublish` and `edit` warn once when the publisher is that key, which makes the
   indexer's decrypt fail with 401.
 - `OceanNodeClient.getIndexerNonceState()` and `isIndexerNonceSignable()` — a read-only
-  check (two `GET`s) for the stuck-indexer fault; `IndexerNonceStuckError` and
-  `PublishOptions.checkIndexerNonce` use it.
+  check (two `GET`s) of whether the node will accept its indexer's next decrypt call;
+  `IndexerNonceStuckError` and `PublishOptions.checkIndexerNonce` use it.
 - `ProviderFeeSignatureError` — the provider-fee pre-check above, with the fee, the address
   `ecrecover` would return and the number of attempts.
 - `RemoteStore.check()` and `IpfsRemoteStore`'s `probe` option — the store is tested before
@@ -160,8 +160,7 @@ await nautilus.publish(asset, { waitForIndexer: { timeoutMs: 600_000 } }) // [!c
 **Know:** keep the **creation envelope** (from `publish()`) and the current one of every
 asset that should stay indexed. A node reindex replays the asset from its creation event and
 drops it from the index when that envelope is gone. See
-[cleaning up](/docs/guides/remote-stores#cleaning-up) and
-[known ocean-node 4.2 issues](/docs/guides/ocean-node#known-ocean-node-42-issues).
+[cleaning up](/docs/guides/remote-stores#cleaning-up).
 
 **Know:** `DEPRECATED` and `REVOKED_BY_PUBLISHER` are one-way on ocean-node — the indexer
 replaces the DDO with a stub — so `publish()` and `edit()` refuse to write metadata in either

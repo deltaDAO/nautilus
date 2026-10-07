@@ -86,7 +86,7 @@ ocean-node 4.2 keeps two kinds of record per asset, under different ids:
 | Success | the asset's `did:ope:` DID | — | `" "` (blank) | `{ did }` |
 | Failure | the old `did:op:` form of the id | the NFT | the transaction | `{ txId }` (preferred) or `{ nft }` |
 
-- **Failure records are never removed.** A later successful edit does not clear them, so an
+- **Failure records stay.** A later successful edit does not remove them, so an
   `{ nft }` lookup can return an old error for an asset that is indexed fine now. Prefer
   `{ txId }`, and compare the record's `txId` with yours.
 - A failure is `valid: false` with the node's message. A DDO dropped at the database write
@@ -122,13 +122,13 @@ const state = await node.getIndexerNonceState()
 // { nodeAddress: '0x…', storedNonce: 264, nextNonce: 265, stuck: true }, or undefined over P2P
 ```
 
-A read-only check (two `GET`s, nothing signed) for an ocean-node 4.2 fault: the node signs its
-own decrypt calls over the full 32-byte hash but verifies them with leading zero bytes
-stripped, so for about one nonce in 256 its indexer is refused (`401 consumer address and
-nonce signature mismatch`), never advances the nonce, and stops indexing encrypted DDOs.
-`stuck: true` means the indexer's next nonce is such a nonce: every publish or edit will go on
-chain and not be indexed until the node operator advances the stored nonce of the node's
-address. `isIndexerNonceSignable(nodeAddress, nonce)` is the underlying check.
+A read-only check (two `GET`s, nothing signed) of whether the node will accept its
+indexer's next decrypt call. The indexer signs each decrypt call with the node's key and the
+next nonce, and the stored nonce advances only when a call succeeds. `stuck: true` means the
+node will not accept a call signed with `nextNonce` (`401 consumer address and nonce
+signature mismatch`): a publish or edit would go on chain without being indexed until the
+node operator advances the stored nonce of the node's address.
+`isIndexerNonceSignable(nodeAddress, nonce)` is the underlying check.
 
 `publish`, `completePublish` and `edit` call it before their first transaction and throw an
 `IndexerNonceStuckError` (an `OceanNodeError` carrying this `state`) when `stuck`; pass

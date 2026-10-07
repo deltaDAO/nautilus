@@ -21,8 +21,8 @@ const status = await node.getNodeStatus()
 
 nautilus 2.0.0-beta.1 works with
 [OceanProtocolEnterprise ocean-node](https://github.com/OceanProtocolEnterprise/ocean-node)
-**4.2.x**, unmodified. Upstream `oceanprotocol/ocean-node` 4.0 and 4.2 cannot resolve remote
-DDOs, so assets published to them are never indexed.
+**4.2.x**, unmodified. Upstream `oceanprotocol/ocean-node` 4.0 and 4.2 do not resolve remote
+DDOs, so they do not index assets published with nautilus.
 
 With an IPFS remote store, the node also needs an IPFS gateway (`IPFS_GATEWAY`) that can
 fetch your store's content — see [remote stores](/docs/guides/remote-stores#storage-options).
@@ -33,37 +33,11 @@ with 401, and the asset goes on chain without ever being indexed. `publish`,
 `completePublish` and `edit` warn once when they see it;
 [`getNodeAddress()`](/docs/api/node/OceanNodeClient#getnodeaddress) returns the address.
 
-:::warning[A node can stop indexing on its own]
-ocean-node 4.2 has faults that can stop a node from indexing or make orders revert, whoever
-publishes. See [known ocean-node 4.2 issues](#known-ocean-node-42-issues) for what they are
-and what nautilus does about each.
-:::
-
 :::tip
 For access to the deltaDAO test environment, or to have your own ocean-node run as a
 service, contact deltaDAO at [delta-dao.com/contact](https://delta-dao.com/contact) or
 [contact@delta-dao.com](mailto:contact@delta-dao.com).
 :::
-
-## Known ocean-node 4.2 issues
-
-These are bugs or limits in ocean-node 4.2.x (Enterprise), not in nautilus. They hit any
-client. nautilus avoids, detects or reports what it can.
-
-| Issue | Effect | What nautilus does |
-| --- | --- | --- |
-| **Stuck indexer nonce** (B1) | The indexer signs its decrypt calls over the 32-byte hash, the node verifies them with leading zero bytes stripped. At the first nonce whose hash starts with `0x00` (about 1 in 256) the node refuses its own call (`401 … signature mismatch`), the stored nonce never advances, and nothing encrypted is indexed again. A restart does not help. | `publish`, `completePublish` and `edit` read [`getIndexerNonceState()`](/docs/api/node/OceanNodeClient#getindexernoncestate) before the first transaction and throw an `IndexerNonceStuckError` when `stuck` (opt out with `checkIndexerNonce: false`; a node that does not answer is skipped). They warn when this publish's own second decrypt would hit the bad nonce. An `IndexingError` for the 401 names the cause. |
-| **Mis-signed provider fees** (B2) | The node signs fees the same wrong way, so about 1 in 256 `startOrder`/`reuseOrder` calls revert on chain (`Invalid provider fee`). | Before any approval or order, nautilus recovers the fee's signer exactly as the datatoken does. On a mismatch it asks the node for a new fee (up to 3 times, a second apart), then throws a `ProviderFeeSignatureError` with nothing spent. Compute fees, and download fees of a service with `timeout: 0`, come out the same every time on 4.2, so such a fee cannot be refreshed: the order is refused until the node is fixed. |
-| **100 KB decrypt body limit** | The node parses every JSON request with express's default 100 KB limit, including its own decrypt call that carries the envelope back. A signed DDO over about 24 000 characters of JWS (roughly 18 KB of DDO JSON) gets a `413` and is never indexed. | `publish`, `completePublish` and `edit` refuse such a DDO before the first transaction (from the DDO) and again before storing it (from the real ciphertext), with a 4 KB margin. |
-| **The node rate-limits itself** | The indexer calls the node's own public URL, so `MAX_REQ_PER_MINUTE` (default 30 per IP) and `MAX_CONNECTIONS_PER_MINUTE` (default 120 IPs) apply to it. A burst of publishes, or a reindex, gets `429`/`403` and those events fail for good. | Nothing it can prevent; publish in small batches. Its own [`waitForIndexer`](/docs/api/nautilus/waitForIndexer#polling-rate-and-rate-limits) polls at most 18 times a minute and backs off on `429`/`403`. Operators should raise the limits. |
-| **Failed events are not retried** | Any failure while indexing `MetadataCreated` (a gateway timeout, a 5xx, any of the above) is final, and later `MetadataUpdated` events of an asset with no stored DDO are ignored. Only an admin `reindexTx` repairs it. A reindex needs the creation envelope again. | It reads the stored envelope back before the metadata transaction (`RemoteStore.verify`). Keep the creation envelope of every live asset: see [cleaning up](/docs/guides/remote-stores#cleaning-up). |
-| **UNLISTED / END_OF_LIFE ordering** (4.2.0) | The ordering check tests array indices instead of values: `ASSET_UNLISTED` (5) assets cannot be ordered, `END_OF_LIFE` (1) assets can. | Nothing. Fixed in 4.2.1. |
-| **C2D engine stall** (seen in local tests, unconfirmed) | In local runs on 4.2.0 the Docker compute engine sometimes stopped processing jobs after a job was stopped right after it was created. The stuck jobs kept their CPU, so later jobs failed with `Not enough available cpu in this environment` until the node restarted. Not reproduced on purpose, not seen elsewhere. | Nothing. |
-
-The first two are signature-encoding bugs in the node. A node-side fix exists but is not in
-any published 4.2 release; until a node runs it, the operator can unstick a stuck indexer by
-advancing the stored nonce of the node's own address once, with any command signed with the
-node key the way ocean.js signs.
 
 ## Checking what you are pointed at
 
@@ -160,8 +134,7 @@ const object = await node.getFileObject(bucketId, 'notes.txt')
 ### Indexing state
 
 When an asset is on chain but `getAsset` says "DDO not found", the node has usually recorded
-why. Its indexing state is the only place that shows it — nothing appears on chain, and the
-node does not retry a failed event.
+why. Its indexing state is the only place that shows it — nothing appears on chain.
 
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'
@@ -188,8 +161,8 @@ different ids:
   `txId` (`" "`). Find them with `?did=did:ope:…`.
 - **Failure** records are filed under the old `did:op:` form of the id, with `nft` and the
   real `txId`. Find them with `?txId=` (preferred) or `?nft=`.
-- **Failure records are never removed.** After a later successful edit, `?nft=` can still
-  return the old error. Check that the record's `txId` is the transaction you care about.
+- **Failure records stay.** After a later successful edit, `?nft=` can still return the
+  old error. Check that the record's `txId` is the transaction you care about.
 
 Treat `valid: false` **or** any non-blank `error` as a failure — a DDO dropped by schema
 validation is recorded as `valid: true` plus an error.

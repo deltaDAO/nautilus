@@ -47,11 +47,11 @@ has recorded that it **could not** index it — a hash mismatch, a store it coul
 from, a DDO that failed validation — this throws an `IndexingError` with the node's message
 straight away, instead of polling until the timeout. Only a failure record of **this**
 transaction counts: one that says `valid: false` or carries any non-blank `error`. Older
-failures of the same asset are ignored, since the node never removes them.
+failures of the same asset are ignored, since a later success does not remove them.
 
-For some node errors that are known symptoms of something else — the garbled UTF-8 or hex
-errors the node records when its own decrypt call failed — the message adds a `Hint:`
-naming the likely cause.
+When the node's error does not name its cause — the UTF-8 or hex decoding error it records
+when its decrypt call during indexing did not succeed, or a `401` on that call — the
+message adds a `Hint:` naming the likely causes and what to check.
 
 ```ts twoslash
 import { IndexingError, Nautilus } from '@deltadao/nautilus'
@@ -64,7 +64,7 @@ try {
   await nautilus.waitForIndexer(did, txid)
 } catch (error) {
   if (error instanceof IndexingError) {
-    console.error(error.message) // the node's own error, plus a hint for known cases // [!code focus]
+    console.error(error.message) // the node's own error, plus a hint where one applies // [!code focus]
     console.error(error.state) // its full record: valid, error, nft, txId // [!code focus]
   }
   throw error

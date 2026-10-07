@@ -1,11 +1,11 @@
 /**
- * Provider fees signed the way ocean-node does, for tests of the fee-signature pre-check.
+ * Provider fees for tests of the fee-signature pre-check.
  *
- * ocean-node 4.2 (`core/utils/feesHandler.ts:96-120`) builds
  * `messageHash = solidityPackedKeccak256(['bytes','address','address','uint256','uint256'], …)`
- * and signs `toBeArray(messageHash)` with `wallet.signMessage`. For a hash starting with
- * `0x00` that is 31 bytes under a `\n31` prefix, which the datatoken's `\n32` ecrecover
- * does not accept (node bug B2).
+ * is signed with `wallet.signMessage`, either over all 32 bytes (the `\n32` digest the
+ * datatoken verifies) or over `toBeArray(messageHash)`. For a hash starting with `0x00`
+ * the latter is 31 bytes under a `\n31` prefix, which does not recover to
+ * `providerFeeAddress`.
  */
 import type { ProviderFees } from '@oceanprotocol/lib'
 import {
@@ -60,8 +60,8 @@ export function feeMessageHash(overrides: FeeFields = {}): string {
 }
 
 /**
- * A fee as the node returns it. `node` signs `toBeArray(messageHash)` as ocean-node 4.2
- * does; `contract` signs all 32 bytes, as the datatoken expects.
+ * A signed fee. `node` signs `toBeArray(messageHash)`; `contract` signs all 32 bytes, as
+ * the datatoken verifies.
  */
 export function signedProviderFee(
   overrides: FeeFields = {},

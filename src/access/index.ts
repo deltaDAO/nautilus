@@ -104,8 +104,8 @@ export async function access(
   })
 
   // 2. Ask the service's node for provider fees and whether a previous order can be
-  //    reused. ocean-node 4.2 mis-signs about one fee in 256 (node bug B2), and the order
-  //    would revert on it, so the signature is checked locally and a bad fee re-requested.
+  //    reused. The datatoken verifies each fee's signature, so it is checked locally first
+  //    and a fee that would not pass is requested again.
   const initialized = await initializeWithValidProviderFee(
     () =>
       serviceNode.initialize(asset.id, service.id, {
@@ -163,7 +163,7 @@ export async function access(
  * otherwise extends it, or places a fresh order.
  *
  * Throws a `ProviderFeeSignatureError` before any transaction when the fee to send carries
- * a signature the datatoken would reject (ocean-node bug B2).
+ * a signature the datatoken would reject.
  */
 export async function settleOrder(params: {
   signer: Signer
@@ -188,7 +188,7 @@ export async function settleOrder(params: {
     return { transferTxId: initialized.validOrder as string, reused: true }
 
   // Both remaining paths send the fee to the datatoken, which checks its signature first:
-  // refuse a fee it would reject (ocean-node bug B2) before the approval spends anything.
+  // refuse a fee it would reject before the approval spends anything.
   assertProviderFeeSignature(providerFeeToSend(initialized))
 
   // Both remaining paths hand the fee to the datatoken, whose `_checkProviderFee` settles

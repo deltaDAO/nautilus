@@ -334,8 +334,8 @@ describe('OceanNodeClient.initializePolicyVerification', () => {
   })
 })
 
-describe('provider-fee signature pre-check (ocean-node bug B2)', () => {
-  it('refuses a mis-signed fee before the approval and the order', async () => {
+describe('provider-fee signature pre-check', () => {
+  it('refuses a fee whose signature does not recover to providerFeeAddress, before the approval and the order', async () => {
     await expectThrowsAsync(
       () =>
         settle({

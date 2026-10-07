@@ -37,8 +37,8 @@ import { publishSession } from './publish'
  *
  * And what changed in 2.0.0-beta.1:
  *
- *   - **One metadata change per asset per block.** ocean-node ignores an update in the same
- *     block as the asset's previous metadata event, silently. A `Nautilus` instance runs its
+ *   - **One metadata change per asset per block.** ocean-node indexes only the first
+ *     metadata event of an asset in a block. A `Nautilus` instance runs its
  *     own writes to one asset one after the other, and each waits for its receipt, so they
  *     never share a block. A write from another instance or process can; `edit()` then
  *     throws a `MetadataConflictError` after the receipt (the result is on

@@ -1,10 +1,10 @@
 /**
- * The provider-fee signature pre-check (ocean-node bug B2).
+ * The provider-fee signature pre-check.
  *
- * ocean-node 4.2 signs `toBeArray(messageHash)`, which drops a leading zero byte. The
- * datatoken's `_checkProviderFee` recovers the signer from the `\n32` digest of all 32
- * bytes, so about one fee in 256 makes `startOrder`/`reuseOrder` revert. These tests
- * build such a fee (a hash starting with `0x00`, signed the node's way) and pin that it is
+ * The datatoken's `_checkProviderFee` recovers the signer from the `\n32` digest of all 32
+ * bytes of the fee hash, and `startOrder`/`reuseOrder` revert unless it is
+ * `providerFeeAddress`. These tests build a fee whose signature does not recover that way
+ * (a hash starting with `0x00`, signed over `toBeArray(messageHash)`) and pin that it is
  * refused before any transaction, and that a fresh fee is asked for.
  */
 import {
@@ -78,7 +78,7 @@ describe('the fee digest', () => {
 })
 
 describe('isProviderFeeSignatureValid', () => {
-  it('accepts a fee the node signed when its hash has no leading zero byte', () => {
+  it('accepts a fee signed over toBeArray(messageHash) when its hash has no leading zero byte', () => {
     expect(feeMessageHash().startsWith('0x00')).to.equal(false)
     expect(isProviderFeeSignatureValid(signedProviderFee({}, 'node'))).to.equal(
       true
@@ -157,12 +157,12 @@ describe('isProviderFeeSignatureValid', () => {
 })
 
 describe('assertProviderFeeSignature', () => {
-  it('names the node bug and says nothing was spent', () => {
+  it('names the digest the datatoken checks and says nothing was spent', () => {
     expect(() => assertProviderFeeSignature(poisonedProviderFee())).toThrow(
       ProviderFeeSignatureError
     )
     expect(() => assertProviderFeeSignature(poisonedProviderFee())).toThrow(
-      /B2.*toBeArray.*Nothing was spent/s
+      /signature check.*\\n32" digest.*Nothing was spent/s
     )
   })
 
@@ -208,7 +208,7 @@ describe('initializeWithValidProviderFee', () => {
     expect(sleep).not.toHaveBeenCalled()
   })
 
-  it('asks again after a mis-signed fee, a second later', async () => {
+  it('asks again after a fee the datatoken would reject, a second later', async () => {
     const good = { providerFee: signedProviderFee() }
     const initialize = vi
       .fn()
@@ -223,8 +223,8 @@ describe('initializeWithValidProviderFee', () => {
     expect(sleep).toHaveBeenCalledWith(PROVIDER_FEE_RETRY_DELAY_MS)
   })
 
-  it('stops at once when the node signs the same fee again', async () => {
-    // A compute fee on 4.2 has validUntil = service.timeout, so it never changes.
+  it('stops at once when the node returns the same fee again', async () => {
+    // A compute fee has validUntil = service.timeout, so it never changes.
     const poisoned = poisonedProviderFee()
     const initialize = vi.fn(async () => ({ providerFee: poisoned }))
 
