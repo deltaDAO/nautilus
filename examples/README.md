@@ -382,7 +382,7 @@ assetBuilder
     { type: 'VerifiableId', format: 'jwt_vc_json' }
   ])
   .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'not-before'])
-  .setVpPolicies(CredentialListTypes.ALLOW, ['holder-binding'])
+  .setVpPolicies(CredentialListTypes.ALLOW, [{ policy: 'holder-binding' }])
 ```
 
 VC policies check each credential; VP policies check the presentation as a whole. Gating also
