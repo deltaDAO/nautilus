@@ -41,7 +41,7 @@ const node = new OceanNodeClient({
 | `auth` | `NodeAuth` | A `Signer`, a JWT auth token, or a pre-computed signature. |
 | `consumerAddress` | `string` | **Required when `auth` is a JWT**, which nautilus cannot decode. |
 | `allowInsecureTransport` | `boolean` | Accept a plain `http://` `nodeUri` on a host other than `localhost`, `127.0.0.0/8`, `::1` or `*.localhost`. Default `false`: the constructor throws an `OceanNodeError`, the same rule as `Nautilus.create`. It also applies to the `nodeUri` argument of `encrypt` and `getFileInfo`. Carried over to `forEndpoint` clients. |
-| `requestTimeoutMs` | `number` | How long one `encrypt` call may run, its nonce retry included. Default `120000` (2 minutes, room for a wallet's signature prompt). Must be a positive finite number. Carried over to `forEndpoint` clients. |
+| `requestTimeoutMs` | `number` | How long one `encrypt` call may run, its nonce retry included; over HTTP also an `initialize` request, and a `getComputeLogs` request until the stream starts. Default `120000` (2 minutes, room for a wallet's signature prompt). Must be a positive finite number. Carried over to `forEndpoint` clients. |
 
 ## Selected methods
 
@@ -51,12 +51,17 @@ const node = new OceanNodeClient({
 `waitForIndexer(did, txid?, options?)` · `getIndexingState({ did } | { nft } | { txId }, signal?)` ·
 `getNodeAddress(signal?)` · `getIndexerNonceState(signal?)` · `validateRemote(ddo)`
 
-The `GET`s behind `waitForIndexer`, `getIndexingState`, `getNodeAddress` and
+The `GET`s behind `resolve`, `waitForIndexer`, `getIndexingState`, `getNodeAddress` and
 `getIndexerNonceState` carry no credentials and no body, so they follow redirects, for
 example from a reverse proxy in front of `/api/aquarius`. The transport rule still applies
 where a redirect ends: plain `http://` on a host other than loopback is refused (an
 `OceanNodeError`), unless the node URI is plain `http://` already
 (`allowInsecureTransport`).
+
+`resolve(did)` throws an `AssetNotFoundError` (`status` 404, `did`) when the node does not
+serve the asset. Only then does it read the node's indexing state for the DID, and when the
+node recorded an indexing failure the message says so (*"the node recorded an indexing
+error for tx …: …"*) and `state` holds the record.
 
 ### getIndexingState
 
@@ -218,7 +223,18 @@ so that the status of a refusal is kept. `checkPolicySession` reports
 ## Errors
 
 Every call is wrapped, so failures arrive as `OceanNodeError` with the operation named and the
-original error on `cause`.
+original error on `cause`. For the requests nautilus sends itself (`resolve`, `initialize`,
+`getComputeLogs` and the indexing reads over HTTP), the message carries the node's status
+and text, unquoted, and `status` the HTTP status:
+
+```text
+[ocean-node] initialize: HTTP 400 Bad Request: Use the initializeCompute endpoint to initialize compute jobs
+```
+
+For the calls that go through ocean.js, a JSON string or `{ error }` answer is unwrapped
+(`[ocean-node] freeComputeStart: Error: Access to asset … was denied`); ocean.js passes on
+no status, and nothing of a plain-text answer. Signatures and tokens in the node's text are
+redacted, and the text is cut at 200 characters.
 
 ```ts twoslash
 import { OceanNodeError } from '@deltadao/nautilus'
@@ -236,6 +252,7 @@ try {
 
 `IndexingError` is the `OceanNodeError` that `waitForIndexer` throws when the node has
 recorded a failure. It carries `did`, `txId` and the node's record on `state`.
+`AssetNotFoundError` is the one `resolve` throws for an asset the node does not serve.
 
 `PolicyDeniedError` is not an `OceanNodeError`: the node and its policy server answered, and
 refused. It carries `did`, `serviceId`, `consumerAddress`, `code` (the HTTP status) and

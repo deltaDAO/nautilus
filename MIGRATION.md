@@ -124,6 +124,24 @@ type `algorithm` without the dataset-side compute settings (`allowRawAlgorithm`,
 `allowNetworkAccess`, `publisherTrustedAlgorithms`, `publisherTrustedAlgorithmPublishers`)
 on its services. ocean-node reads them from the dataset's service only.
 
+### Node errors
+
+**Node errors carry the node's message.** `initialize` and `getComputeLogs` are sent by
+nautilus over HTTP, so a refusal reads `[ocean-node] <operation>: HTTP <status>
+<statusText>: <the node's text>` and the `OceanNodeError` has `status`. It used to surface
+as a JSON parse error (`Unexpected token 'U', "Use the in"... is not valid JSON`). For the
+calls that still go through ocean.js, a JSON string answer is unquoted and the `error` of a
+JSON object is used; a plain-text answer reads "the node's error answer is not JSON", with
+ocean.js's parse error on `cause`. `getNodeAddress`, `getIndexerNonceState`,
+`getIndexingState` and `initializePolicyVerification` (for an answer that is not a refusal)
+use the `HTTP <status>` form too (`HTTP 502 Bad Gateway: …` instead of `502 Bad Gateway …`).
+Code that matches on messages should check `error.status` instead.
+
+**`resolve()` and `getAsset()` throw an `AssetNotFoundError` for an asset the node does not
+serve** (an `OceanNodeError` with `status` 404 and `did`). It used to be `resolve: HTTP
+request failed`. When the node recorded an indexing failure for the DID, the message carries
+the node's error and `state` the record.
+
 ## Upgrading from 2.0.0-beta.0
 
 2.0.0-beta.1 makes published and edited assets indexable by an unmodified

@@ -190,8 +190,12 @@ const result = await node.validateRemote(ddo) // [!code focus]
 ## Errors
 
 Every call is wrapped, so failures arrive as `OceanNodeError` with the operation named and
-the original error kept on `cause`. `IndexingError`, thrown by `waitForIndexer` when the node
-recorded an indexing failure, is a subclass.
+the original error kept on `cause`. For a request nautilus sends itself (see below), the
+message carries the node's HTTP status and text, unquoted, and `status` the status, e.g.
+`[ocean-node] computeStreamableLogs: HTTP 404: Job not found or not running`. Two subclasses
+carry more: `IndexingError`, thrown by `waitForIndexer` when the node recorded an indexing
+failure, and `AssetNotFoundError`, thrown by `resolve` (and `getAsset`) when the node does
+not serve the asset, with the node's indexing error for the DID when it recorded one.
 
 ```ts twoslash
 import { OceanNodeError } from '@deltadao/nautilus'
@@ -206,6 +210,13 @@ try {
   }
 }
 ```
+
+`initialize` and `getComputeLogs` are sent by nautilus itself over HTTP, so their errors
+always carry the node's status and text. The other calls go through ocean.js, which reads an
+error answer as JSON: a JSON answer's message is unwrapped, but for a plain-text answer
+ocean.js passes on neither the status nor the text, and the message says so. ocean.js also
+logs such a failed call to the console at its default level (`LogLevel.Error`), with the
+request payload; it redacts signatures and authorization headers.
 
 ## Building one directly
 

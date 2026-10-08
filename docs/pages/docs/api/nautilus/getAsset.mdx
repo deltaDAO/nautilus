@@ -48,8 +48,11 @@ Available helpers: `getMetadata`, `getServices`, `getService`, `getServiceByType
 ## Throws
 
 Unlike v1, which resolved to `undefined` for an unknown DID, this throws an
-`OceanNodeError` naming the DID. If the asset may not be indexed yet, use
-[`waitForIndexer`](/docs/api/nautilus/waitForIndexer) instead.
+`AssetNotFoundError` (an `OceanNodeError` with `status` 404) naming the DID. When the node
+recorded an indexing failure for the DID, the message carries the node's error and `state`
+the record. If the asset may not be indexed yet, use
+[`waitForIndexer`](/docs/api/nautilus/waitForIndexer) instead. Any other failure is an
+`OceanNodeError` with the node's status and text.
 
 ## Parameters
 
