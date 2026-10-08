@@ -168,6 +168,49 @@ describe('the stored envelope after the metadata transaction', () => {
     expect(removed).to.have.length(0)
   })
 
+  it('is kept, with the hash, when the wallet broadcast the transaction and then failed', async () => {
+    // ethers' JsonRpcSigner gives up polling for a transaction it already sent with
+    // INVALID_ARGUMENT or UNSUPPORTED_OPERATION, and sets info.sendTransactionHash.
+    const { send, edit, removed } = await setup()
+    const hash = `0x${'5e'.repeat(32)}`
+    send.mockRejectedValue(
+      makeError('invalid transaction', 'INVALID_ARGUMENT', {
+        info: { sendTransactionHash: hash }
+      } as never)
+    )
+
+    const { error } = await edit()
+
+    expect(error?.stored.cleanup).to.equal('kept')
+    expect(error?.stored.txHash).to.equal(hash)
+    expect(error?.message).to.match(
+      new RegExp(`metadata transaction ${hash} was sent but not confirmed`)
+    )
+    expect(removed).to.have.length(0)
+  })
+
+  it('is kept, and the edit succeeds, when the wallet sped the transaction up', async () => {
+    const { send, edit, removed } = await setup()
+    const replacement = { hash: '0xspedup', blockNumber: 8, status: 1 }
+    send.mockResolvedValue({
+      hash: '0xsent',
+      wait: async () => {
+        throw makeError('transaction was replaced', 'TRANSACTION_REPLACED', {
+          cancelled: false,
+          reason: 'repriced',
+          hash: replacement.hash,
+          receipt: replacement
+        } as never)
+      }
+    })
+
+    const { response, error } = await edit()
+
+    expect(error).to.equal(undefined)
+    expect(response?.setMetadataTxReceipt).to.equal(replacement)
+    expect(removed).to.have.length(0)
+  })
+
   it('is kept, and referenced, when the transaction is mined', async () => {
     const { send, edit, removed } = await setup()
     send.mockResolvedValue({ hash: '0xsent', wait: async () => RECEIPT })

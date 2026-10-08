@@ -13,7 +13,41 @@ export class NautilusAsset {
   ddo: NautilusDDO
   nftCreateData: NftCreateDataWithoutOwner
   owner?: string
-  lifecycleState?: AssetState
+
+  private requestedLifecycleState?: AssetState
+  private lifecycleStateRequested = false
+
+  /**
+   * The lifecycle state to write: one set with `setLifecycleState()` (or assigned here), or
+   * the indexed state of the asset an `AssetBuilder` was constructed with.
+   */
+  get lifecycleState(): AssetState | undefined {
+    return this.requestedLifecycleState
+  }
+
+  set lifecycleState(state: AssetState | undefined) {
+    this.requestedLifecycleState = state
+    this.lifecycleStateRequested = state !== undefined
+  }
+
+  /**
+   * Whether `lifecycleState` was set explicitly rather than taken over from the indexed
+   * DDO. `edit()` writes an inherited state as the NFT has it on chain at the time of the
+   * write, so a fetched copy that predates a `setAssetLifecycleState()` does not undo it.
+   */
+  get hasRequestedLifecycleState(): boolean {
+    return this.lifecycleStateRequested
+  }
+
+  /**
+   * Takes over the state of the asset being edited, without counting as a request.
+   *
+   * @internal used by `AssetBuilder`.
+   */
+  inheritLifecycleState(state: AssetState | undefined): void {
+    this.requestedLifecycleState = state
+    this.lifecycleStateRequested = false
+  }
 
   constructor(ddo?: NautilusDDO) {
     this.ddo = ddo || new NautilusDDO()
