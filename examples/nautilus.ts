@@ -11,6 +11,7 @@ import {
 import { isAddress, JsonRpcProvider, type Signer, Wallet } from 'ethers'
 import { type NetworkConfig, resolveNetwork } from './config'
 import { describeStoredEnvelope, ledgerLocation } from './ledger'
+import { paymentLimits } from './limits'
 
 /**
  * Shared setup for every example.
@@ -498,11 +499,14 @@ export async function setup(options: SetupOptions = {}): Promise<Setup> {
   if (remoteStore) console.log(`DDO store:  ${describeRemoteStore()}`)
 
   // Neither store needs an ocean-node client, so the store is built before the instance.
+  // The publisher is the consumer too when there is no CONSUMER_PRIVATE_KEY, so it gets
+  // the same ceilings on what a node may charge (see limits.ts).
   const nautilus = await Nautilus.create(signer, {
     config: networkConfig,
     remoteStore,
     credentials: options.credentials,
-    ddoSigner: options.ddoSigner
+    ddoSigner: options.ddoSigner,
+    ...paymentLimits()
   })
 
   if (!hasSeparateConsumer())
@@ -523,7 +527,8 @@ export async function setup(options: SetupOptions = {}): Promise<Setup> {
 
   const consumer = await Nautilus.create(consumerSigner, {
     config: networkConfig,
-    credentials: options.credentials
+    credentials: options.credentials,
+    ...paymentLimits()
   })
 
   return {

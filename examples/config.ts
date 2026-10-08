@@ -3,6 +3,7 @@ import {
   getOceanConfig,
   type PricingConfigWithoutOwner
 } from '@deltadao/nautilus'
+import { isAddress } from 'ethers'
 
 /**
  * Networks these examples can run against.
@@ -499,6 +500,16 @@ export function resolveNetwork(): {
       if (process.env.OCEAN_NODE_URI)
         networkConfig.oceanNodeUri = process.env.OCEAN_NODE_URI
       if (process.env.RPC_URL) networkConfig.nodeUri = process.env.RPC_URL
+  }
+
+  // Paid compute funds only the chain config's escrow contract, whatever the node names.
+  // ocean.js ships it for some chains (OP Sepolia); elsewhere it comes from here.
+  const escrow = process.env.ESCROW_ADDRESS?.trim()
+
+  if (escrow) {
+    if (!isAddress(escrow))
+      throw new Error(`ESCROW_ADDRESS must be an address, not '${escrow}'.`)
+    networkConfig.escrow = escrow
   }
 
   return {

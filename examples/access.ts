@@ -7,6 +7,7 @@ import {
   getServices,
   type Nautilus
 } from '@deltadao/nautilus'
+import { ceilingFromEnv } from './limits'
 
 /**
  * Download examples.
@@ -14,6 +15,11 @@ import {
  * `access()` returns an object now, not a bare URL string — so the order backing the download
  * is visible to the caller. It also covers the whole flow: satisfying any credential policy,
  * asking the node for provider fees, reusing or placing an order, and building the URL.
+ *
+ * The provider fee is set by the service's node, which the publisher chooses. nautilus pays
+ * a non-zero one only within `maxProviderFee`: these examples set it once in
+ * `Nautilus.create` from `MAX_PROVIDER_FEE` (see `limits.ts`), and pay only zero fees
+ * without it. A call can pass its own, as `access()` below shows.
  */
 
 /** Orders the service if needed and prints the download URL. */
@@ -22,7 +28,14 @@ export async function access(
   assetDid: string,
   userdata?: { [key: string]: unknown }
 ) {
-  const result = await nautilus.access({ assetDid, userdata })
+  const result = await nautilus.access({
+    assetDid,
+    userdata,
+    // This call's ceiling, replacing the one set in Nautilus.create. A fee above it, or in
+    // another token, throws a ProviderFeeNotAllowedError before anything is spent, naming
+    // the fee the node asked for.
+    maxProviderFee: ceilingFromEnv('MAX_PROVIDER_FEE') ?? []
+  })
 
   console.log('Download URL:', result.url)
   console.log(`  service:      ${result.serviceId}`)
