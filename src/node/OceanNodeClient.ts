@@ -82,7 +82,9 @@ import {
 import {
   boundedNodeMessage,
   describeAnswer,
-  describeError
+  describeError,
+  nodeText,
+  sanitizedError
 } from './messages.js'
 
 /** Payload accepted by the `policyServer` slots: one entry, or one per compute asset. */
@@ -150,11 +152,19 @@ export class OceanNodeError extends Error {
   /**
    * The error for a failed ocean.js call: its message with a quoted or JSON node message
    * unwrapped (see `describeError`). An `OceanNodeError` is passed on as it is.
+   *
+   * ocean.js puts the node's answer into its error messages, so `cause` is not the ocean.js
+   * error itself but a copy with its name and its message redacted and bounded, as the
+   * message is (see `sanitizedError`).
    */
   static from(operation: string, error: unknown): OceanNodeError {
     if (error instanceof OceanNodeError) return error
 
-    return new OceanNodeError(operation, describeError(error), error)
+    return new OceanNodeError(
+      operation,
+      describeError(error),
+      sanitizedError(error)
+    )
   }
 }
 
@@ -180,11 +190,15 @@ function assetNotFoundMessage(did: string, state?: IndexingState): string {
     return `no asset found for ${did} (HTTP 404). An asset the node has not indexed yet is not found either; waitForIndexer() waits for it.`
 
   const error = state.error?.trim() || 'marked invalid without a message'
-  const tx = state.txId?.trim()
+  // The record is the node's: only a transaction hash is named.
+  const tx = TX_HASH.test(state.txId?.trim() ?? '') ? state.txId?.trim() : ''
   const hint = indexingErrorHint(error)
 
   return `no asset found for ${did} (HTTP 404); the node recorded an indexing error${tx ? ` for tx ${tx}` : ''}: ${boundedNodeMessage(error)}${hint ? `. Hint: ${hint}` : ''}`
 }
+
+/** A 32-byte `0x` hex transaction hash. */
+const TX_HASH = /^0x[0-9a-fA-F]{64}$/
 
 /** Thrown when the node has recorded that it could not index an asset. */
 export class IndexingError extends OceanNodeError {
@@ -199,7 +213,7 @@ export class IndexingError extends OceanNodeError {
 
     super(
       'waitForIndexer',
-      `the node could not index ${did}${txId ? ` (tx ${txId})` : ''}: ${error}${hint ? `. Hint: ${hint}` : ''}`
+      `the node could not index ${did}${txId ? ` (tx ${txId})` : ''}: ${boundedNodeMessage(error)}${hint ? `. Hint: ${hint}` : ''}`
     )
     this.name = 'IndexingError'
     this.did = did
@@ -623,7 +637,7 @@ function normalizeStateQuery(query: IndexingStateQuery): [string, string] {
   }
 
   if (key === 'txId') {
-    if (!/^0x[0-9a-fA-F]{64}$/.test(value))
+    if (!TX_HASH.test(value))
       throw new OceanNodeError(
         'getIndexingState',
         `txId ${JSON.stringify(value)} is not a 32-byte 0x hex transaction hash`
@@ -684,13 +698,13 @@ function policyServerReason(body: unknown): string {
       ? (body as PolicyServerReply).message
       : body
 
-  if (typeof message === 'string' && message.trim()) return message.trim()
+  if (typeof message === 'string' && message.trim()) return nodeText(message)
 
   const error =
     message && typeof message === 'object'
       ? (message as { error?: unknown }).error
       : undefined
-  if (typeof error === 'string' && error.trim()) return error.trim()
+  if (typeof error === 'string' && error.trim()) return nodeText(error)
 
   return boundedNodeMessage(body) || 'no reason given'
 }
@@ -1492,7 +1506,7 @@ export class OceanNodeClient {
     if (!state || typeof state !== 'object' || typeof state.valid !== 'boolean')
       throw new OceanNodeError(
         'getIndexingState',
-        `the node answered with something that is not an indexing state record: ${JSON.stringify(state)?.slice(0, 200)}`
+        `the node answered with something that is not an indexing state record: ${boundedNodeMessage(state)}`
       )
 
     return state
@@ -2300,7 +2314,7 @@ export class OceanNodeClient {
           if (reply && isRefusalStatus(reply.httpStatus))
             throw deny(reply.httpStatus, reply)
 
-          throw new OceanNodeError(operation, errorMessage(error), error)
+          throw OceanNodeError.from(operation, error)
         }
       })
 
@@ -2406,7 +2420,7 @@ export class OceanNodeClient {
       if (refused && isSessionRecord(refused.message))
         return { verified: false, result: refused.message }
 
-      throw new OceanNodeError('checkPolicySession', errorMessage(error), error)
+      throw OceanNodeError.from('checkPolicySession', error)
     }
 
     const result = reply?.message

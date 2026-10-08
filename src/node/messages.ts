@@ -18,19 +18,86 @@ export interface NodeAnswer {
 /** How much of a node's text goes into an error message. */
 const MAX_NODE_MESSAGE_LENGTH = 200
 
-/** Query values and JSON fields that carry a credential. */
-const SECRET_QUERY =
-  /([?&](?:signature|token|authorization|jwt|access_token)=)[^&\s"'#]*/gi
-const SECRET_FIELD =
-  /("(?:signature|token|authorization|jwt|access_token)"\s*:\s*")(?:[^"\\]|\\.)*"/gi
-const BEARER = /(Bearer\s+)[\w.~+/=-]+/gi
+/** Keys whose value is a credential, a session secret or a one-time value. */
+const SECRET_KEYS =
+  'signature|consumerSignature|token|authorization|jwt|access_token|vp_token|id_token|request_uri|code|nonce|password|apiKey|api_key'
 
-/** `text` with signatures, tokens and bearer credentials replaced by `<redacted>`. */
+/** `scheme://authority/path?query#fragment`, up to whitespace or a quote. */
+const URL_PATTERN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>\\]*/gi
+/** `key=value` in a query, a form body or prose: `?signature=…`, `nonce=…`. */
+const SECRET_ASSIGNMENT = new RegExp(`\\b(${SECRET_KEYS})=[^&\\s"'#,;)]*`, 'gi')
+/** `"key": "value"` or `"key": 123` in JSON. */
+const SECRET_FIELD = new RegExp(
+  `("(?:${SECRET_KEYS})"\\s*:\\s*)(?:"(?:[^"\\\\]|\\\\.)*"|[^\\s,}\\]]+)`,
+  'gi'
+)
+/** The same in JSON that is itself inside a JSON string: `\"key\":\"value\"`. */
+const ESCAPED_SECRET_FIELD = new RegExp(
+  `(\\\\"(?:${SECRET_KEYS})\\\\"\\s*:\\s*)(?:\\\\"(?:[^"\\\\]|\\\\[^"])*\\\\"|[^\\s,}\\]\\\\]+)`,
+  'gi'
+)
+/** `signature: 0x…` without quotes. */
+const BARE_SIGNATURE = /\b((?:consumer)?signature\s*:\s*)0x[0-9a-f]+/gi
+/** `password: …`, `apiKey: …`, `access_token: …` without quotes. */
+const BARE_SECRET =
+  /\b((?:password|apiKey|api_key|jwt|access_token|vp_token|id_token)\s*:\s*)[^\s,;"'&)}\]]+/gi
+const BEARER = /(Bearer\s+)[\w.~+/=-]+/gi
+/** A JWT (`eyJ…` header, payload and signature, base64url). */
+const JWT = /\beyJ[\w-]*\.[\w-]+\.[\w-]*/g
+/** A 65-byte ECDSA signature in hex, wherever it stands. */
+const HEX_SIGNATURE = /\b0x[0-9a-f]{130}\b/gi
+
+/** ANSI escape sequences: CSI (`ESC [ … m`), OSC (`ESC ] … BEL`) and two-byte ones. */
+const ANSI_ESCAPE =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: matching them is the point
+  /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|[@-Z\\-_])/g
+/** C0 and C1 controls (CR and LF included), DEL and the bidi overrides and isolates. */
+const CONTROL_CHARACTERS =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: matching them is the point
+  /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]+/g
+
+/**
+ * `text` with credentials replaced by `<redacted>`: signatures, tokens, nonces, codes and
+ * passwords given as `key=value`, as JSON fields or (signatures, passwords, API keys,
+ * tokens) as `key: value`; bearer credentials, JWTs and 65-byte hex signatures anywhere.
+ * A URL keeps its origin only: its path and query (an openid4vp `request_uri`, a policy
+ * server's redirect URI, an internal path) are dropped, and so are its user and password.
+ */
 export function redactSecrets(text: string): string {
   return text
-    .replace(SECRET_QUERY, '$1<redacted>')
-    .replace(SECRET_FIELD, '$1<redacted>"')
+    .replace(URL_PATTERN, originOnly)
+    .replace(SECRET_FIELD, '$1"<redacted>"')
+    .replace(ESCAPED_SECRET_FIELD, '$1\\"<redacted>\\"')
+    .replace(SECRET_ASSIGNMENT, '$1=<redacted>')
+    .replace(BARE_SIGNATURE, '$1<redacted>')
+    .replace(BARE_SECRET, '$1<redacted>')
     .replace(BEARER, '$1<redacted>')
+    .replace(JWT, '<redacted>')
+    .replace(HEX_SIGNATURE, '<redacted>')
+}
+
+/** A URL as `scheme://host[:port]`, with the punctuation that ended its sentence kept. */
+function originOnly(url: string): string {
+  const trailing = /[.,;:!?)\]}]*$/.exec(url)?.[0] ?? ''
+  const core = url.slice(0, url.length - trailing.length)
+  const [, scheme, authority = ''] = /^([^:]+):\/\/([^/?#]*)/.exec(core) ?? []
+  const host = authority.replace(/^.*@/, '')
+
+  return `${scheme}://${host}${trailing}`
+}
+
+/** `text` without ANSI escapes and control characters, whitespace runs as one space. */
+export function stripControlCharacters(text: string): string {
+  return text
+    .replace(ANSI_ESCAPE, '')
+    .replace(CONTROL_CHARACTERS, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** Text from the node, or from an error carrying it, made safe for an error message. */
+function sanitize(text: string): string {
+  return bounded(redactSecrets(stripControlCharacters(text)))
 }
 
 /**
@@ -57,14 +124,14 @@ export function nodeText(text: string): string {
       // not JSON: the text as it is
     }
 
-  return bounded(redactSecrets(message))
+  return sanitize(message)
 }
 
 /** A value the node returned in place of the expected one, as bounded text. */
 export function boundedNodeMessage(value: unknown): string {
   return typeof value === 'string'
     ? nodeText(value)
-    : bounded(redactSecrets(JSON.stringify(value) ?? String(value)))
+    : sanitize(JSON.stringify(value) ?? String(value))
 }
 
 function bounded(text: string): string {
@@ -95,4 +162,17 @@ export function describeError(error: unknown): string {
     return "the node's error answer is not JSON, and ocean.js passes on neither its status nor its text (see cause)"
 
   return nodeText(message)
+}
+
+/**
+ * A stand-in for an error that may carry the node's text, to keep on `cause`: its name and
+ * its message sanitized as `nodeText` does, without its stack or its own `cause`.
+ */
+export function sanitizedError(error: unknown): Error {
+  const copy = new Error(
+    sanitize(error instanceof Error ? error.message : String(error))
+  )
+  if (error instanceof Error) copy.name = error.name
+
+  return copy
 }

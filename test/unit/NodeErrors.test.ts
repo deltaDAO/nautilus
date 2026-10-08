@@ -18,6 +18,7 @@ import {
 } from 'ethers'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NodeAuth } from '../../src/node/auth.js'
+import { nodeText } from '../../src/node/messages.js'
 import {
   AssetNotFoundError,
   OceanNodeClient,
@@ -66,6 +67,14 @@ function client(nodeUri = NODE, auth: NodeAuth = SIGNED) {
     auth,
     consumerAddress: NFT_ADDRESS
   })
+}
+
+/** An unsigned JWT with `claims`, shaped like the tokens ocean-node issues. */
+function jwt(claims: object): string {
+  const part = (value: object) =>
+    Buffer.from(JSON.stringify(value)).toString('base64url')
+
+  return `${part({ alg: 'HS256', typ: 'JWT' })}.${part(claims)}.c2ln`
 }
 
 async function rejection(
@@ -427,6 +436,28 @@ describe('resolve', () => {
     expect(fetch).toHaveBeenCalledTimes(1)
   })
 
+  it('names the tx of an indexing record only when it is a transaction hash', async () => {
+    stubFetch({
+      [ddo]: { status: 404, body: 'DDO not found' },
+      [state(ASSET_DID)]: {
+        status: 200,
+        body: JSON.stringify({
+          did: ASSET_DID,
+          txId: '\u001b[31mhttps://internal.example/x?token=abc',
+          valid: false,
+          error: 'boom'
+        })
+      },
+      [state(DID_OP)]: { status: 404, body: '' }
+    })
+
+    const error = await rejection(() => client().resolve(ASSET_DID))
+
+    expect(error.message).to.equal(
+      `[ocean-node] resolve: no asset found for ${ASSET_DID} (HTTP 404); the node recorded an indexing error: boom`
+    )
+  })
+
   it('reads no indexing state for an id that is not a did:op:/did:ope: hash', async () => {
     const fetch = stubFetch({
       '/api/aquarius/assets/ddo/': { status: 404, body: 'DDO not found' }
@@ -464,5 +495,94 @@ describe('ocean.js logging', () => {
     await rejection(() => node.getComputeLogs(JOB))
 
     expect(consoleError).not.toHaveBeenCalled()
+  })
+})
+
+describe("the node's text in a message", () => {
+  it('redacts credentials in queries, prose, JSON and escaped JSON', () => {
+    for (const [text, kept] of [
+      ['bad ?signature=0xabc&x=1', 'signature=<redacted>&x=1'],
+      ['bad signature=0xabc, retry', 'signature=<redacted>, retry'],
+      ['consumerSignature=0xabc', 'consumerSignature=<redacted>'],
+      ['vp_token=abc&id_token=def', 'vp_token=<redacted>&id_token=<redacted>'],
+      [
+        'request_uri=urn:x&code=123&nonce=7',
+        'request_uri=<redacted>&code=<redacted>&nonce=<redacted>'
+      ],
+      [
+        'password=hunter2 apiKey=k1 api_key=k2',
+        'password=<redacted> apiKey=<redacted> api_key=<redacted>'
+      ],
+      [
+        '{"password":"hunter2","nonce":7}',
+        '{"password":"<redacted>","nonce":"<redacted>"}'
+      ],
+      [
+        '{"apiKey":"k","consumerSignature":"0xabc"}',
+        '{"apiKey":"<redacted>","consumerSignature":"<redacted>"}'
+      ],
+      [
+        'raw {\\"signature\\":\\"0xabc\\"} end',
+        'raw {\\"signature\\":\\"<redacted>\\"} end'
+      ],
+      [
+        'invalid signature: 0xdeadbeef for 0x1',
+        'invalid signature: <redacted> for 0x1'
+      ],
+      [
+        'password: hunter2, apiKey: k1',
+        'password: <redacted>, apiKey: <redacted>'
+      ],
+      ['Authorization: Bearer abc.def', 'Authorization: Bearer <redacted>']
+    ]) {
+      expect(nodeText(text), text).to.contain(kept)
+    }
+  })
+
+  it('redacts a bare JWT and a bare 65-byte signature', () => {
+    const token = jwt({ address: NFT_ADDRESS })
+    const signature = `0x${'ab'.repeat(65)}`
+
+    expect(nodeText(`token ${token} expired`)).to.equal(
+      'token <redacted> expired'
+    )
+    expect(nodeText(`mismatch for ${signature}.`)).to.equal(
+      'mismatch for <redacted>.'
+    )
+  })
+
+  it("keeps a URL's origin only", () => {
+    expect(
+      nodeText(
+        'redirect to openid4vp://authorize?request_uri=https%3A%2F%2Fverifier.internal%2Fx&state=s1, or see https://user:pw@policy.internal:8443/api/initiate?session=abc.'
+      )
+    ).to.equal(
+      'redirect to openid4vp://authorize, or see https://policy.internal:8443.'
+    )
+  })
+
+  it('strips ANSI escapes and control characters', () => {
+    expect(
+      nodeText('\u001b[31mError\u001b[0m:\r\nline 2\tend\u0007\u202e')
+    ).to.equal('Error: line 2 end')
+  })
+
+  it('keeps the message of an unwrapped JSON answer to one line', () => {
+    expect(nodeText(JSON.stringify({ error: 'a\nb' }))).to.equal('a b')
+  })
+
+  it('redacts and bounds the cause of a wrapped ocean.js error', () => {
+    const raw = new Error(
+      `failed: /api/services/download?signature=0xsecret ${'x'.repeat(500)}`
+    )
+    raw.name = 'TypeError'
+
+    const error = OceanNodeError.from('download', raw)
+    const cause = error.cause as Error
+
+    expect(cause).not.to.equal(raw)
+    expect(cause.name).to.equal('TypeError')
+    expect(cause.message).not.to.contain('0xsecret')
+    expect(cause.message.length).to.be.at.most(201)
   })
 })
