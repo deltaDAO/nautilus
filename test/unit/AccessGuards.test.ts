@@ -7,14 +7,14 @@
  * checked values.
  */
 
-import type { Config } from '@oceanprotocol/lib'
+import { type Config, ProviderInstance } from '@oceanprotocol/lib'
 import type { Signer } from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { access } from '../../src/access/index.js'
 import { compute, freeCompute } from '../../src/compute/index.js'
 import type { AssetV5, ConsumerParameterV5 } from '../../src/ddo/index.js'
 import type { PolicySessionResolver } from '../../src/identity/PolicySessionResolver.js'
-import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
+import { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
 import { ConsumerParameterError } from '../../src/utils/consumerParameters.js'
 import { order, reuseOrder } from '../../src/utils/order.js'
 import {
@@ -129,6 +129,7 @@ async function rejection(promise: Promise<unknown>): Promise<Error> {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.restoreAllMocks()
 })
 
 describe('access() pre-order checks', () => {
@@ -457,4 +458,77 @@ describe('compute() consumer parameters', () => {
       expect(request.algorithm.userdata).to.deep.equal({ anything: 'goes' })
       expect(request.algorithm.algocustomdata).to.deep.equal({})
     })
+})
+
+describe('access() download URL', () => {
+  const NODE = 'https://node.test.invalid'
+  const CONSUMER = '0x0000000000000000000000000000000000c05e5a'
+
+  /**
+   * A real `OceanNodeClient` with a pre-computed signature, so ocean.js builds the URL
+   * itself without asking the node for a nonce. Only `resolve` and `initialize` are
+   * stubbed: the node offers a reusable, fee-free order, so nothing is sent on chain.
+   */
+  async function downloadUrl(userdata: Record<string, unknown>) {
+    const asset = getAssetFixture()
+    asset.credentialSubject.services[0].consumerParameters = [
+      { name: 'query', type: 'text', label: 'Query', required: true },
+      { name: 'rows', type: 'number', label: 'Rows', required: false }
+    ] as unknown as AssetV5['credentialSubject']['services'][0]['consumerParameters']
+
+    const node = new OceanNodeClient({
+      nodeUri: NODE,
+      chainId: CHAIN_ID,
+      auth: { consumerAddress: CONSUMER, nonce: '7', signature: '0x5167' }
+    })
+    vi.spyOn(node, 'resolve').mockResolvedValue(asset)
+    vi.spyOn(ProviderInstance, 'initialize').mockResolvedValue({
+      datatoken: asset.credentialSubject.services[0].datatokenAddress,
+      validOrder: '0xexisting',
+      providerFee: { providerFeeAmount: '0' }
+    } as never)
+
+    const { url } = await access(
+      { assetDid: asset.id, userdata },
+      { node, signer, chainConfig, policySessions }
+    )
+
+    return url
+  }
+
+  it('encodes userdata as one query component, for values holding & # + = and 1e21', async () => {
+    const userdata = { query: 'a&b=c#d+e f', rows: 1e21 }
+
+    const url = await downloadUrl(userdata)
+
+    expect(url).to.equal(
+      `${NODE}/api/services/download?fileIndex=0&documentId=${ASSET_DID}&transferTxId=0xexisting&serviceId=${SERVICE_ID}&consumerAddress=${CONSUMER}&nonce=7&signature=0x5167` +
+        '&userdata=%7B%22query%22%3A%22a%26b%3Dc%23d%2Be%20f%22%2C%22rows%22%3A1e%2B21%7D'
+    )
+    // The node reads it back as it was sent.
+    const sent = new URL(url).searchParams.get('userdata')
+    expect(JSON.parse(sent as string)).to.deep.equal(userdata)
+  })
+
+  it('appends only the cleaned userdata', async () => {
+    const url = await downloadUrl({ query: 'x', rows: null })
+
+    expect(url.endsWith('&userdata=%7B%22query%22%3A%22x%22%7D')).to.equal(true)
+  })
+
+  it('hands userdata to ocean.js as an object over P2P', async () => {
+    const download = vi
+      .spyOn(ProviderInstance, 'getDownloadUrl')
+      .mockResolvedValue({ data: new ArrayBuffer(0), filename: 'file0' })
+    const node = new OceanNodeClient({
+      nodeUri: '16Uiu2HAmQU8YmsACkFjkaFqEECLN3Csu6JgoU3hw9EsPmk7i9TFL',
+      chainId: CHAIN_ID,
+      auth: { consumerAddress: CONSUMER, nonce: '7', signature: '0x5167' }
+    })
+    const userdata = { query: 'a&b' }
+
+    await node.getDownloadUrl(ASSET_DID, SERVICE_ID, '0xorder', { userdata })
+
+    expect(download.mock.calls[0][7]).to.equal(userdata)
+  })
 })

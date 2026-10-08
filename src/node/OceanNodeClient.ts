@@ -1651,6 +1651,14 @@ export class OceanNodeClient {
   /**
    * Builds the one-time download URL. `policyServer` carries the policy-server session id
    * when the node checks the service's credentials.
+   *
+   * Over HTTP, `userdata` is appended here as one encoded query component. ocean.js
+   * appends it with `encodeURI`, which leaves `&`, `#`, `+` and `=` as they are: a value
+   * holding one of them (or a number such as `1e21`, serialized as `1e+21`) broke the query,
+   * and the node, unable to parse it, ran the paid download without any `userdata`. The
+   * download signature covers the consumer address, the nonce and the command only, so
+   * appending the parameter afterwards leaves it valid. Over P2P the values travel as an
+   * object, and ocean.js sends them.
    */
   async getDownloadUrl(
     did: string,
@@ -1662,6 +1670,7 @@ export class OceanNodeClient {
       userdata?: UserCustomParameters
     } = {}
   ): Promise<string> {
+    const http = isHttpUri(this.nodeUri)
     const url = await attempt('getDownloadUrl', () =>
       ProviderInstance.getDownloadUrl(
         did,
@@ -1671,7 +1680,7 @@ export class OceanNodeClient {
         this.nodeUri,
         this.auth,
         options.policyServer ?? undefined,
-        options.userdata
+        http ? undefined : options.userdata
       )
     )
 
@@ -1681,9 +1690,12 @@ export class OceanNodeClient {
         'the node returned no download URL'
       )
 
-    return typeof url === 'string'
-      ? url
-      : (url as DownloadResponse as unknown as string)
+    if (typeof url !== 'string')
+      return url as DownloadResponse as unknown as string
+
+    return http && options.userdata
+      ? `${url}&userdata=${encodeURIComponent(JSON.stringify(options.userdata))}`
+      : url
   }
 
   // #endregion
