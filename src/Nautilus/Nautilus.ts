@@ -14,6 +14,7 @@ import {
 import {
   getAddress,
   isAddress,
+  isHexString,
   type Signer,
   type TransactionReceipt
 } from 'ethers'
@@ -286,6 +287,18 @@ export interface PublishOptions {
    * skipped. Default `true`; `false` skips it.
    */
   checkIndexerNonce?: boolean
+}
+
+/** `completePublish()`'s options: those of `publish()`, plus the earlier attempt's transaction. */
+export interface CompletePublishOptions extends PublishOptions {
+  /**
+   * The metadata transaction the failed attempt sent, from
+   * `PublishIncompleteError.stored.txHash` (`cleanup: 'kept'`). `completePublish()` then
+   * refuses while that transaction is pending, and once it was mined successfully, instead
+   * of writing the metadata a second time. A reverted one is no obstacle. Without it,
+   * only the signer's pending transaction count guards against a second write.
+   */
+  metadataTxHash?: string
 }
 
 /**
@@ -608,6 +621,7 @@ export class Nautilus {
           asset,
           nftAddress: created.nftAddress,
           create: true,
+          lifecycleState: asset.lifecycleState ?? 0,
           remoteStore,
           ddoSigner,
           issuer
@@ -645,17 +659,28 @@ export class Nautilus {
    * pricing never got created is priced now; one that has pricing must match the service's
    * pricing config, or the call is refused. The response lists every service. Refuses an
    * NFT that already has metadata; use `edit()` there.
+   *
+   * A metadata transaction the failed attempt sent may still be pending, and the NFT then
+   * reads as having no metadata. So it also refuses while the signer has pending
+   * transactions (`getNonce('pending')` above `getNonce('latest')`), and, given
+   * `options.metadataTxHash`, while that transaction is pending or once it succeeded.
    */
   async completePublish(
     nftAddress: string,
     asset: NautilusAsset,
-    options: PublishOptions = {}
+    options: CompletePublishOptions = {}
   ): Promise<PublishResponse> {
     assertEncryptOption(options)
     assertWritableState(asset.lifecycleState ?? 0, 'the asset')
 
     if (!isAddress(nftAddress))
       throw new Error(`completePublish: ${nftAddress} is not an address.`)
+
+    const { metadataTxHash } = options
+    if (metadataTxHash !== undefined && !isHexString(metadataTxHash, 32))
+      throw new Error(
+        `completePublish: metadataTxHash ${metadataTxHash} is not a transaction hash.`
+      )
 
     const owner = await this.ownerForNewAsset(asset, 'completePublish')
     const services = asset.ddo.services
@@ -664,6 +689,12 @@ export class Nautilus {
       throw new Error('Cannot publish an asset with no services.')
 
     const response = await this.withNftLock(nftAddress, async () => {
+      // Before the metadata read: a pending write reads as "no metadata", and one mined
+      // between these checks and that read shows up there.
+      if (metadataTxHash)
+        await this.assertEarlierWriteSettled(nftAddress, metadataTxHash)
+      await this.assertNoPendingTransactions(nftAddress)
+
       const status = await readMetadataStatus(
         new Nft(this.signer, this.config.chainId, this.config),
         nftAddress
@@ -749,6 +780,7 @@ export class Nautilus {
         asset,
         nftAddress,
         create: true,
+        lifecycleState: asset.lifecycleState ?? 0,
         remoteStore,
         ddoSigner,
         issuer
@@ -883,6 +915,69 @@ export class Nautilus {
   }
 
   /**
+   * Refuses to complete while the earlier attempt's metadata transaction (`txHash`) is
+   * pending, or once it was mined successfully: either way it writes, or wrote, the
+   * metadata, and completing would write it a second time. A reverted transaction changed
+   * nothing. One the RPC does not know was dropped or replaced; the pending-transaction
+   * check and the metadata read that follow cover both.
+   */
+  private async assertEarlierWriteSettled(
+    nftAddress: string,
+    txHash: string
+  ): Promise<void> {
+    const provider = this.signer.provider
+
+    if (!provider)
+      throw new Error(
+        `completePublish: the signer has no provider, so metadata transaction ${txHash} cannot be looked up. Nothing was sent.`
+      )
+
+    const receipt = await provider.getTransactionReceipt(txHash)
+
+    if (receipt) {
+      if (receipt.status === 0) return
+
+      throw new Error(
+        `completePublish: metadata transaction ${txHash} of the earlier attempt was mined in block ${receipt.blockNumber}, so NFT ${nftAddress} has its metadata and there is no publish left to complete. Nothing was sent. Use edit() to change it.`
+      )
+    }
+
+    if (await provider.getTransaction(txHash))
+      throw new Error(
+        `completePublish: metadata transaction ${txHash} of the earlier attempt is still pending. Once mined, it gives NFT ${nftAddress} its metadata, so completing now would write it twice. Nothing was sent. Wait until it is mined or dropped, then call completePublish() again.`
+      )
+  }
+
+  /**
+   * Refuses to complete while the signer has transactions that are not mined yet
+   * (`getNonce('pending')` above `getNonce('latest')`). One of them may be the earlier
+   * attempt's metadata transaction: the NFT reads as having no metadata until it is mined,
+   * so completing now could write the metadata twice. Any pending transaction of the
+   * signer counts, since nautilus cannot tell which it is. Best effort: when the counts
+   * cannot be read, it warns and goes on.
+   */
+  private async assertNoPendingTransactions(nftAddress: string): Promise<void> {
+    let pending: number
+    let latest: number
+    try {
+      ;[pending, latest] = await Promise.all([
+        this.signer.getNonce('pending'),
+        this.signer.getNonce('latest')
+      ])
+    } catch (error) {
+      LoggerInstance.warn(
+        `[publish] completePublish could not read the signer's pending transaction count, so it cannot tell whether an earlier metadata transaction for ${nftAddress} is still pending: ${errorMessage(error)}`
+      )
+      return
+    }
+
+    if (pending > latest)
+      throw new Error(
+        `completePublish: the signer ${await this.signer.getAddress()} has ${pending - latest} transaction(s) not mined yet (nonces ${latest} to ${pending - 1}). One may be the earlier attempt's metadata transaction, and NFT ${nftAddress} reads as having no metadata until it is mined, so completing now could write it twice. Nothing was sent. Wait until they are mined or dropped, then call completePublish() again.`
+      )
+  }
+
+  /**
    * Creates a datatoken, with its pricing, on the NFT for each service.
    *
    * `createDatatokenForService()` sets `service.datatokenAddress` before the pricing, so a
@@ -948,13 +1043,18 @@ export class Nautilus {
     const response = await this.withNftLock(nftAddress, async () => {
       // Inside the lock, so a lifecycle change this instance started for the NFT has landed:
       // a DEPRECATED or REVOKED asset can never take metadata again.
-      assertWritableState(
-        await readMetadataState(
-          new Nft(this.signer, this.config.chainId, this.config),
-          nftAddress
-        ),
-        `NFT ${nftAddress}`
+      const onChainState = await readMetadataState(
+        new Nft(this.signer, this.config.chainId, this.config),
+        nftAddress
       )
+      assertWritableState(onChainState, `NFT ${nftAddress}`)
+
+      // The state the builder took over from the indexed DDO may predate a
+      // setAssetLifecycleState() (or the index may lag one), and writing it would undo that
+      // change. Only a state set on the builder replaces the one on chain.
+      const lifecycleState = asset.hasRequestedLifecycleState
+        ? (asset.lifecycleState ?? 0)
+        : onChainState
       await assertNftPermissions({
         signer: this.signer,
         chainConfig: this.config,
@@ -994,6 +1094,7 @@ export class Nautilus {
           asset,
           nftAddress,
           create: false,
+          lifecycleState,
           remoteStore,
           ddoSigner,
           issuer
@@ -1264,12 +1365,21 @@ export class Nautilus {
     asset: NautilusAsset
     nftAddress: string
     create: boolean
+    /** The lifecycle state to write with the metadata. */
+    lifecycleState: number
     remoteStore: RemoteStore
     ddoSigner: DdoSigner
     /** Resolved before the first transaction, so it is not asked for twice. */
     issuer: string
   }): Promise<Omit<PublishResponse, 'nftAddress' | 'services' | 'indexed'>> {
-    const { asset, nftAddress, create, remoteStore, ddoSigner } = params
+    const {
+      asset,
+      nftAddress,
+      create,
+      lifecycleState,
+      remoteStore,
+      ddoSigner
+    } = params
 
     const ddo = await asset.ddo.getDDO(this.node, {
       create,
@@ -1311,12 +1421,11 @@ export class Nautilus {
       did: ddo.id as string
     })
 
-    const lifecycleState = (asset.lifecycleState ?? 0) as number
-
     // From here the envelope is stored. A failure while no transaction can point at it
     // (before the broadcast, or after a mined revert) orphans it, so it is removed again;
     // once the transaction may be on chain it is kept.
     let sent = false
+    let txHash: string | undefined
     let setMetadataTxReceipt: TransactionReceipt
     try {
       // Read the stored object back the way the node will, before the transaction, so an
@@ -1333,8 +1442,9 @@ export class Nautilus {
         nodeUri: this.config.oceanNodeUri as string,
         lifecycleState,
         prepared,
-        onProgress: (progress) => {
+        onProgress: (progress, hash) => {
           sent = progress === 'sent'
+          txHash = hash ?? txHash
         }
       })
     } catch (error) {
@@ -1342,7 +1452,8 @@ export class Nautilus {
         remoteStore,
         storedPointer: prepared.storedPointer,
         metadataHash: prepared.written.metadataHash,
-        sent
+        sent,
+        ...(txHash ? { txHash } : {})
       })
     }
 

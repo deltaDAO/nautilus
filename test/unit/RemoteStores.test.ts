@@ -680,6 +680,31 @@ describe('IpfsRemoteStore', () => {
         expect(thrown.message).to.match(/timed out after 1000 ms/)
         expect(thrown.cause).to.be.instanceOf(RequestTimeoutError)
       })
+
+      it('clamps a timeout above 2^31 − 1 ms to that, as setTimeout takes it', async () => {
+        const fetchImpl = vi.fn(
+          (_url: string, init: RequestInit) =>
+            new Promise<Response>((_, reject) =>
+              init.signal?.addEventListener('abort', () =>
+                reject(new Error('aborted'))
+              )
+            )
+        )
+
+        const waiting = new IpfsRemoteStore({
+          uploadUrl: 'https://ipfs.test/add',
+          requestTimeoutMs: 1e12,
+          fetchImpl: fetchImpl as unknown as typeof fetch
+        })
+          .put('{}', { did: 'did:ope:1' })
+          .catch((error) => error)
+        await vi.advanceTimersByTimeAsync(2 ** 31)
+
+        expect((await waiting).message).to.match(
+          /timed out after 2147483647 ms/
+        )
+        expect(vi.getTimerCount()).to.equal(0)
+      })
     })
   })
 
@@ -733,6 +758,30 @@ describe('IpfsRemoteStore', () => {
         )
         expect(message, name).not.to.contain('hunter2')
       }
+    })
+
+    it('refuses a requestTimeoutMs that is not a positive finite number, up front', () => {
+      // fetchText would throw a RangeError on every request instead.
+      for (const requestTimeoutMs of [-1, 0, Number.NaN, Infinity, '1000'])
+        expect(
+          () =>
+            new IpfsRemoteStore({
+              uploadUrl: 'https://ipfs.test/add',
+              requestTimeoutMs: requestTimeoutMs as number
+            }),
+          String(requestTimeoutMs)
+        ).to.throw(
+          /^IpfsRemoteStore: requestTimeoutMs must be a finite number of milliseconds, more than 0/
+        )
+
+      for (const requestTimeoutMs of [undefined, 1, 60_000, 2 ** 40])
+        expect(
+          () =>
+            new IpfsRemoteStore({
+              uploadUrl: 'https://ipfs.test/add',
+              requestTimeoutMs
+            })
+        ).not.to.throw()
     })
 
     it('refuses a malformed probe up front', () => {

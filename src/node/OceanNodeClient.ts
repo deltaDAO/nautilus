@@ -59,7 +59,8 @@ import {
   errorMessage,
   type FetchedText,
   fetchText,
-  MAX_TIMER_MS
+  MAX_TIMER_MS,
+  RequestTimeoutError
 } from '../utils/http.js'
 import { assertSecureTransport, parseHttpUrl } from '../utils/transport.js'
 import { warnOnce } from '../utils/warn.js'
@@ -248,9 +249,9 @@ export interface WaitForIndexerOptions {
    * indexing state when there is a `txid`), so one wait stays at or below 18 requests a
    * minute, under ocean-node's default `MAX_REQ_PER_MINUTE` of 30 per IP. When the node
    * answers 429 (or 403 "Too many active connections"), the next poll waits longer:
-   * `2 × intervalMs`, doubling with each rate-limit answer in a row, and at least as long
-   * as the node asks (`Retry-After`, or "Try again in N seconds") plus 1 s; never more
-   * than 60 s.
+   * `2 × intervalMs` (counting an `intervalMs` under 1 s as 1 s), doubling with each
+   * rate-limit answer in a row, and at least as long as the node asks (`Retry-After`, or
+   * "Try again in N seconds") plus 1 s; never more than 60 s.
    */
   intervalMs?: number
   /**
@@ -260,7 +261,8 @@ export interface WaitForIndexerOptions {
   timeoutMs?: number
   /**
    * Timeout for each request to the node, capped by what is left of `timeoutMs` (but at
-   * least 1 s, or `requestTimeoutMs` when that is shorter). Default 15 s.
+   * least 1 s, or `requestTimeoutMs` when that is shorter). Default 15 s. Over P2P it
+   * bounds each asset lookup as a whole, ocean.js's own dial and retries included.
    */
   requestTimeoutMs?: number
   /**
@@ -276,6 +278,12 @@ export interface WaitForIndexerOptions {
 const DEFAULT_INDEXER_INTERVAL_MS = 7_000
 /** The longest wait after a rate-limit answer. */
 const MAX_RATE_LIMIT_BACKOFF_MS = 60_000
+/**
+ * The least `intervalMs` the rate-limit backoff doubles from, so an `intervalMs` of 0 (or a
+ * few ms) still backs off by seconds: a 403 "Too many active connections" has no
+ * `Retry-After`.
+ */
+const MIN_RATE_LIMIT_BACKOFF_BASE_MS = 1_000
 const DEFAULT_INDEXER_TIMEOUT_MS = 300_000
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000
 const DEFAULT_MAX_CONSECUTIVE_FAILURES = 5
@@ -676,7 +684,8 @@ export class OceanNodeClient {
    * 403 "Too many active connections") is not a failure: the next poll waits longer (see
    * `WaitForIndexerOptions.intervalMs`), never more than 60 s.
    *
-   * Each request has its own timeout (`requestTimeoutMs`). After `maxConsecutiveFailures`
+   * Each request has its own timeout (`requestTimeoutMs`); over P2P it bounds each lookup.
+   * The read-only GETs follow redirects (see `getPublic`). After `maxConsecutiveFailures`
    * failed asset lookups in a row this throws an `OceanNodeError` with the last error, so a
    * wrong node URL or a node that answers 500 is reported as such rather than as "not
    * indexed". When `timeoutMs` is up, one last lookup runs; then this throws an
@@ -782,7 +791,8 @@ export class OceanNodeClient {
         lastRateLimit = rateLimited
         const backoff = Math.min(
           MAX_RATE_LIMIT_BACKOFF_MS,
-          Math.max(intervalMs, 1) * 2 ** Math.min(rateLimits, 10)
+          Math.max(intervalMs, MIN_RATE_LIMIT_BACKOFF_BASE_MS) *
+            2 ** Math.min(rateLimits, 10)
         )
         delay = Math.min(
           MAX_RATE_LIMIT_BACKOFF_MS,
@@ -824,7 +834,7 @@ export class OceanNodeClient {
    *
    * Over HTTP this reads `GET /api/aquarius/assets/ddo/<did>` itself, so a failing request
    * is told apart from a 404 ("not indexed yet"). Over P2P it falls back to ocean.js's
-   * `waitForIndexer` with one retry and no delay, which cannot tell the two apart.
+   * `waitForIndexer` with one retry and no delay (see `lookupIndexedP2p`).
    */
   private async lookupIndexed(
     did: string,
@@ -832,25 +842,13 @@ export class OceanNodeClient {
     signal: AbortSignal | undefined,
     timeoutMs: number
   ): Promise<Lookup> {
-    if (!isHttpUri(this.nodeUri)) {
-      const asset = await this.aquarius
-        .waitForIndexer(did, txid, signal, 0, 1)
-        .catch(() => null)
-
-      return asset
-        ? { kind: 'indexed', asset: asset as unknown as AssetV5 }
-        : { kind: 'pending' }
-    }
+    if (!isHttpUri(this.nodeUri))
+      return this.lookupIndexedP2p(did, txid, signal, timeoutMs)
 
     const url = `${this.nodeUri.replace(/\/+$/, '')}/api/aquarius/assets/ddo/${encodeURIComponent(did)}`
 
     try {
-      const response = await fetchText(
-        fetch,
-        url,
-        { method: 'GET', headers: { Accept: 'application/json' } },
-        { timeoutMs, signal }
-      )
+      const response = await this.getPublic(url, timeoutMs, signal)
 
       if (response.status === 404) return { kind: 'pending' }
       if (isRateLimited(response))
@@ -890,6 +888,85 @@ export class OceanNodeClient {
   }
 
   /**
+   * A P2P lookup through ocean.js's `waitForIndexer`, bounded by `timeoutMs`.
+   *
+   * ocean.js 9.2.1 bounds the stages of a P2P call (10 s to dial, 60 s per idle read), not
+   * the call: it retries a failed dial up to 5 times, and neither its wait for a free
+   * request slot nor its backoff between retries looks at the signal. So the call gets a
+   * signal that also aborts after `timeoutMs`, and is raced against that, so a call that
+   * does not settle cannot hold up the wait's deadline or its failure count.
+   *
+   * ocean.js swallows its own errors, so its answer is the asset or "not yet"; only running
+   * out of `timeoutMs` is reported as a failed lookup.
+   */
+  private async lookupIndexedP2p(
+    did: string,
+    txid: string | undefined,
+    signal: AbortSignal | undefined,
+    timeoutMs: number
+  ): Promise<Lookup> {
+    if (signal?.aborted) throw signal.reason
+
+    const controller = new AbortController()
+    let stop!: (reason: unknown) => void
+    const stopped = new Promise<never>((_, reject) => {
+      stop = reject
+    })
+    // `stopped` is rejected before `controller` aborts, so the race settles with it, not
+    // with the `null` that ocean.js turns its own abort into.
+    const halt = (reason: unknown) => {
+      stop(reason)
+      controller.abort(reason)
+    }
+    const timer = setTimeout(
+      () => halt(new RequestTimeoutError(timeoutMs)),
+      Math.min(timeoutMs, MAX_TIMER_MS)
+    )
+    const onAbort = () => halt(signal?.reason)
+    signal?.addEventListener('abort', onAbort, { once: true })
+
+    try {
+      const asset = await Promise.race([
+        this.aquarius
+          .waitForIndexer(did, txid, controller.signal, 0, 1)
+          .catch(() => null),
+        stopped
+      ])
+
+      return asset
+        ? { kind: 'indexed', asset: asset as unknown as AssetV5 }
+        : { kind: 'pending' }
+    } catch (error) {
+      if (signal?.aborted) throw signal.reason
+
+      return { kind: 'failed', error }
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+    }
+  }
+
+  /**
+   * A read-only `GET` to the node that follows redirects, e.g. from a reverse proxy in front
+   * of `/api/aquarius`. Safe because it carries no credentials (no `Authorization`, no
+   * token, no body), only `Accept`. The transport rule still applies to where it ends:
+   * `fetchText` refuses a redirect to plain `http://` on a non-loopback host, unless the
+   * node URI is such a URL already (`allowInsecureTransport`).
+   */
+  private getPublic(
+    url: string,
+    timeoutMs: number,
+    signal: AbortSignal | undefined
+  ): Promise<FetchedText> {
+    return fetchText(
+      fetch,
+      url,
+      { method: 'GET', headers: { Accept: 'application/json' } },
+      { timeoutMs, signal, followRedirects: true }
+    )
+  }
+
+  /**
    * The node's own address (`providerAddress` in `GET /`), or `undefined` when the node
    * does not say or is reached over P2P. The indexer signs its decrypt calls with this key.
    *
@@ -901,11 +978,10 @@ export class OceanNodeClient {
 
     let response: Awaited<ReturnType<typeof fetchText>>
     try {
-      response = await fetchText(
-        fetch,
+      response = await this.getPublic(
         `${this.nodeUri.replace(/\/+$/, '')}/`,
-        { method: 'GET', headers: { Accept: 'application/json' } },
-        { timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS, signal }
+        DEFAULT_REQUEST_TIMEOUT_MS,
+        signal
       )
     } catch (error) {
       if (signal?.aborted) throw error
@@ -955,11 +1031,10 @@ export class OceanNodeClient {
 
     let response: Awaited<ReturnType<typeof fetchText>>
     try {
-      response = await fetchText(
-        fetch,
+      response = await this.getPublic(
         `${this.nodeUri.replace(/\/+$/, '')}/api/services/nonce?userAddress=${nodeAddress}`,
-        { method: 'GET', headers: { Accept: 'application/json' } },
-        { timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS, signal }
+        DEFAULT_REQUEST_TIMEOUT_MS,
+        signal
       )
     } catch (error) {
       if (signal?.aborted) throw error
@@ -1040,7 +1115,7 @@ export class OceanNodeClient {
     const url = `${this.nodeUri.replace(/\/+$/, '')}/api/aquarius/state/ddo?${key}=${encodeURIComponent(value)}`
 
     const response = await attempt('getIndexingState', () =>
-      fetchText(fetch, url, { method: 'GET' }, { timeoutMs, signal })
+      this.getPublic(url, timeoutMs, signal)
     ).catch((error) => {
       // Like the other calls: an abort rejects with the signal's own reason.
       if (signal?.aborted) throw signal.reason

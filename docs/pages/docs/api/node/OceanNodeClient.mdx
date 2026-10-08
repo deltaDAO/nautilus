@@ -51,6 +51,13 @@ const node = new OceanNodeClient({
 `waitForIndexer(did, txid?, options?)` · `getIndexingState({ did } | { nft } | { txId }, signal?)` ·
 `getNodeAddress(signal?)` · `getIndexerNonceState(signal?)` · `validateRemote(ddo)`
 
+The `GET`s behind `waitForIndexer`, `getIndexingState`, `getNodeAddress` and
+`getIndexerNonceState` carry no credentials and no body, so they follow redirects, for
+example from a reverse proxy in front of `/api/aquarius`. The transport rule still applies
+where a redirect ends: plain `http://` on a host other than loopback is refused (an
+`OceanNodeError`), unless the node URI is plain `http://` already
+(`allowInsecureTransport`).
+
 ### getIndexingState
 
 The indexer's record for an asset or a transaction — the only place a node reports **why** an

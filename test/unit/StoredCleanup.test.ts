@@ -9,7 +9,14 @@
  * a mined revert, which points at nothing either.
  */
 import type { StorageObject } from '@oceanprotocol/lib'
-import { makeError, type TransactionReceipt, Wallet } from 'ethers'
+import {
+  isError,
+  JsonRpcSigner,
+  makeError,
+  type Signer,
+  type TransactionReceipt,
+  Wallet
+} from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FailedWithStoredObject } from '../../src/@types/Publish.js'
 import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
@@ -29,6 +36,9 @@ const PRIVATE_KEY =
   '0x0123456789012345678901234567890123456789012345678901234567890123'
 
 const HASH = `0x${'ab'.repeat(32)}`
+
+/** The hash of a metadata transaction the RPC accepted. */
+const SENT_HASH = `0x${'5e'.repeat(32)}`
 
 /** The S3 pointer as stored, secret included, and as nautilus hands it back. */
 const S3_POINTER = {
@@ -304,23 +314,41 @@ describe('writeMetadata', () => {
     const signer = new Wallet(PRIVATE_KEY)
     const sendTransaction = vi.fn(send)
     signer.sendTransaction = sendTransaction as never
+
+    return { ...(await writeWith(signer, chainConfig)), sendTransaction }
+  }
+
+  /** `writeMetadata()` with `signer`, recording where the write got to and its hashes. */
+  async function writeWith(
+    signer: Signer,
+    chainConfig: Record<string, unknown> = {},
+    whileWriting?: () => Promise<void>
+  ) {
     const progress: MetadataWriteProgress[] = []
+    const hashes: (string | undefined)[] = []
+    const ready = await prepared()
+
+    const writing = writeMetadata({
+      signer,
+      chainConfig: { chainId: 32456, ...chainConfig } as never,
+      nftAddress: NFT_ADDRESS,
+      nodeUri: 'https://node.test.invalid',
+      lifecycleState: 0,
+      prepared: ready,
+      onProgress: (stage, hash) => {
+        progress.push(stage)
+        hashes.push(hash)
+      }
+    }).then(
+      (receipt) => ({ receipt }),
+      (error: Error) => ({ error })
+    )
+    await whileWriting?.()
 
     const result: { receipt?: TransactionReceipt; error?: Error } =
-      await writeMetadata({
-        signer,
-        chainConfig: { chainId: 32456, ...chainConfig } as never,
-        nftAddress: NFT_ADDRESS,
-        nodeUri: 'https://node.test.invalid',
-        lifecycleState: 0,
-        prepared: await prepared(),
-        onProgress: (stage) => progress.push(stage)
-      }).then(
-        (receipt) => ({ receipt }),
-        (error: Error) => ({ error })
-      )
+      await writing
 
-    return { ...result, progress, sendTransaction }
+    return { ...result, progress, hashes }
   }
 
   /** A broadcast transaction whose `wait()` does `wait`. */
@@ -344,7 +372,13 @@ describe('writeMetadata', () => {
   })
 
   it('reports nothing when the wallet or the RPC refuses the transaction', async () => {
-    for (const code of ['ACTION_REJECTED', 'INSUFFICIENT_FUNDS'] as const) {
+    for (const code of [
+      'ACTION_REJECTED',
+      'INSUFFICIENT_FUNDS',
+      'REPLACEMENT_UNDERPRICED',
+      'INVALID_ARGUMENT',
+      'UNSUPPORTED_OPERATION'
+    ] as const) {
       const refusal = makeError(`refused: ${code}`, code, {} as never)
 
       const { error, progress } = await write(async () => {
@@ -356,11 +390,120 @@ describe('writeMetadata', () => {
     }
   })
 
+  it('reports "sent" for a refusal code that carries the hash of a broadcast transaction', async () => {
+    for (const [code, info] of [
+      ['INVALID_ARGUMENT', { info: { sendTransactionHash: SENT_HASH } }],
+      ['UNSUPPORTED_OPERATION', { info: { sendTransactionHash: SENT_HASH } }],
+      ['ACTION_REJECTED', { transactionHash: SENT_HASH }],
+      ['INSUFFICIENT_FUNDS', { hash: SENT_HASH }]
+    ] as const) {
+      const failure = makeError(`failed: ${code}`, code, info as never)
+
+      const { error, progress, hashes } = await write(async () => {
+        throw failure
+      })
+
+      expect(error).to.equal(failure)
+      expect(progress).to.deep.equal(['sent'])
+      expect(hashes).to.deep.equal([SENT_HASH])
+    }
+  })
+
+  describe("with ethers' JsonRpcSigner (a BrowserProvider wallet)", () => {
+    /**
+     * A JSON-RPC backend whose `eth_sendTransaction` accepts the transaction, and whose
+     * `getTransaction` then fails with `failure` every time: the polling ethers does after
+     * the send, in `JsonRpcSigner.sendTransaction`.
+     */
+    function jsonRpcSigner(failure: () => Error) {
+      const getTransaction = vi.fn(async () => {
+        throw failure()
+      })
+      const provider = {
+        getBlockNumber: async () => 7,
+        estimateGas: async () => 100_000n,
+        getRpcTransaction: (tx: unknown) => tx,
+        send: async (method: string) => {
+          if (method !== 'eth_sendTransaction')
+            throw new Error(`unexpected ${method}`)
+          return SENT_HASH
+        },
+        getTransaction,
+        emit: () => undefined,
+        _setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms)
+      }
+
+      return {
+        signer: new JsonRpcSigner(
+          provider as never,
+          new Wallet(PRIVATE_KEY).address
+        ),
+        getTransaction
+      }
+    }
+
+    beforeEach(() => {
+      chain.setMetadataTx = async () => ({ to: NFT_ADDRESS, data: '0x' })
+    })
+
+    it('reports "sent" when the polling gives up with INVALID_ARGUMENT', async () => {
+      const { signer, getTransaction } = jsonRpcSigner(() =>
+        makeError('invalid transaction', 'INVALID_ARGUMENT', {
+          argument: 'hash',
+          value: SENT_HASH
+        } as never)
+      )
+
+      vi.useFakeTimers()
+      try {
+        const { error, progress, hashes } = await writeWith(
+          signer,
+          {},
+          async () => {
+            // ethers retries after 100 ms, 1 s, then every 4 s, and gives up after 11.
+            await vi.advanceTimersByTimeAsync(60_000)
+          }
+        )
+
+        expect(getTransaction).toHaveBeenCalledTimes(11)
+        expect(isError(error, 'INVALID_ARGUMENT')).to.equal(true)
+        expect(
+          (error as { info?: { sendTransactionHash?: string } }).info
+            ?.sendTransactionHash
+        ).to.equal(SENT_HASH)
+        expect(progress).to.deep.equal(['sent'])
+        expect(hashes).to.deep.equal([SENT_HASH])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('reports "sent" when the polling gives up with UNSUPPORTED_OPERATION', async () => {
+      const { signer } = jsonRpcSigner(() =>
+        makeError('provider destroyed', 'UNSUPPORTED_OPERATION', {
+          operation: 'getTransaction'
+        } as never)
+      )
+
+      const { error, progress, hashes } = await writeWith(signer)
+
+      expect(isError(error, 'UNSUPPORTED_OPERATION')).to.equal(true)
+      expect(progress).to.deep.equal(['sent'])
+      expect(hashes).to.deep.equal([SENT_HASH])
+    })
+  })
+
   it('reports "sent" when the send fails in a way that may follow the broadcast', async () => {
     for (const failure of [
       makeError('request timed out', 'TIMEOUT', {} as never),
       makeError('connection reset', 'NETWORK_ERROR', {} as never),
-      new Error('custom signer failed')
+      new Error('custom signer failed'),
+      // ethers raises this for a request already at the RPC when the provider is destroyed.
+      makeError(
+        'provider destroyed; cancelled request',
+        'UNSUPPORTED_OPERATION',
+        { operation: 'eth_sendRawTransaction' } as never
+      )
     ]) {
       const { error, progress } = await write(async () => {
         throw failure
@@ -409,30 +552,67 @@ describe('writeMetadata', () => {
     expect(returned.error?.message).to.match(/mined in block 7 but reverted/)
   })
 
-  it('reports "reverted" for a transaction another one cancelled, and keeps "sent" for a repriced one', async () => {
-    const replaced = (reason: string) =>
-      makeError('transaction was replaced', 'TRANSACTION_REPLACED', {
-        cancelled: reason !== 'repriced',
-        reason,
-        hash: '0xreplacement',
-        receipt: RECEIPT
-      } as never)
+  /** ethers' `TRANSACTION_REPLACED`, as `TransactionResponse.wait()` throws it. */
+  const replaced = (reason: string, receipt: object = REPLACEMENT) =>
+    makeError('transaction was replaced', 'TRANSACTION_REPLACED', {
+      cancelled: reason !== 'repriced',
+      reason,
+      hash: '0xreplacement',
+      replacement: { hash: '0xreplacement' },
+      receipt
+    } as never)
 
-    const cancelled = await write(
-      sent(async () => {
-        throw replaced('cancelled')
-      })
-    )
-    expect(cancelled.progress).to.deep.equal(['sent', 'reverted'])
-    expect(cancelled.error?.message).to.match(/was replaced by 0xreplacement/)
+  const REPLACEMENT = { hash: '0xreplacement', blockNumber: 8, status: 1 }
 
-    // Same data at a higher fee: the replacement carries this metadata.
-    const repriced = await write(
+  it('reports "reverted" for a transaction another one cancelled or replaced', async () => {
+    for (const reason of ['cancelled', 'replaced']) {
+      const { progress, error } = await write(
+        sent(async () => {
+          throw replaced(reason)
+        })
+      )
+      expect(progress).to.deep.equal(['sent', 'reverted'])
+      expect(error?.message).to.match(/was replaced by 0xreplacement/)
+    }
+  })
+
+  it('returns the receipt of a sped-up replacement, which carries this metadata', async () => {
+    // MetaMask's "speed up": same to, data and value at a higher fee (reason 'repriced').
+    const { receipt, error, progress } = await write(
       sent(async () => {
         throw replaced('repriced')
       })
     )
-    expect(repriced.progress).to.deep.equal(['sent'])
+
+    expect(error).to.equal(undefined)
+    expect(receipt).to.equal(REPLACEMENT)
+    expect(progress).to.deep.equal(['sent'])
+  })
+
+  it('reports "reverted" for a sped-up replacement that reverted', async () => {
+    const { error, progress, hashes } = await write(
+      sent(async () => {
+        throw replaced('repriced', { ...REPLACEMENT, status: 0 })
+      })
+    )
+
+    expect(progress).to.deep.equal(['sent', 'reverted'])
+    expect(hashes).to.deep.equal(['0xsent', '0xreplacement'])
+    expect(error?.message).to.match(
+      /setMetadata transaction 0xsent, sped up as 0xreplacement, was mined in block 8 but reverted, so it did not change the metadata/
+    )
+  })
+
+  it('keeps "sent" for a sped-up replacement without a usable receipt', async () => {
+    const odd = replaced('repriced', { ...REPLACEMENT, status: null })
+    const { error, progress } = await write(
+      sent(async () => {
+        throw odd
+      })
+    )
+
+    expect(error).to.equal(odd)
+    expect(progress).to.deep.equal(['sent'])
   })
 
   it('keeps "sent" when the receipt never comes', async () => {

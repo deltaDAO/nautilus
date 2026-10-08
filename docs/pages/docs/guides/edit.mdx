@@ -236,6 +236,10 @@ It resolves once the transaction is mined, and returns `undefined` without sendi
 when the asset is already in that state. If you are changing metadata anyway, set it on the
 builder instead with [`setLifecycleState`](/docs/api/assetbuilder/setLifecycleState).
 
+Without `setLifecycleState`, `edit()` writes the state the NFT has on chain at that moment,
+not the one in the asset you built from. So an edit built from a copy you fetched before
+unlisting the asset keeps it unlisted.
+
 :::warning[DEPRECATED and REVOKED are one-way]
 On ocean-node, moving an active asset to `DEPRECATED` (2) or `REVOKED_BY_PUBLISHER` (3)
 makes the indexer **replace the whole DDO with a stub** that keeps only the NFT state.

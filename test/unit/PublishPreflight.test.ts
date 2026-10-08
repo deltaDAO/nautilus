@@ -79,7 +79,13 @@ const nftState = vi.hoisted(() => ({
   /** Metadata events in the receipt's block, for the same-block check. */
   blockEvents: undefined as
     | { transactionHash: string; index: number }[]
-    | undefined
+    | undefined,
+  /** The signer's transaction counts, `getTransactionCount(signer, tag)`. */
+  nonces: { pending: 4, latest: 4 },
+  /** Mined transactions, by hash. */
+  receipts: {} as Record<string, { status: number; blockNumber: number }>,
+  /** Transactions the RPC knows but has not mined. */
+  pendingTxs: [] as string[]
 }))
 
 vi.mock('@oceanprotocol/lib', async (importOriginal) => {
@@ -208,6 +214,8 @@ const STORED_CID = vi.hoisted(
   () => 'bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy'
 )
 const SIGNER_ADDRESS = new Wallet(PRIVATE_KEY).address
+/** A metadata transaction an earlier, failed attempt sent. */
+const EARLIER_TX = `0xe4${'11'.repeat(31)}`
 const SECOND_DATATOKEN = '0x1111111111111111111111111111111111111111'
 const FOREIGN_DATATOKEN = '0x2222222222222222222222222222222222222222'
 
@@ -250,7 +258,13 @@ async function createNautilus(
 }> {
   const wallet = new Wallet(PRIVATE_KEY)
   const signer = wallet.connect({
-    getNetwork: async () => ({ chainId: BigInt(CHAIN_ID) })
+    getNetwork: async () => ({ chainId: BigInt(CHAIN_ID) }),
+    getTransactionCount: async (_address: string, tag: 'pending' | 'latest') =>
+      nftState.nonces[tag],
+    getTransactionReceipt: async (hash: string) =>
+      nftState.receipts[hash] ? { hash, ...nftState.receipts[hash] } : null,
+    getTransaction: async (hash: string) =>
+      nftState.pendingTxs.includes(hash) ? { hash, blockNumber: null } : null
   } as never)
 
   const nautilus = await Nautilus.create(signer, {
@@ -291,6 +305,9 @@ beforeEach(() => {
   nftState.datatokens = [DATATOKEN_ADDRESS]
   nftState.permissions = { updateMetadata: true, deployERC20: true }
   nftState.blockEvents = undefined
+  nftState.nonces = { pending: 4, latest: 4 }
+  nftState.receipts = {}
+  nftState.pendingTxs = []
   freeDispenser.owner = SIGNER_ADDRESS
   freeDispenser.paymentCollector = SIGNER_ADDRESS
   vi.mocked(writeMetadata).mockImplementation(
@@ -502,6 +519,27 @@ describe('publish after the mint', () => {
     expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
   })
 
+  it('records the hash of a metadata transaction that may still land', async () => {
+    const { nautilus } = await createNautilus()
+
+    vi.mocked(writeMetadata).mockImplementationOnce(async ({ onProgress }) => {
+      onProgress?.('sent', EARLIER_TX)
+      throw new Error('wait for transaction timeout')
+    })
+
+    const thrown = (await nautilus
+      .publish(validAsset())
+      .catch((error) => error)) as PublishIncompleteError
+
+    expect(thrown).to.be.instanceOf(PublishIncompleteError)
+    expect(thrown.stored?.cleanup).to.equal('kept')
+    expect(thrown.stored?.txHash).to.equal(EARLIER_TX)
+    expect(thrown.message).to.contain(`metadata transaction ${EARLIER_TX}`)
+    expect(thrown.message).to.match(
+      /Wait until it is mined or dropped.*metadataTxHash.*still pending/
+    )
+  })
+
   it('passes an indexing failure through, carrying the publish result', async () => {
     const indexingError = new IndexingError(ASSET_DID, {
       valid: false,
@@ -640,6 +678,98 @@ describe('publish with datatokens left from an earlier attempt', () => {
       true,
       undefined
     ])
+  })
+})
+
+describe('completePublish while an earlier metadata transaction may land', () => {
+  it('refuses while the signer has a transaction that is not mined yet', async () => {
+    const { nautilus } = await createNautilus()
+    nftState.nonces = { pending: 5, latest: 4 }
+
+    await expectThrowsAsync(
+      () => nautilus.completePublish(NFT_ADDRESS, validAsset()),
+      /signer 0x.* has 1 transaction\(s\) not mined yet \(nonces 4 to 4\).*write it twice.*Nothing was sent/
+    )
+    expect(vi.mocked(createDatatokenForService)).not.toHaveBeenCalled()
+    expect(vi.mocked(createPricingForDatatoken)).not.toHaveBeenCalled()
+    expect(vi.mocked(prepareMetadataForWrite)).not.toHaveBeenCalled()
+    expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+
+    // Once it is mined, and the NFT still has no metadata, completing goes ahead.
+    nftState.nonces = { pending: 5, latest: 5 }
+    await nautilus.completePublish(NFT_ADDRESS, validAsset())
+    expect(vi.mocked(writeMetadata)).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses while the given metadata transaction is pending, or once it succeeded', async () => {
+    const { nautilus } = await createNautilus()
+
+    nftState.pendingTxs = [EARLIER_TX]
+    await expectThrowsAsync(
+      () =>
+        nautilus.completePublish(NFT_ADDRESS, validAsset(), {
+          metadataTxHash: EARLIER_TX
+        }),
+      /metadata transaction 0xe4.* is still pending.*Nothing was sent/
+    )
+
+    nftState.pendingTxs = []
+    nftState.receipts = { [EARLIER_TX]: { status: 1, blockNumber: 9 } }
+    await expectThrowsAsync(
+      () =>
+        nautilus.completePublish(NFT_ADDRESS, validAsset(), {
+          metadataTxHash: EARLIER_TX
+        }),
+      /was mined in block 9.*Nothing was sent.*edit\(\)/
+    )
+
+    expect(vi.mocked(prepareMetadataForWrite)).not.toHaveBeenCalled()
+    expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+  })
+
+  it('completes after the given transaction reverted or was dropped', async () => {
+    const { nautilus } = await createNautilus()
+
+    nftState.receipts = { [EARLIER_TX]: { status: 0, blockNumber: 9 } }
+    await nautilus.completePublish(NFT_ADDRESS, validAsset(), {
+      metadataTxHash: EARLIER_TX
+    })
+
+    // Unknown to the RPC: dropped, or replaced by another transaction with its nonce.
+    nftState.receipts = {}
+    await nautilus.completePublish(NFT_ADDRESS, validAsset(), {
+      metadataTxHash: EARLIER_TX
+    })
+
+    expect(vi.mocked(writeMetadata)).toHaveBeenCalledTimes(2)
+  })
+
+  it('refuses a metadataTxHash that is not a transaction hash', async () => {
+    const { nautilus } = await createNautilus()
+
+    await expectThrowsAsync(
+      () =>
+        nautilus.completePublish(NFT_ADDRESS, validAsset(), {
+          metadataTxHash: '0x1234'
+        }),
+      /metadataTxHash 0x1234 is not a transaction hash/
+    )
+    expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+  })
+
+  it('warns and goes on when the transaction counts cannot be read', async () => {
+    const warn = vi
+      .spyOn(LoggerInstance, 'warn')
+      .mockImplementation(() => undefined)
+    const { nautilus } = await createNautilus()
+    nftState.nonces = undefined as never
+
+    await nautilus.completePublish(NFT_ADDRESS, validAsset())
+
+    expect(String(warn.mock.calls[0]?.[0])).to.match(
+      /could not read the signer's pending transaction count/
+    )
+    expect(vi.mocked(writeMetadata)).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -1330,6 +1460,43 @@ describe('lifecycle state', () => {
     )
     expect(vi.mocked(createDatatokenForService)).not.toHaveBeenCalled()
     expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+  })
+
+  it('edit() keeps the state on chain unless the builder asks for another', async () => {
+    const { nautilus } = await createNautilus()
+    // Unlisted on chain after the asset was fetched: the copy still says ACTIVE (0).
+    nftState.state = 5
+    const fixture = getAssetFixture()
+
+    const inherited = new AssetBuilder(fixture).build()
+    expect(inherited.lifecycleState).to.equal(0)
+    expect(inherited.hasRequestedLifecycleState).to.equal(false)
+
+    await nautilus.edit(inherited)
+    expect(vi.mocked(writeMetadata).mock.calls[0][0].lifecycleState).to.equal(5)
+
+    // setLifecycleState(), or an assignment, is a request and wins over the chain.
+    const relisted = new AssetBuilder(fixture).setLifecycleState(0).build()
+    expect(relisted.hasRequestedLifecycleState).to.equal(true)
+    await nautilus.edit(relisted)
+    expect(vi.mocked(writeMetadata).mock.calls[1][0].lifecycleState).to.equal(0)
+
+    const assigned = new AssetBuilder(fixture).build()
+    assigned.lifecycleState = 4
+    await nautilus.edit(assigned)
+    expect(vi.mocked(writeMetadata).mock.calls[2][0].lifecycleState).to.equal(4)
+  })
+
+  it('publish() and completePublish() write ACTIVE unless the builder asks for another', async () => {
+    const { nautilus } = await createNautilus()
+
+    await nautilus.publish(validAsset())
+    expect(vi.mocked(writeMetadata).mock.calls[0][0].lifecycleState).to.equal(0)
+
+    const unlisted = validAsset()
+    unlisted.lifecycleState = 5
+    await nautilus.completePublish(NFT_ADDRESS, unlisted)
+    expect(vi.mocked(writeMetadata).mock.calls[1][0].lifecycleState).to.equal(5)
   })
 
   it('refuses to publish for an owner other than the signer, before the mint', async () => {

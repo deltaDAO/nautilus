@@ -153,11 +153,15 @@ way.
   which carries the flag over from the client it is called on. Service endpoints on plain
   `http://` (non-loopback) now fail in `getFileInfo`/`encrypt` unless
   `allowInsecureTransport: true`.
-- nautilus no longer follows redirects on the requests it sends itself: node lookups, every
-  `S3RemoteStore` request, and `IpfsRemoteStore` uploads, `probe`, `unpin` and Kubo `cat`
-  reads. Only the `IpfsRemoteStore` `gatewayUrl` read still follows them, and requests
-  ocean.js sends (`encrypt`, `initialize`, …) are unchanged. If your node or store sits
-  behind a redirect, configure the final URL.
+- nautilus no longer follows redirects on the requests that carry credentials or a body:
+  every `S3RemoteStore` request, and `IpfsRemoteStore` uploads, `probe`, `unpin` and Kubo
+  `cat` reads. If your store sits behind a redirect, configure the final URL. The read-only
+  node GETs and the `IpfsRemoteStore` `gatewayUrl` read do follow them, so a node behind a
+  reverse proxy that redirects `/api/aquarius/…` works for `waitForIndexer`,
+  `getIndexingState`, `getNodeAddress` and `getIndexerNonceState`. A redirect to plain
+  `http://` on a non-loopback host is refused there, unless the URL nautilus requested
+  (e.g. the node URI) is plain `http://` already, with `allowInsecureTransport`. Requests
+  ocean.js sends (`encrypt`, `initialize`, …) are unchanged.
 - `IpfsRemoteStore`: move URL credentials (`https://user:pass@…`) into `headers`
   (`Authorization: 'Basic …'`). A redirecting `uploadUrl`/`probe.url`/`unpin.url` must be
   replaced by its final URL. A custom `unpin` service must answer 404 (or 2xx) for a CID
@@ -175,10 +179,17 @@ way.
 - `edit()` no longer waits for this instance's previous metadata change to be indexed.
   Instead, one instance's writes to an NFT are serialized, and a metadata transaction that
   shares its block with another one for the same NFT throws a `MetadataConflictError`.
+- `edit()` no longer writes the lifecycle state taken from the fetched DDO. To change the
+  state in an edit, call `setLifecycleState()` on the builder; otherwise the state the NFT
+  has on chain at the time of the write is kept (`NautilusAsset.hasRequestedLifecycleState`
+  tells the two apart).
 - A custom `RemoteStore`'s `remove()` is now called by nautilus when no metadata transaction
   can point at the envelope: `publish()`, `completePublish()` or `edit()` stored it and then
   failed before the transaction was sent, or the transaction was rejected, or mined and
-  reverted. It is never called once that transaction may have been mined.
+  reverted. It is never called once that transaction may have been mined. A send error that
+  carries a transaction hash (or ethers' "provider destroyed" for a request already at the
+  RPC) counts as sent: the envelope is kept (`cleanup: 'kept'`), and `stored.txHash` names
+  the transaction when its hash is known.
 - The JWS a custom `DdoSigner` returns is decoded before it is stored, and its payload (`vc`
   unwrapped, as the node does) must be the validated DDO. Allowed on top: the JWT registered
   claims (`iss`, `sub`, `aud`, `exp`, `nbf`, `iat`, `jti`), `type: ['VerifiableCredential']`,
@@ -209,11 +220,18 @@ way.
   allowance with the publish-market fee and the purchase where they share a token and
   spender. If you approve the provider fee before calling them, you can drop that approval
   (or keep it: an allowance that already covers the sum is not approved again).
+- `payer` in `order()`/`settleOrder()` must be omitted or be the signer's address (any
+  case); another address throws "The payer … is not the signer …" before any allowance read
+  or transaction. It could not work before either: the contracts pull from `msg.sender`. To
+  pay from another account, sign with that account.
 - `waitForIndexer` polls every 7 s by default (at most 18 requests a minute, under the node's
   default rate limit of 30) and backs off on a `429` or a `403` "Too many active
   connections" instead of counting it as a failed request, never waiting more than 60 s.
 - `waitForIndexer({ timeoutMs: Infinity })` (or `NaN`/negative values for any timing option)
   now throws an `OceanNodeError`; pass a large finite number.
+- `waitForIndexer` over a P2P node URI cuts each lookup off after `requestTimeoutMs`
+  (default 15 s, capped by the time left) and counts it as a failed lookup towards
+  `maxConsecutiveFailures`. Raise `requestTimeoutMs` if your peer needs longer to dial.
 
 **New:**
 
@@ -231,7 +249,9 @@ way.
   front of the bucket must let S3's `AccessDenied` through. Bucket names must follow the S3
   rules (lowercase, 3–63 characters, no IP address), and dotted buckets over https need
   `forcePathStyle: true`. The pointer's endpoint always carries a lowercase scheme, and
-  `remove()` refuses keys `put()` would not have written.
+  `remove()` refuses keys `put()` would not have written. `endpoint` and `nodeEndpoint` must
+  not carry `user:password@` (the constructor throws): S3 auth uses `readCredentials` and
+  `writeCredentials` only.
 - `PublishResponse.stored` — `{ pointer, metadataHash }`: the store's pointer (for IPFS, the
   CID to unpin), redacted, and the on-chain hash.
 - `OceanNodeClient.getIndexingState({ did } | { nft } | { txId })` — the node's indexing
@@ -255,7 +275,12 @@ way.
   refuses a reused datatoken whose existing pricing differs from the service's pricing
   config: make the service's `setPricing()` match what is on chain. When a datatoken would
   be matched only by creation order and its pricing does not fit, set `datatokenAddress` on
-  each service to say which datatoken belongs to it.
+  each service to say which datatoken belongs to it. It refuses with "has N transaction(s)
+  not mined yet" while the signer has any pending transaction, unrelated ones included:
+  wait until they are mined or dropped, then call it again. After a `PublishIncompleteError`
+  with `stored.cleanup === 'kept'`, pass `{ metadataTxHash: error.stored.txHash }`
+  (`CompletePublishOptions`): it then also refuses while that transaction is pending and
+  once it succeeded, so the metadata is not written twice.
 - `PublishedNotIndexed` — when the metadata transaction was mined but the wait for the
   indexer fails, the error carries the full `PublishResponse` as `error.published`.
 - `MetadataConflictError` (`published`, `conflictingTxIds`, `indexedFirst`) — ocean-node
@@ -263,6 +288,8 @@ way.
   after every metadata transaction.
 - `WaitForIndexerOptions.requestTimeoutMs` (default 15 s) and `maxConsecutiveFailures`
   (default 5); `S3RemoteStore` and `IpfsRemoteStore` take `requestTimeoutMs` (30 s and 60 s).
+  The store constructors throw for a `requestTimeoutMs` of 0, a negative number, `NaN`,
+  `Infinity` or a non-number, and clamp larger values to 2^31−1 ms.
 - `IpfsRemoteStore.remove(pointer)` unpins a CID: derived from `uploadUrl` for Pinata
   (`DELETE /pinning/unpin/<cid>`) and Kubo (`POST /api/v0/pin/rm`), or set with the new
   `unpin: { url, method?, headers? }` option.
@@ -270,7 +297,7 @@ way.
   a write fails after the envelope was stored, the redacted pointer, the hash and what became
   of the object: `'removed'` (the transaction was never sent, was rejected, or was mined and
   reverted, so nautilus removed it), `'not-removed'` or `'kept'` (the transaction was sent
-  and may be mined). See
+  and may be mined; `txHash` names it when its hash is known). See
   [when a write fails](/docs/guides/remote-stores#when-a-write-fails-after-the-envelope-is-stored).
 - `S3RemoteStore` retries a network error or a 500, 502, 503 or 504 once, freshly signed;
   other statuses are not retried.

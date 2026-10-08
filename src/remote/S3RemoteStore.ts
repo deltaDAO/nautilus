@@ -50,6 +50,7 @@ import {
   errorMessage,
   type FetchedText,
   fetchText,
+  MAX_TIMER_MS,
   RedirectError,
   RequestTimeoutError
 } from '../utils/http.js'
@@ -72,13 +73,15 @@ export interface S3RemoteStoreOptions {
   /**
    * Where this store uploads, e.g. `https://sos-de-fra-1.exo.io`. No scheme means
    * `https://`. Plain `http://` only for loopback hosts, or with `allowInsecureTransport`.
+   * No user name or password in the URL (`user:pass@host`): requests are signed with the
+   * key pairs, and the endpoint goes as is into the pointer and into error messages.
    */
   endpoint: string
   /**
    * The endpoint written into the pointer, for the node. Defaults to `endpoint`. May be
    * `http://` (e.g. `http://minio:9000` inside Docker): only the node connects to it. The
    * pointer gets it normalised like `endpoint`: no scheme means `https://`, and the scheme is
-   * lowercased.
+   * lowercased. No user name or password in the URL, as for `endpoint`.
    */
   nodeEndpoint?: string
   /** Default `us-east-1`, as on the node. */
@@ -112,7 +115,10 @@ export interface S3RemoteStoreOptions {
   allowWritableReadKey?: boolean
   /** Allow a plain `http://` `endpoint` on a non-loopback host. Default `false`. */
   allowInsecureTransport?: boolean
-  /** Per-request timeout, body included. Default 30 s. */
+  /**
+   * Per-request timeout, body included. Default 30 s. A finite number of milliseconds, more
+   * than 0 (the constructor throws otherwise); above 2^31 − 1 ms it is clamped to that.
+   */
   requestTimeoutMs?: number
   fetchImpl?: typeof fetch
   /** The clock used for signing. Only for tests. */
@@ -151,6 +157,7 @@ export class S3RemoteStore implements RemoteStore {
   private readonly region: string
   private readonly prefix: string
   private readonly sharedCredentials: boolean
+  private readonly requestTimeoutMs: number
   /** `<prefix><DID hash>/<sha256>.json`: the keys `put()` (and `check()`) write. */
   private readonly objectKeyShape: RegExp
 
@@ -197,6 +204,13 @@ export class S3RemoteStore implements RemoteStore {
     assertHttpEndpoint('endpoint', options.endpoint)
     if (options.nodeEndpoint)
       assertHttpEndpoint('nodeEndpoint', options.nodeEndpoint)
+
+    // Before anything that echoes an endpoint in its message.
+    assertEndpointWithoutCredentials('endpoint', options.endpoint)
+    if (options.nodeEndpoint)
+      assertEndpointWithoutCredentials('nodeEndpoint', options.nodeEndpoint)
+
+    this.requestTimeoutMs = requestTimeout(options.requestTimeoutMs)
 
     assertSecureTransport(
       withScheme(options.endpoint),
@@ -534,8 +548,7 @@ export class S3RemoteStore implements RemoteStore {
       this.options.forcePathStyle ?? false
     )
 
-    const timeoutMs =
-      this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
+    const timeoutMs = this.requestTimeoutMs
 
     for (let attempt = 1; ; attempt++) {
       const headers = await signS3Request({
@@ -668,6 +681,45 @@ function assertHttpEndpoint(name: string, endpoint: string): void {
     throw new Error(
       `S3RemoteStore: ${name} must be an http:// or https:// URL, or a host without a scheme (meaning https://).`
     )
+}
+
+/**
+ * Throws for an endpoint with a user name or password (`https://user:pass@host`). Requests
+ * are signed and sent to the host alone, so they are never used, and the endpoint is copied
+ * as is into the pointer (`PublishResponse.stored.pointer` included) and into error
+ * messages. The message does not echo the endpoint.
+ */
+function assertEndpointWithoutCredentials(
+  name: string,
+  endpoint: string
+): void {
+  let parsed: URL
+  try {
+    parsed = new URL(withScheme(endpoint))
+  } catch {
+    throw new Error(`S3RemoteStore: ${name} is not a valid URL.`)
+  }
+
+  if (parsed.username || parsed.password)
+    throw new Error(
+      `S3RemoteStore: ${name} carries credentials in the URL (user:password@host). S3 requests are signed with the key pairs, so remove them from the URL.`
+    )
+}
+
+/**
+ * `requestTimeoutMs`, or the default: a positive, finite number of milliseconds, clamped to
+ * the longest delay `setTimeout` takes. Anything else throws here rather than fail every
+ * request as if the host were unreachable.
+ */
+function requestTimeout(value: unknown): number {
+  if (value === undefined) return DEFAULT_REQUEST_TIMEOUT_MS
+
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0)
+    throw new Error(
+      `S3RemoteStore: requestTimeoutMs must be a finite number of milliseconds, more than 0; got ${String(value)}.`
+    )
+
+  return Math.min(value, MAX_TIMER_MS)
 }
 
 /**

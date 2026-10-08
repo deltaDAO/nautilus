@@ -137,12 +137,19 @@ export interface StoredBeforeFailure {
    * - `'not-removed'`: the same, but the store has no `remove()` or it failed
    *   (`removeError`). Nothing points at the object; delete or unpin it yourself.
    * - `'kept'`: the transaction was sent and may have been mined. Check the NFT's metadata
-   *   (`getAsset()`, or `completePublish()`, which refuses an NFT with metadata) before
-   *   removing the object: if the transaction landed, the asset needs it.
+   *   (`getAsset()`, or `completePublish()`, which refuses an NFT with metadata and a
+   *   signer with pending transactions) before removing the object: if the transaction
+   *   landed, the asset needs it.
    */
   cleanup: 'removed' | 'not-removed' | 'kept'
   /** Why `remove()` did not delete it, for `'not-removed'`. */
   removeError?: string
+  /**
+   * The hash of the metadata transaction, when it was sent and its hash is known. With
+   * `'kept'`, pass it to `completePublish()` as `metadataTxHash`, which then refuses while
+   * that transaction is pending and once it succeeded.
+   */
+  txHash?: string
 }
 
 /** An error from `publish()`, `completePublish()` or `edit()` that carries `stored`. */

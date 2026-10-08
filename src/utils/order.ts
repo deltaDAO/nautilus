@@ -75,7 +75,12 @@ export interface OrderRequest extends ProviderFeeLimits {
   providerFees: ProviderFees
   /** The account that may consume. For compute, the environment's consumer address. */
   consumer: string
-  /** The account paying. Defaults to the signer's address. */
+  /**
+   * The account paying: the signer's address, which is also the default. Another address
+   * is refused before anything is sent: the datatoken and the exchange pull every amount
+   * from the transaction's sender (`msg.sender`), and the allowances are the signer's, so
+   * no other account can pay.
+   */
   payer?: string
 }
 
@@ -160,7 +165,8 @@ export async function reuseOrder(
  * Throws before any approval or purchase for a missing or incomplete provider fee, one
  * whose signature the datatoken would reject (a `ProviderFeeSignatureError`), a non-zero
  * fee `maxProviderFee` / `confirmProviderFees` do not allow (a
- * `ProviderFeeNotAllowedError`), or pricing that cannot be ordered.
+ * `ProviderFeeNotAllowedError`), pricing that cannot be ordered, or a `payer` other than
+ * the signer.
  */
 export async function order(request: OrderRequest): Promise<OrderResult> {
   const { signer, config, pricing, price, providerFees, serviceIndex } = request
@@ -182,7 +188,7 @@ export async function order(request: OrderRequest): Promise<OrderResult> {
   const route = routeOf(request)
   const allowances = allowancesFor(request, route)
 
-  const payer = request.payer || (await signer.getAddress())
+  const payer = await payingAccount(signer, request.payer)
 
   const datatoken = new Datatoken(signer, config.chainId, config)
 
@@ -208,6 +214,30 @@ export async function order(request: OrderRequest): Promise<OrderResult> {
   return route.schema === 'fixed'
     ? orderFixed({ ...request, route, datatoken, orderParams })
     : orderFree({ ...request, route, payer, datatoken, orderParams })
+}
+
+/**
+ * The signer's address, which pays for the order, or throws for a `payer` that is another
+ * account.
+ *
+ * Every amount an order or a reuse pulls (the purchase, the publish-market fee, the
+ * provider fee) is taken with `transferFrom(msg.sender, …)` by the datatoken or the
+ * exchange, and the approvals are sent by the signer. So the signer pays, and its
+ * allowances are the ones that count: an allowance another account holds would skip the
+ * approval and leave the order short.
+ */
+export async function payingAccount(
+  signer: Signer,
+  payer?: string
+): Promise<string> {
+  const account = await signer.getAddress()
+
+  if (payer && payer.toLowerCase() !== account.toLowerCase())
+    throw new Error(
+      `The payer ${payer} is not the signer ${account}. The datatoken and the exchange take every amount from the account that sends the transaction, so the order must be signed by the account that pays.`
+    )
+
+  return account
 }
 
 /** How an order is placed, once its pricing has been checked. */
@@ -393,6 +423,8 @@ async function approveAllowance(params: {
     return approveSpend({
       signer,
       config,
+      // The signer (see `payingAccount`): ocean.js compares this account's allowance, and
+      // the signer sends the approval.
       account: payer,
       token: allowance.token,
       spender: allowance.spender,

@@ -240,6 +240,89 @@ describe('fetchText', () => {
     expect(response.body).to.equal('ok')
   })
 
+  describe('the transport rule on a followed redirect', () => {
+    /** A response as fetch hands it back after following redirects to `finalUrl`. */
+    const landedOn = (finalUrl: string, body = 'ok') => {
+      const cancel = vi.fn(async () => undefined)
+      const response = new Response(body, { status: 200 })
+      Object.defineProperty(response, 'url', { value: finalUrl })
+      Object.defineProperty(response, 'body', { value: { cancel } })
+      Object.defineProperty(response, 'text', { value: async () => body })
+      return { fetchImpl: (async () => response) as typeof fetch, cancel }
+    }
+
+    it('refuses one that ends on plain http on a non-loopback host, unread', async () => {
+      for (const finalUrl of [
+        'http://mirror.example/api/aquarius/assets/ddo/x',
+        'HTTP://10.0.0.5:8001/x'
+      ]) {
+        const { fetchImpl, cancel } = landedOn(finalUrl)
+
+        const error = await fetchText(
+          fetchImpl,
+          'https://node.example/api/aquarius/assets/ddo/x',
+          { method: 'GET' },
+          { timeoutMs: 1000, followRedirects: true }
+        ).catch((thrown: unknown) => thrown)
+
+        expect(error, finalUrl).to.be.instanceOf(RedirectError)
+        expect((error as RedirectError).insecure).to.equal(true)
+        expect((error as RedirectError).locationOrigin).to.equal(
+          new URL(finalUrl).origin
+        )
+        expect((error as Error).message).to.contain(
+          'https://node.example redirected to plain http://'
+        )
+        expect(cancel).toHaveBeenCalledOnce()
+      }
+    })
+
+    it('accepts https, loopback http, and http when the request was plain http already', async () => {
+      for (const [requested, finalUrl] of [
+        ['https://node.example/x', 'https://mirror.example/x'],
+        ['https://node.example/x', 'http://127.0.0.1:8001/x'],
+        ['http://localhost:8001/x', 'http://localhost:8002/x'],
+        // allowInsecureTransport: the request already went out in clear.
+        ['http://node.example/x', 'http://mirror.example/x']
+      ]) {
+        const { fetchImpl } = landedOn(finalUrl)
+
+        const response = await fetchText(
+          fetchImpl,
+          requested,
+          { method: 'GET' },
+          { timeoutMs: 1000, followRedirects: true }
+        )
+
+        expect(response.url, `${requested} -> ${finalUrl}`).to.equal(finalUrl)
+      }
+    })
+
+    it('refuses a loopback request that is redirected to a remote host in clear', async () => {
+      const { fetchImpl } = landedOn('http://mirror.example/x')
+
+      const error = await fetchText(
+        fetchImpl,
+        'http://127.0.0.1:8001/x',
+        { method: 'GET' },
+        { timeoutMs: 1000, followRedirects: true }
+      ).catch((thrown: unknown) => thrown)
+
+      expect((error as RedirectError).insecure).to.equal(true)
+    })
+
+    it('reports the requested URL when fetch names none', async () => {
+      const response = await fetchText(
+        (async () => new Response('ok')) as typeof fetch,
+        'https://node.example/x',
+        { method: 'GET' },
+        { timeoutMs: 1000, followRedirects: true }
+      )
+
+      expect(response.url).to.equal('https://node.example/x')
+    })
+  })
+
   it('passes a 304 through: it is not a redirect', async () => {
     const response = await fetchText(
       (async () => new Response(null, { status: 304 })) as typeof fetch,
@@ -339,6 +422,35 @@ describe('fetchText', () => {
         `http://127.0.0.1:${port}`
       )
       expect(seen).to.deep.equal(['POST /upload'])
+    })
+
+    it('follows a redirect with followRedirects and reports the final URL', async () => {
+      server = createServer((request, response) => {
+        if (request.url === '/api/aquarius/assets/ddo/x') {
+          response.writeHead(301, { location: '/aquarius/assets/ddo/x' })
+          response.end()
+        } else {
+          response.writeHead(200)
+          response.end('{"id":"x"}')
+        }
+      })
+      await new Promise<void>((resolve) =>
+        server?.listen(0, '127.0.0.1', resolve)
+      )
+      const { port } = server.address() as AddressInfo
+
+      const response = await fetchText(
+        fetch,
+        `http://127.0.0.1:${port}/api/aquarius/assets/ddo/x`,
+        { method: 'GET' },
+        { timeoutMs: 2000, followRedirects: true }
+      )
+
+      expect(response.status).to.equal(200)
+      expect(response.body).to.equal('{"id":"x"}')
+      expect(response.url).to.equal(
+        `http://127.0.0.1:${port}/aquarius/assets/ddo/x`
+      )
     })
   })
 })

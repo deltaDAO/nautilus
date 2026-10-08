@@ -545,6 +545,50 @@ describe('S3RemoteStore', () => {
         )
     })
 
+    it('refuses credentials in endpoint or nodeEndpoint, without echoing them', () => {
+      // Signing uses the host alone, and the endpoint would reach the pointer (and
+      // PublishResponse.stored, where only the secret key is redacted) and error messages.
+      for (const [option, value] of [
+        ['endpoint', 'https://user:hunter2@s3.example.org'],
+        // Plain http on a public host would otherwise be refused, echoing the URL.
+        ['endpoint', 'http://user:hunter2@s3.example.org'],
+        ['endpoint', 'hunter2@s3.example.org'],
+        ['nodeEndpoint', 'http://minio:hunter2@minio:9000'],
+        ['nodeEndpoint', 'http://:hunter2@10.0.0.5:9000']
+      ] as const) {
+        let message = ''
+        try {
+          store(fakeBucket(), { [option]: value, forcePathStyle: true })
+        } catch (error) {
+          message = (error as Error).message
+        }
+
+        expect(message, value).to.match(
+          new RegExp(
+            `^S3RemoteStore: ${option} carries credentials in the URL \\(user:password@host\\)`
+          )
+        )
+        expect(message, value).not.to.contain('hunter2')
+      }
+    })
+
+    it('refuses a requestTimeoutMs that is not a positive finite number, up front', () => {
+      // fetchText would throw a RangeError on every request, reported as an unreachable host.
+      for (const requestTimeoutMs of [-1, 0, Number.NaN, Infinity, '1000'])
+        expect(
+          () =>
+            store(fakeBucket(), {
+              requestTimeoutMs: requestTimeoutMs as number
+            }),
+          String(requestTimeoutMs)
+        ).to.throw(
+          /^S3RemoteStore: requestTimeoutMs must be a finite number of milliseconds, more than 0/
+        )
+
+      for (const requestTimeoutMs of [undefined, 1, 30_000, 2 ** 40])
+        expect(() => store(fakeBucket(), { requestTimeoutMs })).not.to.throw()
+    })
+
     it('refuses virtual-host addressing on an IP or localhost endpoint', () => {
       const bucket = fakeBucket()
 
@@ -916,6 +960,36 @@ describe('S3RemoteStore', () => {
 
         expect((await waiting).message).to.match(
           /S3 PUT .* failed \(timed out after 2000 ms\)/
+        )
+        expect(vi.getTimerCount()).to.equal(0)
+      })
+
+      it('clamps a timeout above 2^31 − 1 ms to that, as setTimeout takes it', async () => {
+        let called!: () => void
+        const sent = new Promise<void>((resolve) => {
+          called = resolve
+        })
+        const fetchImpl = ((_url: string, init: RequestInit) => {
+          called()
+          return new Promise((_, reject) =>
+            init.signal?.addEventListener('abort', () =>
+              reject(new Error('aborted'))
+            )
+          )
+        }) as unknown as typeof fetch
+
+        const waiting = store(fakeBucket(), {
+          fetchImpl,
+          requestTimeoutMs: 1e12
+        })
+          .put('{}', { did: ASSET_DID })
+          .catch((error) => error)
+
+        await sent
+        await vi.advanceTimersByTimeAsync(2 ** 31)
+
+        expect((await waiting).message).to.match(
+          /S3 PUT .* failed \(timed out after 2147483647 ms\)/
         )
         expect(vi.getTimerCount()).to.equal(0)
       })
