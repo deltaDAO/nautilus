@@ -11,7 +11,8 @@ import {
   type ComputeAsset,
   type ComputeEnvironment,
   type Config,
-  EscrowContract
+  EscrowContract,
+  sendTx
 } from '@oceanprotocol/lib'
 import type { Signer } from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -45,11 +46,16 @@ vi.mock('../../src/access/index.js', () => ({
 }))
 
 // Escrow runs against the chain too; stub the contract so a test can see whether it was
-// funded or authorised at all.
+// read or written at all. The payer already holds enough in escrow, so only the
+// authorisation is sent; the amounts are pinned in PaymentLimits.test.ts.
 const escrow = {
-  verifyFundsForEscrowPayment: vi.fn(async () => ({ isValid: true })),
-  deposit: vi.fn(),
-  authorize: vi.fn()
+  getUserFunds: vi.fn(async () => ({ available: 10n ** 30n, locked: 0n })),
+  getAuthorizations: vi.fn(async () => []),
+  contract: {
+    getFunction: vi.fn(() =>
+      Object.assign(vi.fn(), { estimateGas: vi.fn(async () => 50_000n) })
+    )
+  }
 }
 
 vi.mock('@oceanprotocol/lib', async (importOriginal) => ({
@@ -57,7 +63,7 @@ vi.mock('@oceanprotocol/lib', async (importOriginal) => ({
   EscrowContract: vi.fn(function (this: void) {
     return escrow
   }),
-  unitsToAmount: vi.fn(async () => '1')
+  sendTx: vi.fn(async () => ({ wait: async () => ({ hash: '0xescrow' }) }))
 }))
 
 /** An escrow quote, as `initializeCompute` returns it for a paid job. */
@@ -72,9 +78,30 @@ const PAYMENT = {
 
 function expectNoEscrow() {
   expect(vi.mocked(EscrowContract)).not.toHaveBeenCalled()
-  expect(escrow.verifyFundsForEscrowPayment).not.toHaveBeenCalled()
-  expect(escrow.deposit).not.toHaveBeenCalled()
-  expect(escrow.authorize).not.toHaveBeenCalled()
+  expect(vi.mocked(sendTx)).not.toHaveBeenCalled()
+}
+
+/**
+ * What a caller allows to be paid in these tests: the fixtures' provider fees and the
+ * escrow quote above. The refusals are pinned in PaymentLimits.test.ts.
+ */
+const ALLOWED = {
+  maxProviderFee: {
+    token: '0xfee0000000000000000000000000000000000000',
+    amount: 1000n
+  },
+  maxEscrowPayment: {
+    token: '0xfee0000000000000000000000000000000000000',
+    amount: 10n ** 18n
+  }
+}
+
+/** `compute()` as a caller who allowed the fixtures' fees and escrow payment. */
+function computeAllowed(
+  config: ComputeConfig,
+  context: Parameters<typeof compute>[1]
+) {
+  return compute({ ...ALLOWED, ...config }, context)
 }
 
 const ALGO_DID = 'did:ope:algorithm'
@@ -173,8 +200,13 @@ function createComputeNodeMock(
   return { client, calls }
 }
 
-const signer = { getAddress: async () => '0xConsumer' } as unknown as Signer
-const chainConfig = { chainId: CHAIN_ID } as unknown as Config
+const signer = {
+  getAddress: async () => '0x0000000000000000000000000000000000c05e5a'
+} as unknown as Signer
+const chainConfig = {
+  chainId: CHAIN_ID,
+  escrow: PAYMENT.escrowAddress
+} as unknown as Config
 
 function computeContext(client: OceanNodeClient) {
   return { node: client, signer, chainConfig }
@@ -198,7 +230,7 @@ describe('compute() algorithm service resolution', () => {
       algorithm: { did: ALGO_DID }
     }
 
-    const result = await compute(config, computeContext(client))
+    const result = await computeAllowed(config, computeContext(client))
 
     expect(calls.computeStart[0].algorithm.serviceId).to.equal(ALGO_SERVICE_ID)
     expect(result.orders).to.have.property(`${ALGO_DID}#${ALGO_SERVICE_ID}`)
@@ -210,7 +242,7 @@ describe('compute() algorithm service resolution', () => {
       [ALGO_DID]: accessOnlyAlgorithm()
     })
 
-    await compute(
+    await computeAllowed(
       {
         dataset: { did: ASSET_DID },
         algorithm: { did: ALGO_DID, serviceId: ALGO_SERVICE_ID }
@@ -235,7 +267,7 @@ describe('compute() algorithm service resolution', () => {
       [ALGO_DID]: algorithm
     })
 
-    await compute(
+    await computeAllowed(
       { dataset: { did: ASSET_DID }, algorithm: { did: ALGO_DID } },
       computeContext(client)
     )
@@ -258,7 +290,7 @@ describe('compute() algorithm service resolution', () => {
 
     await expectThrowsAsync(
       () =>
-        compute(
+        computeAllowed(
           { dataset: { did: ASSET_DID }, algorithm: { did: ALGO_DID } },
           computeContext(client)
         ),
@@ -283,7 +315,7 @@ describe('compute() order bookkeeping', () => {
 
     const { client, calls } = createComputeNodeMock({ [ASSET_DID]: asset })
 
-    const result = await compute(
+    const result = await computeAllowed(
       {
         dataset: { did: ASSET_DID, serviceId: SERVICE_ID },
         algorithm: { did: ASSET_DID, serviceId: SECOND_SERVICE_ID }
@@ -322,7 +354,7 @@ describe('compute() provider-fee signature pre-check', () => {
   async function run(client: OceanNodeClient) {
     vi.useFakeTimers()
     try {
-      const running = compute(config, computeContext(client)).catch(
+      const running = computeAllowed(config, computeContext(client)).catch(
         (caught) => caught
       )
       await vi.advanceTimersByTimeAsync(5_000)
@@ -413,7 +445,8 @@ describe('compute() provider-fee signature pre-check', () => {
 
     expect(await run(client)).not.to.be.instanceOf(Error)
     expect(calls.initializeCompute).to.equal(1)
-    expect(escrow.verifyFundsForEscrowPayment).toHaveBeenCalledOnce()
+    expect(escrow.getUserFunds).toHaveBeenCalledOnce()
+    expect(vi.mocked(sendTx)).toHaveBeenCalledOnce()
     expect(vi.mocked(settleOrder)).toHaveBeenCalledTimes(2)
     expect(calls.computeStart).to.have.length(1)
   })

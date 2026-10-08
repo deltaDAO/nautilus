@@ -26,6 +26,23 @@ export {
   getDatatokenBalance,
   getOceanConfig
 } from './utils/index.js'
-export { confirmTransaction, order, reuseOrder } from './utils/order.js'
+export {
+  confirmTransaction,
+  type OrderRequest,
+  type OrderResult,
+  order,
+  reuseOrder
+} from './utils/order.js'
+export {
+  type EscrowPaymentLimits,
+  EscrowPaymentNotAllowedError,
+  type EscrowPaymentQuote,
+  type EscrowPaymentRefusal,
+  type ProviderFeeLimits,
+  ProviderFeeNotAllowedError,
+  type ProviderFeeQuote,
+  type ProviderFeeRefusal,
+  type TokenAmount
+} from './utils/paymentLimits.js'
 export * from './utils/pricing.js'
 export { ProviderFeeSignatureError } from './utils/providerFee.js'

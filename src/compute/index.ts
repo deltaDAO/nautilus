@@ -21,13 +21,11 @@ import {
   type ComputeJob,
   type ComputeResourceRequest,
   type Config,
-  EscrowContract,
   LoggerInstance,
   type ProviderComputeInitialize,
-  type ProviderComputeInitializeResults,
-  unitsToAmount
+  type ProviderComputeInitializeResults
 } from '@oceanprotocol/lib'
-import { getAddress, type Signer } from 'ethers'
+import type { Signer } from 'ethers'
 import type {
   ComputeAlgorithmRef,
   ComputeAssetRef,
@@ -55,9 +53,18 @@ import {
 } from '../identity/policy.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
 import {
+  assertEscrowPaymentAllowed,
+  assertProviderFeesAllowed,
+  ceilingFor,
+  checkEscrowQuote,
+  type ProviderFeeQuote,
+  quoteProviderFee
+} from '../utils/paymentLimits.js'
+import {
   initializeWithValidProviderFee,
   providerFeeToSend
 } from '../utils/providerFee.js'
+import { type EscrowPlan, fundEscrow, planEscrow } from './escrow.js'
 
 export interface ComputeContext {
   node: OceanNodeClient
@@ -168,12 +175,41 @@ export async function compute(
     { attempts: 1 }
   )
 
-  // 3. Fund and authorise escrow for the amount the node quoted.
-  await ensureEscrow(signer, environment, initializeResults, paymentToken)
+  // 3. The node chose the provider fees and the escrow payment: check both against what
+  //    the caller allowed, and the escrow contract against the chain config, before the
+  //    first approval, deposit or order.
+  const fees = inputs.map((input, index) =>
+    quoteProviderFee(
+      providerFeeToSend(
+        matchInitializeResult(initializeResults, input, datatokens[index])
+      ),
+      {
+        datatoken: datatokens[index],
+        did: input.asset.id,
+        serviceId: input.serviceId
+      }
+    )
+  )
 
-  // 4. Order every input that needs one, and record the transfer ids.
+  await assertProviderFeesAllowed(fees, config)
+
+  const escrowPlan = await prepareEscrow({
+    signer,
+    chainConfig,
+    environment,
+    initializeResults,
+    paymentToken,
+    config
+  })
+
+  // 4. Fund and authorise escrow for exactly the amount the node quoted.
+  if (escrowPlan) await fundEscrow(signer, chainConfig, escrowPlan)
+
+  // 5. Order every input that needs one, each allowed to pay exactly its fee approved
+  //    above, and record the transfer ids.
   const orders = await placeOrders({
     inputs,
+    fees,
     initializeResults,
     signer,
     chainConfig,
@@ -189,7 +225,7 @@ export async function compute(
       orders[orderKey(algorithm.documentId, algorithm.serviceId)] ||
       algorithm.transferTxId
 
-  // 5. Start the job.
+  // 6. Start the job.
   const jobs = await node.computeStart({
     computeEnv: environment.id,
     datasets,
@@ -530,47 +566,46 @@ async function resolvePolicies(
 // #region payment
 
 /**
- * Makes sure escrow can cover the job.
+ * Checks the node's escrow quote and decides what to deposit and authorise, without
+ * sending anything. `undefined` when the node quoted no payment, or a payment of zero.
  *
- * `verifyFundsForEscrowPayment` both checks and tops up: it deposits if the balance is
- * short and authorises the environment's consumer address to draw the quoted amount.
+ * The escrow contract must be the chain config's `escrow`, and the chain, token and payee
+ * the job's own; the amount must be within `maxEscrowPayment` or confirmed by
+ * `confirmEscrowPayment`. Each refusal is an `EscrowPaymentNotAllowedError`.
  */
-async function ensureEscrow(
-  signer: Signer,
-  environment: ComputeEnvironment,
-  results: ProviderComputeInitializeResults,
+async function prepareEscrow(params: {
+  signer: Signer
+  chainConfig: Config
+  environment: ComputeEnvironment
+  initializeResults: ProviderComputeInitializeResults
   paymentToken: string
-): Promise<void> {
-  const payment = results.payment
+  config: ComputeConfig
+}): Promise<EscrowPlan | undefined> {
+  const { signer, chainConfig, environment, paymentToken, config } = params
+  const payment = params.initializeResults.payment
 
-  if (!payment?.escrowAddress) {
+  if (!payment) {
     LoggerInstance.debug(
       '[compute] node quoted no escrow payment; skipping funding'
     )
-    return
+    return undefined
   }
 
-  const escrow = new EscrowContract(getAddress(payment.escrowAddress), signer)
+  const quote = checkEscrowQuote(payment, {
+    escrow: chainConfig.escrow,
+    chainId: chainConfig.chainId,
+    token: paymentToken,
+    payee: environment.consumerAddress
+  })
 
-  const amount = await unitsToAmount(
-    signer,
-    paymentToken,
-    String(payment.amount)
-  )
+  if (!quote) {
+    LoggerInstance.debug('[compute] node quoted a zero escrow payment')
+    return undefined
+  }
 
-  const validation = await escrow.verifyFundsForEscrowPayment(
-    paymentToken,
-    environment.consumerAddress,
-    amount,
-    String(payment.amount),
-    String(payment.minLockSeconds),
-    '10'
-  )
+  await assertEscrowPaymentAllowed(quote, config, payment)
 
-  if (validation && validation.isValid === false)
-    throw new Error(
-      `Escrow cannot cover this compute job: ${validation.message}. Deposit ${amount} of ${paymentToken} and authorise ${environment.consumerAddress}.`
-    )
+  return planEscrow(signer, chainConfig, quote)
 }
 
 /**
@@ -581,15 +616,18 @@ async function ensureEscrow(
  */
 async function placeOrders(params: {
   inputs: ResolvedInput[]
+  /** Each input's approved provider fee, by position; `undefined` for none. */
+  fees: (ProviderFeeQuote | undefined)[]
   initializeResults: ProviderComputeInitializeResults
   signer: Signer
   chainConfig: Config
   consumer: string
 }): Promise<Record<string, string>> {
-  const { inputs, initializeResults, signer, chainConfig, consumer } = params
+  const { inputs, fees, initializeResults, signer, chainConfig, consumer } =
+    params
   const orders: Record<string, string> = {}
 
-  for (const input of inputs) {
+  for (const [index, input] of inputs.entries()) {
     const datatokenAddress = datatokenFor(input)
 
     const initialized = matchInitializeResult(
@@ -604,7 +642,8 @@ async function placeOrders(params: {
       datatokenAddress,
       serviceIndex: getServiceIndex(input.asset, input.serviceId),
       initialized,
-      consumer
+      consumer,
+      maxProviderFee: ceilingFor([fees[index]])
     })
 
     // Keyed by DID *and* service: one asset can back two inputs (the algorithm doubling

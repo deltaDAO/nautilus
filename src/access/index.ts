@@ -26,6 +26,12 @@ import {
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
 import { order, reuseOrder } from '../utils/order.js'
 import {
+  assertProviderFeesAllowed,
+  ceilingFor,
+  type ProviderFeeLimits,
+  quoteProviderFee
+} from '../utils/paymentLimits.js'
+import {
   getOrderPrice,
   getPricingInfo,
   hasReusableOrder
@@ -127,19 +133,31 @@ export async function access(
       `Could not determine the datatoken for service ${service.id} of ${asset.id}.`
     )
 
-  // 3. Reuse or place an order.
+  // 3. The node chose the fee's token and amount, and in a download it is the
+  //    publisher's node: pay a non-zero fee only within what the caller allowed, before
+  //    any chain read or transaction.
+  const fee = quoteProviderFee(providerFeeToSend(initialized), {
+    datatoken: datatokenAddress,
+    did: asset.id,
+    serviceId: service.id
+  })
+
+  await assertProviderFeesAllowed([fee], config)
+
+  // 4. Reuse or place an order, allowed to pay exactly the fee approved above.
   const { transferTxId, reused } = await settleOrder({
     signer,
     chainConfig,
     datatokenAddress,
     serviceIndex: getServiceIndex(asset, service.id),
     initialized,
-    consumer: consumerAddress
+    consumer: consumerAddress,
+    maxProviderFee: ceilingFor([fee])
   })
 
   LoggerInstance.debug('[access] order settled', { transferTxId, reused })
 
-  // 4. Build the download URL — on the service's node, which holds the decryption key —
+  // 5. Build the download URL — on the service's node, which holds the decryption key —
   // carrying the verifier session when there is one.
   const url = await serviceNode.getDownloadUrl(
     asset.id,
@@ -168,18 +186,27 @@ export async function access(
  * Every path but the first sends the node's provider fee to the datatoken, so it throws a
  * `ProviderFeeSignatureError` before any chain read or transaction when that fee is
  * missing, incomplete, or carries a signature the datatoken would reject.
+ * `order()`/`reuseOrder()` then refuse a non-zero fee `maxProviderFee` /
+ * `confirmProviderFees` do not allow with a `ProviderFeeNotAllowedError`, before their
+ * first approval.
  */
-export async function settleOrder(params: {
-  signer: Signer
-  chainConfig: Config
-  datatokenAddress: string
-  serviceIndex: number
-  initialized: { validOrder?: string; providerFee?: unknown }
-  consumer: string
-  payer?: string
-}): Promise<{ transferTxId: string; reused: boolean }> {
+export async function settleOrder(
+  params: {
+    signer: Signer
+    chainConfig: Config
+    datatokenAddress: string
+    serviceIndex: number
+    initialized: { validOrder?: string; providerFee?: unknown }
+    consumer: string
+    payer?: string
+  } & ProviderFeeLimits
+): Promise<{ transferTxId: string; reused: boolean }> {
   const { signer, chainConfig, datatokenAddress, serviceIndex, initialized } =
     params
+  const limits: ProviderFeeLimits = {
+    maxProviderFee: params.maxProviderFee,
+    confirmProviderFees: params.confirmProviderFees
+  }
 
   const providerFee = initialized.providerFee as ProviderFeeLike | undefined
 
@@ -203,7 +230,8 @@ export async function settleOrder(params: {
       config: chainConfig,
       datatokenAddress,
       validOrderTx: initialized.validOrder as string,
-      providerFees
+      providerFees,
+      ...limits
     })
 
   const pricing = await getPricingInfo(signer, datatokenAddress, chainConfig)
@@ -217,6 +245,7 @@ export async function settleOrder(params: {
     serviceIndex,
     providerFees,
     consumer: params.consumer,
-    payer: params.payer
+    payer: params.payer,
+    ...limits
   })
 }

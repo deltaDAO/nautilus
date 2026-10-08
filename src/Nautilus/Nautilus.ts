@@ -75,6 +75,11 @@ import {
 import { resolvePublisherTrustedAlgorithms } from '../utils/helpers/trusted-algorithms.js'
 import { errorMessage } from '../utils/http.js'
 import { getChainId } from '../utils/index.js'
+import {
+  assertValidLimits,
+  type EscrowPaymentLimits,
+  type ProviderFeeLimits
+} from '../utils/paymentLimits.js'
 import { getPricingInfo } from '../utils/pricing.js'
 import { assertSecureTransport } from '../utils/transport.js'
 import { warnOnce } from '../utils/warn.js'
@@ -209,7 +214,15 @@ function attachPublished(
   )
 }
 
-export interface NautilusOptions {
+/**
+ * `maxProviderFee`, `confirmProviderFees`, `maxEscrowPayment` and `confirmEscrowPayment`
+ * set the default for every `access()` and `compute()` call of this instance. An option
+ * passed to the call itself replaces the default of the same name. Without them, a
+ * non-zero provider fee or escrow payment is refused before anything is spent.
+ */
+export interface NautilusOptions
+  extends ProviderFeeLimits,
+    EscrowPaymentLimits {
   /**
    * Where the signed DDO is stored. Required to publish, because nautilus writes a
    * `{remote}` pointer on chain rather than the document itself.
@@ -333,6 +346,9 @@ export class Nautilus {
     signer: Signer,
     options: NautilusOptions = {}
   ): Promise<Nautilus> {
+    // A malformed ceiling fails here, not at the first paid call.
+    assertValidLimits(options)
+
     const instance = new Nautilus(signer, options)
 
     await instance.init()
@@ -1361,13 +1377,34 @@ export class Nautilus {
     )
   }
 
+  /** Fills the provider-fee options the call leaves out from `Nautilus.create`'s. */
+  private withProviderFeeDefaults<T extends ProviderFeeLimits>(config: T): T {
+    return {
+      ...config,
+      maxProviderFee: config.maxProviderFee ?? this.options.maxProviderFee,
+      confirmProviderFees:
+        config.confirmProviderFees ?? this.options.confirmProviderFees
+    }
+  }
+
+  /** Fills the escrow options the call leaves out from `Nautilus.create`'s. */
+  private withEscrowDefaults<T extends EscrowPaymentLimits>(config: T): T {
+    return {
+      ...config,
+      maxEscrowPayment:
+        config.maxEscrowPayment ?? this.options.maxEscrowPayment,
+      confirmEscrowPayment:
+        config.confirmEscrowPayment ?? this.options.confirmEscrowPayment
+    }
+  }
+
   // #endregion
 
   // #region access
 
   /** Orders a service if needed and returns a one-time download URL. */
   async access(config: AccessConfig): Promise<AccessResult> {
-    return access(config, {
+    return access(this.withProviderFeeDefaults(config), {
       node: this.node,
       signer: this.signer,
       chainConfig: this.config,
@@ -1393,12 +1430,15 @@ export class Nautilus {
 
   /** Starts a paid compute job: orders inputs, funds escrow, then starts. */
   async compute(config: ComputeConfig): Promise<ComputeResult> {
-    return compute(config, {
-      node: this.node,
-      signer: this.signer,
-      chainConfig: this.config,
-      credentials: this.getCredentialProvider()
-    })
+    return compute(
+      this.withEscrowDefaults(this.withProviderFeeDefaults(config)),
+      {
+        node: this.node,
+        signer: this.signer,
+        chainConfig: this.config,
+        credentials: this.getCredentialProvider()
+      }
+    )
   }
 
   /** Starts a free compute job. No orders, no escrow, no payment token. */

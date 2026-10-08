@@ -30,6 +30,11 @@ import {
   type TransactionReceipt,
   type TransactionResponse
 } from 'ethers'
+import {
+  assertProviderFeesAllowed,
+  type ProviderFeeLimits,
+  quoteProviderFee
+} from './paymentLimits.js'
 import type { ConsumeMarketFee, OrderPrice, PricingInfo } from './pricing.js'
 import {
   assertProviderFeeSignature,
@@ -57,7 +62,11 @@ const NO_CONSUME_MARKET_FEE = {
   consumeMarketFeeAmount: '0'
 }
 
-export interface OrderRequest {
+/**
+ * `maxProviderFee` / `confirmProviderFees` decide whether the node's provider fee may be
+ * paid: without either, a non-zero fee is refused with a `ProviderFeeNotAllowedError`.
+ */
+export interface OrderRequest extends ProviderFeeLimits {
   signer: Signer
   config: Config
   pricing: PricingInfo
@@ -83,18 +92,32 @@ export interface OrderResult {
  *
  * Approves the datatoken to pull the provider fee, unless a standing allowance covers it.
  * Throws a `ProviderFeeSignatureError`, before sending anything, for a missing or
- * incomplete fee, or one whose signature the datatoken would reject.
+ * incomplete fee, or one whose signature the datatoken would reject, and a
+ * `ProviderFeeNotAllowedError` for a non-zero fee `maxProviderFee` /
+ * `confirmProviderFees` do not allow.
  */
-export async function reuseOrder(params: {
-  signer: Signer
-  config: Config
-  datatokenAddress: string
-  validOrderTx: string
-  providerFees: ProviderFees
-}): Promise<OrderResult> {
+export async function reuseOrder(
+  params: {
+    signer: Signer
+    config: Config
+    datatokenAddress: string
+    validOrderTx: string
+    providerFees: ProviderFees
+  } & ProviderFeeLimits
+): Promise<OrderResult> {
   // The datatoken checks the fee's signature on chain; a fee it would reject is refused
   // here, before the approval and the transaction.
   assertProviderFeeSignature(params.providerFees)
+
+  // The node chose this fee: pay it only within what the caller allowed.
+  await assertProviderFeesAllowed(
+    [
+      quoteProviderFee(params.providerFees, {
+        datatoken: params.datatokenAddress
+      })
+    ],
+    params
+  )
 
   // `_checkProviderFee` pulls the fee with `transferFrom`, and ocean.js's `reuseOrder`
   // approves nothing, so without this any non-zero provider fee reverts.
@@ -135,15 +158,26 @@ export async function reuseOrder(params: {
  * allowance already covers.
  *
  * Throws before any approval or purchase for a missing or incomplete provider fee, one
- * whose signature the datatoken would reject (a `ProviderFeeSignatureError`), or pricing
- * that cannot be ordered.
+ * whose signature the datatoken would reject (a `ProviderFeeSignatureError`), a non-zero
+ * fee `maxProviderFee` / `confirmProviderFees` do not allow (a
+ * `ProviderFeeNotAllowedError`), or pricing that cannot be ordered.
  */
 export async function order(request: OrderRequest): Promise<OrderResult> {
   const { signer, config, pricing, price, providerFees, serviceIndex } = request
 
   // 1. Everything that can be checked without spending, first: a fee the datatoken would
-  //    reject, or pricing that cannot be ordered, otherwise surfaces after the buy.
+  //    reject, a fee the caller did not allow, or pricing that cannot be ordered,
+  //    otherwise surfaces after the buy.
   assertProviderFeeSignature(providerFees)
+
+  await assertProviderFeesAllowed(
+    [
+      quoteProviderFee(providerFees, {
+        datatoken: pricing.datatokenAddress
+      })
+    ],
+    request
+  )
 
   const route = routeOf(request)
   const allowances = allowancesFor(request, route)
