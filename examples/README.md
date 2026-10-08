@@ -418,8 +418,9 @@ C2D v2 is a different model, and `compute.ts` shows it:
   `npm start -- compute:envs` to see what a node offers, what it costs per chain, and whether
   it allows free jobs.
 - **Paid jobs lock funds in an escrow contract.** nautilus funds and authorises it from what
-  the node quotes, in exact amounts, but only in the chain config's escrow contract
-  (`ESCROW_ADDRESS` where ocean.js ships none) and only up to a ceiling. `compute:paid`
+  the node quotes, in exact amounts, but only in a known escrow contract for the chain (the
+  `Escrow` or `EnterpriseEscrow` contract in Ocean's address data, or `ESCROW_ADDRESS`) and
+  only up to a ceiling. `compute:paid`
   passes `MAX_ESCROW_PAYMENT`, or else what the environment advertises for the job.
 - **Free jobs need no order, no escrow and no payment token** — but the environment has to
   expose them, and its access list may restrict who can use them.

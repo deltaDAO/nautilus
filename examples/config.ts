@@ -502,8 +502,9 @@ export function resolveNetwork(): {
       if (process.env.RPC_URL) networkConfig.nodeUri = process.env.RPC_URL
   }
 
-  // Paid compute funds only the chain config's escrow contract, whatever the node names.
-  // ocean.js ships it for some chains (OP Sepolia); elsewhere it comes from here.
+  // Paid compute funds only a known escrow contract for the chain, whatever the node names:
+  // this one, or the Escrow / EnterpriseEscrow entry of Ocean's address data (ocean.js
+  // ships it for some chains, OP Sepolia among them). Set it where the chain has neither.
   const escrow = process.env.ESCROW_ADDRESS?.trim()
 
   if (escrow) {

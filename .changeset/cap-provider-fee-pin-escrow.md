@@ -3,7 +3,7 @@
 ---
 
 Pay a node's provider fee and compute escrow payment only with the caller's consent, and
-fund only the configured escrow contract.
+fund only an escrow contract known for the chain.
 
 The node chooses the provider fee of a download or compute input (its token, its amount
 and who receives it). For a download that node is the service's `serviceEndpoint`, which
@@ -25,10 +25,14 @@ the token's decimals a second time.
   or when `confirmEscrowPayment(payment)` returns `true`, or an
   `EscrowPaymentNotAllowedError` (`payment`, `reason`) is thrown before anything is sent.
   A zero payment needs nothing.
-- **Only the chain config's `escrow` contract is funded.** A quote naming another
-  contract, another chain, token or payee, or an inexact amount, is refused
-  (`EscrowPaymentNotAllowedError`), and no callback overrides it. On a chain whose
-  `ConfigHelper` defaults have no `escrow`, pass `config: { escrow: '0x…' }` to
+- **Only an escrow contract known for the chain is funded**: the chain config's `escrow`,
+  or the `Escrow` or `EnterpriseEscrow` entry of Ocean's address data for the chain
+  (ocean.js's bundled addresses, or `ADDRESS_FILE` when set). ocean.js fills
+  `config.escrow` from `Escrow`, and ocean-node 4.2.0 quotes `EnterpriseEscrow` where the
+  chain has one (OP Sepolia, Optimism, Sepolia, Ethereum mainnet), so both are accepted. A
+  quote naming any other contract, another chain, token or payee, or an inexact amount, is
+  refused (`EscrowPaymentNotAllowedError`), and no callback overrides it. On a chain with
+  no known escrow (Pontus-X devnet among them), pass `config: { escrow: '0x…' }` to
   `Nautilus.create`.
 - **Escrow is funded in exact amounts.** nautilus approves the escrow contract for the
   deposit only, deposits what escrow lacks for the job, and authorises the environment's

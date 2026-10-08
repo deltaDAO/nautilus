@@ -208,9 +208,13 @@ ask a user. See [`access`](/docs/api/nautilus/access#confirmproviderfees-optiona
 The default ceiling on what one [`compute`](/docs/api/nautilus/compute) job may lock in
 escrow, per payment token, in the token's smallest unit.
 
-nautilus funds only the chain config's `escrow` contract, whatever contract the node names.
-ocean.js's `ConfigHelper` ships it for some chains (OP Sepolia among them); on the others,
-pass it as `config.escrow`, or paid compute is refused.
+nautilus funds only a known escrow contract for the chain, whatever contract the node
+names: `config.escrow`, or the `Escrow` or `EnterpriseEscrow` entry of Ocean's address data
+for the chain (ocean.js's bundled addresses, or the file `ADDRESS_FILE` names). ocean.js
+fills `config.escrow` from `Escrow`; ocean-node 4.2.0 quotes `EnterpriseEscrow` where the
+chain has one (OP Sepolia among them), so both are accepted. On a chain with neither
+(Pontus-X devnet among them), pass the escrow your node uses as `config.escrow`, or paid
+compute is refused.
 
 ##### confirmEscrowPayment
 

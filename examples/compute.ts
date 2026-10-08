@@ -13,8 +13,9 @@ import { advertisedJobPrice, ceilingFromEnv } from './limits'
  *   - **Resources are requested explicitly** — `[{ id: 'cpu', amount: 2 }]` — instead of
  *     fixed CPU/GPU descriptors. Environments advertise what they have and what it costs.
  *   - **Payment runs through an escrow contract.** The node quotes an amount, and nautilus
- *     deposits and authorises it before the job starts — only in the chain config's escrow
- *     contract, and only up to the ceiling the caller allows (see `limits.ts`).
+ *     deposits and authorises it before the job starts — only in a known escrow contract for
+ *     the chain (the config's `escrow`, or the `Escrow` / `EnterpriseEscrow` contract in
+ *     Ocean's address data), and only up to the ceiling the caller allows (see `limits.ts`).
  *   - **All datasets travel in one array.** v1 had `dataset` plus `additionalDatasets`.
  *   - **Free compute exists**, with no order, no escrow and no payment token.
  *   - **`providerUri` is gone** from the status and result calls; they default to the node
@@ -125,7 +126,7 @@ export async function compute(
   const maxJobDuration = 3600
 
   // The most this job may lock in escrow. nautilus refuses, before anything is spent, a
-  // quote above it, or one naming another escrow contract than the chain config's.
+  // quote above it, or one naming an escrow contract not known for the chain.
   const maxEscrowPayment =
     ceilingFromEnv('MAX_ESCROW_PAYMENT') ??
     (await advertisedJobPrice(nautilus, environment, resources, maxJobDuration))

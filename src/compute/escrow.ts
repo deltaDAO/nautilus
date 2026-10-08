@@ -18,16 +18,55 @@
 import {
   type Config,
   EscrowContract,
+  getOceanArtifactsAddressesByChainId,
   LoggerInstance,
   sendTx
 } from '@oceanprotocol/lib'
-import { Contract, getAddress, type Signer } from 'ethers'
+import { Contract, getAddress, isAddress, type Signer } from 'ethers'
 import { approveFeeWei, confirmTransaction } from '../utils/order.js'
 import type { EscrowPaymentQuote } from '../utils/paymentLimits.js'
 
 const ERC20_BALANCE_ABI = [
   'function balanceOf(address) view returns (uint256)'
 ] as const
+
+/**
+ * The escrow contracts nautilus may fund on the config's chain, checksummed: the chain
+ * config's `escrow`, then the `EnterpriseEscrow` and `Escrow` entries of Ocean's address data
+ * for the chain (the file `ADDRESS_FILE` names when set, else the addresses ocean.js ships).
+ *
+ * ocean.js fills `config.escrow` from `Escrow`, while ocean-node 4.2.0 quotes
+ * `EnterpriseEscrow` wherever the address data has one, so both are known. Each comes from
+ * the caller's config or Ocean's address data, never from the node. Reads no chain.
+ */
+export function knownEscrowContracts(
+  chainConfig: Pick<Config, 'chainId' | 'escrow'>
+): string[] {
+  let addresses: Record<string, unknown> | null = null
+
+  try {
+    addresses = getOceanArtifactsAddressesByChainId(chainConfig.chainId)
+  } catch {
+    addresses = null
+  }
+
+  const candidates = [
+    chainConfig.escrow,
+    addresses?.EnterpriseEscrow,
+    addresses?.Escrow
+  ]
+
+  return [
+    ...new Set(
+      candidates
+        .filter(
+          (entry): entry is string =>
+            typeof entry === 'string' && isAddress(entry)
+        )
+        .map((entry) => getAddress(entry))
+    )
+  ]
+}
 
 /** What `fundEscrow` will send, decided from chain reads before anything is sent. */
 export interface EscrowPlan {

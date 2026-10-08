@@ -3,8 +3,9 @@
  *
  * The node chooses the provider fee's token and amount, and the compute escrow's contract
  * and amount. These tests pin that nautilus pays a non-zero fee only within
- * `maxProviderFee` or with `confirmProviderFees`, funds only the chain config's escrow
- * contract, and only within `maxEscrowPayment` or with `confirmEscrowPayment`; that every
+ * `maxProviderFee` or with `confirmProviderFees`, funds only an escrow contract known for
+ * the chain (the config's `escrow`, or Ocean's address data's `EnterpriseEscrow` /
+ * `Escrow`), and only within `maxEscrowPayment` or with `confirmEscrowPayment`; that every
  * refusal comes before the first approval, deposit or order; and that the escrow is
  * approved, funded and authorised for exact amounts.
  *
@@ -12,18 +13,23 @@
  * the token balance read. `settleOrder` is stubbed for `compute()`, and `order()` /
  * `reuseOrder()` for `access()`.
  */
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   allowanceWei,
   approveWei,
   type ComputeEnvironment,
   type Config,
+  ConfigHelper,
   EscrowContract,
   sendTx
 } from '@oceanprotocol/lib'
-import type { Signer } from 'ethers'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { getAddress, type Signer } from 'ethers'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComputeConfig } from '../../src/@types/Compute.js'
 import { access, settleOrder } from '../../src/access/index.js'
+import { knownEscrowContracts } from '../../src/compute/escrow.js'
 import { compute } from '../../src/compute/index.js'
 import type { AssetV5 } from '../../src/ddo/index.js'
 import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
@@ -456,6 +462,135 @@ describe('compute() escrow contract and quote', () => {
     expect(vi.mocked(EscrowContract)).not.toHaveBeenCalled()
     expect(vi.mocked(sendTx)).not.toHaveBeenCalled()
     expect(computeStart).toHaveBeenCalledOnce()
+  })
+})
+
+describe('compute() escrow contracts known for the chain', () => {
+  const goodFees = { dataset: feeOf(0n), algorithm: feeOf(0n) }
+  const ENTERPRISE = getAddress('0x00000000000000000000000000000000e5c4e5c4')
+  const savedAddressFile = process.env.ADDRESS_FILE
+  let dir: string
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'nautilus-escrow-'))
+  })
+
+  afterEach(() => {
+    if (savedAddressFile === undefined) delete process.env.ADDRESS_FILE
+    else process.env.ADDRESS_FILE = savedAddressFile
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  /** Ocean's address data for the test chain, as ocean.js reads it from ADDRESS_FILE. */
+  function useAddressData(entry: object) {
+    const file = join(dir, 'address.json')
+    writeFileSync(
+      file,
+      JSON.stringify({ testchain: { chainId: CHAIN_ID, ...entry } })
+    )
+    process.env.ADDRESS_FILE = file
+  }
+
+  // ocean-node 4.2.0 quotes EnterpriseEscrow wherever the address data has one, while
+  // ocean.js fills config.escrow from Escrow.
+  it('funds the address data’s EnterpriseEscrow when the node names it', async () => {
+    useAddressData({ Escrow: ESCROW, EnterpriseEscrow: ENTERPRISE })
+
+    const { running, computeStart } = runCompute(
+      quoteWith(goodFees, {
+        ...PAYMENT,
+        escrowAddress: ENTERPRISE.toLowerCase()
+      }),
+      ALLOW_ALL
+    )
+    await running
+
+    expect(vi.mocked(EscrowContract)).toHaveBeenCalledWith(
+      ENTERPRISE,
+      signer,
+      CHAIN_ID,
+      chainConfig
+    )
+    expect(vi.mocked(approveWei)).toHaveBeenCalledExactlyOnceWith(
+      signer,
+      chainConfig,
+      CONSUMER,
+      TOKEN,
+      ENTERPRISE,
+      ONE.toString(),
+      true
+    )
+    expect(escrowTransactions()[0]).to.deep.equal({
+      method: 'deposit',
+      args: [TOKEN, ONE]
+    })
+    expect(computeStart).toHaveBeenCalledOnce()
+  })
+
+  it('funds the address data’s escrow when the chain config has none', async () => {
+    useAddressData({ EnterpriseEscrow: ENTERPRISE })
+
+    const { running, computeStart } = runCompute(
+      quoteWith(goodFees, { ...PAYMENT, escrowAddress: ENTERPRISE }),
+      ALLOW_ALL,
+      { chainId: CHAIN_ID, gasFeeMultiplier: 1 } as unknown as Config
+    )
+    await running
+
+    expect(vi.mocked(EscrowContract).mock.calls[0][0]).to.equal(ENTERPRISE)
+    expect(computeStart).toHaveBeenCalledOnce()
+  })
+
+  it('still refuses a contract neither the config nor the address data lists', async () => {
+    useAddressData({ Escrow: ESCROW, EnterpriseEscrow: ENTERPRISE })
+    const confirm = vi.fn(() => true)
+
+    const thrown = await runCompute(
+      quoteWith(goodFees, { ...PAYMENT, escrowAddress: ATTACKER }),
+      { ...ALLOW_ALL, confirmEscrowPayment: confirm }
+    ).running.catch((caught) => caught)
+
+    expect(thrown).to.be.instanceOf(EscrowPaymentNotAllowedError)
+    expect(thrown.reason).to.equal('escrow-address')
+    expect(thrown.message).to.contain(ENTERPRISE)
+    expect(thrown.message).to.contain(getAddress(ESCROW))
+    expect(confirm).not.toHaveBeenCalled()
+    expect(vi.mocked(EscrowContract)).not.toHaveBeenCalled()
+    expectNothingSent()
+  })
+
+  it('lists the config’s escrow, then the address data’s EnterpriseEscrow and Escrow', () => {
+    const other = getAddress('0x00000000000000000000000000000000000e5c41')
+    useAddressData({ Escrow: other, EnterpriseEscrow: ENTERPRISE })
+
+    expect(
+      knownEscrowContracts({ chainId: CHAIN_ID, escrow: ESCROW.toLowerCase() })
+    ).to.deep.equal([getAddress(ESCROW), ENTERPRISE, other])
+    // A config escrow that repeats one from the address data is listed once.
+    expect(
+      knownEscrowContracts({ chainId: CHAIN_ID, escrow: other })
+    ).to.deep.equal([other, ENTERPRISE])
+  })
+
+  it('knows OP Sepolia’s Escrow and EnterpriseEscrow from the addresses ocean.js ships', () => {
+    delete process.env.ADDRESS_FILE
+    const opSepolia = new ConfigHelper().getConfig(11155420)
+
+    expect(opSepolia?.escrow).to.equal(
+      getAddress('0x7842Fa3B2d87Ff1cd52C4152382f7C4B3406E5A6')
+    )
+    expect(
+      knownEscrowContracts({ chainId: 11155420, escrow: opSepolia?.escrow })
+    ).to.deep.equal([
+      getAddress('0x7842Fa3B2d87Ff1cd52C4152382f7C4B3406E5A6'),
+      getAddress('0xfa48673a7C36A2A768f89AC1ee8C355D5c367B02')
+    ])
+  })
+
+  it('knows none on a chain with no config escrow and no address data for it', () => {
+    delete process.env.ADDRESS_FILE
+
+    expect(knownEscrowContracts({ chainId: CHAIN_ID })).to.deep.equal([])
   })
 })
 

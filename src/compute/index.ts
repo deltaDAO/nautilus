@@ -64,7 +64,12 @@ import {
   initializeWithValidProviderFee,
   providerFeeToSend
 } from '../utils/providerFee.js'
-import { type EscrowPlan, fundEscrow, planEscrow } from './escrow.js'
+import {
+  type EscrowPlan,
+  fundEscrow,
+  knownEscrowContracts,
+  planEscrow
+} from './escrow.js'
 
 export interface ComputeContext {
   node: OceanNodeClient
@@ -569,9 +574,10 @@ async function resolvePolicies(
  * Checks the node's escrow quote and decides what to deposit and authorise, without
  * sending anything. `undefined` when the node quoted no payment, or a payment of zero.
  *
- * The escrow contract must be the chain config's `escrow`, and the chain, token and payee
- * the job's own; the amount must be within `maxEscrowPayment` or confirmed by
- * `confirmEscrowPayment`. Each refusal is an `EscrowPaymentNotAllowedError`.
+ * The escrow contract must be one known for the chain (`knownEscrowContracts`: the chain
+ * config's `escrow`, or Ocean's address data's `EnterpriseEscrow` / `Escrow`), and the
+ * chain, token and payee the job's own; the amount must be within `maxEscrowPayment` or
+ * confirmed by `confirmEscrowPayment`. Each refusal is an `EscrowPaymentNotAllowedError`.
  */
 async function prepareEscrow(params: {
   signer: Signer
@@ -592,7 +598,7 @@ async function prepareEscrow(params: {
   }
 
   const quote = checkEscrowQuote(payment, {
-    escrow: chainConfig.escrow,
+    escrow: knownEscrowContracts(chainConfig),
     chainId: chainConfig.chainId,
     token: paymentToken,
     payee: environment.consumerAddress

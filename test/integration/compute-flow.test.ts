@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest'
+import { knownEscrowContracts } from '../../src/compute/escrow.js'
 import { getServices } from '../../src/ddo/read.js'
 import { AssetBuilder, type Nautilus } from '../../src/index.js'
 import { getNodeUri } from '../fixtures/Config.js'
@@ -172,14 +173,19 @@ describe('compute', () => {
         return
       }
 
-      // Escrow is funded only in the chain config's contract; without one the job is
+      // Escrow is funded only in a contract known for the chain (config.escrow, or the
+      // Escrow / EnterpriseEscrow entry of Ocean's address data); without one the job is
       // refused before anything is spent.
-      if (!nautilus.getOceanConfig().escrow) {
+      const knownEscrows = knownEscrowContracts(nautilus.getOceanConfig())
+      if (!knownEscrows.length) {
         console.log(
-          `[compute] no escrow contract configured for chain ${chainId} (set ESCROW_ADDRESS); skipping`
+          `[compute] no escrow contract known for chain ${chainId} (set ESCROW_ADDRESS or ADDRESS_FILE); skipping`
         )
         return
       }
+      console.log(
+        `[compute] known escrow contracts: ${knownEscrows.join(', ')}`
+      )
 
       const result = await consumer.compute({
         dataset: { did: datasetDid },
