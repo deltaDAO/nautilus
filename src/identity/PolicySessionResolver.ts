@@ -34,7 +34,24 @@ import {
   emptyPolicyServerPayload
 } from './CredentialProvider.js'
 import { assertPolicySatisfied, requiresPresentation } from './policy.js'
-import { MemorySessionStore, type SessionStore } from './session.js'
+import {
+  MemorySessionStore,
+  type SessionEntry,
+  type SessionKey,
+  type SessionStore
+} from './session.js'
+
+/**
+ * How long a cached session is reused by default: 2 minutes from `initiate`.
+ *
+ * walt.id's verifier keeps a presentation session for 5 minutes from its creation (its
+ * default; the policy server sets no other), and the session has to outlive the fee
+ * request, the orders and, for a compute job, the escrow before the node checks it. A
+ * session reused at most 2 minutes in leaves 3 for that. An address-only session holds no
+ * state in the policy server, but a policy server that restarts or runs another handler
+ * may not honour it as long, so the same bound applies to it.
+ */
+export const DEFAULT_SESSION_TTL_MS = 2 * 60 * 1000
 
 export interface PolicySessionResolverOptions {
   /**
@@ -44,6 +61,12 @@ export interface PolicySessionResolverOptions {
   credentials?: CredentialProvider
   /** Where verified sessions are kept. Defaults to an in-memory store. */
   sessionStore?: SessionStore
+  /**
+   * How long, in milliseconds from `initiate`, a cached session is reused. An older entry
+   * is deleted and the session opened again. `0` turns the cache off. Default:
+   * `DEFAULT_SESSION_TTL_MS` (2 minutes).
+   */
+  sessionTtlMs?: number
 }
 
 /** One service a session is needed for. */
@@ -57,9 +80,11 @@ export interface PolicySessionRequest {
   asset: AssetV5
   serviceId: string
   /**
-   * Sent to `initiate` as it is. The policy server hashes this exact string into the
-   * session id and compares it with the address of the download or compute call, so it
-   * must be the address that call is made with (`signer.getAddress()`).
+   * Sent to `initiate` as it is, and the cache key as it is. The policy server hashes this
+   * exact string into the session id and compares it with the address of the download or
+   * compute call, so it must be the string that call is made with: `signer.getAddress()`,
+   * unchanged (checksummed, for an ethers signer), which is what ocean.js signs the
+   * download and `computeStart` with.
    */
   consumerAddress: string
 }
@@ -67,10 +92,19 @@ export interface PolicySessionRequest {
 export class PolicySessionResolver {
   private credentials?: CredentialProvider
   private readonly sessions: SessionStore
+  private readonly sessionTtlMs: number
 
   constructor(options: PolicySessionResolverOptions = {}) {
+    const sessionTtlMs = options.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS
+
+    if (!Number.isFinite(sessionTtlMs) || sessionTtlMs < 0)
+      throw new Error(
+        `sessionTtlMs must be a finite number of milliseconds, 0 or more; got ${sessionTtlMs}.`
+      )
+
     this.credentials = options.credentials
     this.sessions = options.sessionStore || new MemorySessionStore()
+    this.sessionTtlMs = sessionTtlMs
   }
 
   /** Swaps the credential provider. Sessions already verified stay cached. */
@@ -105,15 +139,15 @@ export class PolicySessionResolver {
 
     if (!hasCredentials(asset, service)) return null
 
-    const key = {
+    const key: SessionKey = {
       nodeUri: node.nodeUri,
       did: asset.id,
       serviceId,
       consumerAddress
     }
 
-    const cached = this.sessions.get(key)
-    if (cached) return emptyPolicyServerPayload(cached.sessionId)
+    const cached = await this.reusable(key, node)
+    if (cached) return emptyPolicyServerPayload(cached)
 
     if ((await node.hasPolicyServer()) === false) return null
 
@@ -127,6 +161,9 @@ export class PolicySessionResolver {
       serviceCredentials,
       canPresent: !!this.credentials
     })
+
+    // Taken before `initiate`: the verifier counts a session's lifetime from its creation.
+    const createdAt = Date.now()
 
     const reply = await node.initializePolicyVerification({
       documentId: asset.id,
@@ -145,7 +182,9 @@ export class PolicySessionResolver {
         `the policy server opened no session for service ${serviceId} of ${asset.id}: ${JSON.stringify(reply).slice(0, 200)}`
       )
 
-    if (requiresPresentation(assetCredentials, serviceCredentials)) {
+    const presented = requiresPresentation(assetCredentials, serviceCredentials)
+
+    if (presented) {
       if (!redirectUri)
         throw new OceanNodeError(
           'initializePolicyVerification',
@@ -174,9 +213,55 @@ export class PolicySessionResolver {
         })
     }
 
-    this.sessions.set(key, { sessionId })
+    if (this.sessionTtlMs > 0)
+      this.sessions.set(key, { sessionId, createdAt, presented })
 
     return emptyPolicyServerPayload(sessionId)
+  }
+
+  /**
+   * The cached session id for `key`, if it can still be spent; a stale entry is deleted.
+   *
+   * An entry is stale once it is `sessionTtlMs` old (or carries no valid `createdAt`). A
+   * presented session is also asked about again (`checkSessionId`, one call through the
+   * node) and is stale unless the verifier still reports it verified: it lives in the
+   * verifier, which forgets it on expiry or a restart. A check that fails outright counts
+   * as stale too, and `initiate` then reports what is wrong with the node.
+   */
+  private async reusable(
+    key: SessionKey,
+    node: OceanNodeClient
+  ): Promise<string | undefined> {
+    const entry = this.sessions.get(key)
+    if (!entry) return undefined
+
+    if (!this.isFresh(entry)) {
+      this.sessions.delete(key)
+      return undefined
+    }
+
+    if (entry.presented) {
+      const check = await node
+        .checkPolicySession(entry.sessionId)
+        .catch(() => undefined)
+
+      if (!check?.verified) {
+        this.sessions.delete(key)
+        return undefined
+      }
+    }
+
+    return entry.sessionId
+  }
+
+  private isFresh(entry: SessionEntry): boolean {
+    const { createdAt } = entry
+    if (typeof createdAt !== 'number' || !Number.isFinite(createdAt))
+      return false
+
+    const age = Date.now() - createdAt
+
+    return age >= 0 && age < this.sessionTtlMs
   }
 }
 
