@@ -260,19 +260,20 @@ export async function waitForComputeJob(
 }
 
 /**
- * The container's logs, while the job is still running.
+ * The algorithm's logs: live while the job runs, and its `algorithmLog` result once it has
+ * finished.
  *
  * New in v2, and the practical way to debug an algorithm you cannot otherwise observe.
  */
 export async function getComputeLogs(nautilus: Nautilus, jobId: string) {
-  const logs = await nautilus.getComputeLogs({ jobId })
+  const stream = await nautilus.getComputeLogs({ jobId })
+  const decoder = new TextDecoder()
 
-  console.log('Job logs:', logs)
-
-  return logs
+  for await (const chunk of stream)
+    process.stdout.write(decoder.decode(chunk, { stream: true }))
 }
 
-/** A download URL for a finished job's output. */
+/** A download URL for a finished job's output: `outputs.tar`, a tar archive. */
 export async function retrieveComputeResult(nautilus: Nautilus, jobId: string) {
   const url = await nautilus.getComputeResult({ jobId })
 
@@ -285,11 +286,11 @@ export async function retrieveComputeResult(nautilus: Nautilus, jobId: string) {
   console.log('Compute result URL:', url)
 
   const response = await fetch(url)
-  const body = await response.text()
+  const archive = new Uint8Array(await response.arrayBuffer())
 
-  console.log('Result:', body.slice(0, 1000))
+  console.log(`Result: outputs.tar, ${archive.length} bytes`)
 
-  return body
+  return url
 }
 
 /** Streams a result instead of downloading it through a URL. Better for large outputs. */
