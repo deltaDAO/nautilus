@@ -17,6 +17,28 @@ const node = nautilus.getNodeClient() // [!code focus]
 const status = await node.getNodeStatus()
 ```
 
+## Which node
+
+nautilus 2.0.0-beta.1 works with
+[OceanProtocolEnterprise ocean-node](https://github.com/OceanProtocolEnterprise/ocean-node)
+**4.2.x**, unmodified. Upstream `oceanprotocol/ocean-node` 4.0 and 4.2 do not resolve remote
+DDOs, so they do not index assets published with nautilus.
+
+With an IPFS remote store, the node also needs an IPFS gateway (`IPFS_GATEWAY`) that can
+fetch your store's content — see [remote stores](/docs/guides/remote-stores#storage-options).
+
+Do not publish with the node's own key. The indexer signs its decrypt calls with the node's
+key (`providerAddress`), so with the same key as publisher their nonces collide, decrypt fails
+with 401, and the asset goes on chain without ever being indexed. `publish`,
+`completePublish` and `edit` warn once when they see it;
+[`getNodeAddress()`](/docs/api/node/OceanNodeClient#getnodeaddress) returns the address.
+
+:::tip
+For access to the deltaDAO test environment, or to have your own ocean-node run as a
+service, contact deltaDAO at [delta-dao.com/contact](https://delta-dao.com/contact) or
+[contact@delta-dao.com](mailto:contact@delta-dao.com).
+:::
+
 ## Checking what you are pointed at
 
 Worth doing first when something behaves unexpectedly — a v1 Provider and an ocean-node
@@ -89,7 +111,10 @@ that went away shows up here rather than at download time.
 ### Buckets
 
 The node's persistent storage, which is what
-[`NodePersistentRemoteStore`](/docs/guides/remote-stores) uses underneath.
+[`NodePersistentRemoteStore`](/docs/api/remote/NodePersistentRemoteStore) uses underneath.
+Buckets work for asset files (`nodePersistentStorage` file objects), but **not for DDOs**:
+ocean-node 4.2 resolves a remote DDO without a consumer address, and a bucket refuses that
+read.
 
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'
@@ -105,6 +130,47 @@ await node.uploadFile(bucketId, 'notes.txt', new Blob(['hello']).stream()) // [!
 
 const object = await node.getFileObject(bucketId, 'notes.txt')
 ```
+
+### Indexing state
+
+When an asset is on chain but `getAsset` says "DDO not found", the node has usually recorded
+why. Its indexing state is the only place that shows it — nothing appears on chain.
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+const node = nautilus.getNodeClient()
+declare const did: string
+declare const txHash: string
+// ---cut---
+const failure = await node.getIndexingState({ txId: txHash }) // [!code focus]
+// e.g. { did: 'did:op:…', nft: '0x…', txId: '0x…', valid: false, error: 'Provider exception on decrypt DDO. …' }
+
+const success = await node.getIndexingState({ did }) // [!code focus]
+// e.g. { did: 'did:ope:…', txId: ' ', valid: true, error: ' ' }
+```
+
+This is `GET <node>/api/aquarius/state/ddo?txId=<hash>` (or `?did=<did:ope:…>`, or
+`?nft=<address>`), so `curl` works too — but the node matches the values exactly, as it filed
+them: `nft` checksummed, `txId` lower-case. `getIndexingState` normalizes both for you and
+rejects a malformed `nft`, `txId` or `did`. The node keeps two kinds of record under
+different ids:
+
+- **Success** records are filed under the asset's `did:ope:` DID, with no `nft` and a blank
+  `txId` (`" "`). Find them with `?did=did:ope:…`.
+- **Failure** records are filed under the old `did:op:` form of the id, with `nft` and the
+  real `txId`. Find them with `?txId=` (preferred) or `?nft=`.
+- **Failure records stay.** After a later successful edit, `?nft=` can still return the
+  old error. Check that the record's `txId` is the transaction you care about.
+
+Treat `valid: false` **or** any non-blank `error` as a failure — a DDO dropped by schema
+validation is recorded as `valid: true` plus an error.
+
+[`waitForIndexer`](/docs/api/nautilus/waitForIndexer) reads the record for its transaction
+for you, and throws an `IndexingError` with the node's message. See
+[how the node resolves your DDO](/docs/guides/remote-stores#how-the-node-resolves-your-ddo)
+for what it checks.
 
 ### Remote validation
 
@@ -124,7 +190,8 @@ const result = await node.validateRemote(ddo) // [!code focus]
 ## Errors
 
 Every call is wrapped, so failures arrive as `OceanNodeError` with the operation named and
-the original error kept on `cause`.
+the original error kept on `cause`. `IndexingError`, thrown by `waitForIndexer` when the node
+recorded an indexing failure, is a subclass.
 
 ```ts twoslash
 import { OceanNodeError } from '@deltadao/nautilus'
@@ -157,4 +224,8 @@ const node = new OceanNodeClient({
 })
 ```
 
-`nodeUri` also accepts a peerId or multiaddr, which switches it to the libp2p transport.
+`nodeUri` also accepts a peerId or multiaddr, which switches it to the libp2p transport. A
+plain `http://` `nodeUri` on a host other than `localhost`, `127.0.0.0/8`, `::1` or
+`*.localhost` throws an `OceanNodeError`, as in `Nautilus.create`, unless you pass
+`allowInsecureTransport: true`; `forEndpoint` applies the same rule to the other node, and
+`encrypt` and `getFileInfo` to their `nodeUri` argument (a service's `serviceEndpoint`).

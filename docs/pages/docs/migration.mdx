@@ -11,6 +11,261 @@ New to nautilus rather than upgrading? Start with
 [Getting Started](/docs/getting-started) instead — this page assumes you know v1.
 :::
 
+## Upgrading from 2.0.0-beta.0
+
+2.0.0-beta.1 makes published and edited assets indexable by an unmodified
+[OceanProtocolEnterprise ocean-node](https://github.com/OceanProtocolEnterprise/ocean-node)
+4.2.x. beta.0 stored the bare signed JWS and hashed its claims; the 4.2 node expects a JSON
+envelope and hashes that, so every beta.0 asset went on chain and was never indexed. Those
+assets cannot be repaired — publish them again with beta.1.
+
+**Switch the remote store to IPFS (or S3).** `NodePersistentRemoteStore` is rejected as the
+DDO store, because ocean-node 4.2 cannot read a DDO from its own bucket storage. The bootstrap
+instance is no longer needed for the store:
+
+```ts
+const bootstrap = await Nautilus.create(signer, { config }) // [!code --]
+const nautilus = await Nautilus.create(signer, { // [!code --]
+  config, // [!code --]
+  remoteStore: new NodePersistentRemoteStore(bootstrap.getNodeClient()) // [!code --]
+}) // [!code --]
+const nautilus = await Nautilus.create(signer, { // [!code ++]
+  config, // [!code ++]
+  remoteStore: new IpfsRemoteStore({ // [!code ++]
+    uploadUrl: 'https://api.pinata.cloud/pinning/pinFileToIPFS', // [!code ++]
+    headers: { Authorization: `Bearer ${process.env.PINATA_JWT}` }, // [!code ++]
+    probe: 'upload', // [!code ++]
+    gatewayUrl: 'https://gateway.pinata.cloud' // [!code ++]
+  }) // [!code ++]
+}) // [!code ++]
+```
+
+**Drop `encrypt`.** nautilus is encrypted only: the stored envelope and the on-chain pointer
+are always node-encrypted (flags `0x02`), and the DDO never goes on chain. Passing
+`encrypt: false` throws.
+
+```ts
+await nautilus.publish(asset, { encrypt: false }) // [!code --]
+await nautilus.publish(asset) // [!code ++]
+```
+
+**Custom `RemoteStore`s receive the envelope.** `put(payload)` now gets the JSON string
+`{"encryptedData":"0x…"}`, not the JWS. Store it byte for byte — its sha256 is the on-chain
+metadata hash — and return an `ipfs`, `url`, `s3`, `arweave` or `ftp` pointer; an `ipfs`
+`hash` must be a CIDv0 or CIDv1. Three optional methods are new: `check()`, which runs before
+the first transaction of `publish()`, `completePublish()` and `edit()`; `verify(pointer,
+expectedHash)`, which runs right before the metadata transaction and reads the stored object
+back; and `remove(pointer)` for cleanup, which must accept the redacted pointer from
+`PublishResponse.stored`. See
+[writing your own](/docs/guides/remote-stores#writing-your-own).
+
+**`waitForIndexer` throws instead of returning `undefined`.** It polls every 7 s for up to
+5 minutes by default, rather than about 50 minutes, and throws an `IndexingError` with the
+node's message as soon as the node records a failure, or an `OceanNodeError` on timeout or
+after repeated failed requests. On `OceanNodeClient.waitForIndexer`, the `interval` and
+`maxRetries` options are replaced by `intervalMs` and `timeoutMs`; `signal` stays. The old
+keys still work for now, mapped to `intervalMs = interval` and
+`timeoutMs = interval × maxRetries` (`maxRetries` alone: beta.0's 30 s × `maxRetries`) with a
+one-time warning, but will be removed.
+`publish`/`edit` take the same timing:
+
+```ts
+const indexed = await nautilus.waitForIndexer(did, txid) // AssetV5 | undefined // [!code --]
+if (!indexed) throw new Error('not indexed') // [!code --]
+const indexed = await nautilus.waitForIndexer(did, txid, { timeoutMs: 600_000 }) // AssetV5 // [!code ++]
+await nautilus.publish(asset, { waitForIndexer: { timeoutMs: 600_000 } }) // [!code ++]
+```
+
+**Also breaking:**
+
+- `writeMetadata` is no longer exported. Metadata is only written through
+  `Nautilus.publish()`, `completePublish()` and `edit()`, which run every encrypted-only check
+  first. `prepareMetadata` stays and returns redacted pointers.
+- `prepareMetadata` no longer takes `encrypt` (`encrypt: false` throws). It stores the
+  node-encrypted envelope instead of the bare JWS, and its `metadataHash` is `0x` + sha256 of
+  that envelope instead of the JWS claims. `WrittenMetadata` gained `stored` (the redacted
+  store pointer and the envelope hash) and `encryptedBy` (the URI of the node that encrypted
+  it).
+- `signS3Request` is not exported (unreleased builds of this change exported it); SigV4 is an
+  internal detail of `S3RemoteStore`.
+- `PublishResponse.stored.pointer` (and `prepareMetadata`'s `pointer`/`stored`) is
+  **redacted**: an S3 `secretAccessKey`, `url` header values, and a URL's user name,
+  password, query values (all of them; the parameter names stay) and fragment read
+  `'<redacted>'`. `S3RemoteStore.remove()` works with the redacted pointer.
+- `IpfsRemoteStore` reads every envelope back before the metadata transaction, and refuses
+  to publish when it cannot: through `gatewayUrl` when set, otherwise, for a Kubo `uploadUrl`
+  (`…/api/v0/add`), through the same node's `/api/v0/cat`. Any other `uploadUrl` (Pinata,
+  your own uploader) needs `gatewayUrl`, or the new `verify: false` to publish without the
+  read-back; without either, `check()` throws before anything is minted and `verify()`
+  throws instead of passing without a read.
+- Plain `http://` is refused for `oceanNodeUri`, the `S3RemoteStore` `endpoint` and the
+  `IpfsRemoteStore` `uploadUrl`/`gatewayUrl`/`probe.url`/`unpin.url`, except on
+  `localhost`, `127.0.0.0/8`, `::1` and `*.localhost`. Opt out with
+  `allowInsecureTransport: true` on `Nautilus.create`, `S3RemoteStore` or `IpfsRemoteStore`.
+  `S3RemoteStore.nodeEndpoint` may stay `http://`: only the node connects to it. URLs are
+  judged as `fetch` parses them, so `http:host` or `http:/host` is plain `http://` too, and
+  a URL containing a tab, CR, LF or another control character is refused. A URL with a
+  scheme other than `http(s)` as `oceanNodeUri`/`nodeUri` or a store URL, or a scheme-less
+  `host:port` (it parses as a scheme), now throws; use `https://host:port`. Only the
+  `S3RemoteStore` `endpoint` takes a bare host, meaning `https://`. A
+  `new OceanNodeClient({ nodeUri })` applies the same rule and throws an `OceanNodeError`
+  (opt out with its own `allowInsecureTransport: true`), and so does `forEndpoint(uri)`,
+  which carries the flag over from the client it is called on. Service endpoints on plain
+  `http://` (non-loopback) now fail in `getFileInfo`/`encrypt` unless
+  `allowInsecureTransport: true`.
+- nautilus no longer follows redirects on the requests that carry credentials or a body:
+  every `S3RemoteStore` request, and `IpfsRemoteStore` uploads, `probe`, `unpin` and Kubo
+  `cat` reads. If your store sits behind a redirect, configure the final URL. The read-only
+  node GETs and the `IpfsRemoteStore` `gatewayUrl` read do follow them, so a node behind a
+  reverse proxy that redirects `/api/aquarius/…` works for `waitForIndexer`,
+  `getIndexingState`, `getNodeAddress` and `getIndexerNonceState`. A redirect to plain
+  `http://` on a non-loopback host is refused there, unless the URL nautilus requested
+  (e.g. the node URI) is plain `http://` already, with `allowInsecureTransport`. Requests
+  ocean.js sends (`encrypt`, `initialize`, …) are unchanged.
+- `IpfsRemoteStore`: move URL credentials (`https://user:pass@…`) into `headers`
+  (`Authorization: 'Basic …'`). A redirecting `uploadUrl`/`probe.url`/`unpin.url` must be
+  replaced by its final URL. A custom `unpin` service must answer 404 (or 2xx) for a CID
+  that isn't pinned to count as removed.
+- `OceanNodeClient.encrypt` now times out after 120 s with an `OceanNodeError`; pass
+  `requestTimeoutMs` to `Nautilus.create` or `new OceanNodeClient()` for slower nodes or
+  signers.
+- `Nautilus.create` refuses a `config.chainId` that differs from the signer's chain.
+- An `asset.owner` other than the signer now throws in `publish()` and `completePublish()`
+  before the mint. Publish with the owner's signer, then transfer the NFT if needed.
+- `publish()` resets `service.datatokenAddress` on every service before minting, so
+  `PublishIncompleteError.datatokens` lists only the datatokens this `publish()` created.
+- `PublishedService.tx` is optional: it is absent for a datatoken `completePublish()` reused
+  as it was (`reused: true`).
+- `edit()` no longer waits for this instance's previous metadata change to be indexed.
+  Instead, one instance's writes to an NFT are serialized, and a metadata transaction that
+  shares its block with another one for the same NFT throws a `MetadataConflictError`.
+- `edit()` no longer writes the lifecycle state taken from the fetched DDO. To change the
+  state in an edit, call `setLifecycleState()` on the builder; otherwise the state the NFT
+  has on chain at the time of the write is kept (`NautilusAsset.hasRequestedLifecycleState`
+  tells the two apart).
+- A custom `RemoteStore`'s `remove()` is now called by nautilus when no metadata transaction
+  can point at the envelope: `publish()`, `completePublish()` or `edit()` stored it and then
+  failed before the transaction was sent, or the transaction was rejected, or mined and
+  reverted. It is never called once that transaction may have been mined. A send error that
+  carries a transaction hash (or ethers' "provider destroyed" for a request already at the
+  RPC) counts as sent: the envelope is kept (`cleanup: 'kept'`), and `stored.txHash` names
+  the transaction when its hash is known.
+- The JWS a custom `DdoSigner` returns is decoded before it is stored, and its payload (`vc`
+  unwrapped, as the node does) must be the validated DDO. Allowed on top: the JWT registered
+  claims (`iss`, `sub`, `aud`, `exp`, `nbf`, `iat`, `jti`), `type: ['VerifiableCredential']`,
+  an `issuer` that differs only in the case of an Ethereum address (or any issuer when the DDO
+  declares none), and any claim outside a `vc` wrapper. Anything else that differs is refused
+  before the envelope is stored. The built-in signers already sign exactly this.
+- `publish()`, `completePublish()` and `edit()` check the node before their first
+  transaction and throw an `IndexerNonceStuckError` when the node would not accept its
+  indexer's next decrypt call, since the asset would not be indexed. Opt out with
+  `checkIndexerNonce: false`; a node that does not answer the check is skipped.
+- They also refuse a DDO whose signed envelope the node could not decrypt: the node accepts
+  decrypt requests up to 100 KB, so the JWS must stay under about 24 000 characters.
+  Checked before the first transaction from an upper bound of the signed DDO (encrypted
+  files and credential claims at their real size, plus 1024 characters for the JWS header
+  and signature), and exactly before the envelope is stored.
+- The pointer a `RemoteStore` returns must carry what the node needs for its type: `url` an
+  absolute `http(s)` `url` and a `GET`/`POST` `method` (and string `headers`, if any); `s3` an
+  `s3Access` with non-empty `bucket`, `objectKey`, `endpoint`, `accessKeyId` and
+  `secretAccessKey`; `arweave` a `transactionId` that is not a URL or path; `ftp` an
+  `ftp://`/`ftps://` `url`. Others are refused before the pointer is encrypted.
+- `access()`, `compute()`, `order()` and `reuseOrder()` throw a `ProviderFeeSignatureError`,
+  before any approval, purchase or order, for a provider fee that is missing, lacks a field,
+  or whose signature does not recover to `providerFeeAddress` the way the datatoken
+  contract verifies it. When the signature fails, `access` asks the node for a new fee
+  (1.1 s later, at most 3 `initialize` calls in total) unless the service has `timeout: 0`;
+  `compute` calls `initializeCompute` once.
+- `order()` and `reuseOrder()` approve the provider fee themselves, combined into one
+  allowance with the publish-market fee and the purchase where they share a token and
+  spender. If you approve the provider fee before calling them, you can drop that approval
+  (or keep it: an allowance that already covers the sum is not approved again).
+- `payer` in `order()`/`settleOrder()` must be omitted or be the signer's address (any
+  case); another address throws "The payer … is not the signer …" before any allowance read
+  or transaction. It could not work before either: the contracts pull from `msg.sender`. To
+  pay from another account, sign with that account.
+- `waitForIndexer` polls every 7 s by default (at most 18 requests a minute, under the node's
+  default rate limit of 30) and backs off on a `429` or a `403` "Too many active
+  connections" instead of counting it as a failed request, never waiting more than 60 s.
+- `waitForIndexer({ timeoutMs: Infinity })` (or `NaN`/negative values for any timing option)
+  now throws an `OceanNodeError`; pass a large finite number.
+- `waitForIndexer` over a P2P node URI cuts each lookup off after `requestTimeoutMs`
+  (default 15 s, capped by the time left) and counts it as a failed lookup towards
+  `maxConsecutiveFailures`. Raise `requestTimeoutMs` if your peer needs longer to dial.
+
+**New:**
+
+- `S3RemoteStore` — the envelope in an S3 bucket (AWS S3, Exoscale SOS, MinIO), with a
+  separate write key and a read-only key for the node, `verify()` with the read key, and
+  `remove(pointer)` to clean up. Read and write key policies must cover
+  `<prefix>nautilus-store-check/*`, where `check()` puts its probes (in the shape of real
+  objects), and a bare 403 on the read-key probe fails `check()`: a proxy or firewall in
+  front of the bucket must let S3's `AccessDenied` through. Bucket names must follow the S3
+  rules (lowercase, 3–63 characters, no IP address), and dotted buckets over https need
+  `forcePathStyle: true`. The pointer's endpoint always carries a lowercase scheme, and
+  `remove()` refuses keys `put()` would not have written. `endpoint` and `nodeEndpoint` must
+  not carry `user:password@` (the constructor throws): S3 auth uses `readCredentials` and
+  `writeCredentials` only.
+- `PublishResponse.stored` — `{ pointer, metadataHash }`: the store's pointer (for IPFS, the
+  CID to unpin), redacted, and the on-chain hash.
+- `OceanNodeClient.getIndexingState({ did } | { nft } | { txId })` — the node's indexing
+  record, the only place it says why an asset was not indexed. Failures are filed by
+  transaction (query `{ txId }`); successes by DID (`{ did }`).
+- `OceanNodeClient.getNodeAddress()` — the node's `providerAddress`. `publish`,
+  `completePublish` and `edit` warn once when the publisher is that key, which makes the
+  indexer's decrypt fail with 401.
+- `OceanNodeClient.getIndexerNonceState()` and `isIndexerNonceSignable()` — a read-only
+  check (two `GET`s) of whether the node will accept its indexer's next decrypt call;
+  `IndexerNonceStuckError` and `PublishOptions.checkIndexerNonce` use it.
+- `ProviderFeeSignatureError` — the provider-fee pre-check above, with the fee, the address
+  `ecrecover` would return and the number of attempts.
+- `RemoteStore.check()` and `IpfsRemoteStore`'s `probe` option — the store is tested before
+  anything is minted. `RemoteStore.verify()` and `IpfsRemoteStore`'s `gatewayUrl` (or a
+  Kubo node's `/api/v0/cat`) — the stored envelope is read back before the metadata
+  transaction; `IpfsRemoteStore`'s `verify: false` opts out explicitly.
+- `PublishIncompleteError` and `nautilus.completePublish(nftAddress, asset)` — finish a
+  publish that failed after the NFT was minted. `completePublish` checks that the signer owns
+  the NFT and that the configured factory created it, and reuses the NFT's datatokens. It
+  refuses a reused datatoken whose existing pricing differs from the service's pricing
+  config: make the service's `setPricing()` match what is on chain. When a datatoken would
+  be matched only by creation order and its pricing does not fit, set `datatokenAddress` on
+  each service to say which datatoken belongs to it. It refuses with "has N transaction(s)
+  not mined yet" while the signer has any pending transaction, unrelated ones included:
+  wait until they are mined or dropped, then call it again. After a `PublishIncompleteError`
+  with `stored.cleanup === 'kept'`, pass `{ metadataTxHash: error.stored.txHash }`
+  (`CompletePublishOptions`): it then also refuses while that transaction is pending and
+  once it succeeded, so the metadata is not written twice.
+- `PublishedNotIndexed` — when the metadata transaction was mined but the wait for the
+  indexer fails, the error carries the full `PublishResponse` as `error.published`.
+- `MetadataConflictError` (`published`, `conflictingTxIds`, `indexedFirst`) — ocean-node
+  indexes only the first metadata event of an asset per block, so nautilus checks the block
+  after every metadata transaction.
+- `WaitForIndexerOptions.requestTimeoutMs` (default 15 s) and `maxConsecutiveFailures`
+  (default 5); `S3RemoteStore` and `IpfsRemoteStore` take `requestTimeoutMs` (30 s and 60 s).
+  The store constructors throw for a `requestTimeoutMs` of 0, a negative number, `NaN`,
+  `Infinity` or a non-number, and clamp larger values to 2^31−1 ms.
+- `IpfsRemoteStore.remove(pointer)` unpins a CID: derived from `uploadUrl` for Pinata
+  (`DELETE /pinning/unpin/<cid>`) and Kubo (`POST /api/v0/pin/rm`), or set with the new
+  `unpin: { url, method?, headers? }` option.
+- `error.stored` (type `StoredBeforeFailure`, also on `PublishIncompleteError.stored`) — when
+  a write fails after the envelope was stored, the redacted pointer, the hash and what became
+  of the object: `'removed'` (the transaction was never sent, was rejected, or was mined and
+  reverted, so nautilus removed it), `'not-removed'` or `'kept'` (the transaction was sent
+  and may be mined; `txHash` names it when its hash is known). See
+  [when a write fails](/docs/guides/remote-stores#when-a-write-fails-after-the-envelope-is-stored).
+- `S3RemoteStore` retries a network error or a 500, 502, 503 or 504 once, freshly signed;
+  other statuses are not retried.
+
+**Know:** keep the **creation envelope** (from `publish()`) and the current one of every
+asset that should stay indexed. A node reindex replays the asset from its creation event and
+drops it from the index when that envelope is gone. See
+[cleaning up](/docs/guides/remote-stores#cleaning-up).
+
+**Know:** `DEPRECATED` and `REVOKED_BY_PUBLISHER` are one-way on ocean-node — the indexer
+replaces the DDO with a stub — so `publish()` and `edit()` refuse to write metadata in either
+state. See
+[lifecycle states](/docs/api/nautilus/setAssetLifecycleState#states).
+
 ## 1. Dependencies
 
 ```json
@@ -66,8 +321,13 @@ const nautilus = await Nautilus.create(signer, { // [!code ++]
 | `subgraphUri` | *removed* — pricing comes from chain reads |
 | — | `escrow`, `accessListFactory`, `sdk: 'evm' \| 'oasis'` |
 
-`ConfigHelper` ships Pontus-X devnet (chain 32456). For any other deltaDAO network, pass
-the addresses explicitly in `config`.
+`ConfigHelper` ships contract addresses for a set of chains, including Pontus-X devnet
+(32456) and OP Sepolia (11155420). On a chain it does not know, pass the addresses
+explicitly in `config`.
+
+v2 needs an OceanProtocolEnterprise ocean-node 4.2.x. For access to the deltaDAO test
+environment, or to have your own ocean-node run as a service, contact deltaDAO at
+https://delta-dao.com/contact or contact@delta-dao.com.
 
 ## 3. Reading assets
 
@@ -93,7 +353,7 @@ getOwner(asset) // [!code ++]
 getLifecycleState(asset) // [!code ++]
 ```
 
-New: `nautilus.query(searchQuery)` and `nautilus.waitForIndexer(did, txid?)`.
+New: `nautilus.query(searchQuery)` and `nautilus.waitForIndexer(did, txid?, options?)`.
 
 ## 4. Publishing
 
@@ -102,30 +362,24 @@ only a `{remote}` pointer. So it needs a **remote store** — see
 [remote stores](/docs/guides/remote-stores) and [signing](/docs/guides/signing):
 
 ```ts
-import { NodePersistentRemoteStore, Nautilus } from '@deltadao/nautilus'
-
-const bootstrap = await Nautilus.create(signer, { config })
+import { IpfsRemoteStore, Nautilus } from '@deltadao/nautilus'
 
 const nautilus = await Nautilus.create(signer, {
   config,
-  // Uses the node's own storage — no external IPFS needed.
-  remoteStore: new NodePersistentRemoteStore(bootstrap.getNodeClient())
+  // A Kubo node; Pinata's pinFileToIPFS works too, with a Bearer JWT in `headers`.
+  remoteStore: new IpfsRemoteStore({ uploadUrl: 'http://127.0.0.1:5001/api/v0/add' })
 })
 ```
 
-Or with IPFS:
-
-```ts
-import { IpfsRemoteStore } from '@deltadao/nautilus'
-
-remoteStore: new IpfsRemoteStore({ uploadUrl: 'http://127.0.0.1:5001/api/v0/add' })
-```
+The store holds a node-encrypted envelope, never the DDO in clear, and the on-chain pointer
+is node-encrypted too. The node's own storage (`NodePersistentRemoteStore`) cannot hold DDOs
+on ocean-node 4.2, so nautilus rejects it.
 
 `publish()` gained options and returns a little more:
 
 ```ts
 const { nftAddress, services, ddo, setMetadataTxReceipt } = await nautilus.publish(asset) // [!code --]
-const { nftAddress, services, ddo, setMetadataTxReceipt, credential, indexed } = // [!code ++]
+const { nftAddress, services, ddo, setMetadataTxReceipt, credential, stored, indexed } = // [!code ++]
   await nautilus.publish(asset, { waitForIndexer: true }) // [!code ++]
 ```
 

@@ -452,6 +452,23 @@ describe('NautilusService projection', () => {
     )
   })
 
+  it('explains that an edited endpoint needs the files again', async () => {
+    // The files are encrypted for the node in the serviceEndpoint, so the old ciphertext
+    // cannot move to another node.
+    const { client } = createNodeMock()
+    const service = new ServiceBuilder({
+      asset: getAssetFixture(),
+      serviceId: SERVICE_ID
+    })
+      .setServiceEndpoint('https://other-node.test.invalid')
+      .build()
+
+    await expectThrowsAsync(
+      () => service.assertPublishable(client),
+      /serviceEndpoint changed.*can only change together with the files: add them again with addFile\(\)/
+    )
+  })
+
   it('rejects an endpoint that does not answer as an ocean-node', async () => {
     const { client } = createNodeMock({ validNode: false })
     const service = accessBuilder().addFile(urlFile).build()

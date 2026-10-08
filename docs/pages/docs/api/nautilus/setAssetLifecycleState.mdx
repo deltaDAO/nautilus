@@ -17,8 +17,11 @@ const receipt = await nautilus.setAssetLifecycleState( // [!code focus]
 ) // [!code focus]
 ```
 
-Returns `undefined` without sending a transaction when the asset is already in the
-requested state.
+Resolves with the receipt once the transaction is **mined**, and throws if it was not
+submitted or reverted. Returns `undefined` without sending a transaction when the asset is
+already in the requested state. Within one instance, it waits for any `publish()`,
+`completePublish()` or `edit()` of the same NFT still running before it sends its
+transaction.
 
 The states can also be set while editing, via
 [`AssetBuilder.setLifecycleState`](/docs/api/assetbuilder/setLifecycleState) — use that when
@@ -31,11 +34,31 @@ you are changing metadata anyway, and this when the state is all you want to cha
 | Value | Name | Meaning |
 | --- | --- | --- |
 | `0` | `ACTIVE` | Normal. |
-| `1` | `END_OF_LIFE` | Retired; no longer maintained. |
-| `2` | `DEPRECATED` | Superseded by another asset. |
-| `3` | `REVOKED_BY_PUBLISHER` | Withdrawn. |
-| `4` | `ORDERING_DISABLED_TEMPORARILY` | Visible, but cannot be ordered. |
-| `5` | `ASSET_UNLISTED` | Accessible by DID, hidden from markets. |
+| `1` | `END_OF_LIFE` | Retired; no longer maintained. Reversible. |
+| `2` | `DEPRECATED` | Superseded by another asset. **One-way on ocean-node.** |
+| `3` | `REVOKED_BY_PUBLISHER` | Withdrawn. **One-way on ocean-node.** |
+| `4` | `ORDERING_DISABLED_TEMPORARILY` | Visible, but cannot be ordered. Reversible. |
+| `5` | `ASSET_UNLISTED` | Accessible by DID, hidden from markets. Reversible. |
+
+:::warning[DEPRECATED and REVOKED are one-way]
+When an active asset moves to `DEPRECATED` or `REVOKED_BY_PUBLISHER`, ocean-node replaces its
+full DDO with a stub that keeps only the NFT state. Setting `ACTIVE` again does not restore
+it: only a new metadata write could, and [`edit`](/docs/api/nautilus/edit) refuses an NFT in
+either state and needs the full published DDO as its baseline, which the stub no longer is.
+Treat both states as final. Assets cannot be deleted; `REVOKED_BY_PUBLISHER` is the strongest
+state a publisher can set.
+
+Revoking does not make the stored DDO unreadable either: the envelope stays in the remote
+store, and a node that decrypts for anyone will still decrypt it. Remove it from the store
+(`remove(stored.pointer)`) if it must go — see
+[encrypted is not access control](/docs/guides/remote-stores#what-is-stored). Do that only for
+an asset retired for good: without its creation envelope, a node reindex cannot restore it.
+:::
+
+A state change does not update the indexed transaction id, so
+[`waitForIndexer`](/docs/api/nautilus/waitForIndexer) with the receipt's hash cannot wait for
+it. Poll [`getAsset`](/docs/api/nautilus/getAsset) and read
+[`getLifecycleState`](/docs/api/ddo/getLifecycleState).
 
 DDO v5's `State` enum carries the same values and is accepted too. nautilus re-exports it as a
 type only, so pass `LifecycleStates` members when you need a value.
@@ -43,6 +66,10 @@ type only, so pass `LifecycleStates` members when you need a value.
 ## Returns
 
 - Type: `TransactionReceipt | undefined`
+
+The mined receipt. The standalone `setMetadataState({ nftAddress, state, chainConfig, signer })`
+export behaves the same way and also waits for the receipt. A read straight after can still
+show the old state on an RPC behind a load balancer whose nodes lag each other by a block.
 
 ## Parameters
 

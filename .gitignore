@@ -28,3 +28,6 @@ docs/pages.gen.ts
 # stays on disk so it can be picked up again; see dev-stack/PARKED.md for what
 # to restore when it ships.
 dev-stack/
+
+# Claude Code worktrees and local settings
+.claude/

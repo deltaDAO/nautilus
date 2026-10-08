@@ -62,11 +62,13 @@ The builder pattern is unchanged as the primary API: `AssetBuilder`, `ServiceBui
 - **ocean-node replaces Aquarius and Provider.** One `OceanNodeClient` wraps both, and `Config.oceanNodeUri` replaces `metadataCacheUri` and `providerUri`.
 - **The subgraph is gone.** Pricing comes from chain reads and the DDO's indexed stats, so `urql`, `graphql` and graphql-codegen are no longer dependencies.
 - **DDO v5.** Assets are W3C Verifiable Credentials: everything moved under `credentialSubject`, DIDs use the `did:ope:` prefix, `description` and `displayTitle` are language-tagged, `license` is structured, and `providedBy` is required.
-- **DDOs are signed and stored off chain.** Only a `{remote}` pointer is written on chain. The remote backend is configurable — IPFS, or ocean-node's own persistent storage.
+- **DDOs are signed, encrypted and stored off chain.** The remote store (IPFS via `IpfsRemoteStore`, or S3 via `S3RemoteStore`) holds a node-encrypted envelope, and only a node-encrypted `{remote}` pointer is written on chain. There is no plaintext mode.
 - **Credential-gated access.** nautilus resolves policy-server challenges through the walt.id wallet and verifier, headless by default with optional selection callbacks.
 - **Compute is C2D v2.** Explicit resource requests, escrow payment, free compute, streamable logs and results.
 - **Local DDO validation** via ddo-js SHACL, before any gas is spent.
 - **`strict` TypeScript** is enabled, and ethers v6 is required.
+
+**Compatibility:** works with [OceanProtocolEnterprise ocean-node](https://github.com/OceanProtocolEnterprise/ocean-node) 4.2.x. For access to the deltaDAO test environment, or to have your own ocean-node run as a service, contact deltaDAO at [delta-dao.com/contact](https://delta-dao.com/contact) or [contact@delta-dao.com](mailto:contact@delta-dao.com).
 
 Because this is a beta, the surface above can still move. [MIGRATION.md](https://github.com/deltaDAO/nautilus/blob/main/MIGRATION.md) has the call-by-call mapping from v1, and the [changelog](https://github.com/deltaDAO/nautilus/blob/main/src/CHANGELOG.md) tracks what lands in each beta.
 
@@ -101,8 +103,9 @@ const nautilus = await Nautilus.create(signer, {
 })
 ```
 
-`ConfigHelper` ships defaults for Pontus-X devnet (chain 32456). On other networks, pass the
-contract addresses in `config` as well.
+ocean.js's `ConfigHelper` ships contract addresses for a set of chains, including Pontus-X
+devnet (32456) and OP Sepolia (11155420). On a chain it does not know, pass the contract
+addresses in `config` as well.
 
 ### 3. Download an asset
 
@@ -125,17 +128,18 @@ existing one if you do.
 
 ### 4. Publish an asset
 
-nautilus signs the DDO as a verifiable credential and stores it off chain, writing only a
-`{ remote }` pointer on chain — so publishing needs a **remote store**. The node's own
-persistent storage works, and needs no external service:
+nautilus signs the DDO as a verifiable credential, has the node encrypt it and stores it off
+chain, writing only an encrypted `{ remote }` pointer on chain — so publishing needs a
+**remote store**. Use IPFS: a Kubo node, or a pinning service such as Pinata
+(`https://api.pinata.cloud/pinning/pinFileToIPFS` with `headers: { Authorization: 'Bearer <JWT>' }`):
 
 ```ts twoslash
 import { JsonRpcProvider, Wallet } from 'ethers'
 import {
   AssetBuilder,
   FileTypes,
+  IpfsRemoteStore,
   Nautilus,
-  NodePersistentRemoteStore,
   ServiceBuilder,
   ServiceTypes
 } from '@deltadao/nautilus'
@@ -144,11 +148,12 @@ const provider = new JsonRpcProvider('https://rpc.dev.pontus-x.eu')
 const signer = new Wallet('0x...', provider)
 const config = { oceanNodeUri: 'https://node.example.org' }
 
-// The store needs a node client, so build the instance in two steps.
-const bootstrap = await Nautilus.create(signer, { config })
 const nautilus = await Nautilus.create(signer, {
   config,
-  remoteStore: new NodePersistentRemoteStore(bootstrap.getNodeClient())
+  remoteStore: new IpfsRemoteStore({
+    uploadUrl: 'http://127.0.0.1:5001/api/v0/add',
+    probe: 'upload' // test the store before anything is minted
+  })
 })
 
 const service = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
@@ -174,7 +179,18 @@ const asset = new AssetBuilder()
 const { ddo } = await nautilus.publish(asset, { waitForIndexer: true })
 ```
 
-The DDO is validated locally before anything is written, so a missing field costs no gas.
+The DDO is validated locally and the store is probed before anything is written, so a
+missing field or a bad store key costs no gas. If the node cannot index the asset,
+`waitForIndexer` throws an `IndexingError` with the node's message; the asset is on chain by
+then, and the error carries the full result as `error.published`.
+
+`oceanNodeUri` and the store endpoints must be `https://`, except on `localhost`,
+`127.0.0.0/8`, `::1` and `*.localhost` (like the local Kubo node above); pass
+`allowInsecureTransport: true` to accept plain `http://` elsewhere.
+
+To keep DDOs in an S3 bucket (AWS S3, Exoscale SOS, MinIO) instead, use `S3RemoteStore`.
+ocean-node 4.2 cannot read DDOs from its own bucket storage, so `NodePersistentRemoteStore`
+is rejected as the DDO store. See [remote stores](https://nautilus.delta-dao.com/docs/guides/remote-stores).
 
 ### 5. Credential-gated assets
 
@@ -214,10 +230,11 @@ npm install
 cp example.env .env
 ```
 
-Set `NETWORK` and `PRIVATE_KEY` in `.env`, then check that your ocean-node is reachable before anything else:
+Set `NETWORK` and `PRIVATE_KEY` in `.env` — and, to publish or edit, a DDO store with `DDO_STORE` (`ipfs` or `s3`), since ocean-node 4.2 cannot read DDOs from its own storage — then check that your ocean-node is reachable and your store works before anything else:
 
 ```sh
 npm start -- check:node
+npm start -- store:check
 ```
 
 Every example is a named command, and `help` lists all of them:
@@ -228,7 +245,7 @@ npm start -- publish:access-dataset
 npm start -- access:download did:ope:...
 ```
 
-The commands are grouped by prefix: `check:`, `publish:`, `asset:`, `edit:`, `access:`, `compute:` and `ssi:` for the credential-gated flows.
+The commands are grouped by prefix: `check:`, `store:`, `publish:`, `asset:`, `edit:`, `access:`, `compute:` and `ssi:` for the credential-gated flows. `npm start -- <command> --help` prints what one command needs.
 
 ### Local build or published package
 
@@ -240,7 +257,7 @@ npm run use:local        # build ../src and link it   (the default)
 npm run use:npm          # switch to the published package
 ```
 
-`npm run use:npm -- --spec 2.0.0-beta.0` pins a specific version or dist-tag. Switching rewrites `package.json` and `package-lock.json`, so run `use:local` again before committing.
+`npm run use:npm -- --spec <version>` pins a specific version or dist-tag. The examples use APIs that `2.0.0-beta.0` does not have (`S3RemoteStore`, `completePublish`, `getIndexingState`), so pin a release that does, or stay on the local build. Switching rewrites `package.json` and `package-lock.json`, so run `use:local` again before committing.
 
 Full details, including the environment variables and the credential-gated setup, are in the [examples README](https://github.com/deltaDAO/nautilus/blob/main/examples/README.md) and on the [Examples](https://nautilus.delta-dao.com/docs/examples) docs page.
 

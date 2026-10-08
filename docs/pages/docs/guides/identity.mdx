@@ -203,15 +203,14 @@ To issue from a proper DID, sign with a walt.id wallet key:
 ```ts twoslash
 import { JsonRpcProvider, Wallet } from 'ethers'
 import {
+  IpfsRemoteStore,
   Nautilus,
-  NodePersistentRemoteStore,
   WaltIdHttpWallet,
   WaltIdVcSigner
 } from '@deltadao/nautilus'
 
 const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
 const config = { oceanNodeUri: 'https://node.example.org' }
-const bootstrap = await Nautilus.create(signer, { config })
 
 const wallet = new WaltIdHttpWallet({ apiUrl: 'https://wallet.example.org' })
 const session = await wallet.authenticate(signer)
@@ -221,7 +220,7 @@ const [did] = await wallet.listDids(walletRef.id, session.token)
 
 const nautilus = await Nautilus.create(signer, {
   config,
-  remoteStore: new NodePersistentRemoteStore(bootstrap.getNodeClient()),
+  remoteStore: new IpfsRemoteStore({ uploadUrl: 'http://127.0.0.1:5001/api/v0/add' }),
   ddoSigner: new WaltIdVcSigner({ // [!code focus]
     wallet, // [!code focus]
     walletId: walletRef.id, // [!code focus]

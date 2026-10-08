@@ -3,12 +3,40 @@
 ## Why does publishing need a remote store?
 
 Because v2 does not write the DDO on chain. It signs the document as a verifiable
-credential, stores it off chain, and writes only a `{ remote: … }` pointer that ocean-node
-dereferences. Without somewhere to put the document there is nothing to point at, so
-[`publish`](/docs/api/nautilus/publish) throws.
+credential, has the node encrypt it, stores it off chain, and writes only an encrypted
+`{ remote: … }` pointer that ocean-node dereferences. Without somewhere to put the document
+there is nothing to point at, so [`publish`](/docs/api/nautilus/publish) throws.
 
-The default needs no external infrastructure — `NodePersistentRemoteStore` uses the node's
-own storage. See [remote stores](/docs/guides/remote-stores).
+Use `IpfsRemoteStore` with a Kubo node or a pinning service such as Pinata, or
+`S3RemoteStore` with an S3-compatible bucket. The node's own
+storage (`NodePersistentRemoteStore`) cannot hold DDOs on ocean-node 4.2, so nautilus
+rejects it. See [remote stores](/docs/guides/remote-stores).
+
+## My asset is on chain, but `getAsset` says "DDO not found"
+
+The transactions succeeded, but the node could not index the asset. It does not say so on
+chain; it records a failure in its indexing state, under the transaction:
+
+```sh
+curl "https://<your-node>/api/aquarius/state/ddo?txId=<setMetadata tx hash, lower-case>"
+```
+
+`?nft=<nftAddress>` finds failures too, but a later success does not remove them, so it can
+return an old error from an earlier transaction. A **success** is filed under the DID instead
+(`?did=did:ope:…`). From nautilus, use
+[`getIndexingState`](/docs/guides/ocean-node#indexing-state). With
+`waitForIndexer`, nautilus reads it for you and throws an `IndexingError` with the node's
+message. Typical causes: the node cannot fetch the remote store's content through its
+gateway, the node is not an OceanProtocolEnterprise ocean-node 4.2.x, the publisher key is the
+node's own (decrypt then fails with 401; nautilus warns about it), or two metadata
+transactions for the asset landed in one block (nautilus then throws a
+`MetadataConflictError`).
+
+## Can I publish without encryption?
+
+No. Since 2.0.0-beta.1 nautilus is encrypted only: the stored envelope and the on-chain
+pointer are always node-encrypted (flags `0x02`), and `encrypt: false` throws. The DDO is
+never written on chain.
 
 ## Where did the subgraph go?
 
@@ -37,14 +65,15 @@ Credential gating is enforced on **consumption**, not on publication.
 
 ## Why am I paying twice for the same asset?
 
-A known limitation of the current node, not of nautilus. ocean-node's access `initialize`
-returns `{ providerFee, datatoken, nonce, computeAddress }` and **no `validOrder`**, so
-`hasReusableOrder()` is always false and every [`access`](/docs/api/nautilus/access) buys a
-fresh datatoken — even inside the service timeout, where you already hold a valid order.
+nautilus reuses an order only when the node's `initialize` reports one in `validOrder`. In
+ocean-node 3.0 to 4.2, the access `initialize` returns
+`{ providerFee, datatoken, nonce, computeAddress }`, without `validOrder`, so
+`hasReusableOrder()` is false and each [`access`](/docs/api/nautilus/access) call places a
+new order, also inside the service timeout. (`initializeCompute` reports `validOrder` for
+an input whose request carries a still-valid `transferTxId`.)
 
-The v4 Provider returned that field; 3.2.21 does not. On a paid asset this is repeated
-payment for access you already have. Until it is restored, cache the download URL you get
-back rather than calling `access` again.
+On a paid asset, keep the download URL you get back rather than calling `access` again.
+See [Do you already hold an order?](/docs/guides/pricing#do-you-already-hold-an-order).
 
 ## Never put `127.0.0.1` in a DDO
 

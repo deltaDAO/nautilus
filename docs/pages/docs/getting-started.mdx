@@ -59,8 +59,15 @@ const nautilus = await Nautilus.create(signer, { // [!code focus]
 }) // [!code focus]
 ```
 
-ocean.js ships contract addresses for Pontus-X devnet (chain 32456). On other networks, pass
-them in `config` too — see [Custom Configuration](/docs/guides/config).
+ocean.js ships contract addresses for a set of chains, including Pontus-X devnet (32456)
+and OP Sepolia (11155420), so `oceanNodeUri` is usually all you pass. On a chain it does not
+know, pass the addresses in `config` too — see [Custom Configuration](/docs/guides/config).
+
+nautilus works with
+[OceanProtocolEnterprise ocean-node](https://github.com/OceanProtocolEnterprise/ocean-node)
+4.2.x. For access to the deltaDAO test environment, or to have your own ocean-node run as a
+service, contact deltaDAO at [delta-dao.com/contact](https://delta-dao.com/contact) or
+[contact@delta-dao.com](mailto:contact@delta-dao.com).
 
 ### Download an asset
 

@@ -70,7 +70,7 @@ declared issuer to match.
 ## What you get back
 
 [`publish`](/docs/api/nautilus/publish) returns the credential alongside the rest of the
-result.
+result, and `stored` says what went to the remote store.
 
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'
@@ -79,11 +79,18 @@ import type { NautilusAsset } from '@deltadao/nautilus'
 const nautilus = await Nautilus.create(new Wallet('0x1234'))
 declare const asset: NautilusAsset
 // ---cut---
-const { credential } = await nautilus.publish(asset)
+const { credential, stored } = await nautilus.publish(asset)
 
-credential?.jwt // the compact JWT that was stored
+credential?.jwt // the compact JWT that was signed
 credential?.issuer // the DID or address that signed it
+stored.pointer // where the encrypted envelope is, e.g. { type: 'ipfs', hash }
+stored.metadataHash // the on-chain hash: sha256 of that envelope
 ```
+
+The JWT is not stored as is. nautilus has the node encrypt it into an envelope, and that
+envelope is what the store holds and what the on-chain hash covers — see
+[what is stored](/docs/guides/remote-stores#what-is-stored). ocean-node stores the signature
+with the indexed DDO but does not verify it.
 
 ## Inspecting a credential
 
@@ -129,6 +136,25 @@ declare function signSomehow(ddo: Record<string, unknown>): Promise<string>
 `getIssuer()` is asked first, and its answer is written onto the DDO before the document is
 validated, signed and returned — so `PublishResponse.ddo.issuer` always matches the signed
 claims. It must name the same identity `sign()` issues as.
+
+`sign()` must return a compact JWS whose payload is the DDO it was given: that payload is the
+document the node indexes. nautilus decodes it, unwraps a `vc` claim as the node does, and
+compares it with the validated DDO (key order aside) before anything is stored. On top of the
+DDO, the payload may carry:
+
+- the JWT registered claims `iss`, `sub`, `aud`, `exp`, `nbf`, `iat` and `jti`;
+- `type: ['VerifiableCredential']` in place of the DDO's `type`;
+- an `issuer` that differs only in the case of an Ethereum address, or any issuer when the
+  DDO declares none;
+- with a `vc` wrapper, any claims outside `vc`, which the node does not index.
+
+Anything else that differs is refused. The built-in signers already sign exactly this, and
+walt.id signs the credential it is sent unchanged.
+
+Before the first transaction, nautilus sizes the signed envelope from the DDO plus 1024
+characters for the JWS header and signature, and refuses a DDO that could exceed the node's
+decrypt limit. A signer that adds more than that is still caught before the envelope is
+stored, but only after the mint.
 
 :::warning[`setIssuer()` must match the signer]
 [`AssetBuilder.setIssuer`](/docs/api/AssetBuilder) declares who signs; it does not change

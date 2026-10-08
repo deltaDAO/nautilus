@@ -22,9 +22,19 @@ What happens in order:
 1. If the service is credential-gated, the configured
    [credential provider](/docs/guides/identity) satisfies the policy. This happens
    **before** any spend, so a failed presentation costs nothing.
-2. The node is asked for provider fees and whether a previous order can be reused.
+2. The node is asked for provider fees and whether a previous order can be reused. Before
+   ordering, nautilus checks that the provider fee signature recovers to
+   `providerFeeAddress` the way the datatoken contract verifies it, since an order with any
+   other fee reverts. If it does not, nautilus calls `initialize` again, 1.1 s later: at
+   most 3 calls in total (2 retries). It stops early when the node signs the same fee
+   again, and does not ask again at all for a service with `timeout: 0`, whose fee is the
+   same on every request. A fee that is missing or lacks a field is refused at once. In
+   every case it throws a `ProviderFeeSignatureError` before any approval, purchase or
+   order.
 3. An existing order is reused where possible — extended if a new fee period is due, or
-   used as-is if not. Otherwise a datatoken is bought and a new order placed.
+   used as-is if not. Otherwise a datatoken is bought and a new order placed. Everything the
+   order pulls from you (the purchase, the publish-market fee and the provider fee) is
+   approved with one allowance per token and spender, after every check has passed.
 4. The download URL is built, carrying the verifier session if there was one.
 
 ## Returns

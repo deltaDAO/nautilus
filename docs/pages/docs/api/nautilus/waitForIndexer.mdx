@@ -31,18 +31,112 @@ const { ddo, setMetadataTxReceipt } = await nautilus.edit(
 
 const updated = await nautilus.waitForIndexer( // [!code focus]
   ddo.id as string, // [!code focus]
-  setMetadataTxReceipt.hash // [!code focus]
+  setMetadataTxReceipt.hash, // [!code focus]
+  { timeoutMs: 600_000 } // [!code focus]
 ) // [!code focus]
 ```
 
-`publish()` and `edit()` can do this for you — pass `{ waitForIndexer: true }`.
+`publish()` and `edit()` can do this for you — pass `{ waitForIndexer: true }`, or
+`{ waitForIndexer: { intervalMs, timeoutMs } }`.
+
+## Failures are reported, not waited out
+
+With a `txid`, each round also reads the node's
+[indexing state](/docs/guides/ocean-node#indexing-state) for that transaction. When the node
+has recorded that it **could not** index it — a hash mismatch, a store it could not fetch
+from, a DDO that failed validation — this throws an `IndexingError` with the node's message
+straight away, instead of polling until the timeout. Only a failure record of **this**
+transaction counts: one that says `valid: false` or carries any non-blank `error`. Older
+failures of the same asset are ignored, since a later success does not remove them.
+
+When the node's error does not name its cause — the UTF-8 or hex decoding error it records
+when its decrypt call during indexing did not succeed, or a `401` on that call — the
+message adds a `Hint:` naming the likely causes and what to check.
+
+```ts twoslash
+import { IndexingError, Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+declare const did: string
+declare const txid: string
+// ---cut---
+try {
+  await nautilus.waitForIndexer(did, txid)
+} catch (error) {
+  if (error instanceof IndexingError) {
+    console.error(error.message) // the node's own error, plus a hint where one applies // [!code focus]
+    console.error(error.state) // its full record: valid, error, nft, txId // [!code focus]
+  }
+  throw error
+}
+```
+
+The asset is on chain either way: the transactions succeeded, only indexing failed.
+
+## Polling rate and rate limits
+
+ocean-node limits each IP to `MAX_REQ_PER_MINUTE` HTTP requests a minute (default **30**)
+and answers `429` above that. Each round of the wait is up to two requests (the asset, and
+the indexing state when there is a `txid`), so the default `intervalMs` of 7 s keeps one
+wait at or below 18 requests a minute. A shorter interval can run into the limit,
+especially right after a publish, which makes its own requests to the same node.
+
+A rate-limit answer is not counted as a failed lookup. On `429`, or `403` "Too many active
+connections" (the node's `MAX_CONNECTIONS_PER_MINUTE`), the next round waits longer:
+`2 × intervalMs`, doubling with each rate-limit answer in a row, and at least as long as
+the node asks ("Try again in N seconds", or `Retry-After` in seconds or as an HTTP date)
+plus a second. An `intervalMs` under 1 s counts as 1 s here, so even `intervalMs: 0` backs
+off by 2, 4, 8 … seconds; the `403` comes without `Retry-After`. It never waits more than
+60 s at a time. If the time runs out while the node keeps refusing, the timeout error says
+so.
+
+When `timeoutMs` is up, the wait makes one last lookup before it throws, so it can end up to
+one request later. Each request gets at least a second (or `requestTimeoutMs`, when that is
+shorter), even when less of `timeoutMs` is left.
+
+The lookups send no credentials, so they follow redirects, for example from a reverse proxy
+in front of `/api/aquarius`. A redirect that ends on plain `http://` on a host other than
+loopback fails the lookup, unless the node URI is plain `http://` already
+(`allowInsecureTransport`).
+
+:::info
+Without a `txid`, the indexing state is not checked: the wait only polls for the asset until
+the timeout. Over a P2P node URI there is no state endpoint, and the wait also falls back to
+polling until the timeout. There, ocean.js reports a failed lookup as "not indexed yet", so
+only a lookup that does not answer within `requestTimeoutMs` counts towards
+`maxConsecutiveFailures`. That timeout bounds each P2P lookup as a whole, ocean.js's own
+dial and retries included, so a peer that does not answer cannot hold the wait past
+`timeoutMs`.
+:::
 
 ## Returns
 
-- Type: `AssetV5 | undefined`
+- Type: `Promise<AssetV5>`
 
-The indexed asset, or `undefined` if it did not appear before the retry limit. It returns
-rather than throws, so you can decide whether a timeout is fatal.
+The indexed asset.
+
+## Throws
+
+- `IndexingError` — the node recorded a failure for this transaction. Carries `did`, `txId`
+  and the node's record on `state`. It extends `OceanNodeError`. Only thrown when a `txid` is
+  passed.
+- `OceanNodeError` — the asset did not appear within `timeoutMs`. The message names the last
+  request error, if one is still unresolved: an error that a later answer cleared is not
+  reported.
+- `OceanNodeError` — `intervalMs`, `timeoutMs`, `requestTimeoutMs` or
+  `maxConsecutiveFailures` is negative or not a finite number (`Infinity`, `NaN`).
+- `OceanNodeError` — `maxConsecutiveFailures` asset lookups in a row failed (a network error,
+  a request timeout, a redirect to plain `http://`, or an HTTP status other than 2xx and
+  404), so a wrong node URI or a node answering 500 is reported as such instead of being
+  waited out. A 404 counts as "not indexed yet", and a rate-limit answer (`429`, or `403`
+  "Too many active connections") makes the wait back off; neither is a failure.
+- The signal's `reason`, when `signal` aborts the wait.
+
+A failing or missing state endpoint does not throw: the wait just loses its early exit and
+polls until the timeout.
+
+Before 2.0.0-beta.1 this returned `undefined` after an undocumented retry limit (about 50
+minutes) and never surfaced the node's error.
 
 ## Parameters
 
@@ -55,3 +149,31 @@ rather than throws, so you can decide whether a timeout is fatal.
 - Type: `string`
 
 Wait for the update carried by this transaction, not just for the asset to exist.
+
+:::warning
+A lifecycle change made with
+[`setAssetLifecycleState`](/docs/api/nautilus/setAssetLifecycleState) does not update the
+indexed transaction id, so `waitForIndexer(did, receipt.hash)` cannot wait for it. Poll
+[`getAsset`](/docs/api/nautilus/getAsset) and read
+[`getLifecycleState`](/docs/api/ddo/getLifecycleState) instead.
+:::
+
+### options (optional)
+
+- Type: `WaitForIndexerOptions`
+
+| Option | Type | Default | Purpose |
+| --- | --- | --- | --- |
+| `intervalMs` | `number` | `7000` | Delay between polls. The default keeps one wait at or below 18 requests a minute. |
+| `timeoutMs` | `number` | `300000` (5 min) | How long to wait before throwing. |
+| `requestTimeoutMs` | `number` | `15000` | Timeout of each request to the node (over P2P, of each lookup), capped by what is left of `timeoutMs`. |
+| `maxConsecutiveFailures` | `number` | `5` | How many failed asset lookups in a row throw an `OceanNodeError` before the timeout. |
+| `signal` | `AbortSignal` | — | Cancel the wait. Aborting rejects with the signal's reason. |
+
+`publish`, `completePublish` and `edit` take only `intervalMs`, `timeoutMs` and `signal`,
+through their `waitForIndexer` option.
+
+The 2.0.0-beta.0 options `interval` and `maxRetries` still work for now: they are mapped to
+`intervalMs = interval` and `timeoutMs = interval × maxRetries`, with a one-time
+`console.warn`, and will be removed. Rename them. `maxRetries` without `interval` counts
+beta.0's default 30 s interval, so `{ maxRetries: 10 }` waits 5 minutes, polling every 7 s.

@@ -54,6 +54,10 @@ import {
   shouldResolveCredentials
 } from '../identity/policy.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
+import {
+  initializeWithValidProviderFee,
+  providerFeeToSend
+} from '../utils/providerFee.js'
 
 export interface ComputeContext {
   node: OceanNodeClient
@@ -132,19 +136,37 @@ export async function compute(
     config.algorithm
   )
 
-  // 2. Ask the node what the job costs and which orders can be reused.
-  const initializeResults = await node.initializeCompute({
-    datasets,
-    algorithm,
-    computeEnv: environment.id,
-    paymentToken,
-    validUntil,
-    resources,
-    consumerAddress,
-    policyServer,
-    output: config.output,
-    queueMaxWaitTime: config.queueMaxWaitTime
-  })
+  // Read before anything is asked or spent: an input without a datatoken cannot be
+  // ordered.
+  const datatokens = inputs.map(datatokenFor)
+
+  // 2. Ask the node what the job costs and which orders can be reused. The provider fee
+  //    of every input that will be ordered is checked here, before escrow or any order,
+  //    the way the datatoken verifies it, so an order is never sent with a fee it would
+  //    reject, or with none. A compute fee is the same on every request, so a bad one is
+  //    refused at once rather than requested again.
+  const initializeResults = await initializeWithValidProviderFee(
+    () =>
+      node.initializeCompute({
+        datasets,
+        algorithm,
+        computeEnv: environment.id,
+        paymentToken,
+        validUntil,
+        resources,
+        consumerAddress,
+        policyServer,
+        output: config.output,
+        queueMaxWaitTime: config.queueMaxWaitTime
+      }),
+    (results) =>
+      inputs.map((input, index) =>
+        providerFeeToSend(
+          matchInitializeResult(results, input, datatokens[index])
+        )
+      ),
+    { attempts: 1 }
+  )
 
   // 3. Fund and authorise escrow for the amount the node quoted.
   await ensureEscrow(signer, environment, initializeResults, paymentToken)
@@ -568,15 +590,7 @@ async function placeOrders(params: {
   const orders: Record<string, string> = {}
 
   for (const input of inputs) {
-    const datatokenAddress = getDatatokenForService(
-      input.asset,
-      input.serviceId
-    )
-
-    if (!datatokenAddress)
-      throw new Error(
-        `Could not determine the datatoken for service ${input.serviceId} of ${input.asset.id}.`
-      )
+    const datatokenAddress = datatokenFor(input)
 
     const initialized = matchInitializeResult(
       initializeResults,
@@ -601,6 +615,18 @@ async function placeOrders(params: {
   }
 
   return orders
+}
+
+/** The datatoken an input is ordered with. */
+function datatokenFor(input: ResolvedInput): string {
+  const datatokenAddress = getDatatokenForService(input.asset, input.serviceId)
+
+  if (!datatokenAddress)
+    throw new Error(
+      `Could not determine the datatoken for service ${input.serviceId} of ${input.asset.id}.`
+    )
+
+  return datatokenAddress
 }
 
 /** The key of one order in `ComputeResult.orders`: a DID URL naming the exact service. */

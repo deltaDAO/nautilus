@@ -7,9 +7,10 @@ writing the asset's metadata onto the NFT.
 
 Three changes matter when you come from v1:
 
-1. **The DDO is signed and stored off chain.** Only a `{ remote }` pointer goes on chain, so
-   publishing needs a **remote store**. This follows the enterprise-market model and gives
-   the asset a real issuer.
+1. **The DDO is signed, encrypted and stored off chain.** Only an encrypted `{ remote }`
+   pointer goes on chain, so publishing needs a **remote store**. This follows the
+   enterprise-market model and gives the asset a real issuer. Everything is always
+   node-encrypted; there is no plaintext mode.
 2. **DDO v5.** Assets are W3C Verifiable Credentials. `providedBy` is now required, and
    `description` and `license` changed shape — though the builder still takes plain strings.
 3. **One transaction instead of three.** The NFT, the first service's datatoken and that
@@ -19,26 +20,34 @@ Three changes matter when you come from v1:
 
 ### Set up an instance with a remote store
 
-The remote store needs an ocean-node client, so the instance is built in two steps.
-`NodePersistentRemoteStore` uses the node's own storage, which means no external service:
+The remote store holds the encrypted DDO envelope. Use `IpfsRemoteStore` with any IPFS upload
+endpoint, here Pinata with the JWT from the environment:
 
 ```ts twoslash
 import { JsonRpcProvider, Wallet } from 'ethers'
-import { Nautilus, NodePersistentRemoteStore } from '@deltadao/nautilus'
+import { IpfsRemoteStore, Nautilus } from '@deltadao/nautilus'
+
+declare const process: { env: Record<string, string | undefined> }
 
 const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
 const config = { oceanNodeUri: 'https://ocean-node.dev.pontus-x.eu' }
 
-const bootstrap = await Nautilus.create(signer, { config })
-
 const nautilus = await Nautilus.create(signer, {
   config,
-  remoteStore: new NodePersistentRemoteStore(bootstrap.getNodeClient()) // [!code focus]
+  remoteStore: new IpfsRemoteStore({ // [!code focus]
+    uploadUrl: 'https://api.pinata.cloud/pinning/pinFileToIPFS', // [!code focus]
+    headers: { Authorization: `Bearer ${process.env.PINATA_JWT}` }, // [!code focus]
+    probe: 'upload', // [!code focus]
+    gatewayUrl: 'https://gateway.pinata.cloud' // [!code focus]
+  }) // [!code focus]
 })
 ```
 
-Prefer IPFS? Swap in `IpfsRemoteStore` with any upload endpoint — see
-[`create`](/docs/api/nautilus/create#remotestore).
+`probe: 'upload'` makes `publish()` test the store before it sends any transaction, and
+`gatewayUrl` is where it reads the stored envelope back before the metadata transaction
+(Pinata needs one; a Kubo node is read back without). For a
+Kubo node, other pinning services, S3, and why the node's own storage cannot hold DDOs, see
+[remote stores](/docs/guides/remote-stores).
 
 ### Build a service
 
@@ -135,13 +144,60 @@ console.log('published', ddo.id)
 resolvable. Without it, publish returns as soon as the metadata transaction confirms — which
 is earlier than the indexer has seen it.
 
+If the node records that it **could not** index the asset, the wait throws an
+`IndexingError` with the node's message instead of running into its timeout; if the node
+simply has not indexed it within the timeout, it throws an `OceanNodeError`. Pass
+`{ waitForIndexer: { timeoutMs: 600_000 } }` to wait longer than the 5-minute default. See
+[`waitForIndexer`](/docs/api/nautilus/waitForIndexer).
+
 :::info
 Before anything is written, nautilus validates the DDO **locally** against the DDO v5 SHACL
-schema. A missing required field fails here, naming the field, having spent no gas. This did
-not exist in v1.
+schema, and runs the remote store's `check()`. A missing required field or a store that would
+refuse the upload fails here, having spent no gas. Local validation did not exist in v1. It
+also refuses a DDO too large for the node to decrypt again (see
+[`publish`](/docs/api/nautilus/publish#throws)), and a node whose indexer nonce is stuck (see
+[`checkIndexerNonce`](/docs/api/nautilus/publish#checkindexernonce)).
+Right before the metadata transaction it also runs the store's `verify()`, which reads the
+stored envelope back and checks its hash.
 :::
 
 ::::
+
+## If a publish stops halfway
+
+The DID derives from the NFT address, so the NFT has to be minted before the DDO can be
+stored. If anything fails after the mint — the store, the node, the RPC — `publish()` throws a
+`PublishIncompleteError` carrying the `nftAddress`. Finish the publish on that NFT instead of
+minting a new one:
+
+```ts twoslash
+import { Nautilus, PublishIncompleteError, type NautilusAsset } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+const asset = {} as NautilusAsset
+// ---cut---
+try {
+  await nautilus.publish(asset)
+} catch (error) {
+  if (!(error instanceof PublishIncompleteError)) throw error
+
+  // The same asset, or one rebuilt the same way: the datatokens already on the NFT are reused.
+  await nautilus.completePublish(error.nftAddress, asset) // [!code focus]
+}
+```
+
+Before any transaction, `completePublish` checks that the signer owns the NFT, that the
+configured factory created it, that the signer holds the permissions the writes need, and
+that every reused datatoken that already has pricing is priced the way its service says. It
+also refuses while the signer has pending transactions: when the error's `stored.cleanup` is
+`'kept'`, the metadata transaction was sent and may still be mined. Pass
+`{ metadataTxHash: error.stored.txHash }` to have that exact transaction checked too. See
+[`completePublish`](/docs/api/nautilus/completePublish).
+
+Once the metadata transaction is mined, nothing is left to complete. A wait for the indexer
+that fails, or a `MetadataConflictError` (another metadata transaction for the NFT in the
+same block), still carries the whole result as `error.published` — see
+[`PublishResponse`](/docs/api/PublishResponse#when-the-write-was-mined-but-the-call-throws).
 
 ## Publishing an algorithm
 
@@ -232,11 +288,13 @@ const asset = new AssetBuilder()
 Every shape above is a runnable command in [`examples/`](/docs/examples):
 
 ```sh
-npm start -- publish:access-dataset      # a dataset anyone can download
+npm start -- store:check                 # test the DDO store first, without a transaction
+npm start -- publish:access-dataset      # a downloadable dataset, allowlisted to the publisher and consumer
 npm start -- publish:compute-dataset     # a dataset algorithms can run against
 npm start -- publish:saas                # a SaaS offer
 npm start -- publish:multi-service       # one NFT carrying two services
 npm start -- publish:validate            # build and validate, without publishing
+npm start -- publish:resume publish:access-dataset 0xNFT… 0xDatatoken…   # finish a stopped publish
 ```
 
 ## Next steps

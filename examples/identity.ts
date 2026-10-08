@@ -10,7 +10,6 @@ import {
   getServices,
   Nautilus,
   type PricingConfigWithoutOwner,
-  type RemoteStore,
   ServiceBuilder,
   ServiceTypes,
   StaticCredentialProvider,
@@ -23,7 +22,13 @@ import type { Signer } from 'ethers'
 import { EXAMPLE_DATASET_URL } from './assets'
 import type { NetworkConfig } from './config'
 import { resolveNetwork } from './config'
-import { getRemoteStore, getSigner } from './nautilus'
+import {
+  describeRemoteStore,
+  getRemoteStore,
+  getSigner,
+  type Role
+} from './nautilus'
+import { publishAsset, publishSession } from './publish'
 
 /**
  * Credential-gated publishing and consuming, with the walt.id identity stack.
@@ -48,6 +53,11 @@ import { getRemoteStore, getSigner } from './nautilus'
  * Set `SSI_WALLET_API` in `.env`. Run `connectSsiWallet()` first to see which wallets, keys
  * and DIDs your account has, then optionally pin them with `SSI_WALLET_ID`,
  * `SSI_WALLET_KEY_ID` and `SSI_WALLET_DID`.
+ *
+ * With `CONSUMER_PRIVATE_KEY` set, publishing runs as `PRIVATE_KEY` and consuming as the
+ * consumer, each logging in to walt.id with its own Ethereum key. The pinned `SSI_WALLET_*`
+ * values belong to one account, so set `CONSUMER_SSI_WALLET_ID` and `CONSUMER_SSI_WALLET_DID`
+ * for the consumer's wallet (or leave them unset to use its first wallet and DID).
  */
 
 function getWalletApi(): string {
@@ -59,6 +69,23 @@ function getWalletApi(): string {
     )
 
   return api
+}
+
+/**
+ * The pinned wallet and DID for a role. The consumer has its own variables: the publisher's
+ * pins name a wallet the consumer's account does not own.
+ */
+function walletEnv(role: Role): { walletId?: string; did?: string } {
+  if (role === 'consumer' && process.env.CONSUMER_PRIVATE_KEY)
+    return {
+      walletId: process.env.CONSUMER_SSI_WALLET_ID || undefined,
+      did: process.env.CONSUMER_SSI_WALLET_DID || undefined
+    }
+
+  return {
+    walletId: process.env.SSI_WALLET_ID || undefined,
+    did: process.env.SSI_WALLET_DID || undefined
+  }
 }
 
 /** A wallet client. Swap this out for a walt.id api2 backend when you move to one. */
@@ -73,9 +100,9 @@ export function getWallet(): WaltIdWallet {
  * **Ethereum** key — the same key that signs transactions — so no separate walt.id password
  * is involved. walt.id registers the account the first time it sees the address.
  */
-export async function connectSsiWallet(signer?: Signer) {
+export async function connectSsiWallet(role: Role = 'publisher') {
   const { networkConfig } = resolveNetwork()
-  const account = signer ?? getSigner(networkConfig)
+  const account = getSigner(networkConfig, role)
   const wallet = getWallet()
 
   console.log(
@@ -100,7 +127,7 @@ export async function connectSsiWallet(signer?: Signer) {
     return { session, wallets, keys: [], dids: [] }
   }
 
-  const walletId = process.env.SSI_WALLET_ID ?? wallets[0].id
+  const walletId = walletEnv(role).walletId ?? wallets[0].id
 
   const keys = await wallet.listKeys(walletId, session.token)
   console.log(`\nKeys in ${walletId} (${keys.length}):`)
@@ -112,10 +139,13 @@ export async function connectSsiWallet(signer?: Signer) {
   for (const did of dids)
     console.log(`  ${did.did}${did.default ? ' (default)' : ''}`)
 
+  const prefix = role === 'consumer' ? 'CONSUMER_' : ''
+
   console.log('\nPin these in .env to skip the lookup:')
-  console.log(`  SSI_WALLET_ID="${walletId}"`)
-  if (keys[0]) console.log(`  SSI_WALLET_KEY_ID="${keys[0].keyId.id}"`)
-  if (dids[0]) console.log(`  SSI_WALLET_DID="${dids[0].did}"`)
+  console.log(`  ${prefix}SSI_WALLET_ID="${walletId}"`)
+  if (keys[0] && role === 'publisher')
+    console.log(`  SSI_WALLET_KEY_ID="${keys[0].keyId.id}"`)
+  if (dids[0]) console.log(`  ${prefix}SSI_WALLET_DID="${dids[0].did}"`)
 
   return { session, wallets, keys, dids }
 }
@@ -131,12 +161,15 @@ export function createCredentialProvider(
   nautilus: Nautilus,
   options: {
     interactive?: boolean
+    role?: Role
   } = {}
 ): CredentialProvider {
+  const { walletId, did } = walletEnv(options.role ?? 'publisher')
+
   return new WaltIdCredentialProvider(nautilus.getNodeClient(), {
     walletApi: getWalletApi(),
-    walletId: process.env.SSI_WALLET_ID,
-    did: process.env.SSI_WALLET_DID,
+    walletId,
+    did,
 
     ...(options.interactive
       ? {
@@ -212,10 +245,17 @@ export async function createDidSigner(signer: Signer): Promise<DdoSigner> {
  * A nautilus instance wired for identity.
  *
  * `credentials` lets it consume gated assets; `ddoSigner` makes it publish with a DID issuer.
- * Both are optional and independent.
+ * Both are optional and independent. `role: 'consumer'` builds it for the
+ * `CONSUMER_PRIVATE_KEY` account, without a DDO store; `withRemoteStore` adds the store a
+ * publish needs.
  */
 export async function setupWithIdentity(
-  options: { withDidIssuer?: boolean; interactive?: boolean } = {}
+  options: {
+    withDidIssuer?: boolean
+    interactive?: boolean
+    role?: Role
+    withRemoteStore?: boolean
+  } = {}
 ): Promise<{
   nautilus: Nautilus
   signer: Signer
@@ -223,19 +263,30 @@ export async function setupWithIdentity(
   networkConfig: NetworkConfig
   pricingConfig: { [key: string]: PricingConfigWithoutOwner }
 }> {
+  const role = options.role ?? 'publisher'
   const { networkConfig, pricingConfig } = resolveNetwork()
-  const signer = getSigner(networkConfig)
+  const signer = getSigner(networkConfig, role)
+
+  // These commands skip setup(), which is where runCommand() takes the chain from.
+  publishSession.chainId = networkConfig.chainId
   const owner = await signer.getAddress()
 
-  // The credential provider and the remote store both need a node client, so the instance is
-  // built in two steps.
+  console.log(`SSI ${role}: ${owner}`)
+
+  // The credential provider needs a node client, which only an instance has, so this is
+  // built in two steps. (The DDO stores need none.)
   const bootstrap = await Nautilus.create(signer, { config: networkConfig })
 
-  const remoteStore: RemoteStore = getRemoteStore(bootstrap)
-  const credentials = createCredentialProvider(bootstrap, options)
+  const remoteStore = options.withRemoteStore ? getRemoteStore() : undefined
+  const credentials = createCredentialProvider(bootstrap, {
+    interactive: options.interactive,
+    role
+  })
   const ddoSigner = options.withDidIssuer
     ? await createDidSigner(signer)
     : undefined
+
+  if (remoteStore) console.log(`DDO store: ${describeRemoteStore()}`)
 
   const nautilus = await Nautilus.create(signer, {
     config: networkConfig,
@@ -310,13 +361,90 @@ export async function publishGatedDataset(
     ])
     .build()
 
-  const result = await nautilus.publish(asset, { waitForIndexer: true })
+  const result = await publishAsset(nautilus, asset)
 
-  console.log(`\nPublished ${result.ddo.id}`)
-  console.log(`  issuer: ${result.credential?.issuer}`)
   console.log(
     '  credentials:',
     JSON.stringify(getCredentials(result.ddo), null, 2)
+  )
+
+  return result
+}
+
+/**
+ * Publishes a **compute** dataset that requires a verifiable credential.
+ *
+ * The compute counterpart of `publishGatedDataset`, and what `ssi:compute` consumes: the
+ * policy server checks the credential at `startCompute`, before any order is placed. The
+ * algorithms to trust are pinned at publish time — nautilus resolves their container and
+ * file checksums from the live DDOs — so the job can start without a separate
+ * `edit:trusted-algorithms`. Publish one with `publish:compute-algorithm`.
+ */
+export async function publishGatedComputeDataset(
+  nautilus: Nautilus,
+  networkConfig: NetworkConfig,
+  pricingConfig: { [key: string]: PricingConfigWithoutOwner },
+  owner: string,
+  algorithmDids: string[],
+  credentialType = 'VerifiableId'
+) {
+  console.log(
+    `Publishing a compute dataset gated on a ${credentialType} credential...`
+  )
+
+  const service = new ServiceBuilder<ServiceTypes.COMPUTE, FileTypes.URL>({
+    serviceType: ServiceTypes.COMPUTE
+  })
+    .setServiceEndpoint(networkConfig.oceanNodeUri)
+    .setName('Credential-Gated Compute')
+    .setDescription('Requires a verifiable credential to run algorithms on')
+    .setTimeout(3600)
+    .addFile({
+      type: 'url',
+      url: EXAMPLE_DATASET_URL(),
+      method: 'GET'
+    })
+    .setPricing(pricingConfig.FREE)
+    .setDatatokenNameAndSymbol('Gated Compute Token', 'GCT')
+    .allowAlgorithmNetworkAccess(false)
+    .allowRawAlgorithms(false)
+
+  if (algorithmDids.length)
+    service.addTrustedAlgorithms(algorithmDids.map((did) => ({ did })))
+
+  const asset = new AssetBuilder()
+    .setType('dataset')
+    .setName('Nautilus-Example: Credential-Gated Compute Dataset')
+    .setDescription(
+      '# Credential-Gated Compute Dataset\n\nRunning algorithms on this asset requires presenting a verifiable credential.'
+    )
+    .setAuthor('Company Name')
+    .setProvidedBy('Company Name')
+    .setLicense('MIT')
+    .addService(service.build())
+    .setOwner(owner)
+    .addRequestCredentials(CredentialListTypes.ALLOW, [
+      { type: credentialType, format: 'jwt_vc_json' }
+    ])
+    .setVcPolicies(CredentialListTypes.ALLOW, [
+      'signature',
+      'not-before',
+      'revoked-status-list'
+    ])
+    .setVpPolicies(CredentialListTypes.ALLOW, ['holder-binding'])
+    .build()
+
+  const result = await publishAsset(nautilus, asset)
+
+  console.log(
+    '  trusted algorithms:',
+    JSON.stringify(
+      getServiceByType(result.ddo, 'compute')?.compute
+        ?.publisherTrustedAlgorithms ?? []
+    )
+  )
+  console.log(
+    `\nRun it: npm start -- ssi:compute ${result.ddo.id} ${algorithmDids[0] ?? '<algorithmDid>'}`
   )
 
   return result
@@ -362,11 +490,8 @@ export async function publishWithDidIssuer(
     .setOwner(owner)
     .build()
 
-  const result = await nautilus.publish(asset, { waitForIndexer: true })
-
-  console.log(`\nPublished ${result.ddo.id}`)
-  // A did: value here rather than a 0x address means the walt.id signer was used.
-  console.log(`  issuer: ${result.credential?.issuer}`)
+  // In the output, a did: issuer rather than a 0x address means the walt.id signer was used.
+  const result = await publishAsset(nautilus, asset)
 
   return result
 }
@@ -434,9 +559,8 @@ export async function publishPartiallyGatedDataset(
     .setOwner(owner)
     .build()
 
-  const result = await nautilus.publish(asset, { waitForIndexer: true })
+  const result = await publishAsset(nautilus, asset)
 
-  console.log(`\nPublished ${result.ddo.id}`)
   for (const service of getServices(result.ddo))
     console.log(
       `  ${service.name} (${service.id}) gated=${JSON.stringify(service.credentials) !== '{}'}`
@@ -536,7 +660,8 @@ export async function consumeWithExistingSession(
   sessionId: string,
   assetDid: string
 ) {
-  const signer = getSigner(networkConfig)
+  // The session is bound to the consumer address, so replay it as the consumer.
+  const signer = getSigner(networkConfig, 'consumer')
 
   const nautilus = await Nautilus.create(signer, {
     config: networkConfig,
@@ -591,7 +716,12 @@ export async function runGatedPublishAndConsume(
   credentialType = 'VerifiableId'
 ) {
   const { nautilus, networkConfig, pricingConfig, owner } =
-    await setupWithIdentity()
+    await setupWithIdentity({ withRemoteStore: true })
+
+  // The publish half is ssi:publish-gated, and that is what publish:resume can re-run: name
+  // it in the resume hint and PUBLISH_LOG, not ssi:round-trip.
+  publishSession.command = 'ssi:publish-gated'
+  publishSession.args = [credentialType]
 
   const published = await publishGatedDataset(
     nautilus,
@@ -603,5 +733,8 @@ export async function runGatedPublishAndConsume(
 
   console.log('\n--- now consuming it ---\n')
 
-  return consumeGatedAsset(nautilus, published.ddo.id as string)
+  // As the consumer account, when CONSUMER_PRIVATE_KEY is set; otherwise the same one.
+  const consumer = await setupWithIdentity({ role: 'consumer' })
+
+  return consumeGatedAsset(consumer.nautilus, published.ddo.id as string)
 }

@@ -60,7 +60,9 @@ export class AssetBuilder implements IAssetBuilder {
 
     const asset = new NautilusAsset(NautilusDDO.createFromAsset(source))
     asset.owner = getOwner(source)
-    asset.lifecycleState = getLifecycleState(source)
+    // Inherited, not requested: `edit()` writes the state the NFT has on chain unless
+    // `setLifecycleState()` asks for another.
+    asset.inheritLifecycleState(getLifecycleState(source))
 
     return asset
   }
@@ -342,6 +344,11 @@ export class AssetBuilder implements IAssetBuilder {
 
   // #region lifecycle
 
+  /**
+   * The lifecycle state to write with the metadata. Without it, `publish()` writes `ACTIVE`
+   * (0) and `edit()` keeps the state the NFT has on chain at the time of the write, not the
+   * one in the DDO this builder was constructed with.
+   */
   setLifecycleState(state: AssetState) {
     this.asset.lifecycleState = state
     return this

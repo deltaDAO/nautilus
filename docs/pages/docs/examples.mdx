@@ -30,20 +30,39 @@ cp example.env .env
 Node 22 or later. There is no build step for the examples themselves — [`tsx`](https://tsx.is)
 runs the TypeScript directly.
 
-Set two variables in `.env`:
+Set these variables in `.env`:
 
 | Variable | Value |
 | --- | --- |
-| `NETWORK` | `PONTUSXDEV`, `PONTUSXTEST`, `OASISSAPPHIRE`, or `LOCAL` |
-| `PRIVATE_KEY` | The account that publishes and consumes |
+| `NETWORK` | `PONTUSXDEV`, `PONTUSXTEST`, `OASISSAPPHIRE`, `OPSEPOLIA` (OP Sepolia), `LOCAL` (the local docker stack, chain 8996) or `CUSTOM` (any other chain, from `CHAIN_ID`, `RPC_URL` and `OCEAN_NODE_URI`) |
+| `PRIVATE_KEY` | The account that publishes and edits — and consumes, unless `CONSUMER_PRIVATE_KEY` is set |
+| `OCEAN_NODE_URI` | The ocean-node to use. Required for `OPSEPOLIA` and `CUSTOM`, and in practice everywhere (see below) |
+| `DDO_STORE` | `ipfs` (with `IPFS_UPLOAD_URL`, optionally `IPFS_JWT`) or `s3` (with the `S3_*` variables) — where the encrypted DDO goes. Needed to publish or edit (an `IPFS_UPLOAD_URL` on its own also selects `ipfs`). There is no fallback to the node's own storage, which ocean-node 4.2 cannot read DDOs from. See [remote stores](/docs/guides/remote-stores). |
 
-Your account needs funds for gas, and for any non-free asset it buys. Contact deltaDAO at
-contact@delta-dao.com for tokens and onboarding.
+Optional:
 
-Then check what your ocean-node actually is, before anything else:
+| Variable | Value |
+| --- | --- |
+| `CONSUMER_PRIVATE_KEY` | A second account that orders, downloads and runs compute. Its address is added to the allowlist of every allowlisted example asset. |
+| `CONSUMER_ADDRESSES` | More addresses to allowlist, comma separated — e.g. a consumer on another machine. |
+| `PRICING_TOKEN_ADDRESS`, `PRICING_TOKEN_DECIMALS`, `PRICING_FIXED_RATE` | Fixed prices in a token of your choice, on any network. `OPSEPOLIA` and `CUSTOM` have no ready-made payment token, so without these they publish for free. |
+| `PUBLISH_LOG` | A file that gets one JSON line per publish and edit — DID, NFT, datatokens, transaction and the store pointer without credentials — for cleaning up later. `example.env` sets `published.jsonl`. |
+| `INDEXER_TIMEOUT_MS`, `INDEXER_INTERVAL_MS` | How long publish and edit wait for the indexer (default 5 minutes, every 7 s). |
+
+`example.env` documents every variable inline. Your account needs funds for gas, and for any
+non-free asset it buys. Contact deltaDAO at contact@delta-dao.com for tokens and onboarding.
+
+Plain `http://` URLs are accepted only for `localhost`, `127.0.0.0/8`, `::1` and `*.localhost`
+(nautilus requires `https://` for `OCEAN_NODE_URI`, `S3_ENDPOINT` and `IPFS_UPLOAD_URL`
+elsewhere, and the examples have no switch to relax that). `S3_NODE_ENDPOINT` may be `http://`,
+since only the node connects to it.
+
+Then check what your ocean-node actually is, and that your DDO store works, before anything
+else:
 
 ```sh
 npm start -- check:node
+npm start -- store:check     # the store's check(), what publish runs before minting; no transaction
 ```
 
 :::warning
@@ -51,6 +70,11 @@ nautilus v2 needs an **ocean-node**, and the public Pontus-X endpoints do not ru
 they still report the legacy standalone `Provider 2.1.3`. Set `OCEAN_NODE_URI` in `.env` to a
 node you can actually reach. Without one, publishing gets as far as encrypting files and then
 fails with *"does not answer as an ocean-node"*.
+
+It has to be an OceanProtocolEnterprise ocean-node 4.2.x. For access to the deltaDAO test
+environment, or to have your own ocean-node run as a service, contact deltaDAO at
+[delta-dao.com/contact](https://delta-dao.com/contact) or
+[contact@delta-dao.com](mailto:contact@delta-dao.com).
 :::
 
 ## The CLI
@@ -59,21 +83,24 @@ Every example is a named command:
 
 ```sh
 npm start -- <command> [args...]
-npm start -- help
+npm start -- help                # every command, grouped
+npm start -- <command> --help    # one command's usage and what it needs, offline
 ```
 
 `help` is generated from the command table in `commands.ts`, so it never drifts from what is
-actually there. The groups:
+actually there. It marks the commands that need a DDO store (`S`) and the ones that act as the
+consumer (`C`). The groups:
 
 | Group | What it covers |
 | --- | --- |
 | `check:` | Diagnostics. `check:node` is the one to run first. |
-| `publish:` | Datasets, algorithms, SaaS offers, multi-service assets, local validation. |
-| `asset:` | Inspecting, unlisting and revoking a published asset. |
-| `edit:` | Metadata, descriptions, prices, services, trusted algorithms, lifecycle. |
+| `store:` | `store:check` — the DDO store's preflight, without a transaction. |
+| `publish:` | Datasets, algorithms, SaaS offers, multi-service assets, local validation, and `publish:resume` to finish a publish that stopped after the mint. |
+| `asset:` | Inspecting, unlisting and revoking a published asset, and `asset:indexing-state` — the node's record of why it did or did not index it. |
+| `edit:` | Metadata, descriptions, a service's name, description and timeout (`edit:service`), its files and endpoint (`edit:service-files`) and allowlist (`edit:service-allow`), prices, trusted algorithms. |
 | `access:` | Price checks, ordering, downloading, service selection, consumer parameters. |
 | `compute:` | Environments, free and paid jobs, status, logs, results, multi-dataset jobs. |
-| `ssi:` | Credential-gated publishing and consuming with walt.id. |
+| `ssi:` | Credential-gated publishing and consuming with walt.id, for access and compute (`ssi:publish-gated-compute`, then `ssi:compute`). |
 
 A first run, end to end:
 
@@ -83,12 +110,23 @@ npm start -- access:price did:ope:…
 npm start -- access:download did:ope:…
 ```
 
+If a publish stops after the NFT was minted, the error prints the command to finish it on the
+same NFT, and the node's indexing record tells you why a change was not indexed:
+
+```sh
+npm start -- publish:resume publish:access-dataset 0xNFT… 0xDatatoken…
+npm start -- asset:indexing-state 0xTxHash…   # failures are filed by transaction
+```
+
 Or chain the whole thing:
 
 ```sh
-npm run scenario:e2e             # publish → order → download → compute
+npm run scenario:e2e             # publish → order → download → compute → revoke
 npm start -- ssi:round-trip      # the credential-gated round trip
 ```
+
+`scenario:e2e` revokes the assets it published at the end (revoking is one-way); set
+`E2E_KEEP_ASSETS=true` to keep them.
 
 ## Running against a local nautilus
 
@@ -102,8 +140,9 @@ npm run use:local        # build ../src and link it   (the default)
 npm run use:npm          # switch to the published package
 ```
 
-`use:npm` reads the version from `src/package.json`, so it tracks whatever the checkout is
-about to release. Pin something specific with `--spec`:
+A bare `use:npm` reads the version from `../src/package.json` and installs `^<version>`, so it
+tracks whatever the checkout is about to release. Pin something specific with `--spec`; then
+nothing outside `examples/` is read, so it also works in a copy of the directory:
 
 ```sh
 npm run use:npm -- --spec 2.0.0-beta.0
@@ -111,8 +150,9 @@ npm run use:npm -- --spec beta
 ```
 
 Switching rewrites `package.json` and `package-lock.json`; that churn is not meant to be
-committed. And until `2.0.0-beta.0` is published, a bare `use:npm` will warn and fail — the
-local checkout is the way to run these today.
+committed. And the examples need the release they were written for: they use
+`S3RemoteStore`, `completePublish`, `getIndexingState` and the throwing `waitForIndexer`,
+which `2.0.0-beta.0` does not have. Pin a version that does, or stay on `use:local`.
 
 It is a dependency rewrite rather than `npm link`, deliberately: nothing is written to your
 global npm prefix.
@@ -123,11 +163,12 @@ global npm prefix.
   <Card title="Publishing" description="publish:access-dataset, publish:saas, publish:multi-service" to="/docs/guides/publish" />
   <Card title="Download" description="access:price, access:order, access:download" to="/docs/guides/download" />
   <Card title="Compute to Data" description="compute:envs, compute:free, compute:paid, compute:full" to="/docs/guides/compute" />
-  <Card title="Editing" description="edit:metadata, edit:price, edit:trusted-algorithms" to="/docs/guides/edit" />
-  <Card title="Credential-gated assets" description="ssi:connect, ssi:round-trip, ssi:consume" to="/docs/guides/identity" />
+  <Card title="Editing" description="edit:metadata, edit:service, edit:service-files, edit:price" to="/docs/guides/edit" />
+  <Card title="Credential-gated assets" description="ssi:connect, ssi:round-trip, ssi:publish-gated-compute" to="/docs/guides/identity" />
 </Cards>
 
 The examples' own
 [README](https://github.com/deltaDAO/nautilus/blob/main/examples/README.md) goes further on
-the three things that most often surprise people coming from v1: publishing needing a remote
-store, one ocean-node replacing two URLs, and what DDO v5 did to the metadata.
+the things that most often surprise people coming from v1: publishing needing a DDO store,
+what to do when a publish or an edit does not end indexed, one ocean-node replacing two URLs,
+and what DDO v5 did to the metadata.

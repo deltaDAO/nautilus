@@ -53,6 +53,27 @@ const customConfig: Partial<Config> = {
 A peer id or multiaddr also works instead of an HTTP URL, in which case ocean.js talks to
 the node over libp2p rather than REST.
 
+An HTTP URL must be `https://`, except on `localhost`, `127.0.0.0/8`, `::1` and `*.localhost`:
+the plaintext DDO pointer and the signed DDO go to this node for encryption, and node auth
+travels with every request. `Nautilus.create` throws for a plain `http://` URI elsewhere
+unless you pass `allowInsecureTransport: true` next to `config`.
+
+The URL is judged the way `fetch` parses it, so spellings such as `http:host` or `http:/host`
+count as plain `http://`, and a URL containing a tab, a line break or another control
+character is refused. `*.localhost` names are trusted without being resolved; they are
+reserved for loopback (RFC 6761), but if your resolver does not map them there, use
+`localhost` or `127.0.0.1` instead.
+
+It must be an
+[OceanProtocolEnterprise ocean-node](https://github.com/OceanProtocolEnterprise/ocean-node)
+4.2.x — see [which node](/docs/guides/ocean-node#which-node). For access to the deltaDAO test
+environment, or to have your own ocean-node run as a service, contact deltaDAO at
+[delta-dao.com/contact](https://delta-dao.com/contact) or
+[contact@delta-dao.com](mailto:contact@delta-dao.com).
+
+The same node encrypts your DDO and its pointer, and its URI is written on chain as the
+node that can decrypt them, so keep publishing and editing an asset through the same node.
+
 ## The RPC endpoint
 
 `nodeUri` is the **blockchain** RPC, not the ocean-node — an easy pair to confuse. In
@@ -69,12 +90,18 @@ const customConfig: Partial<Config> = {
 
 ## An unsupported network
 
-ocean.js's `ConfigHelper` ships defaults for a handful of chains, and for deltaDAO that
-means **Pontus-X devnet (32456)**. Anywhere else, supply the addresses yourself.
+ocean.js's `ConfigHelper` ships defaults for a set of chains, among them
+**Pontus-X devnet (32456)** and **OP Sepolia (11155420)**. Check
+`nautilus.getOceanConfig()` to see what you got. On a chain it does not know, supply the
+addresses yourself.
 
 `Nautilus.create` validates `nftFactoryAddress`, `fixedRateExchangeAddress` and
 `dispenserAddress` up front, so a missing one fails immediately with a message naming it —
 rather than halfway through a publish.
+
+`chainId` cannot select another network: the chain always comes from the signer's provider,
+and a `config.chainId` that differs from it throws. Connect the signer to the RPC of the
+chain you want.
 
 ```ts twoslash
 import type { Config } from '@oceanprotocol/lib'

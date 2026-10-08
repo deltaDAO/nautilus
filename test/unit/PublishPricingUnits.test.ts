@@ -13,7 +13,6 @@ import {
   type Config,
   Datatoken,
   Nft,
-  type ProviderFees,
   ZERO_ADDRESS
 } from '@oceanprotocol/lib'
 import { parseUnits, type Signer } from 'ethers'
@@ -26,6 +25,7 @@ import type {
 import { createDatatokenForService } from '../../src/publish/index.js'
 import { order } from '../../src/utils/order.js'
 import type { OrderPrice, PricingInfo } from '../../src/utils/pricing.js'
+import { signedProviderFee } from '../fixtures/ProviderFee.js'
 
 vi.mock('@oceanprotocol/lib', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@oceanprotocol/lib')>()
@@ -53,7 +53,10 @@ function constructs<T>(mocked: { mockImplementation: unknown }, instance: T) {
   })
 }
 
-const signer = {} as Signer
+// The account that pays for an order: `order()` refuses a `payer` other than the signer.
+const signer = {
+  getAddress: async () => '0x6666666666666666666666666666666666666666'
+} as unknown as Signer
 
 const chainConfig = {
   chainId: 32456,
@@ -109,7 +112,8 @@ describe('order approveSpend', () => {
       pricing,
       price,
       serviceIndex: 0,
-      providerFees: {} as ProviderFees,
+      // No provider fee, so `approve` is the only approval.
+      providerFees: signedProviderFee({ providerFeeAmount: '0' }),
       consumer: '0x5555555555555555555555555555555555555555',
       payer: '0x6666666666666666666666666666666666666666'
     })

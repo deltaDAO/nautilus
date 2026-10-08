@@ -40,19 +40,151 @@ const node = new OceanNodeClient({
 | `chainId` | `number` | |
 | `auth` | `NodeAuth` | A `Signer`, a JWT auth token, or a pre-computed signature. |
 | `consumerAddress` | `string` | **Required when `auth` is a JWT**, which nautilus cannot decode. |
+| `allowInsecureTransport` | `boolean` | Accept a plain `http://` `nodeUri` on a host other than `localhost`, `127.0.0.0/8`, `::1` or `*.localhost`. Default `false`: the constructor throws an `OceanNodeError`, the same rule as `Nautilus.create`. It also applies to the `nodeUri` argument of `encrypt` and `getFileInfo`. Carried over to `forEndpoint` clients. |
+| `requestTimeoutMs` | `number` | How long one `encrypt` call may run, its nonce retry included. Default `120000` (2 minutes, room for a wallet's signature prompt). Must be a positive finite number. Carried over to `forEndpoint` clients. |
 
 ## Selected methods
 
 ### Metadata
 
-`resolve(did)` · `resolveMany(dids)` · `query(searchQuery)` · `waitForIndexer(did, txid?)` ·
-`validateRemote(ddo)`
+`resolve(did)` · `resolveMany(dids)` · `query(searchQuery)` ·
+`waitForIndexer(did, txid?, options?)` · `getIndexingState({ did } | { nft } | { txId }, signal?)` ·
+`getNodeAddress(signal?)` · `getIndexerNonceState(signal?)` · `validateRemote(ddo)`
+
+The `GET`s behind `waitForIndexer`, `getIndexingState`, `getNodeAddress` and
+`getIndexerNonceState` carry no credentials and no body, so they follow redirects, for
+example from a reverse proxy in front of `/api/aquarius`. The transport rule still applies
+where a redirect ends: plain `http://` on a host other than loopback is refused (an
+`OceanNodeError`), unless the node URI is plain `http://` already
+(`allowInsecureTransport`).
+
+### getIndexingState
+
+The indexer's record for an asset or a transaction — the only place a node reports **why** an
+asset was not indexed.
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+const node = nautilus.getNodeClient()
+declare const txHash: string
+// ---cut---
+const state = await node.getIndexingState({ txId: txHash }) // [!code focus]
+// or: { did: 'did:ope:…' } for the success record, { nft: '0x…' } for failure records
+
+if (state && (!state.valid || state.error?.trim())) console.error(state.error)
+```
+
+Returns `IndexingState | undefined` — `{ did?, chainId?, nft?, txId?, valid, error? }`, or
+`undefined` when the node has no record (404). The query is an `IndexingStateQuery`,
+`{ did } | { nft } | { txId }`, sent the way the node files it: `nft` checksummed and `txId`
+lower-cased, so either spelling finds the record. It reads
+`GET <node>/api/aquarius/state/ddo`, which is HTTP only, with a 15-second request timeout.
+
+It throws an `OceanNodeError` on a P2P node URI, for a blank query value, an `nft` that is not
+an address, a `txId` that is not a 32-byte `0x` hash, a `did` that is not a `did:op:` or
+`did:ope:` id, any other non-2xx answer, and a response that is not JSON or has no boolean
+`valid`.
+
+ocean-node 4.2 keeps two kinds of record per asset, under different ids:
+
+| Record | Filed under | `nft` | `txId` | Look it up by |
+| --- | --- | --- | --- | --- |
+| Success | the asset's `did:ope:` DID | — | `" "` (blank) | `{ did }` |
+| Failure | the old `did:op:` form of the id | the NFT | the transaction | `{ txId }` (preferred) or `{ nft }` |
+
+- **Failure records stay.** A later successful edit does not remove them, so an
+  `{ nft }` lookup can return an old error for an asset that is indexed fine now. Prefer
+  `{ txId }`, and compare the record's `txId` with yours.
+- A failure is `valid: false` with the node's message. A DDO dropped at the database write
+  (schema validation) is recorded as `valid: true` **with** an error, so treat any non-blank
+  `error` as a failure. `error` is a single space when there is none.
+
+[`waitForIndexer`](/docs/api/nautilus/waitForIndexer) reads the `{ txId }` record for you and
+throws an `IndexingError` on a failure of that transaction. `OceanNodeClient.waitForIndexer`
+takes the same arguments and `WaitForIndexerOptions` as `nautilus.waitForIndexer`.
+
+### getNodeAddress
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+const node = nautilus.getNodeClient()
+// ---cut---
+const nodeAddress = await node.getNodeAddress() // [!code focus]
+// '0x…' (checksummed), or undefined
+```
+
+The node's own address, `providerAddress` from its root document (`GET <node>/`). The indexer
+signs its decrypt calls with this key. Returns `undefined` when the node does not report a
+valid address, or is reached over P2P. A network error, a timeout (15 s), a non-2xx status or
+a body that is not JSON throws an `OceanNodeError` (operation `getNodeAddress`); aborting
+`signal` rejects with the signal's reason.
+
+### getIndexerNonceState
+
+```ts
+const state = await node.getIndexerNonceState()
+// { nodeAddress: '0x…', storedNonce: 264, nextNonce: 265, stuck: true }, or undefined over P2P
+```
+
+A read-only check (two `GET`s, nothing signed) of whether the node will accept its
+indexer's next decrypt call. The indexer signs each decrypt call with the node's key and the
+next nonce, and the stored nonce advances only when a call succeeds. `stuck: true` means the
+node will not accept a call signed with `nextNonce` (`401 consumer address and nonce
+signature mismatch`): a publish or edit would go on chain without being indexed until the
+node operator advances the stored nonce of the node's address.
+`isIndexerNonceSignable(nodeAddress, nonce)` is the underlying check.
+
+`publish`, `completePublish` and `edit` call it before their first transaction and throw an
+`IndexerNonceStuckError` (an `OceanNodeError` carrying this `state`) when `stuck`; pass
+`{ checkIndexerNonce: false }` to skip that. When the check fails (P2P, a node without the
+nonce endpoint, a network error) they go on silently.
+
+They also read `getNodeAddress()` once per instance and `console.warn` once when the
+publisher is that same address: the node's decrypt calls then collide with the publisher's
+nonces and fail with 401, so the asset goes on chain but is never indexed. Publish with a
+different key than the node's.
+
+### Encryption
+
+`encrypt(data, policyServer?, signal?, nodeUri?)` has the node encrypt `data` and returns its
+`0x` hex ciphertext. nautilus uses it for service file objects, the DDO envelope and the
+on-chain pointer. `nodeUri` defaults to the client's node; node keys are node-local, so a
+service's files must be encrypted by the node in its `serviceEndpoint`.
+
+- Another `nodeUri` gets the client's transport rule, since the plaintext and the signed
+  command go to it: a plain `http://` URI on a non-loopback host throws an `OceanNodeError`
+  (`encrypt`) before anything is sent, unless the client has `allowInsecureTransport`.
+  `getFileInfo(file, withChecksum?, signal?, nodeUri?)` does the same (`getFileInfo`).
+
+- It throws an `OceanNodeError` (`encrypt`) unless the node answers with `0x` hex:
+  *"the node returned an empty ciphertext"*, or *"the node did not return ciphertext: …"* with
+  the node's message cut to 200 characters. ocean.js passes an HTTP error body through as if
+  it were the result, so without this check a node error could end up stored as a service's
+  encrypted files.
+- With `Signer` auth, it retries once when the node rejects the nonce (*"not a valid
+  nonce"*). A JWT or a pre-computed signature is not retried, since it would fail the same
+  way.
+- With `Signer` auth, one client runs its encrypt calls one at a time, because concurrent
+  calls read the same nonce and the node rejects all but one. A publish with several services
+  therefore encrypts their files one after the other.
+- Each call has `requestTimeoutMs` (default 2 minutes) from the moment it starts; time spent
+  waiting behind other calls does not count. A call that runs out throws an
+  `OceanNodeError` (*"timed out after … ms"*) and the next call starts, so one node that
+  does not answer cannot hold up the client. Aborting `signal`, while the call waits or
+  runs, rejects with the signal's reason.
 
 ### Files and storage
 
 `getFileInfo(file, withChecksum?)` · `checkDidFiles(did, serviceId, withChecksum?)` ·
 `createBucket(accessLists, label?)` · `uploadFile(bucketId, fileName, content)` ·
 `getFileObject(bucketId, fileName)`
+
+Buckets work for asset files, but not for DDOs: ocean-node 4.2 cannot read a remote DDO from
+its own bucket storage.
 
 ### Compute
 
@@ -87,5 +219,8 @@ try {
   }
 }
 ```
+
+`IndexingError` is the `OceanNodeError` that `waitForIndexer` throws when the node has
+recorded a failure. It carries `did`, `txId` and the node's record on `state`.
 
 See [the Ocean Node client guide](/docs/guides/ocean-node).

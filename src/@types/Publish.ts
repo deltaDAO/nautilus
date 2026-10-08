@@ -4,7 +4,8 @@ import type {
   DatatokenCreateParams,
   DispenserParams,
   FreCreationParams,
-  NftCreateData
+  NftCreateData,
+  StorageObject
 } from '@oceanprotocol/lib'
 import type { Signer, TransactionReceipt } from 'ethers'
 import type { MetadataState } from '../ddo/project.js'
@@ -59,7 +60,13 @@ export interface CreateAssetConfig {
 export interface PublishedService {
   service: NautilusService<ServiceTypes, FileTypes>
   datatokenAddress: string
-  tx: TransactionReceipt
+  /**
+   * The transaction that created the datatoken (or, for a reused one, its pricing).
+   * Absent for a datatoken `completePublish()` reused as it was.
+   */
+  tx?: TransactionReceipt
+  /** `true` for a datatoken `completePublish()` found on the NFT instead of creating it. */
+  reused?: boolean
 }
 
 export interface PublishResponse {
@@ -69,8 +76,18 @@ export interface PublishResponse {
   ddo: Record<string, unknown>
   /** The signed VC the DDO pointer refers to. */
   credential?: { jwt: string; issuer: string }
+  /**
+   * What went to the remote store: the pointer it returned (for IPFS `{ type, hash }`, with
+   * the CID to unpin) and the on-chain metadata hash, which is the sha256 of the stored
+   * envelope. The pointer is **redacted**: an S3 `secretAccessKey`, `url` header values and
+   * URL passwords read `'<redacted>'`. `remove()` on the nautilus stores accepts it as is.
+   */
+  stored: { pointer: StorageObject; metadataHash: string }
   setMetadataTxReceipt: TransactionReceipt
-  /** Present when `publish({ waitForIndexer: true })` was used. */
+  /**
+   * `true` when `waitForIndexer` was passed: the asset is resolvable now. Waiting throws
+   * when the node fails to index it, so this is never `false`.
+   */
   indexed?: boolean
 }
 
@@ -87,3 +104,53 @@ export type TrustedAlgorithmAsset = {
 
 /** Re-exported so callers can type a built service without reaching into internals. */
 export type PublishedServiceDefinition = ServiceV5
+
+/**
+ * An error thrown after the metadata transaction was mined (the wait for the indexer
+ * failed or timed out, or a `MetadataConflictError`). The asset is on chain: `published`
+ * carries the full result, so the caller keeps the NFT address, the DDO and the stored
+ * pointer instead of publishing again.
+ */
+export type PublishedNotIndexed = Error & { published: PublishResponse }
+
+/**
+ * What a failed `publish()`, `completePublish()` or `edit()` left in the remote store, on
+ * `error.stored` (and on `PublishIncompleteError.stored`). Present when the envelope had
+ * been stored but its metadata transaction was not confirmed.
+ *
+ * Nothing on chain points at an envelope whose transaction was never sent, or was mined and
+ * reverted, so nautilus deletes it with `RemoteStore.remove()`. Once the transaction was
+ * sent it may have been mined and the envelope may be what the NFT now points at, so
+ * nautilus leaves it alone.
+ */
+export interface StoredBeforeFailure {
+  /**
+   * The pointer the store returned, redacted as in `PublishResponse.stored`. A pointer that
+   * cannot be copied (a custom store's BigInt or cycle) is reported as `{ type }` alone.
+   */
+  pointer: StorageObject
+  /** `0x` + sha256 of the stored envelope. */
+  metadataHash: string
+  /**
+   * - `'removed'`: the metadata transaction was never sent (or was mined and reverted), and
+   *   `remove()` deleted the object.
+   * - `'not-removed'`: the same, but the store has no `remove()` or it failed
+   *   (`removeError`). Nothing points at the object; delete or unpin it yourself.
+   * - `'kept'`: the transaction was sent and may have been mined. Check the NFT's metadata
+   *   (`getAsset()`, or `completePublish()`, which refuses an NFT with metadata and a
+   *   signer with pending transactions) before removing the object: if the transaction
+   *   landed, the asset needs it.
+   */
+  cleanup: 'removed' | 'not-removed' | 'kept'
+  /** Why `remove()` did not delete it, for `'not-removed'`. */
+  removeError?: string
+  /**
+   * The hash of the metadata transaction, when it was sent and its hash is known. With
+   * `'kept'`, pass it to `completePublish()` as `metadataTxHash`, which then refuses while
+   * that transaction is pending and once it succeeded.
+   */
+  txHash?: string
+}
+
+/** An error from `publish()`, `completePublish()` or `edit()` that carries `stored`. */
+export type FailedWithStoredObject = Error & { stored: StoredBeforeFailure }

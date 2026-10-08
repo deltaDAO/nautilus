@@ -3,9 +3,11 @@
 The underlying [ocean-node](/docs/guides/ocean-node) client, for calls nautilus does not wrap.
 
 :::tip
-You also need this to build a [remote store](/docs/guides/remote-stores) or a credential
-provider, because both take a node client. That is why those are configured with a two-step
-`Nautilus.create` — see [`create`](/docs/api/nautilus/create).
+You also need this to build a credential provider such as `WaltIdCredentialProvider`,
+because it takes a node client. That is why it is configured with a two-step
+`Nautilus.create` — see [`create`](/docs/api/nautilus/create). The DDO
+[remote stores](/docs/guides/remote-stores) (`IpfsRemoteStore`, `S3RemoteStore`) need no
+node client.
 :::
 
 ## Usage

@@ -1,20 +1,50 @@
 # IpfsRemoteStore
 
-Store the signed DDO on IPFS.
+Store the encrypted DDO envelope on IPFS. The store to use with ocean-node 4.2.
 
 ## Usage
+
+A Kubo node, which [`verify()`](#verify) reads back through its own `/api/v0/cat`:
 
 ```ts twoslash
 import { IpfsRemoteStore } from '@deltadao/nautilus'
 // ---cut---
 const store = new IpfsRemoteStore({ // [!code focus]
-  uploadUrl: 'http://127.0.0.1:5001/api/v0/add' // [!code focus]
+  uploadUrl: 'http://127.0.0.1:5001/api/v0/add', // [!code focus]
+  probe: 'upload' // [!code focus]
 }) // [!code focus]
 ```
 
+Pinata, with the JWT from the environment, verified through Pinata's gateway:
+
+```ts twoslash
+import { IpfsRemoteStore } from '@deltadao/nautilus'
+
+declare const process: { env: Record<string, string | undefined> }
+// ---cut---
+const store = new IpfsRemoteStore({ // [!code focus]
+  uploadUrl: 'https://api.pinata.cloud/pinning/pinFileToIPFS', // [!code focus]
+  headers: { Authorization: `Bearer ${process.env.PINATA_JWT}` }, // [!code focus]
+  probe: 'upload', // [!code focus]
+  gatewayUrl: 'https://gateway.pinata.cloud' // [!code focus]
+}) // [!code focus]
+```
+
+Pinata, or any other upload endpoint that is not Kubo, needs a `gatewayUrl` for `verify()`,
+or `verify: false` to publish without reading the envelope back. Without either,
+[`check()`](#check) throws before anything is minted.
+
+The Pinata key needs the pin scope to publish, and the unpin scope to clean up. Use
+`pinFileToIPFS`, not `pinJSONToIPFS`: the latter re-wraps the body, so the stored bytes are no
+longer the envelope and the asset cannot be indexed.
+
+It needs no node client, so it can be passed straight to
+[`Nautilus.create`](/docs/api/nautilus/create#remotestore).
+
 :::warning
-The **node** dereferences this pointer, not you. An endpoint reachable only from your machine
-will publish fine and then fail to index.
+The **node** fetches the content, through its own IPFS gateway. Content that gateway cannot
+reach will publish fine and then fail to index. See
+[remote stores](/docs/guides/remote-stores#ipfs).
 :::
 
 ## Parameters
@@ -23,12 +53,130 @@ will publish fine and then fail to index.
 
 - Type: `IpfsRemoteStoreOptions`
 
-| Option | Type | Purpose |
-| --- | --- | --- |
-| `uploadUrl` | `string` | The Kubo RPC add endpoint. Required. |
-| `headers` | `Record<string, string>` | For an authenticated gateway. |
-| `extractCid` | `(response: unknown) => string \| undefined` | Override CID extraction. Defaults to `Hash`/`cid`/`Cid`/`IpfsHash`/`hash`. |
-| `fetchImpl` | `typeof fetch` | Inject a custom fetch. |
+| Option | Type | Default | Purpose |
+| --- | --- | --- | --- |
+| `uploadUrl` | `string` | — | The upload endpoint: Kubo's `/api/v0/add`, Pinata's `pinFileToIPFS`, or your own. Required. |
+| `headers` | `Record<string, string>` | — | For an authenticated endpoint, e.g. `{ Authorization: 'Bearer <JWT>' }`. |
+| `probe` | `'upload' \| { url: string; method?: string; headers?: Record<string, string> }` | — | What [`check()`](#check) does. Omit to skip the check. |
+| `gatewayUrl` | `string` | — | An IPFS gateway for [`verify()`](#verify), ideally the one the node uses (`IPFS_GATEWAY`). Without it, a Kubo `uploadUrl` is read back through the same node's `/api/v0/cat`; any other `uploadUrl` needs `gatewayUrl` or `verify: false`. |
+| `verify` | `false` | — | Publish without reading the envelope back: `verify()` resolves without a request. Only for a store with neither `gatewayUrl` nor a Kubo `uploadUrl`; not together with `gatewayUrl`. |
+| `unpin` | `false \| { url: string; method?: string; headers?: Record<string, string> }` | derived from `uploadUrl` | How [`remove()`](#remove) unpins. `url` contains `{cid}`; `method` defaults to `DELETE`. `false` turns `remove()` off. |
+| `extractCid` | `(response: unknown) => string \| undefined` | `Hash`/`cid`/`Cid`/`IpfsHash`/`hash` | Override CID extraction. |
+| `allowInsecureTransport` | `boolean` | `false` | Allow a plain `http://` `uploadUrl`, `gatewayUrl`, `probe.url` or `unpin.url` on a host other than `localhost`, `127.0.0.0/8`, `::1` or `*.localhost`. |
+| `requestTimeoutMs` | `number` | `60000` | Timeout of each request, body included. A finite number of milliseconds, more than 0; above 2^31 − 1 it is clamped to that. |
+| `fetchImpl` | `typeof fetch` | `fetch` | Inject a custom fetch. |
 
-Produces an `{ type: 'ipfs', hash }` pointer. See
-[remote stores](/docs/guides/remote-stores).
+The constructor throws without an `uploadUrl`, for an `unpin.url` without `{cid}`, for
+`gatewayUrl` together with `verify: false`, for a `probe` that is neither `'upload'` nor
+`{ url, method?, headers? }`, for an `uploadUrl`, `gatewayUrl`, `probe.url` or `unpin.url`
+that does not parse or carries `user:password@` credentials (pass them in `headers`
+instead), for a plain `http://` one of those on a non-loopback host unless
+`allowInsecureTransport` is set, and for a `requestTimeoutMs` that is not a finite number of
+milliseconds above 0.
+
+The payload is uploaded unchanged, as a multipart `file` field (`application/json`, named
+`<did>.json`). Produces an `{ type: 'ipfs', hash }` pointer. Throws when the upload fails, the
+response carries no CID, or the CID is not a CIDv0 (`Qm…`) or a base32/base36 CIDv1
+(`b…`/`k…`) — the node would resolve anything else as a gateway path.
+
+Upstream error bodies are cut to 300 characters and scrubbed before they reach an error
+message: the configured header values and anything that looks like a token read
+`<redacted>`. That includes a 2xx body echoed as a CID that is not one, and fetch's own
+error text: a network error is rethrown without fetch's raw error as `cause`.
+
+Only the `gatewayUrl` read in [`verify()`](#verify) follows redirects. Every other request
+(upload, probe, unpin, Kubo `cat`) carries the upload `headers` or the envelope, so a
+redirect fails it with a message naming the origin it pointed to; configure the final URL.
+
+
+## check
+
+Called by [`publish`](/docs/api/nautilus/publish),
+[`completePublish`](/docs/api/nautilus/completePublish) and [`edit`](/docs/api/nautilus/edit)
+before their first transaction. It first throws when [`verify()`](#verify) would have no way to
+read the envelope back (no `gatewayUrl`, an `uploadUrl` that is not Kubo, and no
+`verify: false`), then runs the configured `probe`:
+
+- `'upload'` uploads a fixed probe of a few bytes, always the same CID (so it stays pinned,
+  once). This is the only check that catches a pinning-service key without upload scope.
+- `{ url, method?, headers? }` makes a test call, e.g. Pinata's
+  `https://api.pinata.cloud/data/testAuthentication`, with `method` defaulting to `GET`. It
+  must answer 2xx. It sends `probe.headers` when given; otherwise the upload `headers`, but
+  only when `url` has the same origin as `uploadUrl`, so your credentials never go to another
+  host by accident.
+
+Throws if the store would refuse an upload, so nothing is spent.
+
+## verify
+
+Called by `publish`, `completePublish` and `edit` right before the metadata transaction. It
+reads the CID back and throws unless the content hashes, the way the node hashes it, to the
+on-chain metadata hash, or when the read does not answer 2xx:
+
+| Configuration | Read-back |
+| --- | --- |
+| `gatewayUrl` set | `GET <gatewayUrl>/ipfs/<cid>`, as the node does, without the upload `headers`. A failure here means the node may not be able to fetch it either. |
+| Kubo `uploadUrl` (`…/api/v0/add`), no `gatewayUrl` | `POST <same base>/api/v0/cat?arg=<cid>`, with the upload `headers`. This proves your node holds the exact bytes, not that the node's gateway can reach them; set `gatewayUrl` for that. |
+| anything else | Throws (and so does `check()`, before anything is minted). Set `gatewayUrl`, or `verify: false`. |
+| `verify: false` | Resolves without reading anything: the envelope is not checked before the metadata transaction. |
+
+## remove
+
+```ts twoslash
+import { IpfsRemoteStore, Nautilus, type NautilusAsset } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+declare const remoteStore: IpfsRemoteStore
+const nautilus = await Nautilus.create(new Wallet('0x1234'), { remoteStore })
+declare const asset: NautilusAsset
+// ---cut---
+const { stored } = await nautilus.publish(asset)
+
+// later, once the asset is revoked for good: a live asset needs this creation envelope
+await remoteStore.remove(stored.pointer) // [!code focus]
+```
+
+Unpins the CID of an `{ type: 'ipfs', hash }` pointer, such as
+[`PublishResponse.stored.pointer`](/docs/api/PublishResponse#stored). Where it unpins:
+
+| `uploadUrl` | Unpin request |
+| --- | --- |
+| Pinata, `…/pinning/pinFileToIPFS` | `DELETE <origin>/pinning/unpin/<cid>`, with the upload `headers`. The key needs the unpin scope. |
+| Kubo, `…/api/v0/add` | `POST <same base>/api/v0/pin/rm?arg=<cid>`, with the upload `headers`. |
+| anything else | `unpin: { url, method?, headers? }`, with `{cid}` in `url`. Without it, `remove()` throws. |
+
+A configured `unpin.url` gets `unpin.headers` when given, and otherwise the upload `headers`
+only if it has the same origin as `uploadUrl`.
+
+It is idempotent: an answer saying the CID is not pinned counts as removed, in the format of
+the service that answers — Kubo's JSON error with a `Message` starting `not pinned`, Pinata's
+JSON with `error.reason` `CURRENT_USER_HAS_NOT_PINNED_CID`, or a `404` from a configured
+`unpin` — except with a 401 or 403. A body that merely mentions it, like a proxy's error
+page, does not count. It throws for a
+pointer that is not `ipfs` or whose hash is not a CID, and with the scrubbed upstream answer
+when the service refuses.
+
+`remove()` unpins whatever CID it is given from your account, so pass it only pointers this
+store returned. Unpinning releases your service's copy: IPFS has no delete, and nodes or
+gateways that fetched the CID may serve it until they garbage-collect it. The content is
+ciphertext either way.
+
+nautilus calls it itself only when a `publish`, `completePublish` or `edit` stored the envelope
+and then failed before its metadata transaction was sent, or that transaction was rejected
+or mined and reverted; the outcome is on
+[`error.stored`](/docs/guides/remote-stores#when-a-write-fails-after-the-envelope-is-stored).
+
+:::warning
+Never remove the **creation** envelope (from `publish()`) or the **current** one of an asset
+that should stay indexed. A node reindex replays the asset from its creation event: without
+that envelope the asset vanishes from the index, and without the current one it falls back
+to an older version. Only intermediate versions, envelopes a failed write left behind, and
+those of assets retired for good are safe to remove. See
+[cleaning up](/docs/guides/remote-stores#cleaning-up).
+:::
+
+## In the browser
+
+The upload is a plain `fetch`, so a browser app needs the upload endpoint to answer CORS for
+its origin; Kubo and gateways do not by default. See
+[browser use](/docs/guides/remote-stores#browser-use-cors) for the Kubo settings and for why a
+pinning-service key should not ship in browser code.
