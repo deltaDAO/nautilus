@@ -28,13 +28,14 @@ export const DEFAULT_VC_POLICIES: VcPolicy[] = [
 export function isSsiPolicyCredential(
   credential: DdoCredential
 ): credential is SsiPolicyCredential {
-  return credential.type === 'SSIpolicy'
+  // Null-safe: a stored list can hold entries that are not objects.
+  return credential?.type === 'SSIpolicy'
 }
 
 export function isAddressCredential(
   credential: DdoCredential
 ): credential is AddressCredential {
-  return credential.type === 'address'
+  return credential?.type === 'address'
 }
 
 /**
@@ -109,8 +110,10 @@ export function setVpPolicies(
 /**
  * Applies a change to one list's single `SSIpolicy` entry, creating it if needed.
  *
- * One entry per list: the policy server merges asset- and service-level entries, but two
- * entries in the same list is needless ambiguity.
+ * One entry with one value per list. The policy server merges every value of every
+ * `SSIpolicy` entry (asset and service level), so existing entries and values are merged
+ * into one first: changing only the first value dropped the request credentials of the
+ * others, and a replacement such as `setVcPolicies` left their policies running.
  */
 function updateSsiPolicy(
   credentials: DdoCredentials,
@@ -118,18 +121,26 @@ function updateSsiPolicy(
   mutate: (value: SsiPolicyValue) => void
 ): DdoCredentials {
   const entries = credentials[list] || []
-  const existing = entries.find(isSsiPolicyCredential)
+  const ssiEntries = entries.filter(isSsiPolicyCredential)
+  const [existing, ...others] = ssiEntries
 
-  const value: SsiPolicyValue = existing?.values?.[0] || {
-    request_credentials: []
-  }
+  const value = mergeSsiValues(
+    ssiEntries.flatMap((entry) => toArray(entry.values))
+  )
 
   mutate(value)
 
   if (existing) existing.values = [value]
   else entries.push({ type: 'SSIpolicy', values: [value] })
 
-  return { ...credentials, [list]: entries }
+  return {
+    ...credentials,
+    [list]: others.length
+      ? entries.filter(
+          (entry) => !isSsiPolicyCredential(entry) || entry === existing
+        )
+      : entries
+  }
 }
 
 /**
@@ -283,49 +294,80 @@ function dedupe<T>(values: T[]): T[] {
  * Other producers can also write `{ policy }` objects into `vc_policies` (the policy
  * server reads only the name) and bare-string address `values`. Both are rewritten to the
  * single form nautilus writes, so every array stays one type and the address helpers can
- * read every entry.
+ * read every entry. A single policy or request credential stored without its array is
+ * wrapped in one, as the policy server does for `vp_policies`.
+ *
+ * Unusable addresses and VC policies are dropped, as the policy server skips them; an
+ * allow entry left without addresses stays `values: []` and keeps denying everyone. An
+ * unreadable VP policy, request credential or per-credential policy throws instead:
+ * dropping it would leave the asset open under the remaining policies, where the policy
+ * server today refuses or fails on it.
  */
 export function normalizeStoredCredentials(
   credentials: DdoCredentials
 ): DdoCredentials {
   const copy = structuredClone(credentials)
 
-  for (const entry of [...(copy.allow || []), ...(copy.deny || [])]) {
-    if (isAddressCredential(entry)) {
-      if (Array.isArray(entry.values))
-        entry.values = (entry.values as unknown[]).flatMap(readAddress)
-      continue
-    }
+  for (const list of [copy.allow, copy.deny]) {
+    if (!Array.isArray(list)) continue
 
-    if (!isSsiPolicyCredential(entry)) continue
-
-    for (const value of entry.values || []) {
-      if (value.vc_policies)
-        value.vc_policies = dedupe(
-          (value.vc_policies as unknown[]).flatMap(readVcPolicy)
-        )
-
-      if (value.vp_policies)
-        value.vp_policies = dedupeVpPolicies(
-          (value.vp_policies as unknown[]).flatMap(readVpPolicy)
-        )
-
-      if (value.request_credentials)
-        value.request_credentials = value.request_credentials.map(
-          (credential) =>
-            credential.policies
-              ? {
-                  ...credential,
-                  policies: (credential.policies as unknown[]).map(
-                    readCredentialPolicy
-                  )
-                }
-              : credential
-        )
+    // The guards skip entries that are not objects, which the stack cannot match either.
+    for (const entry of list) {
+      if (isAddressCredential(entry))
+        // A non-array list holds no address the stack can match.
+        entry.values = Array.isArray(entry.values)
+          ? (entry.values as unknown[]).flatMap(readAddress)
+          : []
+      else if (isSsiPolicyCredential(entry))
+        entry.values = toArray(entry.values)
+          .filter(isObject)
+          .map(normalizeSsiValue)
     }
   }
 
   return copy
+}
+
+/** Normalises one stored `SSIpolicy` value in place (see `normalizeStoredCredentials`). */
+function normalizeSsiValue(raw: Record<string, unknown>): SsiPolicyValue {
+  const value = raw as unknown as SsiPolicyValue
+
+  if (raw.request_credentials !== undefined)
+    value.request_credentials = toArray(raw.request_credentials).map(
+      readRequestCredential
+    )
+
+  if (raw.vc_policies !== undefined)
+    value.vc_policies = dedupe(toArray(raw.vc_policies).flatMap(readVcPolicy))
+
+  if (raw.vp_policies !== undefined)
+    value.vp_policies = dedupeVpPolicies(toArray(raw.vp_policies))
+
+  return value
+}
+
+/**
+ * Merges `SSIpolicy` values into one, as the policy server reads them: request
+ * credentials and both policy lists are combined and deduplicated.
+ */
+function mergeSsiValues(values: unknown[]): SsiPolicyValue {
+  const parts = values.filter(isObject).map(normalizeSsiValue)
+
+  const merged: SsiPolicyValue = Object.assign({}, ...parts, {
+    request_credentials: dedupeRequestCredentials(
+      parts.flatMap((part) => part.request_credentials ?? [])
+    )
+  })
+
+  if (parts.some((part) => part.vc_policies))
+    merged.vc_policies = dedupe(parts.flatMap((part) => part.vc_policies ?? []))
+
+  if (parts.some((part) => part.vp_policies))
+    merged.vp_policies = dedupeVpPolicies(
+      parts.flatMap((part) => part.vp_policies ?? [])
+    )
+
+  return merged
 }
 
 /**
@@ -350,30 +392,42 @@ function readVcPolicy(raw: unknown): VcPolicy[] {
   return typeof policy === 'string' ? [policy] : []
 }
 
-/** A stored VP policy in any form the stack has written, as a `VpPolicy`. */
-function readVpPolicy(raw: unknown): VpPolicy[] {
-  if (typeof raw === 'string') return [{ policy: raw }]
+/** A VP policy in any form the stack has written, as a `VpPolicy`. Throws if unreadable. */
+function readVpPolicy(raw: unknown): VpPolicy {
+  if (typeof raw === 'string') return { policy: raw }
 
-  if (
-    raw &&
-    typeof raw === 'object' &&
-    typeof (raw as { policy?: unknown }).policy === 'string'
-  ) {
-    const { policy, args } = raw as { policy: string; args?: unknown }
-    if (args === undefined) return [{ policy }]
+  if (isObject(raw) && typeof raw.policy === 'string') {
+    const { policy, args } = raw
+    if (args === undefined) return { policy }
 
-    return [
-      { policy, args: typeof args === 'string' ? args : JSON.stringify(args) }
-    ]
+    return {
+      policy,
+      args: typeof args === 'string' ? args : JSON.stringify(args)
+    }
   }
 
-  // Unusable: the policy server skips it too.
-  return []
+  throw unreadable('VP policy', raw, 'a name or { policy, args? }')
+}
+
+/** A stored request credential, its per-credential policies JSON-encoded. */
+function readRequestCredential(raw: unknown): StoredRequestCredential {
+  if (!isObject(raw))
+    throw unreadable('request credential', raw, '{ type, format?, policies? }')
+
+  const credential = raw as unknown as StoredRequestCredential
+  if (raw.policies === undefined) return credential
+
+  return {
+    ...credential,
+    policies: toArray(raw.policies).map(readCredentialPolicy)
+  }
 }
 
 /**
- * A stored per-credential policy, JSON-encoded. A string that already parses to a name or
- * an object is kept; anything else is a raw name or object and is encoded.
+ * A per-credential policy, JSON-encoded. A string that already parses to a name or an
+ * object is kept; any other string is a raw name and is encoded, as is a
+ * `{ policy, args? }` object. The single encoder for builder input and stored policies, so
+ * a stored policy passed back in is not encoded twice. Throws if unreadable.
  */
 function readCredentialPolicy(raw: unknown): string {
   if (typeof raw === 'string') {
@@ -384,9 +438,14 @@ function readCredentialPolicy(raw: unknown): string {
     } catch {
       // A raw policy name.
     }
+
+    return JSON.stringify(raw)
   }
 
-  return JSON.stringify(raw)
+  if (isObject(raw) && typeof raw.policy === 'string')
+    return JSON.stringify(raw)
+
+  throw unreadable('per-credential policy', raw, 'a name or { policy, args? }')
 }
 
 function encodeRequestCredential(
@@ -396,19 +455,22 @@ function encodeRequestCredential(
     type: credential.type,
     ...(credential.format !== undefined && { format: credential.format }),
     ...(credential.policies && {
-      policies: credential.policies.map((policy) => JSON.stringify(policy))
+      policies: credential.policies.map(readCredentialPolicy)
     })
   }
 }
 
-/** Deduplicates by value, writing each policy as a plain `{ policy, args? }` object. */
-function dedupeVpPolicies(policies: VpPolicy[]): VpPolicy[] {
+/**
+ * Reads each VP policy (see `readVpPolicy`) and deduplicates by value, writing each as a
+ * plain `{ policy, args? }` object. Takes `unknown[]` because callers outside TypeScript,
+ * and stored DDOs, can hand it bare names or worse.
+ */
+function dedupeVpPolicies(policies: readonly unknown[]): VpPolicy[] {
   const byKey = new Map<string, VpPolicy>()
 
-  for (const { policy, args } of policies) {
-    const key = JSON.stringify([policy, args ?? null])
-    if (!byKey.has(key))
-      byKey.set(key, args === undefined ? { policy } : { policy, args })
+  for (const policy of policies.map(readVpPolicy)) {
+    const key = JSON.stringify([policy.policy, policy.args ?? null])
+    if (!byKey.has(key)) byKey.set(key, policy)
   }
 
   return [...byKey.values()]
@@ -429,4 +491,27 @@ function dedupeRequestCredentials(
     seen.add(key)
     return true
   })
+}
+
+function isObject(raw: unknown): raw is Record<string, unknown> {
+  return typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+}
+
+/** A stored value that may be one item rather than an array, as an array. */
+function toArray(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw
+  return raw === undefined || raw === null ? [] : [raw]
+}
+
+function unreadable(kind: string, raw: unknown, expected: string): Error {
+  let shown: string
+  try {
+    shown = JSON.stringify(raw) ?? String(raw)
+  } catch {
+    shown = String(raw)
+  }
+
+  return new Error(
+    `Cannot read the ${kind} ${shown}: expected ${expected}. Nautilus does not drop it, which would leave the asset open under the remaining policies; fix or remove it.`
+  )
 }

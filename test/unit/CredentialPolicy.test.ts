@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type {
   DdoCredentials,
-  SsiPolicyCredential
+  SsiPolicyCredential,
+  VpPolicy
 } from '../../src/ddo/types.js'
 import { CredentialListTypes } from '../../src/ddo/types.js'
 import {
@@ -171,6 +172,103 @@ describe('SSI credential block', () => {
   })
 })
 
+describe('an SSIpolicy entry with several values', () => {
+  // The policy server merges every value of every SSIpolicy entry. Edits used to rewrite
+  // only `values[0]`, dropping the request credentials of the others.
+  function twoValues(): DdoCredentials {
+    return {
+      allow: [
+        {
+          type: 'SSIpolicy',
+          values: [
+            {
+              request_credentials: [{ type: 'VerifiableId' }],
+              vc_policies: ['signature']
+            },
+            {
+              request_credentials: [{ type: 'ProofOfResidence' }],
+              vc_policies: ['not-before'],
+              vp_policies: [{ policy: 'holder-binding' }]
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+  it("keeps every value's request credentials, merged into one value", () => {
+    const credentials = addRequestCredentials(twoValues(), ALLOW, [
+      { type: 'LegalPerson' }
+    ])
+
+    expect(ssiEntry(credentials)?.values).to.deep.equal([
+      {
+        request_credentials: [
+          { type: 'VerifiableId' },
+          { type: 'ProofOfResidence' },
+          { type: 'LegalPerson' }
+        ],
+        vc_policies: ['signature', 'not-before'],
+        vp_policies: [{ policy: 'holder-binding' }]
+      }
+    ])
+  })
+
+  it('replaces policies across every value', () => {
+    const credentials = setVcPolicies(twoValues(), ALLOW, [
+      'revoked-status-list'
+    ])
+
+    expect(ssiEntry(credentials)?.values).to.have.length(1)
+    expect(ssiEntry(credentials)?.values[0].vc_policies).to.deep.equal([
+      'revoked-status-list'
+    ])
+    expect(ssiEntry(credentials)?.values[0].request_credentials).to.have.length(
+      2
+    )
+  })
+
+  it('merges a second SSIpolicy entry in the same list into the first', () => {
+    const credentials = twoValues()
+    credentials.allow?.push(
+      { type: 'address', values: [{ address: '*' }] },
+      {
+        type: 'SSIpolicy',
+        values: [{ request_credentials: [{ type: 'LegalPerson' }] }]
+      }
+    )
+
+    const result = setVpPolicies(credentials, ALLOW, [])
+
+    expect(result.allow?.map((entry) => entry.type)).to.deep.equal([
+      'SSIpolicy',
+      'address'
+    ])
+    expect(
+      ssiEntry(result)?.values[0].request_credentials.map((c) => c.type)
+    ).to.deep.equal(['VerifiableId', 'ProofOfResidence', 'LegalPerson'])
+    expect(ssiEntry(result)?.values[0].vp_policies).to.deep.equal([])
+  })
+})
+
+describe('VP policy input at runtime', () => {
+  it('writes a bare name from an untyped caller as an object', () => {
+    const credentials = setVpPolicies({}, ALLOW, [
+      'holder-binding'
+    ] as unknown as VpPolicy[])
+
+    expect(ssiEntry(credentials)?.values[0].vp_policies).to.deep.equal([
+      { policy: 'holder-binding' }
+    ])
+  })
+
+  it('refuses an entry it cannot read', () => {
+    expect(() =>
+      setVpPolicies({}, ALLOW, [null] as unknown as VpPolicy[])
+    ).to.throw('Cannot read the VP policy null')
+  })
+})
+
 describe('VP policies are stored as objects', () => {
   // ocean-node 4.2.x did not index an asset whose `vp_policies` mixed a name with an
   // object, so every entry is written as one.
@@ -244,6 +342,22 @@ describe('per-credential policies are stored JSON-encoded', () => {
     ])
   })
 
+  it('keeps an already encoded policy as it is, rather than encoding it twice', () => {
+    const stored = addRequestCredentials({}, ALLOW, [
+      { type: 'gx:LegalPerson', policies: ['signature', { policy: 'expired' }] }
+    ])
+    const [credential] = ssiEntry(stored)?.values[0].request_credentials ?? []
+
+    const again = addRequestCredentials({}, ALLOW, [credential])
+
+    expect(ssiEntry(again)?.values[0].request_credentials).to.deep.equal([
+      {
+        type: 'gx:LegalPerson',
+        policies: ['"signature"', '{"policy":"expired"}']
+      }
+    ])
+  })
+
   it('deduplicates a credential added twice with the same policies', () => {
     const request = {
       type: 'gx:LegalPerson',
@@ -307,15 +421,13 @@ describe('normalizeStoredCredentials', () => {
     expect(vpPolicies(normalized)).to.deep.equal([{ policy: 'holder-binding' }])
   })
 
-  it('turns a mixed array into objects only, dropping unusable entries', () => {
+  it('turns a mixed array into objects only', () => {
     const normalized = normalizeStoredCredentials(
       legacy({
         request_credentials: [],
         vp_policies: [
           'holder-binding',
-          { policy: 'minimum-credentials', args: 1 },
-          42,
-          { args: '1' }
+          { policy: 'minimum-credentials', args: 1 }
         ]
       })
     )
@@ -324,6 +436,89 @@ describe('normalizeStoredCredentials', () => {
       { policy: 'holder-binding' },
       { policy: 'minimum-credentials', args: '1' }
     ])
+  })
+
+  it('refuses an unreadable vp policy rather than dropping it', () => {
+    // The policy server fails on a null entry, so the asset denies everyone. Dropping it
+    // would open the asset under the remaining policies after an unrelated edit.
+    for (const entry of [null, 42, { args: '1' }])
+      expect(() =>
+        normalizeStoredCredentials(
+          legacy({
+            request_credentials: [],
+            vp_policies: ['holder-binding', entry]
+          })
+        )
+      ).to.throw(`Cannot read the VP policy ${JSON.stringify(entry)}`)
+  })
+
+  it('refuses an unreadable request credential or per-credential policy', () => {
+    expect(() =>
+      normalizeStoredCredentials(legacy({ request_credentials: [null] }))
+    ).to.throw('Cannot read the request credential null')
+
+    for (const policy of [null, 7, { args: 'x' }])
+      expect(() =>
+        normalizeStoredCredentials(
+          legacy({
+            request_credentials: [{ type: 'VerifiableId', policies: [policy] }]
+          })
+        )
+      ).to.throw(
+        `Cannot read the per-credential policy ${JSON.stringify(policy)}`
+      )
+  })
+
+  it('wraps a single stored value in an array, as the policy server does', () => {
+    const normalized = normalizeStoredCredentials(
+      legacy({
+        request_credentials: { type: 'VerifiableId', policies: 'signature' },
+        vc_policies: 'signature',
+        vp_policies: { policy: 'holder-binding' }
+      })
+    )
+
+    expect(ssiEntry(normalized)?.values).to.deep.equal([
+      {
+        request_credentials: [
+          { type: 'VerifiableId', policies: ['"signature"'] }
+        ],
+        vc_policies: ['signature'],
+        vp_policies: [{ policy: 'holder-binding' }]
+      }
+    ])
+  })
+
+  it('skips entries and values that are not objects instead of throwing', () => {
+    const input = {
+      allow: [
+        null,
+        'address',
+        { type: 'address', values: null },
+        { type: 'SSIpolicy', values: [null, { request_credentials: null }] }
+      ],
+      deny: [null, { type: 'address', values: '0x1' }]
+    } as unknown as DdoCredentials
+
+    expect(normalizeStoredCredentials(input)).to.deep.equal({
+      allow: [
+        null,
+        'address',
+        { type: 'address', values: [] },
+        { type: 'SSIpolicy', values: [{ request_credentials: [] }] }
+      ],
+      deny: [null, { type: 'address', values: [] }]
+    })
+  })
+
+  it('keeps an allow entry whose addresses are all unusable, so it still denies all', () => {
+    const input = {
+      allow: [{ type: 'address', values: [null, 5] }]
+    } as unknown as DdoCredentials
+
+    expect(normalizeStoredCredentials(input)).to.deep.equal({
+      allow: [{ type: 'address', values: [] }]
+    })
   })
 
   it('encodes raw per-credential policies and keeps encoded ones as they are', () => {
