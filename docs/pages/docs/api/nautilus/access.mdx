@@ -55,8 +55,9 @@ What happens in order:
    order.
 4. An existing order is reused where possible — extended if a new fee period is due, or
    used as-is if not. The node's access `initialize` reports no `validOrder`, so your
-   newest order for the service is read from the datatoken's events, and kept only if the
-   node would accept it: yours, for this service, inside the service's timeout
+   newest order for the service is read from the datatoken's events, and each transaction
+   is checked from its receipt the way the node checks a download: yours, for this
+   service, inside the service's timeout with at least 10 minutes left
    ([details](/docs/guides/pricing#downloads-the-order-on-chain)). Otherwise a datatoken is
    bought and a new order placed.
 5. Only then is your consent asked, and only for the fee that will be paid: none when an
