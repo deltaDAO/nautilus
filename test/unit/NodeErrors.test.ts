@@ -257,7 +257,7 @@ describe('getComputeLogs', () => {
 
     await client(NODE, 'jwt-token').getComputeLogs(JOB)
 
-    const [url, init] = fetch.mock.calls[0] as [string, RequestInit]
+    const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit]
     expect(new URL(url).searchParams.has('signature')).to.equal(false)
     expect((init.headers as Record<string, string>).Authorization).to.equal(
       'jwt-token'
