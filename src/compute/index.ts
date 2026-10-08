@@ -49,6 +49,10 @@ import {
 import type { PolicyServerComputePayload } from '../ddo/types.js'
 import { PolicySessionResolver } from '../identity/PolicySessionResolver.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
+import {
+  assertConsumerParameters,
+  getAlgorithmConsumerParameters
+} from '../utils/consumerParameters.js'
 import type { KeyedLock } from '../utils/keyedLock.js'
 import {
   assertEscrowPaymentAllowed,
@@ -382,6 +386,21 @@ async function resolveInputs(
       if (!isAlgorithm && service.type !== 'compute')
         throw new Error(
           `Service ${ref.serviceId} of ${ref.did} is a '${service.type}' service; compute jobs need a 'compute' service.`
+        )
+
+      // Consumer parameters are checked here, before the environment, any policy session,
+      // `initializeCompute` or an order: the algorithm's service takes `userdata`, its
+      // metadata `algocustomdata`.
+      const target = { did: asset.id, serviceId: service.id }
+      assertConsumerParameters(service.consumerParameters, ref.userdata, {
+        ...target,
+        field: 'userdata'
+      })
+      if (isAlgorithm)
+        assertConsumerParameters(
+          getAlgorithmConsumerParameters(asset),
+          (ref as ComputeAlgorithmRef).algocustomdata,
+          { ...target, field: 'algocustomdata' }
         )
 
       return { ref, asset, serviceId: service.id, isAlgorithm }

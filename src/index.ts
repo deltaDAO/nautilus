@@ -20,6 +20,13 @@ export {
 } from './publish/index.js'
 export * from './remote/index.js'
 export * from './signing/index.js'
+export {
+  ConsumerParameterError,
+  type ConsumerParameterIssue,
+  type ConsumerParameterRefusal,
+  type ConsumerParameterTarget,
+  checkConsumerParameters
+} from './utils/consumerParameters.js'
 export { editPrice, setMetadataState } from './utils/contracts.js'
 export {
   getChainId,

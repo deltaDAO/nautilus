@@ -9,12 +9,7 @@ import type { Config } from '@oceanprotocol/lib'
 import { LoggerInstance } from '@oceanprotocol/lib'
 import type { Signer } from 'ethers'
 import type { AccessConfig, AccessResult } from '../@types/Access.js'
-import {
-  getDatatokenForService,
-  getService,
-  getServiceByType,
-  getServiceIndex
-} from '../ddo/read.js'
+import { getDatatokenForService, getServiceIndex } from '../ddo/read.js'
 import { PolicySessionResolver } from '../identity/PolicySessionResolver.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
 import {
@@ -26,6 +21,7 @@ import {
   initializeWithValidProviderFee,
   providerFeeToSend
 } from '../utils/providerFee.js'
+import { selectAccessService } from './guards.js'
 import { settleOrder } from './settlement.js'
 
 export { settleOrder } from './settlement.js'
@@ -58,16 +54,9 @@ export async function access(
 
   const asset = await node.resolve(config.assetDid)
 
-  const service = config.serviceId
-    ? getService(asset, config.serviceId)
-    : getServiceByType(asset, 'access')
-
-  if (!service)
-    throw new Error(
-      config.serviceId
-        ? `Asset ${config.assetDid} has no service with id ${config.serviceId}.`
-        : `Asset ${config.assetDid} has no 'access' service to download from.`
-    )
+  // Before any other node call or transaction: the service exists, is an 'access' service,
+  // and `userdata` fits its consumer parameters.
+  const service = selectAccessService(asset, config)
 
   // Everything that talks to a node talks to *this* one: the file object was encrypted
   // with a key local to the node in the service's own endpoint, so the quote, the policy
