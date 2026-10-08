@@ -24,6 +24,7 @@ import {
   createTestRemoteStore,
   freeAlgorithm,
   freeDataset,
+  indexerWait,
   integrationEnabled,
   publishAndIndex,
   settledIndexingState
@@ -106,7 +107,7 @@ describe('publish', () => {
     try {
       await nautilus.publish(freeDataset(), {
         remoteStore: tampering,
-        waitForIndexer: { timeoutMs }
+        waitForIndexer: indexerWait({ timeoutMs })
       })
     } catch (thrown) {
       error = thrown

@@ -25,6 +25,8 @@ import {
   createPublisher,
   freeAlgorithm,
   freeDataset,
+  indexerIntervalMs,
+  indexerWait,
   integrationEnabled,
   publishAndIndex,
   settledIndexingState
@@ -53,20 +55,23 @@ describe('edit', () => {
    * that field for MetadataCreated/Updated. A MetadataState change never
    * updates it, so passing the hash here waits forever. Without a hash the call
    * returns the currently-indexed DDO immediately, which is the pre-change one.
-   * So poll the thing we actually care about.
+   * So poll the thing we actually care about, every `indexerIntervalMs` for up to
+   * `timeoutMs`.
    */
   async function settleLifecycleState(
     did: string,
     expected: number,
-    attempts = 30,
-    intervalMs = 2000
+    timeoutMs = 60_000,
+    intervalMs = indexerIntervalMs
   ): Promise<AssetV5> {
     let latest: AssetV5 | undefined
+    const deadline = Date.now() + timeoutMs
 
-    for (let attempt = 0; attempt < attempts; attempt++) {
-      latest = await nautilus.waitForIndexer(did)
+    for (;;) {
+      latest = await nautilus.waitForIndexer(did, undefined, indexerWait())
 
       if (latest && getLifecycleState(latest) === expected) return latest
+      if (Date.now() >= deadline) break
 
       await new Promise((resolve) => setTimeout(resolve, intervalMs))
     }
@@ -86,7 +91,8 @@ describe('edit', () => {
 
     const indexed = await nautilus.waitForIndexer(
       result.ddo.id as string,
-      result.setMetadataTxReceipt.hash
+      result.setMetadataTxReceipt.hash,
+      indexerWait()
     )
 
     asset = indexed || (await nautilus.getAsset(result.ddo.id as string))
@@ -107,7 +113,7 @@ describe('edit', () => {
     it('resolves the edit through getAsset, with a valid indexing state', async () => {
       const result = await nautilus.edit(
         new AssetBuilder(asset).setName('Indexed Edit').build(),
-        { waitForIndexer: true }
+        { waitForIndexer: indexerWait() }
       )
 
       expect(result.indexed).to.equal(true)
@@ -409,7 +415,8 @@ describe('edit', () => {
       computeAsset =
         (await nautilus.waitForIndexer(
           result.ddo.id as string,
-          result.setMetadataTxReceipt.hash
+          result.setMetadataTxReceipt.hash,
+          indexerWait()
         )) || (await nautilus.getAsset(result.ddo.id as string))
 
       return computeAsset

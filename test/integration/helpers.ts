@@ -11,6 +11,7 @@ import {
   ServiceBuilder,
   ServiceTypes
 } from '../../src/index.js'
+import type { WaitForIndexerOptions } from '../../src/node/OceanNodeClient.js'
 import {
   algorithmFile,
   algorithmMetadata,
@@ -175,23 +176,60 @@ export function freeAlgorithm(): NautilusAsset {
 }
 
 /**
+ * How often the suite polls the node while it waits for indexing, in ms:
+ * `INTEGRATION_INDEXER_INTERVAL_MS`, default 1000. The SDK's own default (7 s) keeps a wait
+ * under ocean-node's default `MAX_REQ_PER_MINUTE` of 30; a local node that indexes every
+ * second and allows more requests answers much sooner than that, and about 40 tests wait
+ * for indexing. Set it to 7000 against a node with the default rate limit.
+ */
+export const indexerIntervalMs = readIndexerInterval()
+
+/** How long the suite waits for indexing before failing: generous, for a slow node. */
+export const indexerTimeoutMs = 600_000
+
+function readIndexerInterval(): number {
+  const raw = process.env.INTEGRATION_INDEXER_INTERVAL_MS?.trim()
+  if (!raw) return 1000
+
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value < 0)
+    throw new Error(
+      `INTEGRATION_INDEXER_INTERVAL_MS must be a number of milliseconds (0 or more), got '${raw}'.`
+    )
+
+  return value
+}
+
+/** The `waitForIndexer` options every indexing wait in the suite uses. */
+export function indexerWait(
+  overrides: Partial<WaitForIndexerOptions> = {}
+): WaitForIndexerOptions {
+  return {
+    intervalMs: indexerIntervalMs,
+    timeoutMs: indexerTimeoutMs,
+    ...overrides
+  }
+}
+
+/**
  * The node's success record for an asset, after checking it filed no failure for `txId`.
  *
  * ocean-node 4.2 files a success under the `did:ope:` DID (no `nft`, blank `txId`) and a
  * failure under `did:op:` with the real `txId`, which stays after a later success. So success is
  * read by `{ did }` and failure by `{ txId }`. The node writes the DDO first and the state
  * record right after, so on a fast local chain the asset can resolve a moment before its
- * record exists; hence the polling.
+ * record exists; hence the polling, every `indexerIntervalMs` for up to `timeoutMs`.
  */
 export async function settledIndexingState(
   nautilus: Nautilus,
   asset: { did: string; txId: string },
-  attempts = 15,
-  intervalMs = 1000
+  timeoutMs = 15_000,
+  intervalMs = indexerIntervalMs
 ) {
   const node = nautilus.getNodeClient()
+  const deadline = Date.now() + timeoutMs
 
-  for (let attempt = 0; attempt < attempts; attempt++) {
+  for (;;) {
     const failure = await node.getIndexingState({ txId: asset.txId })
 
     if (failure?.txId?.trim().toLowerCase() === asset.txId.toLowerCase())
@@ -201,6 +239,8 @@ export async function settledIndexingState(
 
     const state = await node.getIndexingState({ did: asset.did })
     if (state) return state
+
+    if (Date.now() >= deadline) break
 
     await new Promise((resolve) => setTimeout(resolve, intervalMs))
   }
@@ -213,5 +253,5 @@ export async function publishAndIndex(
   nautilus: Nautilus,
   asset: NautilusAsset
 ): Promise<PublishResponse> {
-  return nautilus.publish(asset, { waitForIndexer: true })
+  return nautilus.publish(asset, { waitForIndexer: indexerWait() })
 }
