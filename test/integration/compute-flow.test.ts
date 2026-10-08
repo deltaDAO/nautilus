@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest'
-import { knownEscrowContracts } from '../../src/compute/escrow.js'
+import { resolveEscrowPin } from '../../src/compute/escrow.js'
 import { getServices } from '../../src/ddo/read.js'
 import { AssetBuilder, type Nautilus } from '../../src/index.js'
 import { getNodeUri } from '../fixtures/Config.js'
@@ -173,19 +173,18 @@ describe('compute', () => {
         return
       }
 
-      // Escrow is funded only in a contract known for the chain (config.escrow, or the
-      // Escrow / EnterpriseEscrow entry of Ocean's address data); without one the job is
-      // refused before anything is spent.
-      const knownEscrows = knownEscrowContracts(nautilus.getOceanConfig())
-      if (!knownEscrows.length) {
+      // Escrow is funded only in the pinned contract: ESCROW_ADDRESS when set (the
+      // chain's EnterpriseEscrow), else the SDK default, the chain's EnterpriseEscrow in
+      // Ocean's address data (ADDRESS_FILE, else ocean.js's bundled addresses), else its
+      // Escrow. Without one the job is refused before anything is spent.
+      const pin = resolveEscrowPin(chainId, process.env.ESCROW_ADDRESS)
+      if (!pin.address) {
         console.log(
-          `[compute] no escrow contract known for chain ${chainId} (set ESCROW_ADDRESS or ADDRESS_FILE); skipping`
+          `[compute] no escrow contract pinned for chain ${chainId} (set ESCROW_ADDRESS to its EnterpriseEscrow, or ADDRESS_FILE); skipping`
         )
         return
       }
-      console.log(
-        `[compute] known escrow contracts: ${knownEscrows.join(', ')}`
-      )
+      console.log(`[compute] escrow pin: ${pin.address} (rule ${pin.rule})`)
 
       const result = await consumer.compute({
         dataset: { did: datasetDid },
@@ -195,6 +194,9 @@ describe('compute', () => {
 
       expect(result.jobs).to.be.an('array').and.not.empty
       expect(result.environment.id).to.equal(paid.id)
+      expect(
+        String(result.initializeResults.payment?.escrowAddress).toLowerCase()
+      ).to.equal(pin.address.toLowerCase())
       // Both inputs had to be ordered, and each order id is recorded per
       // `<did>#<serviceId>` — the service is part of the key because one DID can back
       // two inputs (e.g. the algorithm doubling as a dataset).
