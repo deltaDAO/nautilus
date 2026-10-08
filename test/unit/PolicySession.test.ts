@@ -13,6 +13,7 @@ import {
   ProviderInstance
 } from '@oceanprotocol/lib'
 import {
+  getAddress,
   getBytes,
   hexlify,
   type Signer,
@@ -28,8 +29,16 @@ import { compute, freeCompute } from '../../src/compute/index.js'
 import type { AssetV5 } from '../../src/ddo/index.js'
 import type { PolicyServerPayload } from '../../src/ddo/types.js'
 import type { CredentialChallenge } from '../../src/identity/CredentialProvider.js'
-import { PolicySessionResolver } from '../../src/identity/PolicySessionResolver.js'
+import {
+  DEFAULT_SESSION_TTL_MS,
+  PolicySessionResolver
+} from '../../src/identity/PolicySessionResolver.js'
 import { addRequestCredentials } from '../../src/identity/policy.js'
+import {
+  MemorySessionStore,
+  type SessionEntry,
+  type SessionKey
+} from '../../src/identity/session.js'
 import {
   OceanNodeClient,
   OceanNodeError,
@@ -403,6 +412,37 @@ describe('OceanNodeClient policy server', () => {
     expect(body.signature).to.equal(undefined)
   })
 
+  it('sends initiate and the download the same checksummed address, read from the signer', async () => {
+    status(true)
+    const wallet = Wallet.createRandom()
+    vi.spyOn(ProviderInstance, 'getNonce').mockResolvedValue(1)
+    const fetch = answer(200, initiated())
+    const node = new OceanNodeClient({
+      nodeUri: NODE,
+      chainId: CHAIN_ID,
+      auth: wallet
+    })
+    const consumerAddress = await wallet.getAddress()
+
+    const session = await new PolicySessionResolver().resolve({
+      node,
+      asset: getAssetFixture(),
+      serviceId: SERVICE_ID,
+      consumerAddress
+    })
+    const url = await node.getDownloadUrl(ASSET_DID, SERVICE_ID, '0xorder', {
+      policyServer: session
+    })
+
+    const init = (fetch.mock.calls[0] as unknown as [string, RequestInit])[1]
+    const initiatedFor = JSON.parse(String(init.body)).consumerAddress
+
+    expect(initiatedFor).to.equal(getAddress(consumerAddress))
+    expect(new URL(url).searchParams.get('consumerAddress')).to.equal(
+      initiatedFor
+    )
+  })
+
   it('reports a verified session', async () => {
     vi.spyOn(ProviderInstance, 'PolicyServerPassthrough').mockResolvedValue({
       success: true,
@@ -666,16 +706,220 @@ describe('PolicySessionResolver', () => {
 
     await resolve(first.client, resolver)
     await resolve(first.client, resolver)
-    await resolve(first.client, resolver, undefined, CONSUMER.toLowerCase())
     await resolve(first.client, resolver, undefined, OTHER_CONSUMER)
     await resolve(second.client, resolver)
 
-    // The second call and the lower-cased one hit the cache: the key ignores case.
+    // Only the second call hits the cache.
     expect(first.initiateRequests.map((r) => r.consumerAddress)).to.deep.equal([
       CONSUMER,
       OTHER_CONSUMER
     ])
     expect(second.initiateRequests).to.have.length(1)
+  })
+
+  it('never hands a session opened for the checksummed address to the lower-cased one', async () => {
+    let opened = 0
+    const { client, initiateRequests } = policyNode({
+      initiate: async () => initiated(`session-${++opened}`)
+    })
+    const resolver = new PolicySessionResolver()
+    const lower = CONSUMER.toLowerCase()
+
+    const checksummed = await resolve(client, resolver)
+    const lowerCased = await resolve(client, resolver, undefined, lower)
+
+    expect(checksummed?.sessionId).to.equal('session-1')
+    expect(lowerCased?.sessionId).to.equal('session-2')
+    expect(initiateRequests.map((r) => r.consumerAddress)).to.deep.equal([
+      CONSUMER,
+      lower
+    ])
+
+    // Each is still cached under its own exact string.
+    expect((await resolve(client, resolver))?.sessionId).to.equal('session-1')
+    expect(
+      (await resolve(client, resolver, undefined, lower))?.sessionId
+    ).to.equal('session-2')
+    expect(initiateRequests).to.have.length(2)
+  })
+
+  describe('session lifetime', () => {
+    const T0 = 1_700_000_000_000
+
+    function at(time: number) {
+      vi.spyOn(Date, 'now').mockReturnValue(time)
+    }
+
+    it('reuses a session younger than the TTL, and opens a new one once it is that old', async () => {
+      let opened = 0
+      const { client, initiateRequests } = policyNode({
+        initiate: async () => initiated(`session-${++opened}`)
+      })
+      const resolver = new PolicySessionResolver()
+
+      at(T0)
+      expect((await resolve(client, resolver))?.sessionId).to.equal('session-1')
+
+      at(T0 + DEFAULT_SESSION_TTL_MS - 1)
+      expect((await resolve(client, resolver))?.sessionId).to.equal('session-1')
+      expect(initiateRequests).to.have.length(1)
+
+      at(T0 + DEFAULT_SESSION_TTL_MS)
+      expect((await resolve(client, resolver))?.sessionId).to.equal('session-2')
+      expect(initiateRequests).to.have.length(2)
+    })
+
+    it('defaults to 2 minutes, within the 5 minutes walt.id keeps a session', () => {
+      expect(DEFAULT_SESSION_TTL_MS).to.equal(2 * 60 * 1000)
+    })
+
+    it('takes sessionTtlMs, and caches nothing with 0', async () => {
+      const { client, initiateRequests } = policyNode()
+
+      at(T0)
+      const short = new PolicySessionResolver({ sessionTtlMs: 1000 })
+      await resolve(client, short)
+      at(T0 + 1000)
+      await resolve(client, short)
+      expect(initiateRequests).to.have.length(2)
+
+      const store = new MemorySessionStore()
+      const uncached = new PolicySessionResolver({
+        sessionTtlMs: 0,
+        sessionStore: store
+      })
+      await resolve(client, uncached)
+      await resolve(client, uncached)
+      expect(initiateRequests).to.have.length(4)
+      expect(
+        store.get({
+          nodeUri: NODE,
+          did: ASSET_DID,
+          serviceId: SERVICE_ID,
+          consumerAddress: CONSUMER
+        })
+      ).to.equal(undefined)
+    })
+
+    it('rejects a negative or non-finite sessionTtlMs', () => {
+      for (const sessionTtlMs of [-1, Number.NaN, Number.POSITIVE_INFINITY])
+        expect(() => new PolicySessionResolver({ sessionTtlMs })).to.throw(
+          /sessionTtlMs/
+        )
+    })
+
+    it('drops an expired, undated or future-dated entry from a store that outlived the policy server', async () => {
+      const key: SessionKey = {
+        nodeUri: NODE,
+        did: ASSET_DID,
+        serviceId: SERVICE_ID,
+        consumerAddress: CONSUMER
+      }
+
+      for (const stale of [
+        {
+          sessionId: 'stale',
+          createdAt: T0 - DEFAULT_SESSION_TTL_MS,
+          presented: false
+        },
+        { sessionId: 'stale', presented: false } as unknown as SessionEntry,
+        { sessionId: 'stale', createdAt: T0 + 60_000, presented: false }
+      ]) {
+        const store = new MemorySessionStore()
+        store.set(key, stale)
+        const { client, initiateRequests } = policyNode()
+
+        at(T0)
+        const session = await resolve(
+          client,
+          new PolicySessionResolver({ sessionStore: store })
+        )
+
+        expect(session?.sessionId).to.equal(SESSION)
+        expect(initiateRequests).to.have.length(1)
+        expect(store.get(key)).to.deep.equal({
+          sessionId: SESSION,
+          createdAt: T0,
+          presented: false
+        })
+      }
+    })
+
+    it('reuses an address-only session without asking the policy server again', async () => {
+      const { client, calls } = policyNode()
+      const resolver = new PolicySessionResolver()
+
+      await resolve(client, resolver)
+      await resolve(client, resolver)
+
+      expect(calls.filter((call) => call === 'initiate')).to.have.length(1)
+      expect(calls).not.to.include('checkSessionId')
+    })
+
+    it('checks a cached presented session again before reusing it', async () => {
+      const { client, calls, checkedSessions } = policyNode({
+        initiate: async () => initiatedWithPresentation()
+      })
+      const { provider, challenges } = recordingProvider()
+      const resolver = new PolicySessionResolver({ credentials: provider })
+
+      await resolve(client, resolver, ssiAsset())
+      const reused = await resolve(client, resolver, ssiAsset())
+
+      expect(reused?.sessionId).to.equal(SESSION)
+      expect(calls.filter((call) => call === 'initiate')).to.have.length(1)
+      expect(challenges).to.have.length(1)
+      // Once after the presentation, once before the reuse.
+      expect(checkedSessions).to.deep.equal([SESSION, SESSION])
+    })
+
+    it('opens and presents again when the verifier no longer knows a cached session', async () => {
+      let opened = 0
+      const { client, initiateRequests } = policyNode({
+        initiate: async () =>
+          initiated(`session-${++opened}`, 'openid4vp://authorize?state=x')
+      })
+      const check = vi.spyOn(client, 'checkPolicySession')
+      const { provider, challenges } = recordingProvider()
+      const resolver = new PolicySessionResolver({ credentials: provider })
+
+      await resolve(client, resolver, ssiAsset())
+
+      // The verifier restarted: checking the cached session fails outright.
+      check.mockRejectedValueOnce(
+        new OceanNodeError('checkPolicySession', '500 session expired')
+      )
+
+      const session = await resolve(client, resolver, ssiAsset())
+
+      expect(session?.sessionId).to.equal('session-2')
+      expect(initiateRequests).to.have.length(2)
+      expect(challenges.map((c) => c.sessionId)).to.deep.equal([
+        'session-1',
+        'session-2'
+      ])
+    })
+
+    it('opens a new session when the check reports a cached one unverified', async () => {
+      let opened = 0
+      const { client, initiateRequests } = policyNode({
+        initiate: async () =>
+          initiated(`session-${++opened}`, 'openid4vp://authorize?state=x')
+      })
+      const check = vi.spyOn(client, 'checkPolicySession')
+      const resolver = new PolicySessionResolver({
+        credentials: recordingProvider().provider
+      })
+
+      await resolve(client, resolver, ssiAsset())
+
+      check.mockResolvedValueOnce({ verified: false, result: {} })
+
+      expect((await resolve(client, resolver, ssiAsset()))?.sessionId).to.equal(
+        'session-2'
+      )
+      expect(initiateRequests).to.have.length(2)
+    })
   })
 })
 
@@ -902,6 +1146,22 @@ describe('compute() with a policy server', () => {
       expect(entry).to.include(expected[index])
     })
     expect(node.computeStart[0].policyServer).to.equal(sent)
+  })
+
+  it('sends initiate and initializeCompute the signer address unchanged', async () => {
+    const initiatedFor: string[] = []
+    const node = computeNode(async (request) => {
+      initiatedFor.push(request.consumerAddress)
+      return initiated(`session-of-${request.documentId}`)
+    })
+
+    await compute(job, context(node.client))
+
+    expect(initiatedFor).to.deep.equal([CONSUMER, CONSUMER])
+    expect(
+      (node.initializeCompute[0] as { consumerAddress?: string })
+        .consumerAddress
+    ).to.equal(CONSUMER)
   })
 
   it('opens every session before initializeCompute and any order', async () => {

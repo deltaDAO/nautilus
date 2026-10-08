@@ -39,7 +39,10 @@ was found out only after the order.
   as ocean.js signs it, because ocean.js reports a failed answer without its status.
 - **`access()` and `compute()` take `policySessions`** (a `PolicySessionResolver`) in their
   standalone `context` instead of `credentials`.
-- **`SessionEntry.skipped` is removed**: only verified sessions are cached.
+- **`SessionEntry` is `{ sessionId, createdAt, presented }`**: `skipped` is removed (only
+  verified sessions are cached), and a `SessionStore` of your own must keep when the session
+  was opened and whether it was presented. `MemorySessionStore` keys the consumer address
+  exactly as given, no longer lower-cased; key a store of your own on `sessionKeyString(key)`.
 - **`assertPolicySatisfied`** now refuses a service that asks for a presentation when no
   provider can make one (`canPresent`), and `shouldResolveCredentials` is removed.
 
@@ -58,9 +61,15 @@ was found out only after the order.
 - **A presentation is checked before the order.** After the provider presents, nautilus asks
   the policy server (`checkSessionId`) and goes on only on `verificationResult: true`, else a
   `PolicyDeniedError` names the failed VC/VP policies.
-- **Refusals are never cached**, and the same address string (`signer.getAddress()`) goes to
-  `initiate` and to the download or compute call: the policy server hashes it into the
-  session id as it is sent.
+- **Refusals are never cached**, and the same address string (`signer.getAddress()`,
+  unchanged) goes to `initiate`, to the download or compute call and into the cache key: the
+  policy server hashes it into the session id as it is sent, so a session opened for the
+  checksummed address is never handed to a request with the lower-cased one.
+- **A cached session is never spent stale.** It is reused for at most `sessionTtlMs` from
+  `initiate` (2 minutes by default, well inside the 5 minutes walt.id's verifier keeps a
+  session), and one that needed a presentation is checked again (`checkSessionId`) before
+  it is reused. A stale one, also from a `sessionStore` that outlived the policy server or
+  its restart, is opened again before anything is ordered.
 - **`publish()` and `edit()` warn about an asset no consumer can use**: when a node the
   asset is served from has a policy server and the asset-level `credentials` are `{}`, or
   have an `allow` list without an `address` entry, that policy server refuses every
@@ -71,7 +80,9 @@ was found out only after the order.
 - `PolicyDeniedError` (`did`, `serviceId`, `consumerAddress`, `code`, `reason`, `details`),
   exported. It is not an `OceanNodeError`.
 - `PolicySessionResolver`, exported, with `resolve()`, `setCredentialProvider()` and
-  `clearSessions()`; `Nautilus.create` takes `sessionStore`.
+  `clearSessions()`; it and `Nautilus.create` take `sessionStore` and `sessionTtlMs`
+  (`DEFAULT_SESSION_TTL_MS`, exported).
+- `sessionKeyString(key)`: the key `MemorySessionStore` stores an entry under.
 - `OceanNodeClient.hasPolicyServer()` (the node's `isPSConfigured`, read once per client) and
   `checkPolicySession(sessionId)`.
 - `hasCredentials(ddo, service)`: whether ocean-node checks credentials for a service.
