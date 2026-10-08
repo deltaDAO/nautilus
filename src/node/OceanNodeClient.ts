@@ -55,8 +55,13 @@ import {
   toUtf8Bytes
 } from 'ethers'
 import type { PolicyServerPayload } from '../ddo/types.js'
-import { errorMessage, type FetchedText, fetchText } from '../utils/http.js'
-import { assertSecureTransport } from '../utils/transport.js'
+import {
+  errorMessage,
+  type FetchedText,
+  fetchText,
+  MAX_TIMER_MS
+} from '../utils/http.js'
+import { assertSecureTransport, parseHttpUrl } from '../utils/transport.js'
 import { warnOnce } from '../utils/warn.js'
 import { isSigner, type NodeAuth, resolveConsumerAddress } from './auth.js'
 
@@ -76,14 +81,26 @@ export interface OceanNodeClientOptions {
   /** Required when `auth` is a JWT, which nautilus cannot decode. */
   consumerAddress?: string
   /**
-   * Accept a plain `http://` `nodeUri` on a host other than `localhost`, `127.0.0.1`,
+   * Accept a plain `http://` `nodeUri` on a host other than `localhost`, `127.0.0.0/8`,
    * `::1` or `*.localhost`. Default `false`, the same rule as `Nautilus.create`: node auth
    * travels with every request, and the plaintext DDO pointer goes to the node for
-   * encryption. Carried over to `forEndpoint` clients. A libp2p peer id or multiaddr is
-   * not an HTTP URL and is not affected.
+   * encryption. The rule also applies to the `nodeUri` argument of `encrypt` and
+   * `getFileInfo` (a service's `serviceEndpoint`). Carried over to `forEndpoint` clients. A
+   * libp2p peer id or multiaddr is not an HTTP URL and is not affected.
    */
   allowInsecureTransport?: boolean
+  /**
+   * How long one `encrypt` call may take, in milliseconds: the nonce lookup, the signature
+   * and the node's answer, including the one retry after a rejected nonce. Default 120 s,
+   * which leaves room for a wallet's signature prompt. A call that runs out throws an
+   * `OceanNodeError`, and the next queued call starts. Carried over to `forEndpoint`
+   * clients.
+   */
+  requestTimeoutMs?: number
 }
+
+/** The default of `OceanNodeClientOptions.requestTimeoutMs`. */
+const DEFAULT_ENCRYPT_TIMEOUT_MS = 120_000
 
 /** Thrown when ocean-node rejects a request or answers unusably. */
 export class OceanNodeError extends Error {
@@ -230,13 +247,21 @@ export interface WaitForIndexerOptions {
    * Delay between polls. Default 7 s: each poll is up to two requests (the asset, and the
    * indexing state when there is a `txid`), so one wait stays at or below 18 requests a
    * minute, under ocean-node's default `MAX_REQ_PER_MINUTE` of 30 per IP. When the node
-   * answers 429 (or 403 "Too many active connections"), the next poll waits longer: as
-   * long as the node says, or twice as long each time, up to 60 s.
+   * answers 429 (or 403 "Too many active connections"), the next poll waits longer:
+   * `2 × intervalMs`, doubling with each rate-limit answer in a row, and at least as long
+   * as the node asks (`Retry-After`, or "Try again in N seconds") plus 1 s; never more
+   * than 60 s.
    */
   intervalMs?: number
-  /** How long to wait before throwing. Default 5 minutes. */
+  /**
+   * How long to wait before throwing. Default 5 minutes. One last lookup runs when the
+   * time is up, so the wait can end up to one request (at least 1 s) later.
+   */
   timeoutMs?: number
-  /** Timeout for each request to the node, capped by what is left of `timeoutMs`. Default 15 s. */
+  /**
+   * Timeout for each request to the node, capped by what is left of `timeoutMs` (but at
+   * least 1 s, or `requestTimeoutMs` when that is shorter). Default 15 s.
+   */
   requestTimeoutMs?: number
   /**
    * How many asset lookups in a row may fail (network error, timeout, an HTTP status other
@@ -254,11 +279,30 @@ const MAX_RATE_LIMIT_BACKOFF_MS = 60_000
 const DEFAULT_INDEXER_TIMEOUT_MS = 300_000
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000
 const DEFAULT_MAX_CONSECUTIVE_FAILURES = 5
+/** The least time a lookup gets, so the last one at the deadline can still succeed. */
+const MIN_REQUEST_BUDGET_MS = 1_000
+/** The interval 2.0.0-beta.0 polled at (ocean.js's `waitForIndexer` default). */
+const LEGACY_INDEXER_INTERVAL_MS = 30_000
+
+/**
+ * Throws an `OceanNodeError` for a timing option that is not a finite number of 0 or
+ * more: `Infinity`, `NaN` or a negative value would otherwise turn into a 1 ms timer.
+ */
+function assertDuration(operation: string, name: string, value: unknown): void {
+  if (value === undefined) return
+
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0)
+    throw new OceanNodeError(
+      operation,
+      `${name} must be a finite number, 0 or more; got ${String(value)}`
+    )
+}
 
 /**
  * 2.0.0-beta.0's `waitForIndexer` took `{ interval, maxRetries }`. They are not part of
  * the options any more, but code passing them must not silently get a different wait: map
- * them (when the new names are absent) and say so.
+ * them (when the new names are absent) and say so. `maxRetries` without `interval` counts
+ * beta.0's 30 s polls, so the wait is as long as it was; the polls themselves stay 7 s apart.
  */
 function resolveIndexerOptions(
   options: WaitForIndexerOptions
@@ -273,7 +317,7 @@ function resolveIndexerOptions(
 
   warnOnce(
     'waitForIndexer-legacy-options',
-    'waitForIndexer: the options `interval` and `maxRetries` were replaced by `intervalMs` and `timeoutMs` in 2.0.0-beta.1. They are mapped for now (intervalMs = interval, timeoutMs = interval × maxRetries) but will be removed; rename them.'
+    "waitForIndexer: the options `interval` and `maxRetries` were replaced by `intervalMs` and `timeoutMs` in 2.0.0-beta.1. They are mapped for now (intervalMs = interval, timeoutMs = interval × maxRetries, with beta.0's 30 s when interval is absent) but will be removed; rename them."
   )
 
   const interval =
@@ -292,7 +336,7 @@ function resolveIndexerOptions(
     timeoutMs:
       options.timeoutMs ??
       (retries !== undefined
-        ? retries * (intervalMs ?? DEFAULT_INDEXER_INTERVAL_MS)
+        ? retries * (intervalMs ?? LEGACY_INDEXER_INTERVAL_MS)
         : undefined)
   }
 }
@@ -317,10 +361,13 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(signal.reason)
 
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort)
-      resolve()
-    }, ms)
+    const timer = setTimeout(
+      () => {
+        signal?.removeEventListener('abort', onAbort)
+        resolve()
+      },
+      Math.min(Math.max(ms, 0), MAX_TIMER_MS)
+    )
 
     const onAbort = () => {
       clearTimeout(timer)
@@ -367,17 +414,28 @@ function isRateLimited(response: FetchedText): boolean {
   )
 }
 
-/** The wait the node asked for: `Retry-After`, or ocean-node's "Try again in N seconds". */
+/**
+ * The wait the node asked for, capped at 60 s: `Retry-After` (delay-seconds or an
+ * HTTP-date), or ocean-node's "Try again in N seconds".
+ */
 function retryAfterMs(response: FetchedText): number | undefined {
   const header = response.retryAfter?.trim()
-  if (header && /^\d+$/.test(header)) return Number(header) * 1000
+  let ms: number | undefined
 
-  const seconds = /try again in (\d+) seconds?/i.exec(response.body)?.[1]
-  return seconds ? Number(seconds) * 1000 : undefined
+  if (header && /^\d+$/.test(header)) ms = Number(header) * 1000
+  else if (header && Number.isFinite(Date.parse(header)))
+    ms = Math.max(0, Date.parse(header) - Date.now())
+  else {
+    const seconds = /try again in (\d+) seconds?/i.exec(response.body)?.[1]
+    if (seconds) ms = Number(seconds) * 1000
+  }
+
+  return ms === undefined ? undefined : Math.min(ms, MAX_RATE_LIMIT_BACKOFF_MS)
 }
 
+/** Whether the node URI is an `http:`/`https:` URL, judged as the transport rule judges it. */
 function isHttpUri(uri: string): boolean {
-  return /^https?:\/\//i.test(uri)
+  return parseHttpUrl(uri) !== undefined
 }
 
 /**
@@ -440,6 +498,31 @@ function boundedNodeMessage(value: unknown): string {
     : text
 }
 
+/** Resolves once `promise` settles; rejects with `signal.reason` if `signal` aborts first. */
+function untilSettled(
+  promise: Promise<unknown>,
+  signal: AbortSignal | undefined
+): Promise<void> {
+  if (!signal)
+    return promise.then(
+      () => undefined,
+      () => undefined
+    )
+
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason)
+
+    const onAbort = () => reject(signal.reason)
+    signal.addEventListener('abort', onAbort, { once: true })
+
+    const done = () => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }
+    promise.then(done, done)
+  })
+}
+
 async function attempt<T>(operation: string, fn: () => Promise<T>): Promise<T> {
   try {
     return await fn()
@@ -460,6 +543,7 @@ export class OceanNodeClient {
   private auth: NodeAuth
   private consumerAddressOverride?: string
   private readonly allowInsecureTransport: boolean
+  private readonly requestTimeoutMs: number
 
   /**
    * Tail of this client's signed commands, see `serializeSigned`. One client has one auth,
@@ -473,20 +557,21 @@ export class OceanNodeClient {
 
   /**
    * Throws an `OceanNodeError` for a plain `http://` `nodeUri` on a non-loopback host,
-   * unless `allowInsecureTransport` (see `OceanNodeClientOptions`).
+   * unless `allowInsecureTransport` (see `OceanNodeClientOptions`), and for a
+   * `requestTimeoutMs` that is not a positive finite number.
    */
   constructor(options: OceanNodeClientOptions) {
     this.allowInsecureTransport = options.allowInsecureTransport === true
 
-    try {
-      assertSecureTransport(
-        options.nodeUri,
-        'nodeUri',
-        this.allowInsecureTransport
-      )
-    } catch (error) {
-      throw new OceanNodeError('create', errorMessage(error), error)
-    }
+    this.assertTransport('create', options.nodeUri)
+
+    assertDuration('create', 'requestTimeoutMs', options.requestTimeoutMs)
+    if (options.requestTimeoutMs === 0)
+      throw new OceanNodeError('create', 'requestTimeoutMs must be more than 0')
+    this.requestTimeoutMs = Math.min(
+      options.requestTimeoutMs ?? DEFAULT_ENCRYPT_TIMEOUT_MS,
+      MAX_TIMER_MS
+    )
 
     this.nodeUri = options.nodeUri
     this.chainId = options.chainId
@@ -521,8 +606,21 @@ export class OceanNodeClient {
       chainId: this.chainId,
       auth: this.auth,
       consumerAddress: this.consumerAddressOverride,
-      allowInsecureTransport: this.allowInsecureTransport
+      allowInsecureTransport: this.allowInsecureTransport,
+      requestTimeoutMs: this.requestTimeoutMs
     })
+  }
+
+  /**
+   * The transport rule (see `OceanNodeClientOptions.allowInsecureTransport`) for a node this
+   * client sends to, as an `OceanNodeError` of `operation`.
+   */
+  private assertTransport(operation: string, uri: string): void {
+    try {
+      assertSecureTransport(uri, 'nodeUri', this.allowInsecureTransport)
+    } catch (error) {
+      throw new OceanNodeError(operation, errorMessage(error), error)
+    }
   }
 
   /** Swap in a session token after minting one, so later calls skip nonce-and-sign. */
@@ -575,14 +673,15 @@ export class OceanNodeClient {
    *
    * Polls every `intervalMs` (default 7 s, so at most 18 requests a minute: ocean-node
    * rate-limits each IP to `MAX_REQ_PER_MINUTE`, default 30). A rate-limit answer (429, or
-   * 403 "Too many active connections") is not a failure: the next poll waits as long as the
-   * node asks, or twice as long as the last one, up to 60 s.
+   * 403 "Too many active connections") is not a failure: the next poll waits longer (see
+   * `WaitForIndexerOptions.intervalMs`), never more than 60 s.
    *
    * Each request has its own timeout (`requestTimeoutMs`). After `maxConsecutiveFailures`
    * failed asset lookups in a row this throws an `OceanNodeError` with the last error, so a
    * wrong node URL or a node that answers 500 is reported as such rather than as "not
-   * indexed". Throws an `OceanNodeError` on timeout, and rejects with the signal's reason
-   * when `signal` aborts.
+   * indexed". When `timeoutMs` is up, one last lookup runs; then this throws an
+   * `OceanNodeError`. Throws an `OceanNodeError` for a timing option that is negative or not
+   * finite, and rejects with the signal's reason when `signal` aborts.
    */
   async waitForIndexer(
     did: string,
@@ -591,6 +690,15 @@ export class OceanNodeClient {
   ): Promise<AssetV5> {
     const resolved = resolveIndexerOptions(options)
     const { signal } = resolved
+
+    for (const name of [
+      'intervalMs',
+      'timeoutMs',
+      'requestTimeoutMs',
+      'maxConsecutiveFailures'
+    ] as const)
+      assertDuration('waitForIndexer', name, resolved[name])
+
     const intervalMs = resolved.intervalMs ?? DEFAULT_INDEXER_INTERVAL_MS
     const timeoutMs = resolved.timeoutMs ?? DEFAULT_INDEXER_TIMEOUT_MS
     const requestTimeoutMs =
@@ -606,8 +714,13 @@ export class OceanNodeClient {
     let lastStateError: unknown
     let lastRateLimit: NodeRateLimitedError | undefined
 
+    // Capped by the time left, but never below a second: after a backoff that ends at the
+    // deadline, the last lookup would otherwise get 1 ms and always fail.
     const requestBudget = () =>
-      Math.max(1, Math.min(requestTimeoutMs, deadline - Date.now()))
+      Math.max(
+        Math.min(requestTimeoutMs, MIN_REQUEST_BUDGET_MS),
+        Math.min(requestTimeoutMs, deadline - Date.now())
+      )
 
     for (;;) {
       if (signal?.aborted) throw signal.reason
@@ -637,7 +750,10 @@ export class OceanNodeClient {
             `${failures} lookups of ${what} in a row failed; the last one: ${errorMessage(lookup.error)}. Check the node URI and that the node is up.`,
             lookup.error
           )
-      } else if (lookup.kind === 'pending') failures = 0
+      } else if (lookup.kind === 'pending') {
+        failures = 0
+        lastLookupError = undefined
+      }
 
       if (!rateLimited && txid && isHttpUri(this.nodeUri)) {
         try {
@@ -649,6 +765,8 @@ export class OceanNodeClient {
 
           if (state && isRecordFor(state, txid) && isIndexingFailure(state))
             throw new IndexingError(did, state, txid)
+
+          lastStateError = undefined
         } catch (error) {
           if (error instanceof IndexingError) throw error
           if (signal?.aborted) throw signal.reason
@@ -666,19 +784,24 @@ export class OceanNodeClient {
           MAX_RATE_LIMIT_BACKOFF_MS,
           Math.max(intervalMs, 1) * 2 ** Math.min(rateLimits, 10)
         )
-        delay = Math.max(
-          backoff,
-          rateLimited.retryAfterMs !== undefined
-            ? rateLimited.retryAfterMs + 1_000
-            : 0
+        delay = Math.min(
+          MAX_RATE_LIMIT_BACKOFF_MS,
+          Math.max(
+            backoff,
+            rateLimited.retryAfterMs !== undefined
+              ? rateLimited.retryAfterMs + 1_000
+              : 0
+          )
         )
         LoggerInstance.debug(
           `[waitForIndexer] ${this.nodeUri} rate-limited the lookup of ${what}; next try in ${Math.round(delay / 1000)}s`
         )
       } else rateLimits = 0
 
+      // Sleep until the next poll or the deadline, whichever is first; a poll at the
+      // deadline is the last one.
       const remaining = deadline - Date.now()
-      if (rateLimited ? remaining <= 0 : delay > remaining) {
+      if (remaining <= 0) {
         if (signal?.aborted) throw signal.reason
 
         const last = lastLookupError ?? lastStateError ?? lastRateLimit
@@ -918,7 +1041,11 @@ export class OceanNodeClient {
 
     const response = await attempt('getIndexingState', () =>
       fetchText(fetch, url, { method: 'GET' }, { timeoutMs, signal })
-    )
+    ).catch((error) => {
+      // Like the other calls: an abort rejects with the signal's own reason.
+      if (signal?.aborted) throw signal.reason
+      throw error
+    })
 
     if (response.status === 404) return undefined
 
@@ -1033,7 +1160,9 @@ export class OceanNodeClient {
   /**
    * @param nodeUri the node to ask. Defaults to the configured one, but a service must be
    * checked against the node it advertises — that is the node that has to read the file at
-   * consume time.
+   * consume time. Another node gets the client's transport rule: a plain `http://` URI on a
+   * non-loopback host throws an `OceanNodeError` unless `allowInsecureTransport`, since the
+   * plaintext file object (URLs, headers) goes to it.
    */
   async getFileInfo(
     file: StorageObject,
@@ -1041,6 +1170,8 @@ export class OceanNodeClient {
     signal?: AbortSignal,
     nodeUri: string = this.nodeUri
   ): Promise<FileInfo[]> {
+    if (nodeUri !== this.nodeUri) this.assertTransport('getFileInfo', nodeUri)
+
     return attempt('getFileInfo', () =>
       ProviderInstance.getFileInfo(file, nodeUri, withChecksum, signal)
     )
@@ -1078,8 +1209,15 @@ export class OceanNodeClient {
    * When `auth` is a JWT rather than a Signer it was minted for one node and another will
    * reject it; pass a Signer if services point at nodes other than the configured one.
    *
+   * Another `nodeUri` gets the client's transport rule: a plain `http://` URI on a
+   * non-loopback host throws an `OceanNodeError` unless `allowInsecureTransport`, since the
+   * plaintext and the signed command go to it.
+   *
    * Throws an `OceanNodeError` unless the node answers with `0x`-prefixed hex ciphertext,
-   * after one retry when the node rejected the nonce. Calls are serialized per client.
+   * after one retry when the node rejected the nonce. Calls are serialized per client. Each
+   * call, its retry included, has `requestTimeoutMs` (default 120 s) and then throws an
+   * `OceanNodeError`; the time it waits in the queue does not count. Aborting `signal`, while
+   * queued or running, rejects with the signal's reason.
    */
   async encrypt(
     data: unknown,
@@ -1087,8 +1225,15 @@ export class OceanNodeClient {
     signal?: AbortSignal,
     nodeUri: string = this.nodeUri
   ): Promise<string> {
-    return this.serializeSigned(async () => {
-      const first = await this.encryptOnce(data, policyServer, signal, nodeUri)
+    if (nodeUri !== this.nodeUri) this.assertTransport('encrypt', nodeUri)
+
+    return this.serializeSigned('encrypt', signal, async (callSignal) => {
+      const first = await this.encryptOnce(
+        data,
+        policyServer,
+        callSignal,
+        nodeUri
+      )
       if ('ciphertext' in first) return first.ciphertext
 
       // ocean.js reads a fresh nonce on every call, so one retry gets past a nonce another
@@ -1096,12 +1241,17 @@ export class OceanNodeClient {
       // nonce and a JWT carries none: retrying either would fail the same way.
       if (
         !isSigner(this.auth) ||
-        signal?.aborted ||
+        callSignal.aborted ||
         !NONCE_REJECTED.test(first.error.message)
       )
         throw first.error
 
-      const second = await this.encryptOnce(data, policyServer, signal, nodeUri)
+      const second = await this.encryptOnce(
+        data,
+        policyServer,
+        callSignal,
+        nodeUri
+      )
       if ('ciphertext' in second) return second.ciphertext
 
       throw second.error
@@ -1167,14 +1317,65 @@ export class OceanNodeClient {
    * (`nonce: N is not a valid nonce`). Publishing an asset encrypts all its services' files
    * at once, so this happens on every multi-service publish. JWT and pre-computed
    * signature auth need no queue.
+   *
+   * Every call runs under `withRequestTimeout`, so a call that hangs gives up its place
+   * after `requestTimeoutMs`. A queued call whose `signal` aborts leaves the queue at once;
+   * the calls behind it still wait for the ones before it.
    */
-  private serializeSigned<T>(fn: () => Promise<T>): Promise<T> {
-    if (!isSigner(this.auth)) return fn()
+  private serializeSigned<T>(
+    operation: string,
+    signal: AbortSignal | undefined,
+    fn: (signal: AbortSignal) => Promise<T>
+  ): Promise<T> {
+    if (signal?.aborted) return Promise.reject(signal.reason)
 
-    const run = this.signedQueue.then(() => fn())
-    this.signedQueue = run.catch(() => undefined)
+    const run = () => this.withRequestTimeout(operation, signal, fn)
 
-    return run
+    if (!isSigner(this.auth)) return run()
+
+    const previous = this.signedQueue
+    const task = untilSettled(previous, signal).then(run)
+    // Neither a failed, timed-out or aborted call nor its rejection holds up the queue.
+    this.signedQueue = Promise.all([previous, task.catch(() => undefined)])
+
+    return task
+  }
+
+  /**
+   * Runs `fn` with a signal that aborts when `signal` does or after `requestTimeoutMs`, and
+   * settles as soon as it aborts, even when `fn` does not honour the signal. Rejects with
+   * `signal.reason` when the caller aborted, or an `OceanNodeError` on timeout.
+   */
+  private async withRequestTimeout<T>(
+    operation: string,
+    signal: AbortSignal | undefined,
+    fn: (signal: AbortSignal) => Promise<T>
+  ): Promise<T> {
+    if (signal?.aborted) throw signal.reason
+
+    const timeoutMs = this.requestTimeoutMs
+    const timeout = AbortSignal.timeout(timeoutMs)
+    const combined = signal ? AbortSignal.any([signal, timeout]) : timeout
+
+    let onAbort = () => {}
+    const aborted = new Promise<never>((_, reject) => {
+      onAbort = () =>
+        reject(
+          signal?.aborted
+            ? signal.reason
+            : new OceanNodeError(
+                operation,
+                `timed out after ${timeoutMs} ms (requestTimeoutMs)`
+              )
+        )
+      combined.addEventListener('abort', onAbort, { once: true })
+    })
+
+    try {
+      return await Promise.race([fn(combined), aborted])
+    } finally {
+      combined.removeEventListener('abort', onAbort)
+    }
   }
 
   // #endregion

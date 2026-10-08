@@ -70,7 +70,16 @@ const indexedAsset = (txid = TX) => ({
   indexedMetadata: { event: { txid, block: 100 } }
 })
 
-type Answer = { status: number; body?: unknown } | Error | 'hang'
+type Answer =
+  | {
+      status: number
+      body?: unknown
+      headers?: Record<string, string>
+      /** Answer only after this long (fake timers), unless aborted first. */
+      delayMs?: number
+    }
+  | Error
+  | 'hang'
 
 /**
  * A node: `lookups` answer `GET /api/aquarius/assets/ddo/<did>` in turn (the last one
@@ -86,16 +95,25 @@ function stubNode(options: { lookups?: Answer[]; state?: Answer } = {}) {
         signal?.addEventListener('abort', () => reject(new Error('aborted')))
       )
 
-    return Promise.resolve(
+    const response = () =>
       new Response(
         answer.body === undefined
           ? 'Not found'
           : typeof answer.body === 'string'
             ? answer.body
             : JSON.stringify(answer.body),
-        { status: answer.status }
+        { status: answer.status, headers: answer.headers }
       )
-    )
+
+    if (!answer.delayMs) return Promise.resolve(response())
+
+    return new Promise<Response>((resolve, reject) => {
+      const timer = setTimeout(() => resolve(response()), answer.delayMs)
+      signal?.addEventListener('abort', () => {
+        clearTimeout(timer)
+        reject(new Error('aborted'))
+      })
+    })
   }
 
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
@@ -204,6 +222,19 @@ describe('getIndexingState', () => {
     expect(await client().getIndexingState({ nft: NFT_ADDRESS })).to.equal(
       undefined
     )
+  })
+
+  it("rejects with the signal's reason when aborted, not with an OceanNodeError", async () => {
+    stubNode({ state: 'hang' })
+    const controller = new AbortController()
+    const reason = new Error('stop')
+
+    const settled = client()
+      .getIndexingState({ txId: TX }, controller.signal)
+      .catch((thrown: unknown) => thrown)
+    controller.abort(reason)
+
+    expect(await settled).to.equal(reason)
   })
 
   it('is HTTP only', async () => {
@@ -365,6 +396,29 @@ describe('waitForIndexer', () => {
     ).to.deep.equal(indexedAsset())
   })
 
+  it('refuses timing options that are negative or not finite', async () => {
+    const fetch = stubNode()
+
+    for (const name of [
+      'intervalMs',
+      'timeoutMs',
+      'requestTimeoutMs',
+      'maxConsecutiveFailures'
+    ])
+      for (const value of [Number.POSITIVE_INFINITY, Number.NaN, -1]) {
+        const thrown = await client()
+          .waitForIndexer(ASSET_DID, TX, { [name]: value })
+          .catch((caught) => caught)
+
+        expect(thrown, `${name}: ${value}`).to.be.instanceOf(OceanNodeError)
+        expect(thrown.message).to.contain(
+          `waitForIndexer: ${name} must be a finite number, 0 or more`
+        )
+      }
+
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it('maps the beta.0 options and warns about them', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     stubNode()
@@ -385,6 +439,135 @@ describe('waitForIndexer', () => {
   describe('timing (fake timers)', () => {
     beforeEach(() => {
       vi.useFakeTimers()
+    })
+
+    it("maps maxRetries alone to beta.0's 30 s polls, so the wait is as long as before", async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      stubNode()
+
+      let thrown: Error | undefined
+      const waiting = client()
+        .waitForIndexer(ASSET_DID, TX, { maxRetries: 2 } as never)
+        .catch((caught) => {
+          thrown = caught
+        })
+
+      await vi.advanceTimersByTimeAsync(59_000)
+      expect(thrown).to.equal(undefined)
+
+      await vi.advanceTimersByTimeAsync(2_000)
+      await waiting
+      expect(thrown?.message).to.match(/not indexed within 60s/)
+    })
+
+    it('polls once more at the deadline instead of giving up an interval early', async () => {
+      const fetch = stubNode({
+        lookups: [
+          { status: 404 },
+          { status: 404 },
+          { status: 200, body: indexedAsset() }
+        ]
+      })
+
+      // Polls at 0 s, 7 s and, at the deadline, 10 s.
+      const waiting = client().waitForIndexer(ASSET_DID, TX, {
+        intervalMs: 7_000,
+        timeoutMs: 10_000
+      })
+      await vi.advanceTimersByTimeAsync(11_000)
+
+      expect(await waiting).to.deep.equal(indexedAsset())
+      expect(
+        urls(fetch).filter((url) => url.includes('/assets/ddo/'))
+      ).to.have.length(3)
+    })
+
+    it('gives the last lookup at least a second after a backoff that ends at the deadline', async () => {
+      stubNode({
+        lookups: [
+          {
+            status: 429,
+            body: 'Rate limit exceeded. Try again in 20 seconds.'
+          },
+          { status: 200, body: indexedAsset(), delayMs: 500 }
+        ]
+      })
+
+      const waiting = client().waitForIndexer(ASSET_DID, TX, {
+        intervalMs: 1_000,
+        timeoutMs: 10_000
+      })
+      await vi.advanceTimersByTimeAsync(11_000)
+
+      expect(await waiting).to.deep.equal(indexedAsset())
+    })
+
+    it('does not report a lookup error that later answers cleared', async () => {
+      stubNode({ lookups: [new TypeError('fetch failed'), { status: 404 }] })
+
+      const waiting = client()
+        .waitForIndexer(ASSET_DID, undefined, {
+          intervalMs: 1_000,
+          timeoutMs: 3_000
+        })
+        .catch((caught) => caught)
+      await vi.advanceTimersByTimeAsync(4_000)
+
+      const thrown = await waiting
+      expect(thrown.message).to.match(/not indexed within 3s/)
+      expect(thrown.message).not.to.match(/Last request error|fetch failed/)
+    })
+
+    it('backs off for a Retry-After header, in seconds or as an HTTP date', async () => {
+      for (const retryAfter of [
+        () => '20',
+        () => new Date(Date.now() + 21_000).toUTCString()
+      ]) {
+        const fetch = stubNode({
+          lookups: [
+            {
+              status: 429,
+              body: '',
+              headers: { 'retry-after': retryAfter() }
+            },
+            { status: 200, body: indexedAsset() }
+          ]
+        })
+
+        const waiting = client().waitForIndexer(ASSET_DID, TX, {
+          intervalMs: 1_000,
+          timeoutMs: 600_000
+        })
+
+        await vi.advanceTimersByTimeAsync(19_000)
+        expect(fetch.mock.calls.length).to.equal(1)
+
+        await vi.advanceTimersByTimeAsync(4_000)
+        expect(await waiting).to.deep.equal(indexedAsset())
+      }
+    })
+
+    it('never waits more than 60 s, whatever the node asks', async () => {
+      const fetch = stubNode({
+        lookups: [
+          {
+            status: 429,
+            body: 'Rate limit exceeded. Try again in 3600 seconds.'
+          },
+          { status: 200, body: indexedAsset() }
+        ]
+      })
+
+      const waiting = client().waitForIndexer(ASSET_DID, TX, {
+        intervalMs: 1_000,
+        timeoutMs: 600_000
+      })
+
+      await vi.advanceTimersByTimeAsync(59_000)
+      expect(fetch.mock.calls.length).to.equal(1)
+
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(await waiting).to.deep.equal(indexedAsset())
     })
 
     it('leaves no timer behind once it resolves', async () => {
