@@ -5,9 +5,15 @@
  * plain text, so a refused call failed with `Unexpected token 'U', "Use the in"... is not
  * valid JSON`, and a JSON string body came back quoted. `initialize` and the compute logs
  * are now sent by nautilus itself over HTTP; the other calls still go through ocean.js and
- * have their message unwrapped.
+ * have their message unwrapped. Whatever the node says is redacted, stripped of control
+ * characters and bounded before it reaches a message.
  */
-import { LoggerInstance, LogLevel, ProviderInstance } from '@oceanprotocol/lib'
+import {
+  Aquarius,
+  LoggerInstance,
+  LogLevel,
+  ProviderInstance
+} from '@oceanprotocol/lib'
 import {
   getBytes,
   hexlify,
@@ -60,12 +66,17 @@ const SIGNED = {
   signature: '0xsigned'
 }
 
-function client(nodeUri = NODE, auth: NodeAuth = SIGNED) {
+/** A client; `consumerAddress: null` leaves it out. */
+function client(
+  nodeUri = NODE,
+  auth: NodeAuth = SIGNED,
+  consumerAddress: string | null = NFT_ADDRESS
+) {
   return new OceanNodeClient({
     nodeUri,
     chainId: CHAIN_ID,
     auth,
-    consumerAddress: NFT_ADDRESS
+    consumerAddress: consumerAddress ?? undefined
   })
 }
 
@@ -193,6 +204,31 @@ describe('initialize', () => {
 
     expect(error.message).not.to.contain('0xdeadbeef')
     expect(error.message).to.contain('signature=<redacted>&fileIndex=0')
+  })
+
+  it('does not follow a redirect: the query carries the consumer address and userdata', async () => {
+    const fetch = stubFetch({
+      '/api/services/initialize': { status: 307, body: '' }
+    })
+    fetch.mockImplementationOnce(
+      async () =>
+        new Response(null, {
+          status: 307,
+          headers: { location: 'https://elsewhere.example/collect' }
+        })
+    )
+
+    const error = await rejection(() =>
+      client().initialize(DID_OP, 'svc', { userdata: { secret: 'x' } })
+    )
+
+    const init = (fetch.mock.calls[0] as unknown as [string, RequestInit])[1]
+    expect(init.redirect).to.equal('manual')
+    expect(error.message).to.match(
+      /^\[ocean-node\] initialize: https:\/\/node\.test\.invalid answered with a redirect \(307\) to https:\/\/elsewhere\.example\./
+    )
+    expect(error.message).not.to.contain(NFT_ADDRESS)
+    expect(fetch).toHaveBeenCalledOnce()
   })
 
   it('goes through ocean.js over P2P, with its message unquoted', async () => {
@@ -436,6 +472,28 @@ describe('resolve', () => {
     expect(fetch).toHaveBeenCalledTimes(1)
   })
 
+  it('reads both indexing states at once', async () => {
+    let inFlight = 0
+    let maxInFlight = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        if (String(input).includes('/assets/ddo/'))
+          return new Response('DDO not found', { status: 404 })
+
+        inFlight++
+        maxInFlight = Math.max(maxInFlight, inFlight)
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        inFlight--
+        return new Response('Not found', { status: 404 })
+      })
+    )
+
+    await rejection(() => client().resolve(ASSET_DID))
+
+    expect(maxInFlight).to.equal(2)
+  })
+
   it('names the tx of an indexing record only when it is a transaction hash', async () => {
     stubFetch({
       [ddo]: { status: 404, body: 'DDO not found' },
@@ -455,6 +513,55 @@ describe('resolve', () => {
 
     expect(error.message).to.equal(
       `[ocean-node] resolve: no asset found for ${ASSET_DID} (HTTP 404); the node recorded an indexing error: boom`
+    )
+  })
+
+  it('refuses a redirect to an internal host and relays none of its answer', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const response = new Response('{"AccessKeyId":"AKIA-SECRET"}', {
+          status: 403
+        })
+        Object.defineProperty(response, 'url', {
+          value: 'https://10.0.0.5/latest/meta-data/iam'
+        })
+        return response
+      })
+    )
+
+    const error = await rejection(() => client().resolve(ASSET_DID))
+
+    expect(error).not.to.be.instanceOf(AssetNotFoundError)
+    expect(error.message).to.contain(
+      'redirected to a loopback, private or link-local host'
+    )
+    expect(error.message).not.to.contain('SECRET')
+  })
+
+  it("throws an AssetNotFoundError over P2P on the node's Not found", async () => {
+    const notFound = new Error('P2P command error: Not found', {
+      cause: new Error('Not found')
+    })
+    vi.spyOn(Aquarius.prototype, 'resolve').mockRejectedValueOnce(notFound)
+
+    const error = await rejection(() => client(PEER).resolve(ASSET_DID))
+
+    expect(error).to.be.instanceOf(AssetNotFoundError)
+    expect((error as AssetNotFoundError).state).to.equal(undefined)
+    expect(error.status).to.equal(404)
+  })
+
+  it('reports any other P2P failure as it is', async () => {
+    vi.spyOn(Aquarius.prototype, 'resolve').mockRejectedValueOnce(
+      new Error('P2P command error: Gateway node error: no response from peer')
+    )
+
+    const error = await rejection(() => client(PEER).resolve(ASSET_DID))
+
+    expect(error).not.to.be.instanceOf(AssetNotFoundError)
+    expect(error.message).to.equal(
+      '[ocean-node] resolve: P2P command error: Gateway node error: no response from peer'
     )
   })
 

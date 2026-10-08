@@ -874,24 +874,42 @@ export class OceanNodeClient {
   }
 
   /**
-   * One request of `operation` to this node with nautilus's own HTTP helper, within
-   * `requestTimeoutMs`. A failed request (network error, timeout, a refused redirect)
-   * throws an `OceanNodeError`; aborting `signal` rejects with its reason. The answer is
-   * returned whatever its status.
+   * A `GET` of `path` on this node with nautilus's own HTTP helper, for `operation`. The
+   * answer is returned whatever its status, the body of a non-2xx answer read up to
+   * `MAX_ERROR_BODY_BYTES`. A failed request (network error, timeout, a refused redirect)
+   * throws an `OceanNodeError` with the error on `cause`; aborting `signal` rejects with its
+   * reason. `timeoutMs` defaults to 15 s.
+   *
+   * Redirects are followed unless `followRedirects: false`, which a request that carries
+   * credentials or consumer data needs. The read-only GETs carry neither (only `Accept`),
+   * and a reverse proxy in front of `/api/aquarius` may redirect them. `fetchText` still
+   * refuses a redirect that ends on plain `http://` on a non-loopback host (unless the node
+   * URI is such a URL already, `allowInsecureTransport`), and one that ends on a loopback,
+   * private or link-local host unless the node is on one itself, so no public node can make
+   * nautilus read an internal service and relay its answer in an error message.
    */
-  private async send(
+  private async get(
     operation: string,
-    url: string,
-    init: RequestInit,
-    signal: AbortSignal | undefined,
-    followRedirects = false
+    path: string,
+    options: {
+      timeoutMs?: number
+      signal?: AbortSignal
+      followRedirects?: boolean
+    } = {}
   ): Promise<FetchedText> {
+    const {
+      timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+      signal,
+      followRedirects = true
+    } = options
+
     try {
-      return await fetchText(fetch, url, init, {
-        timeoutMs: this.requestTimeoutMs,
-        signal,
-        followRedirects
-      })
+      return await fetchText(
+        fetch,
+        `${this.baseUrl()}${path}`,
+        { method: 'GET', headers: { Accept: 'application/json' } },
+        { timeoutMs, signal, followRedirects }
+      )
     } catch (error) {
       if (signal?.aborted) throw signal.reason
       throw new OceanNodeError(operation, errorMessage(error), error)
@@ -948,31 +966,25 @@ export class OceanNodeClient {
    * (HTTP 404), carrying the node's indexing failure for the DID when it recorded one, and
    * an `OceanNodeError` with the node's status and text for any other failure.
    *
-   * Over HTTP this reads `GET /api/aquarius/assets/ddo/<did>` itself (see `getPublic`), with
-   * a 15 s timeout. Only after a 404 does it read the indexing state of the DID (one or two
-   * requests). Aborting `signal` rejects with its reason.
+   * Over HTTP this reads `GET /api/aquarius/assets/ddo/<did>` itself (see `get`), with a
+   * 15 s timeout. Only after a 404 does it read the indexing state of the DID (two requests
+   * in parallel, within one 15 s timeout). Over P2P it goes through ocean.js, and a 404 is
+   * told by the node's "Not found" answer; the indexing state is not read (it is served over
+   * HTTP only), so the error carries no `state`. Aborting `signal` rejects with its reason.
    */
   async resolve(did: string, signal?: AbortSignal): Promise<AssetV5> {
     if (!isHttpUri(this.nodeUri)) {
-      const asset = await attempt('resolve', () =>
-        this.aquarius.resolve(did, signal)
-      )
+      const asset = await this.aquarius.resolve(did, signal).catch((error) => {
+        if (signal?.aborted) throw signal.reason
+        if (isP2pNotFound(error)) throw new AssetNotFoundError(did)
+        throw OceanNodeError.from('resolve', error)
+      })
       if (!asset) throw new AssetNotFoundError(did)
 
       return asset as unknown as AssetV5
     }
 
-    let response: FetchedText
-    try {
-      response = await this.getPublic(
-        this.ddoUrl(did),
-        DEFAULT_REQUEST_TIMEOUT_MS,
-        signal
-      )
-    } catch (error) {
-      if (signal?.aborted) throw signal.reason
-      throw new OceanNodeError('resolve', errorMessage(error), error)
-    }
+    const response = await this.get('resolve', ddoPath(did), { signal })
 
     if (response.status === 404)
       throw new AssetNotFoundError(
@@ -983,16 +995,11 @@ export class OceanNodeClient {
     return nodeJson<AssetV5>('resolve', response)
   }
 
-  /** `GET /api/aquarius/assets/ddo/<did>` on this node. */
-  private ddoUrl(did: string): string {
-    return `${this.nodeUri.replace(/\/+$/, '')}/api/aquarius/assets/ddo/${encodeURIComponent(did)}`
-  }
-
   /**
    * The node's indexing failure record for a DID it does not serve, if it has one. The node
    * files a failure under the `did:op:` form of the id, or under the `did:ope:` form once
-   * the DDO's id is known, so both are read, the given one first. Best effort: a failed
-   * read is no record.
+   * the DDO's id is known, so both are read, in parallel; the given form's record wins.
+   * Best effort: a failed read is no record.
    */
   private async indexingFailureOf(
     did: string,
@@ -1004,20 +1011,20 @@ export class OceanNodeClient {
     const [, method, hash] = match
     const forms = method.toLowerCase() === 'op' ? ['op', 'ope'] : ['ope', 'op']
 
-    for (const form of forms) {
-      try {
-        const state = await this.readIndexingState(
+    const states = await Promise.all(
+      forms.map((form) =>
+        this.readIndexingState(
           { did: `did:${form}:${hash}` },
           signal,
           DEFAULT_REQUEST_TIMEOUT_MS
-        )
-        if (state && isIndexingFailure(state)) return state
-      } catch {
-        if (signal?.aborted) throw signal.reason
-      }
-    }
+        ).catch(() => {
+          if (signal?.aborted) throw signal.reason
+          return undefined
+        })
+      )
+    )
 
-    return undefined
+    return states.find((state) => state && isIndexingFailure(state))
   }
 
   /**
@@ -1036,7 +1043,7 @@ export class OceanNodeClient {
    * `WaitForIndexerOptions.intervalMs`), never more than 60 s.
    *
    * Each request has its own timeout (`requestTimeoutMs`); over P2P it bounds each lookup.
-   * The read-only GETs follow redirects (see `getPublic`). After `maxConsecutiveFailures`
+   * The read-only GETs follow redirects (see `get`). After `maxConsecutiveFailures`
    * failed asset lookups in a row this throws an `OceanNodeError` with the last error, so a
    * wrong node URL or a node that answers 500 is reported as such rather than as "not
    * indexed". When `timeoutMs` is up, one last lookup runs; then this throws an
@@ -1196,10 +1203,13 @@ export class OceanNodeClient {
     if (!isHttpUri(this.nodeUri))
       return this.lookupIndexedP2p(did, txid, signal, timeoutMs)
 
-    const url = this.ddoUrl(did)
+    const path = ddoPath(did)
 
     try {
-      const response = await this.getPublic(url, timeoutMs, signal)
+      const response = await this.get('waitForIndexer', path, {
+        timeoutMs,
+        signal
+      })
 
       if (response.status === 404) return { kind: 'pending' }
       if (isRateLimited(response))
@@ -1210,9 +1220,7 @@ export class OceanNodeClient {
       if (!response.ok)
         return {
           kind: 'failed',
-          error: new Error(
-            `GET ${url} answered ${response.status} ${response.statusText} ${response.body.slice(0, 200)}`.trim()
-          )
+          error: new Error(`GET ${path} answered ${describeAnswer(response)}`)
         }
 
       const asset = JSON.parse(response.body) as AssetV5
@@ -1234,7 +1242,11 @@ export class OceanNodeClient {
     } catch (error) {
       if (signal?.aborted) throw signal.reason
 
-      return { kind: 'failed', error }
+      // The request's own error: `waitForIndexer` names the operation itself.
+      return {
+        kind: 'failed',
+        error: error instanceof OceanNodeError ? (error.cause ?? error) : error
+      }
     }
   }
 
@@ -1298,28 +1310,6 @@ export class OceanNodeClient {
   }
 
   /**
-   * A read-only `GET` to the node that follows redirects, e.g. from a reverse proxy in front
-   * of `/api/aquarius`. Safe because it carries no credentials (no `Authorization`, no
-   * token, no body), only `Accept`. `fetchText` still refuses a redirect that ends on plain
-   * `http://` on a non-loopback host (unless the node URI is such a URL already,
-   * `allowInsecureTransport`), and one that ends on a loopback, private or link-local host
-   * unless the node is on one itself, so no public node can make nautilus read an internal
-   * service and relay its answer in an error message.
-   */
-  private getPublic(
-    url: string,
-    timeoutMs: number,
-    signal: AbortSignal | undefined
-  ): Promise<FetchedText> {
-    return fetchText(
-      fetch,
-      url,
-      { method: 'GET', headers: { Accept: 'application/json' } },
-      { timeoutMs, signal, followRedirects: true }
-    )
-  }
-
-  /**
    * The node's own address (`providerAddress` in `GET /`), or `undefined` when the node
    * does not say or is reached over P2P. The indexer signs its decrypt calls with this key.
    *
@@ -1329,17 +1319,7 @@ export class OceanNodeClient {
   async getNodeAddress(signal?: AbortSignal): Promise<string | undefined> {
     if (!isHttpUri(this.nodeUri)) return undefined
 
-    let response: Awaited<ReturnType<typeof fetchText>>
-    try {
-      response = await this.getPublic(
-        `${this.nodeUri.replace(/\/+$/, '')}/`,
-        DEFAULT_REQUEST_TIMEOUT_MS,
-        signal
-      )
-    } catch (error) {
-      if (signal?.aborted) throw error
-      throw new OceanNodeError('getNodeAddress', errorMessage(error), error)
-    }
+    const response = await this.get('getNodeAddress', '/', { signal })
 
     if (!response.ok)
       throw new OceanNodeError(
@@ -1384,21 +1364,11 @@ export class OceanNodeClient {
     const nodeAddress = await this.getNodeAddress(signal)
     if (!nodeAddress) return undefined
 
-    let response: Awaited<ReturnType<typeof fetchText>>
-    try {
-      response = await this.getPublic(
-        `${this.nodeUri.replace(/\/+$/, '')}/api/services/nonce?userAddress=${nodeAddress}`,
-        DEFAULT_REQUEST_TIMEOUT_MS,
-        signal
-      )
-    } catch (error) {
-      if (signal?.aborted) throw error
-      throw new OceanNodeError(
-        'getIndexerNonceState',
-        errorMessage(error),
-        error
-      )
-    }
+    const response = await this.get(
+      'getIndexerNonceState',
+      `/api/services/nonce?userAddress=${nodeAddress}`,
+      { signal }
+    )
 
     if (!response.ok)
       throw new OceanNodeError(
@@ -1469,15 +1439,11 @@ export class OceanNodeClient {
 
     const [key, value] = normalizeStateQuery(query)
 
-    const url = `${this.nodeUri.replace(/\/+$/, '')}/api/aquarius/state/ddo?${key}=${encodeURIComponent(value)}`
-
-    const response = await attempt('getIndexingState', () =>
-      this.getPublic(url, timeoutMs, signal)
-    ).catch((error) => {
-      // Like the other calls: an abort rejects with the signal's own reason.
-      if (signal?.aborted) throw signal.reason
-      throw error
-    })
+    const response = await this.get(
+      'getIndexingState',
+      `/api/aquarius/state/ddo?${key}=${encodeURIComponent(value)}`,
+      { timeoutMs, signal }
+    )
 
     if (response.status === 404) return undefined
 
@@ -1847,11 +1813,14 @@ export class OceanNodeClient {
       if (options.validUntil)
         query.set('validUntil', String(options.validUntil))
 
-      const response = await this.send(
+      const response = await this.get(
         'initialize',
-        `${this.baseUrl()}/api/services/initialize?${query}`,
-        { method: 'GET', headers: { Accept: 'application/json' } },
-        options.signal
+        `/api/services/initialize?${query}`,
+        {
+          timeoutMs: this.requestTimeoutMs,
+          signal: options.signal,
+          followRedirects: false
+        }
       )
 
       return nodeJson<ProviderInitialize>('initialize', response)
@@ -2515,6 +2484,28 @@ export class OceanNodeClient {
   }
 
   // #endregion
+}
+
+/** The path of `GET /api/aquarius/assets/ddo/<did>`. */
+function ddoPath(did: string): string {
+  return `/api/aquarius/assets/ddo/${encodeURIComponent(did)}`
+}
+
+/**
+ * Whether ocean.js failed a P2P `getDDO` because the node does not have the DDO. Over P2P
+ * the node answers `{ httpStatus: 404, error: "Not found" }`, and ocean.js throws
+ * `P2P command error: Not found` with an error carrying the node's text on `cause`.
+ */
+function isP2pNotFound(error: unknown): boolean {
+  for (
+    let current: unknown = error, depth = 0;
+    current instanceof Error && depth < 4;
+    current = (current as { cause?: unknown }).cause, depth++
+  )
+    if (/^(?:P2P command error: )?Not found$/i.test(current.message.trim()))
+      return true
+
+  return false
 }
 
 /**

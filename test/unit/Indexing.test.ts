@@ -370,7 +370,7 @@ describe('waitForIndexer', () => {
     expect(thrown).to.be.instanceOf(OceanNodeError)
     expect(thrown).not.to.be.instanceOf(IndexingError)
     expect(thrown.message).to.match(
-      /3 lookups of did:ope:.* in a row failed; the last one: GET .* answered 500/
+      /3 lookups of did:ope:.* in a row failed; the last one: GET \/api\/aquarius\/assets\/ddo\/.* answered HTTP 500/
     )
     expect(
       urls(fetch).filter((url) => url.includes('/assets/ddo/'))
