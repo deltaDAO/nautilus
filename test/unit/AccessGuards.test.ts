@@ -157,7 +157,7 @@ describe('access() pre-order checks', () => {
     expect((error as ConsumerParameterError).issues).to.deep.include({
       parameter: 'age',
       reason: 'wrong-type',
-      message: `'age' must be a finite number, got the string "not-a-number"`
+      message: `'age' must be a finite number, got a string of 12 characters`
     })
     expectNothingSent(calls)
   })
