@@ -68,10 +68,64 @@ describe('signS3Request', () => {
       /SignedHeaders=date;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class, Signature=98ad721746da40c64f1a55b78f14c238d841ea1380cd77a1b5971af0ece108bd$/
     )
   })
+
+  it('refuses a URL with a query string rather than sign it wrongly', async () => {
+    await expectThrowsAsync(
+      () =>
+        signS3Request({
+          method: 'GET',
+          url: 'https://examplebucket.s3.amazonaws.com/?list-type=2&prefix=a+b',
+          headers: {},
+          body: '',
+          credentials: AWS_EXAMPLE,
+          region: 'us-east-1',
+          date
+        }),
+      /query string are not supported/
+    )
+  })
 })
 
 const WRITE = { accessKeyId: 'WRITEKEY', secretAccessKey: 'write-secret' }
 const READ = { accessKeyId: 'READKEY', secretAccessKey: 'read-secret' }
+
+/**
+ * Re-signs a request of one of the two known keys from what is actually sent (URL, method,
+ * content type, body, date and scope) and compares. Other key ids are left to the caller.
+ */
+async function signatureMatches(
+  input: string,
+  init: RequestInit
+): Promise<boolean> {
+  const headers = init.headers as Record<string, string>
+  const [, keyId, region] =
+    /Credential=([^/]+)\/\d{8}\/([^/]+)\/s3\/aws4_request/.exec(
+      headers.authorization
+    ) ?? []
+  const credentials = [WRITE, READ].find((key) => key.accessKeyId === keyId)
+  if (!credentials) return true
+
+  const amzDate = headers['x-amz-date']
+  const date = new Date(
+    amzDate.replace(
+      /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/,
+      '$1-$2-$3T$4:$5:$6Z'
+    )
+  )
+  const expected = await signS3Request({
+    method: init.method as string,
+    url: input,
+    headers: headers['content-type']
+      ? { 'content-type': headers['content-type'] }
+      : {},
+    body: (init.body as string | undefined) ?? '',
+    credentials,
+    region,
+    date
+  })
+
+  return expected.authorization === headers.authorization
+}
 
 /**
  * An in-memory bucket. It checks who signed each request (by access key id) and what
@@ -86,6 +140,19 @@ function fakeBucket(
     errorCode?: string
     /** Answers every read-key PUT/DELETE with this instead of AccessDenied. */
     readKeyWriteAnswer?: { status: number; code: string }
+    /** Answers every read-key PUT/DELETE with a bare 403, as a proxy or firewall would. */
+    readKeyWriteBare403?: boolean
+    /**
+     * The read key may PUT and DELETE only paths matching this, like a policy on
+     * `ddo/*` + `/` + `*`.
+     */
+    readKeyWritablePaths?: RegExp
+    /** Answers a DELETE of a missing object with 404 NoSuchKey instead of 204. */
+    deleteMissingIs404?: boolean
+    /** Answers every request with this redirect. */
+    redirect?: { status: number; location: string }
+    /** Answers every request with this status and XML body. */
+    answer?: { status: number; body: string }
     /** Answers GETs with this status and code. */
     getAnswer?: { status: number; code: string }
     /** Rewrites what a GET returns. */
@@ -101,6 +168,7 @@ function fakeBucket(
     key: string
     body?: string
     headers: Record<string, string>
+    redirect?: RequestRedirect
   }[] = []
 
   const error = (status: number, code: string) =>
@@ -114,10 +182,28 @@ function fakeBucket(
     const method = init.method as string
     const url = new URL(input)
     const body = init.body as string | undefined
-    requests.push({ method, url: input, key: keyId as string, body, headers })
+    requests.push({
+      method,
+      url: input,
+      key: keyId as string,
+      body,
+      headers,
+      redirect: init.redirect
+    })
 
     if (options.networkError) throw new TypeError('fetch failed')
+    if (options.redirect)
+      return new Response(null, {
+        status: options.redirect.status,
+        headers: { location: options.redirect.location }
+      })
+    if (options.answer)
+      return new Response(options.answer.body, {
+        status: options.answer.status
+      })
     if (options.errorCode === 'SignatureDoesNotMatch')
+      return error(403, 'SignatureDoesNotMatch')
+    if (!(await signatureMatches(input, init)))
       return error(403, 'SignatureDoesNotMatch')
     if (!url.pathname.startsWith(`/${options.bucket ?? 'ddos'}/`))
       return error(404, 'NoSuchBucket')
@@ -145,13 +231,21 @@ function fakeBucket(
         options.readKeyWriteAnswer.status,
         options.readKeyWriteAnswer.code
       )
+    if (keyId === READ.accessKeyId && options.readKeyWriteBare403)
+      return new Response('Forbidden', { status: 403 })
 
+    const readKeyMay =
+      keyId === READ.accessKeyId && !!options.readKeyWritablePaths?.test(path)
     const canDelete =
       (keyId === WRITE.accessKeyId && !options.writeKeyCannotDelete) ||
-      (keyId === READ.accessKeyId && options.readKeyCanDelete)
+      (keyId === READ.accessKeyId && options.readKeyCanDelete) ||
+      readKeyMay
 
-    if (method === 'DELETE' ? !canDelete : !canWrite)
+    if (method === 'DELETE' ? !canDelete : !(canWrite || readKeyMay))
       return error(403, 'AccessDenied')
+
+    if (method === 'DELETE' && options.deleteMissingIs404 && !objects.has(path))
+      return error(404, 'NoSuchKey')
 
     if (method === 'PUT') objects.set(path, body ?? '')
     if (method === 'DELETE') objects.delete(path)
@@ -182,6 +276,7 @@ function store(
 }
 
 const DID_HASH = ASSET_DID.split(':').pop()
+const HEX = 'a'.repeat(64)
 
 describe('S3RemoteStore', () => {
   it('uploads the envelope byte for byte and returns the S3FileObject the node reads', async () => {
@@ -213,6 +308,59 @@ describe('S3RemoteStore', () => {
       }
     })
     expect(JSON.stringify(pointer)).not.to.contain('write-secret')
+  })
+
+  it('writes the endpoint into the pointer with an explicit, lowercase scheme', async () => {
+    for (const [overrides, expected] of [
+      // No nodeEndpoint: the pointer gets endpoint.
+      [
+        { endpoint: 'sos-de-fra-1.exo.io', nodeEndpoint: undefined },
+        'https://sos-de-fra-1.exo.io'
+      ],
+      // A host whose name starts with "http" still gets a scheme.
+      [
+        { endpoint: 'http-s3.example.com', nodeEndpoint: undefined },
+        'https://http-s3.example.com'
+      ],
+      [
+        { endpoint: 'HTTPS://S3.Example.org', nodeEndpoint: undefined },
+        'https://S3.Example.org'
+      ],
+      [{ nodeEndpoint: 'HTTP://minio:9000' }, 'http://minio:9000'],
+      [{ nodeEndpoint: ' minio:9000 ' }, 'https://minio:9000']
+    ] as const) {
+      const pointer = await store(fakeBucket(), {
+        forcePathStyle: !overrides.endpoint,
+        ...overrides,
+        // Virtual-host uploads go to hosts the fake bucket does not serve.
+        fetchImpl: (async () =>
+          new Response('', { status: 200 })) as unknown as typeof fetch
+      }).put('{}', { did: ASSET_DID })
+
+      expect(pointer.s3Access.endpoint, JSON.stringify(overrides)).to.equal(
+        expected
+      )
+    }
+  })
+
+  it('works end to end without nodeEndpoint, the common configuration', async () => {
+    const bucket = fakeBucket()
+    const s3 = store(bucket, { nodeEndpoint: undefined })
+    const envelope = '{"encryptedData":"0x0102"}'
+
+    await s3.check()
+    const pointer = await s3.put(envelope, { did: ASSET_DID })
+    await s3.verify(
+      pointer,
+      `0x${createHash('sha256').update(envelope).digest('hex')}`
+    )
+
+    expect(pointer.s3Access.endpoint).to.equal('http://127.0.0.1:9000')
+    expect(pointer.s3Access.forcePathStyle).to.equal(true)
+    expect(bucket.objects.size).to.equal(1)
+
+    await s3.remove(pointer)
+    expect(bucket.objects.size).to.equal(0)
   })
 
   it('puts an edit next to the previous version instead of over it', async () => {
@@ -346,6 +494,57 @@ describe('S3RemoteStore', () => {
       ).not.to.throw()
     })
 
+    it('validates the bucket name, which goes into the request URL', () => {
+      for (const bucket of [
+        'evil.example/x',
+        'MyBucket',
+        'my_bucket',
+        'ab',
+        'a'.repeat(64),
+        '-ddos',
+        'ddos-',
+        'dd..os',
+        '192.168.0.1',
+        'ddos?x=1',
+        'user@ddos'
+      ])
+        expect(() => store(fakeBucket(), { bucket }), bucket).to.throw(
+          /is not a valid S3 bucket name/
+        )
+
+      for (const bucket of ['ddos', 'my-ddos-2', 'my.ddos', 'a1b'])
+        expect(() => store(fakeBucket(), { bucket }), bucket).not.to.throw()
+    })
+
+    it('refuses virtual-host addressing for a dotted bucket over https', () => {
+      expect(() =>
+        store(fakeBucket(), {
+          endpoint: 'https://sos-de-fra-1.exo.io',
+          bucket: 'my.ddos',
+          forcePathStyle: false
+        })
+      ).to.throw(
+        /bucket name my\.ddos contains dots, so virtual-host addressing \(my\.ddos\.sos-de-fra-1\.exo\.io\) over https cannot work.*Set forcePathStyle: true/
+      )
+      expect(() =>
+        store(fakeBucket(), {
+          endpoint: 'https://sos-de-fra-1.exo.io',
+          bucket: 'my.ddos',
+          forcePathStyle: true
+        })
+      ).not.to.throw()
+    })
+
+    it('refuses an endpoint with a scheme other than http(s)', () => {
+      for (const [option, value] of [
+        ['endpoint', 'ftp://s3.example.org'],
+        ['nodeEndpoint', 's3://minio:9000']
+      ] as const)
+        expect(() => store(fakeBucket(), { [option]: value })).to.throw(
+          new RegExp(`${option} must be an http:// or https:// URL`)
+        )
+    })
+
     it('refuses virtual-host addressing on an IP or localhost endpoint', () => {
       const bucket = fakeBucket()
 
@@ -396,8 +595,12 @@ describe('S3RemoteStore', () => {
       ])
 
       const [probe, , readProbe, readDelete, cleanup] = probeKeys(bucket)
+      // The shape of the objects put() writes, <prefix><DID hash>/<sha256>.json.
       expect(probe).to.match(
-        /^\/ddos\/ddo\/nautilus-store-check-[0-9a-f-]{36}\.json$/
+        /^\/ddos\/ddo\/nautilus-store-check\/[0-9a-f]{64}\.json$/
+      )
+      expect(readProbe).to.match(
+        /^\/ddos\/ddo\/nautilus-store-check\/[0-9a-f]{64}\.json$/
       )
       expect(readProbe).not.to.equal(probe)
       expect(readDelete).to.equal(probe)
@@ -465,7 +668,7 @@ describe('S3RemoteStore', () => {
 
       await expectThrowsAsync(
         () => store(bucket).check(),
-        /^S3 GET s3:\/\/ddos\/ddo\/nautilus-store-check-.* with the read key: access denied.*s3:GetObject.*removing the check's probe objects also failed/
+        /^S3 GET s3:\/\/ddos\/ddo\/nautilus-store-check\/.* with the read key: access denied.*s3:GetObject.*removing the check's probe objects also failed/
       )
     })
 
@@ -490,6 +693,76 @@ describe('S3RemoteStore', () => {
         )
         expect(bucket.objects.size).to.equal(0)
       }
+    })
+
+    it('catches a read key that may write only where real objects go (<prefix>*/*)', async () => {
+      // A policy on ddo/*/* passes a probe at ddo/<flat key> but not one shaped like put()'s.
+      const bucket = fakeBucket({
+        readKeyWritablePaths: /^\/ddos\/ddo\/[^/]+\/[^/]+$/
+      })
+
+      await expectThrowsAsync(
+        () => store(bucket).check(),
+        /read credentials can write and delete in bucket ddos/
+      )
+      expect(bucket.objects.size).to.equal(0)
+    })
+
+    it('counts a bare 403 (a proxy or firewall) as no answer about the read key', async () => {
+      const bucket = fakeBucket({ readKeyWriteBare403: true })
+
+      await expectThrowsAsync(
+        () => store(bucket).check(),
+        /could not tell whether the read key can write; expected 403 AccessDenied/
+      )
+    })
+
+    it('cleans up the read probe too when the read-key PUT got no clear answer', async () => {
+      const bucket = fakeBucket({
+        readKeyWriteAnswer: { status: 500, code: 'InternalError' }
+      })
+
+      await expectThrowsAsync(() => store(bucket).check(), /could not tell/)
+
+      const readProbe = bucket.requests.find(
+        (request) => request.method === 'PUT' && request.key === 'READKEY'
+      )?.url
+      expect(
+        bucket.requests.filter(
+          (request) =>
+            request.method === 'DELETE' &&
+            request.key === 'WRITEKEY' &&
+            request.url === readProbe
+        )
+      ).to.have.length(1)
+    })
+
+    it('counts a probe that is already gone (404) as cleaned up', async () => {
+      resetWarnings()
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      // The read key deletes the probe, so the write key's cleanup DELETE gets 404 NoSuchKey.
+      const bucket = fakeBucket({
+        readKeyCanDelete: true,
+        deleteMissingIs404: true
+      })
+
+      await store(bucket, { allowWritableReadKey: true }).check()
+
+      expect(bucket.requests.at(-1)).to.deep.include({
+        method: 'DELETE',
+        key: 'WRITEKEY'
+      })
+      expect(String(warn.mock.calls[0][0])).to.match(
+        /read credentials can delete/
+      )
+      warn.mockRestore()
+    })
+
+    it('fails when the read key reads back different content', async () => {
+      await expectThrowsAsync(
+        () => store(fakeBucket({ tamper: (body) => `${body} ` })).check(),
+        /reading s3:\/\/ddos\/ddo\/nautilus-store-check\/[0-9a-f]{64}\.json with the read key returned different content/
+      )
     })
 
     it('accepts a writable read key when told to, with a warning', async () => {
@@ -526,7 +799,7 @@ describe('S3RemoteStore', () => {
           store(fakeBucket(), {
             writeCredentials: { accessKeyId: 'NOPE', secretAccessKey: 'x' }
           }).check(),
-        /PUT s3:\/\/ddos\/ddo\/nautilus-store-check-[0-9a-f-]+\.json with the write key: access denied/
+        /PUT s3:\/\/ddos\/ddo\/nautilus-store-check\/[0-9a-f]{64}\.json with the write key: access denied/
       )
     })
   })
@@ -570,6 +843,42 @@ describe('S3RemoteStore', () => {
         /signature mismatch/
       )
       expect(denied.requests).to.have.length(1)
+    })
+
+    it('does not follow a redirect with a signed request, and says why', async () => {
+      const bucket = fakeBucket({
+        redirect: {
+          status: 301,
+          location: 'https://ddos.s3.eu-west-1.amazonaws.com/ddo/x.json'
+        }
+      })
+
+      await expectThrowsAsync(
+        () =>
+          store(bucket, {
+            endpoint: 'https://s3.amazonaws.com',
+            nodeEndpoint: undefined
+          }).put('{}', { did: ASSET_DID }),
+        /^S3 PUT s3:\/\/ddos\/.* with the write key via https:\/\/s3\.amazonaws\.com was answered with a redirect \(301\) to https:\/\/ddos\.s3\.eu-west-1\.amazonaws\.com, which nautilus does not follow.*signed for \(us-east-1\).*the redirect points to eu-west-1/
+      )
+      // Not retried, and never followed.
+      expect(bucket.requests).to.have.length(1)
+      expect(bucket.requests[0].redirect).to.equal('manual')
+    })
+
+    it('names the region S3 expects', async () => {
+      await expectThrowsAsync(
+        () =>
+          store(
+            fakeBucket({
+              answer: {
+                status: 400,
+                body: '<Error><Code>AuthorizationHeaderMalformed</Code><Region>eu-west-1</Region></Error>'
+              }
+            })
+          ).put('{}', { did: ASSET_DID }),
+        /the bucket is in region eu-west-1, not us-east-1 \(AuthorizationHeaderMalformed\)\. Set region: 'eu-west-1'/
+      )
     })
 
     describe('timeouts', () => {
@@ -647,6 +956,16 @@ describe('S3RemoteStore', () => {
       )
     })
 
+    it('reports a missing object as such, not as a missing bucket', async () => {
+      const s3 = store(fakeBucket())
+      const pointer = await store(fakeBucket()).put('{}', { did: ASSET_DID })
+
+      await expectThrowsAsync(
+        () => s3.verify(pointer, '0x00'),
+        /GET .* with the read key: no such object \(NoSuchKey\)/
+      )
+    })
+
     it('fails when the read key cannot read', async () => {
       const bucket = fakeBucket()
       const s3 = store(bucket)
@@ -687,11 +1006,58 @@ describe('S3RemoteStore', () => {
         [at('ddos', 'other/important.json'), /outside the prefix "ddo\/"/],
         [at('ddos', '/ddo/x.json'), /starts with \//],
         [at('elsewhere', 'ddo/x.json'), /not a pointer into bucket ddos/],
-        [{ type: 'ipfs', hash: 'x' } as never, /not a pointer into bucket ddos/]
+        [
+          { type: 'ipfs', hash: 'x' } as never,
+          /not a pointer into bucket ddos/
+        ],
+        // Under the prefix, but not the shape put() writes.
+        [at('ddos', 'ddo/x.json'), /is not a key this store writes/],
+        [at('ddos', `ddo/a/${HEX}.json.bak`), /is not a key this store writes/],
+        [at('ddos', `ddo/a/b/${HEX}.json`), /is not a key this store writes/],
+        [at('ddos', `ddo/a/${HEX.toUpperCase()}.json`), /is not a key this/]
       ] as const)
         await expectThrowsAsync(() => s3.remove(pointer), message)
 
       expect(bucket.requests).to.have.length(0)
+    })
+
+    it('with a prefix without "/", leaves keys of a longer prefix alone', async () => {
+      const bucket = fakeBucket()
+      const s3 = store(bucket, { prefix: 'ddo' })
+      const pointer = await s3.put('{}', { did: ASSET_DID })
+
+      expect(pointer.s3Access.objectKey).to.match(
+        new RegExp(`^ddo${DID_HASH}/[0-9a-f]{64}\\.json$`)
+      )
+
+      await expectThrowsAsync(
+        () =>
+          s3.remove({
+            type: 's3',
+            s3Access: {
+              bucket: 'ddos',
+              objectKey: `ddo-production/${DID_HASH}/${HEX}.json`
+            }
+          } as never),
+        /is not a key this store writes \("ddo" \+ <DID hash>\/<sha256>\.json\)/
+      )
+
+      await s3.remove(pointer)
+      expect(bucket.objects.size).to.equal(0)
+    })
+
+    it('counts an object that is already gone (404 NoSuchKey) as removed, not a missing bucket', async () => {
+      const bucket = fakeBucket({ deleteMissingIs404: true })
+      const s3 = store(bucket)
+      const pointer = await s3.put('{}', { did: ASSET_DID })
+
+      await s3.remove(pointer)
+      await s3.remove(pointer)
+
+      await expectThrowsAsync(
+        () => store(fakeBucket({ bucket: 'other' })).remove(pointer),
+        /bucket ddos does not exist/
+      )
     })
 
     it('removes through the redacted pointer from PublishResponse.stored', async () => {

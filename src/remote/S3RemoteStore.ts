@@ -28,12 +28,19 @@
  *     node does, and it travels node-encrypted. `endpoint`, which nautilus uploads to, must
  *     be `https://` unless it is a loopback host or `allowInsecureTransport` is set.
  *
+ * The bucket name must follow the S3 naming rules (3–63 lowercase letters, digits, dots and
+ * hyphens), since it goes into the request URL. A dotted bucket over `https://` needs
+ * `forcePathStyle`: `bucket.with.dots.host` does not match the endpoint's certificate.
+ *
  * Object keys are `<prefix><DID hash>/<envelope sha256>.json`: deterministic, and an edit
  * creates a sibling instead of overwriting. The object an on-chain pointer refers to never
  * changes, so its hash keeps matching and a failed edit leaves the live version intact.
  * Remove old versions with `remove(pointer)`. Keys and the prefix are refused when they
  * contain `.`/`..` or empty segments, a leading `/` or a backslash: S3 does not normalise
  * them, but URL handling would, so the upload and the node's read would hit different keys.
+ *
+ * Signed requests never follow a redirect: S3 redirects when the region or endpoint does
+ * not match the bucket, and the error says so.
  *
  * No AWS SDK: requests are signed with SigV4 over `fetch` and WebCrypto, so this runs in
  * Node ≥ 22 and in the browser.
@@ -43,6 +50,7 @@ import {
   errorMessage,
   type FetchedText,
   fetchText,
+  RedirectError,
   RequestTimeoutError
 } from '../utils/http.js'
 import {
@@ -68,11 +76,14 @@ export interface S3RemoteStoreOptions {
   endpoint: string
   /**
    * The endpoint written into the pointer, for the node. Defaults to `endpoint`. May be
-   * `http://` (e.g. `http://minio:9000` inside Docker): only the node connects to it.
+   * `http://` (e.g. `http://minio:9000` inside Docker): only the node connects to it. The
+   * pointer gets it normalised like `endpoint`: no scheme means `https://`, and the scheme is
+   * lowercased.
    */
   nodeEndpoint?: string
   /** Default `us-east-1`, as on the node. */
   region?: string
+  /** An S3 bucket name: 3–63 lowercase letters, digits, dots and hyphens. */
   bucket: string
   /**
    * Prepended to every object key as is, e.g. `'ddo/'`; without the trailing `/`, `'ddo'`
@@ -82,7 +93,8 @@ export interface S3RemoteStoreOptions {
   prefix?: string
   /**
    * Path-style addressing (`endpoint/bucket/key`) for uploads. Default `false`. Required
-   * (the constructor throws otherwise) when `endpoint` is an IP address or `localhost`.
+   * (the constructor throws otherwise) when `endpoint` is an IP address or `localhost`, and
+   * for a bucket name with dots over `https://`.
    */
   forcePathStyle?: boolean
   /** Addressing style written into the pointer. Defaults to `forcePathStyle`. */
@@ -127,6 +139,8 @@ type Role = 'read' | 'write'
 const DEFAULT_REGION = 'us-east-1'
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 const PROBE_BODY = '{"nautilus":"remote-store-check"}'
+/** Where `check()` puts its probes, below `prefix`. */
+const PROBE_DIRECTORY = 'nautilus-store-check'
 /** One retry, for network errors and these answers. */
 const MAX_ATTEMPTS = 2
 const RETRIED_STATUSES = [500, 502, 503, 504]
@@ -137,6 +151,8 @@ export class S3RemoteStore implements RemoteStore {
   private readonly region: string
   private readonly prefix: string
   private readonly sharedCredentials: boolean
+  /** `<prefix><DID hash>/<sha256>.json`: the keys `put()` (and `check()`) write. */
+  private readonly objectKeyShape: RegExp
 
   constructor(options: S3RemoteStoreOptions) {
     const missing = (
@@ -178,11 +194,17 @@ export class S3RemoteStore implements RemoteStore {
         `S3RemoteStore: allowSharedCredentials is set, so the WRITE key ${options.writeCredentials.accessKeyId} is written, node-encrypted, into every on-chain pointer, permanently. Whoever holds the node's key can overwrite or delete every stored DDO with it. Use a separate read-only key scoped to the prefix.`
       )
 
+    assertHttpEndpoint('endpoint', options.endpoint)
+    if (options.nodeEndpoint)
+      assertHttpEndpoint('nodeEndpoint', options.nodeEndpoint)
+
     assertSecureTransport(
       withScheme(options.endpoint),
       'S3RemoteStore endpoint',
       options.allowInsecureTransport
     )
+
+    assertBucketName(options.bucket)
 
     const prefix = options.prefix ?? ''
     if (prefix) assertSafeKey(prefix, 'prefix', true)
@@ -202,8 +224,20 @@ export class S3RemoteStore implements RemoteStore {
         : 'nodeForcePathStyle'
     )
 
+    if (
+      options.bucket.includes('.') &&
+      !options.forcePathStyle &&
+      new URL(withScheme(options.endpoint)).protocol === 'https:'
+    )
+      throw new Error(
+        `S3RemoteStore: the bucket name ${options.bucket} contains dots, so virtual-host addressing (${options.bucket}.${new URL(withScheme(options.endpoint)).host}) over https cannot work: the endpoint's wildcard certificate covers one label only. Set forcePathStyle: true.`
+      )
+
     this.options = options
     this.prefix = prefix
+    this.objectKeyShape = new RegExp(
+      `^${escapeRegExp(prefix)}[A-Za-z0-9._-]+/[0-9a-f]{64}\\.json$`
+    )
     this.fetchImpl = options.fetchImpl || fetch
     this.region = options.region || DEFAULT_REGION
   }
@@ -228,19 +262,33 @@ export class S3RemoteStore implements RemoteStore {
   }
 
   /**
-   * Deletes the object behind a pointer this store returned, with the write key. Only
-   * objects under `prefix` in this store's bucket. The redacted pointer from
-   * `PublishResponse.stored` is enough: only `bucket` and `objectKey` are used.
+   * Deletes the object behind a pointer this store returned, with the write key. Only keys
+   * of the exact shape `put()` writes, `<prefix><DID hash>/<sha256>.json`, in this store's
+   * bucket. The redacted pointer from `PublishResponse.stored` is enough: only `bucket` and
+   * `objectKey` are used. An object that is already gone (`404 NoSuchKey`) counts as removed.
    */
   async remove(pointer: StorageObject): Promise<void> {
     const objectKey = this.ownObjectKey(pointer, 'remove')
 
-    await this.request(
+    if (!this.objectKeyShape.test(objectKey))
+      throw new Error(
+        `S3RemoteStore.remove: ${objectKey} is not a key this store writes (${JSON.stringify(this.prefix)} + <DID hash>/<sha256>.json), so it is left alone.`
+      )
+
+    const response = await this.send(
       'DELETE',
       objectKey,
       this.options.writeCredentials,
       'write'
     )
+
+    if (
+      response.ok ||
+      (response.status === 404 && s3ErrorCode(response.body) === 'NoSuchKey')
+    )
+      return
+
+    throw new Error(this.describeError('DELETE', objectKey, 'write', response))
   }
 
   /**
@@ -267,13 +315,20 @@ export class S3RemoteStore implements RemoteStore {
   }
 
   /**
-   * Runs before the first transaction of a publish or edit.
+   * Runs before the first transaction of a publish, completePublish or edit.
    *
-   * Uploads a probe (under a random key below `prefix`) with the write key, reads it back
-   * with the read key (as the node will, though through `endpoint` rather than
-   * `nodeEndpoint`), makes sure the read key can neither PUT nor DELETE, and deletes the
-   * probes. Only an explicit 403 / `AccessDenied` counts as "the read key cannot"; any
-   * other answer fails the check. A failing cleanup never hides the error that came first.
+   * Uploads a probe with the write key, reads it back with the read key (as the node will,
+   * though through `endpoint` rather than `nodeEndpoint`), makes sure the read key can
+   * neither PUT nor DELETE, and deletes the probes. The probes have the shape of real
+   * objects, `<prefix>nautilus-store-check/<random sha256-like hex>.json`, so a policy that
+   * grants the read key write access only to `<prefix>*` + `/` + `*` is caught too. Only an
+   * explicit 403 `AccessDenied` counts as "the read key cannot"; any other answer fails the
+   * check. A failing cleanup never hides the error that came first; a probe that is already
+   * gone (404) counts as cleaned up.
+   *
+   * Version-level permissions are not tried: on a versioned bucket, a read key allowed
+   * `s3:DeleteObjectVersion` (or to change version ACLs or retention) passes, so its policy
+   * should grant `s3:GetObject` and nothing that writes.
    */
   async check(): Promise<void> {
     const { writeCredentials, readCredentials } = this.options
@@ -297,7 +352,14 @@ export class S3RemoteStore implements RemoteStore {
 
       if (!this.sharedCredentials) {
         const readProbe = this.probeKey()
-        const canWrite = await this.readKeyCan('PUT', readProbe)
+        let canWrite: boolean
+        try {
+          canWrite = await this.readKeyCan('PUT', readProbe)
+        } catch (error) {
+          // No clear answer, so the PUT may have taken effect: clean it up too.
+          written.push(readProbe)
+          throw error
+        }
         if (canWrite) written.push(readProbe)
         const canDelete = await this.readKeyCan('DELETE', probeKey)
 
@@ -310,7 +372,15 @@ export class S3RemoteStore implements RemoteStore {
     const cleanupErrors: unknown[] = []
     for (const key of written) {
       try {
-        await this.request('DELETE', key, writeCredentials, 'write')
+        const response = await this.send(
+          'DELETE',
+          key,
+          writeCredentials,
+          'write'
+        )
+        // 404: already gone, e.g. deleted by a read key that may delete.
+        if (!response.ok && response.status !== 404)
+          throw new Error(this.describeError('DELETE', key, 'write', response))
       } catch (error) {
         cleanupErrors.push(error)
       }
@@ -372,8 +442,13 @@ export class S3RemoteStore implements RemoteStore {
     warnOnce(`s3-writable-read-key:${this.options.bucket}:${can}`, message)
   }
 
+  /** A fresh probe key, shaped like the keys `put()` writes. */
   private probeKey(): string {
-    return `${this.prefix}nautilus-store-check-${crypto.randomUUID()}.json`
+    const random = [...crypto.getRandomValues(new Uint8Array(32))]
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join('')
+
+    return `${this.prefix}${PROBE_DIRECTORY}/${random}.json`
   }
 
   /** The object key of a pointer into this store's bucket and prefix, or throws. */
@@ -408,7 +483,8 @@ export class S3RemoteStore implements RemoteStore {
     return {
       type: 's3',
       s3Access: {
-        endpoint: options.nodeEndpoint || options.endpoint,
+        // Normalised: the node only checks that the endpoint starts with "http".
+        endpoint: withScheme(options.nodeEndpoint || options.endpoint),
         region: this.region,
         bucket: options.bucket,
         objectKey,
@@ -436,7 +512,9 @@ export class S3RemoteStore implements RemoteStore {
   }
 
   /**
-   * One signed request, with a timeout. Network errors are wrapped with context.
+   * One signed request, with a timeout. Network errors are wrapped with context. A redirect
+   * is not followed (fetchText's default): it would carry the signed request elsewhere, and
+   * S3 redirects only when the region or endpoint does not match the bucket.
    *
    * Every request this store sends is idempotent (a PUT writes a content-addressed key with
    * the same body), so a network error or a 500/502/503/504 is retried once, freshly
@@ -479,6 +557,14 @@ export class S3RemoteStore implements RemoteStore {
           { timeoutMs }
         )
       } catch (error) {
+        if (error instanceof RedirectError)
+          throw new Error(
+            this.describeRedirect(method, key, role, url, error),
+            {
+              cause: error
+            }
+          )
+
         const timedOut = error instanceof RequestTimeoutError
         if (!timedOut && attempt < MAX_ATTEMPTS) continue
 
@@ -513,7 +599,14 @@ export class S3RemoteStore implements RemoteStore {
       return `S3 ${where}: signature mismatch. Check the secret key, and that region (${this.region}) and forcePathStyle match the endpoint.`
     if (code === 'InvalidAccessKeyId')
       return `S3 ${where}: the access key id is unknown at ${this.options.endpoint}.`
-    if (code === 'NoSuchBucket' || (status === 404 && method !== 'GET'))
+    const region = /<Region>([^<]+)<\/Region>/.exec(body)?.[1]
+    if (region && region !== this.region)
+      return `S3 ${where}: the bucket is in region ${region}, not ${this.region} (${code || status}). Set region: '${region}', and the endpoint of that region.`
+    if (code === 'NoSuchKey') return `S3 ${where}: no such object (NoSuchKey).`
+    if (
+      code === 'NoSuchBucket' ||
+      (status === 404 && method !== 'GET' && !code)
+    )
       return `S3 ${where}: bucket ${this.options.bucket} does not exist at ${this.options.endpoint} (or forcePathStyle is wrong for it).`
     if (status === 403)
       return `S3 ${where}: access denied (${code || 403}). The ${role} key needs ${role === 'read' ? 's3:GetObject' : 's3:PutObject and s3:DeleteObject'} on ${this.prefix || 'the bucket'}.`
@@ -521,22 +614,85 @@ export class S3RemoteStore implements RemoteStore {
 
     return `S3 ${where} failed: ${status} ${code || ''} ${body.slice(0, 200)}`.trim()
   }
+
+  /** A redirect that was not followed, with what usually causes it. */
+  private describeRedirect(
+    method: string,
+    key: string,
+    role: Role,
+    url: string,
+    error: RedirectError
+  ): string {
+    const target = error.locationOrigin
+    const region = target
+      ? /^https?:\/\/(?:[^/]*\.)?s3[.-]([a-z0-9-]+)\.amazonaws\.com(?::\d+)?$/i.exec(
+          target
+        )?.[1]
+      : undefined
+
+    return `S3 ${method} s3://${this.options.bucket}/${key} with the ${role} key via ${new URL(url).origin} was answered with a redirect (${error.status || 'opaque'})${target ? ` to ${target}` : ''}, which nautilus does not follow with a signed request. S3 redirects when the bucket is not in the region signed for (${this.region}) or the endpoint is not the bucket's: set region${region && region !== this.region ? ` (the redirect points to ${region})` : ''} and endpoint to the bucket's region, e.g. https://s3.<region>.amazonaws.com on AWS, and check forcePathStyle.`
+  }
 }
 
 function s3ErrorCode(body: string): string | undefined {
   return /<Code>([^<]+)<\/Code>/.exec(body)?.[1]
 }
 
-/** Only an explicit 403 `AccessDenied` (or a bare 403) means "this key may not". */
+/**
+ * Only an explicit 403 `AccessDenied` means "this key may not". A bare 403 may come from a
+ * proxy or firewall in front of the bucket, and says nothing about the key.
+ */
 function isAccessDenied(response: FetchedText): boolean {
-  if (response.status !== 403) return false
-
-  const code = s3ErrorCode(response.body)
-  return !code || code === 'AccessDenied'
+  return (
+    response.status === 403 && s3ErrorCode(response.body) === 'AccessDenied'
+  )
 }
 
+/** The endpoint with an explicit, lowercase scheme: none means `https://`. */
 function withScheme(endpoint: string): string {
-  return /^https?:\/\//i.test(endpoint) ? endpoint : `https://${endpoint}`
+  const trimmed = endpoint.trim()
+
+  return /^https?:\/\//i.test(trimmed)
+    ? trimmed.replace(/^https?:/i, (scheme) => scheme.toLowerCase())
+    : `https://${trimmed}`
+}
+
+/** Throws for an endpoint with a scheme other than `http://` or `https://`. */
+function assertHttpEndpoint(name: string, endpoint: string): void {
+  const trimmed = endpoint.trim()
+
+  if (
+    /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) &&
+    !/^https?:\/\//i.test(trimmed)
+  )
+    throw new Error(
+      `S3RemoteStore: ${name} must be an http:// or https:// URL, or a host without a scheme (meaning https://).`
+    )
+}
+
+/**
+ * Throws for a bucket name outside the S3 naming rules: 3–63 characters of lowercase
+ * letters, digits, dots and hyphens, starting and ending with a letter or digit, no two
+ * adjacent dots, not an IP address. It goes into the request URL, so anything else could
+ * change the host or the path.
+ */
+function assertBucketName(bucket: string): void {
+  const problem = !/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(bucket)
+    ? 'must be 3 to 63 lowercase letters, digits, dots and hyphens, starting and ending with a letter or digit'
+    : bucket.includes('..')
+      ? 'must not contain two adjacent dots'
+      : /^\d{1,3}(\.\d{1,3}){3}$/.test(bucket)
+        ? 'must not be an IP address'
+        : undefined
+
+  if (problem)
+    throw new Error(
+      `S3RemoteStore: the bucket ${JSON.stringify(bucket)} is not a valid S3 bucket name: it ${problem}.`
+    )
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 /**

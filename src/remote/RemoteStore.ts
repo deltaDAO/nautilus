@@ -42,12 +42,15 @@ export interface RemoteStore {
   put(payload: string, hint: { did: string }): Promise<StorageObject>
 
   /**
-   * Optional preflight, called by `publish()` before the first transaction.
+   * Optional preflight, called by `publish()`, `completePublish()` and `edit()` before
+   * their first transaction, on every call.
    *
    * The NFT has to exist before the DDO can be stored, because the DID derives from its
    * address. A store that fails only then leaves an NFT without metadata behind, so a
    * store that can tell up front that it will fail (bad credentials, missing scopes, an
-   * unreachable endpoint) should throw here.
+   * unreachable endpoint) should throw here. Since every edit runs it too, keep it cheap:
+   * whatever it writes (`IpfsRemoteStore`'s `probe: 'upload'`, `S3RemoteStore`'s probe
+   * objects) is written again on each call.
    */
   check?(): Promise<void>
 
@@ -69,10 +72,10 @@ export interface RemoteStore {
    * redacted pointer from `PublishResponse.stored` (secrets replaced by `'<redacted>'`).
    *
    * nautilus calls it itself in one case only: `publish()`, `completePublish()` or `edit()`
-   * stored the envelope and then failed before the metadata transaction was sent, so
-   * nothing can point at it (the outcome is on `error.stored`). It never removes an object
-   * once the transaction may have been sent, since an indexed asset needs its DDO for
-   * re-indexing. Removing superseded versions or those of revoked assets is up to you.
+   * stored the envelope and then failed before the metadata transaction was sent, or the
+   * transaction was rejected or mined and reverted, so nothing can point at it (the outcome
+   * is on `error.stored`). It never removes an object once the transaction may have been
+   * mined, since an indexed asset needs its DDO for re-indexing. Removing superseded versions or those of revoked assets is up to you.
    */
   remove?(pointer: StorageObject): Promise<void>
 }

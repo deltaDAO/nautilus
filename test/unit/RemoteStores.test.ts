@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { IpfsRemoteStore } from '../../src/remote/IpfsRemoteStore.js'
+import { errorMessage, RequestTimeoutError } from '../../src/utils/http.js'
 import { expectThrowsAsync } from '../helpers.js'
 
 const CID_V1 = 'bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy'
@@ -421,6 +422,15 @@ describe('IpfsRemoteStore', () => {
         )
       }).remove(pointer)
 
+      await new IpfsRemoteStore({
+        uploadUrl: 'https://api.pinata.cloud/pinning/pinFileToIPFS',
+        headers: { Authorization: `Bearer ${TOKEN}` },
+        fetchImpl: fetchAnswering(
+          400,
+          `{"error":{"reason":"CURRENT_USER_HAS_NOT_PINNED_CID","details":"The current user has not pinned the cid: ${CID_V1}"}}`
+        )
+      }).remove(pointer)
+
       await expectThrowsAsync(
         () =>
           new IpfsRemoteStore({
@@ -433,6 +443,60 @@ describe('IpfsRemoteStore', () => {
           }).remove(pointer),
         /^IPFS unpin of bafk\S+ failed: 403 .*<redacted>/
       )
+    })
+
+    it('reads "not pinned" only in the answering service\'s own format', async () => {
+      // A proxy's error page that merely mentions it.
+      await expectThrowsAsync(
+        () =>
+          new IpfsRemoteStore({
+            uploadUrl: 'http://127.0.0.1:5001/api/v0/add',
+            fetchImpl: fetchAnswering(
+              502,
+              '<html>502 Bad Gateway: upstream said not pinned</html>'
+            )
+          }).remove(pointer),
+        /^IPFS unpin of \S+ failed: 502/
+      )
+      // Kubo's format from Pinata's endpoint, and Pinata's with a 403.
+      await expectThrowsAsync(
+        () =>
+          new IpfsRemoteStore({
+            uploadUrl: 'https://api.pinata.cloud/pinning/pinFileToIPFS',
+            fetchImpl: fetchAnswering(
+              500,
+              '{"Message":"not pinned","Type":"error"}'
+            )
+          }).remove(pointer),
+        /failed: 500/
+      )
+      await expectThrowsAsync(
+        () =>
+          new IpfsRemoteStore({
+            uploadUrl: 'https://api.pinata.cloud/pinning/pinFileToIPFS',
+            fetchImpl: fetchAnswering(
+              403,
+              '{"error":{"reason":"CURRENT_USER_HAS_NOT_PINNED_CID"}}'
+            )
+          }).remove(pointer),
+        /failed: 403/
+      )
+    })
+
+    it('counts a 404 from a configured unpin as removed, and nothing else', async () => {
+      const custom = (status: number, body: string) =>
+        new IpfsRemoteStore({
+          uploadUrl: 'https://pin.test/upload',
+          unpin: { url: 'https://pin.test/pins/{cid}' },
+          fetchImpl: fetchAnswering(status, body)
+        }).remove(pointer)
+
+      await custom(404, 'Not Found')
+      await expectThrowsAsync(
+        () => custom(500, '{"Message":"not pinned","Type":"error"}'),
+        /failed: 500/
+      )
+      await expectThrowsAsync(() => custom(410, 'not pinned'), /failed: 410/)
     })
 
     it('refuses what it cannot unpin', async () => {
@@ -495,6 +559,265 @@ describe('IpfsRemoteStore', () => {
             probe: { url: 'http://ipfs.example.org/auth' }
           })
       ).to.throw(/IpfsRemoteStore probe.url uses plain http:\/\//)
+    })
+  })
+
+  describe('error scrubbing', () => {
+    it('stays fast on a megabyte of hostile body', async () => {
+      // ~1 MB of token-like text: each eyJ starts a match attempt over the rest of the body.
+      const hostile = 'eyJ'.repeat(350_000)
+      const headers = { Authorization: `Bearer ${TOKEN}` }
+
+      for (const [status, body] of [
+        [502, hostile],
+        [502, `token=${'a'.repeat(1_000_000)}`],
+        [502, `Bearer ${'eyJa.'.repeat(200_000)}`],
+        // A 2xx without a CID: the body itself is echoed as the "hash".
+        [200, hostile]
+      ] as const) {
+        const store = new IpfsRemoteStore({
+          uploadUrl: 'https://ipfs.test/add',
+          headers,
+          fetchImpl: fetchAnswering(status, body)
+        })
+
+        const started = performance.now()
+        const thrown = await store
+          .put('{}', { did: 'did:ope:1' })
+          .catch((error) => error)
+        const elapsed = performance.now() - started
+
+        expect(thrown.message).to.match(/^IPFS upload (failed|returned)/)
+        expect(thrown.message.length).to.be.lessThan(800)
+        expect(elapsed, `${status} ${body.slice(0, 20)}`).to.be.lessThan(200)
+      }
+    })
+
+    it('replaces a header value across the whole body before bounding it', async () => {
+      const secret = 'sk_live_0123456789abcdef'
+      // The secret straddles the bound regular expressions run on.
+      const body = `${'x'.repeat(1190)}${secret}${'y'.repeat(100)}`
+
+      const thrown = await new IpfsRemoteStore({
+        uploadUrl: 'https://ipfs.test/add',
+        headers: { 'x-api-key': secret },
+        fetchImpl: fetchAnswering(500, `${'z'.repeat(250)}${secret}${body}`)
+      })
+        .put('{}', { did: 'did:ope:1' })
+        .catch((error) => error)
+
+      expect(thrown.message).to.contain('<redacted>')
+      expect(thrown.message).not.to.contain('sk_live')
+    })
+
+    it('scrubs a 2xx body echoed as the CID', async () => {
+      const secret = 'sk_live_0123456789abcdef'
+
+      const thrown = await new IpfsRemoteStore({
+        uploadUrl: 'https://ipfs.test/add',
+        headers: { 'x-api-key': secret },
+        fetchImpl: fetchAnswering(200, `proxy saw x-api-key ${secret}`)
+      })
+        .put('{}', { did: 'did:ope:1' })
+        .catch((error) => error)
+
+      expect(thrown.message).to.match(
+        /^IPFS upload returned "proxy saw x-api-key <redacted>", which is not a CIDv0/
+      )
+    })
+
+    it("does not attach fetch's raw error, which can quote a header value", async () => {
+      const raw = new TypeError('fetch failed', {
+        cause: new TypeError(`invalid header value: Bearer ${TOKEN}`)
+      })
+      const fetchImpl = vi.fn(async () => {
+        throw raw
+      })
+
+      const thrown = await new IpfsRemoteStore({
+        uploadUrl: 'https://ipfs.test/add',
+        headers: { Authorization: `Bearer ${TOKEN}` },
+        fetchImpl
+      })
+        .put('{}', { did: 'did:ope:1' })
+        .catch((error) => error)
+
+      expect(thrown.message).to.match(
+        /^IPFS upload failed: fetch failed \(invalid header value: Bearer <redacted>.*\(https:\/\/ipfs\.test\)$/
+      )
+      expect(thrown.cause).to.equal(undefined)
+      expect(errorMessage(thrown)).not.to.contain(TOKEN)
+    })
+
+    describe('with a timeout', () => {
+      beforeEach(() => {
+        vi.useFakeTimers()
+      })
+      afterEach(() => {
+        vi.useRealTimers()
+      })
+
+      it("keeps nautilus' own timeout error as the cause", async () => {
+        const fetchImpl = vi.fn(
+          (_url: string, init: RequestInit) =>
+            new Promise<Response>((_, reject) =>
+              init.signal?.addEventListener('abort', () =>
+                reject(new Error('aborted'))
+              )
+            )
+        )
+
+        const waiting = new IpfsRemoteStore({
+          uploadUrl: 'https://ipfs.test/add',
+          requestTimeoutMs: 1000,
+          fetchImpl: fetchImpl as unknown as typeof fetch
+        })
+          .put('{}', { did: 'did:ope:1' })
+          .catch((error) => error)
+        await vi.advanceTimersByTimeAsync(1500)
+
+        const thrown = await waiting
+        expect(thrown.message).to.match(/timed out after 1000 ms/)
+        expect(thrown.cause).to.be.instanceOf(RequestTimeoutError)
+      })
+    })
+  })
+
+  describe('configuration', () => {
+    it('refuses credentials in any URL, without echoing them', () => {
+      for (const [options, name] of [
+        [
+          { uploadUrl: 'https://user:hunter2@ipfs.test/api/v0/add' },
+          'uploadUrl'
+        ],
+        // Plain http on a public host would otherwise be refused, echoing the URL.
+        [
+          { uploadUrl: 'http://user:hunter2@ipfs.example.org/add' },
+          'uploadUrl'
+        ],
+        [
+          {
+            uploadUrl: 'https://ipfs.test/add',
+            gatewayUrl: 'https://hunter2@gateway.test'
+          },
+          'gatewayUrl'
+        ],
+        [
+          {
+            uploadUrl: 'https://ipfs.test/add',
+            verify: false,
+            probe: { url: 'https://user:hunter2@ipfs.test/auth' }
+          },
+          'probe.url'
+        ],
+        [
+          {
+            uploadUrl: 'https://ipfs.test/add',
+            verify: false,
+            unpin: { url: 'https://:hunter2@pin.test/pins/{cid}' }
+          },
+          'unpin.url'
+        ]
+      ] as const) {
+        let message = ''
+        try {
+          new IpfsRemoteStore(options as never)
+        } catch (error) {
+          message = (error as Error).message
+        }
+
+        expect(message, name).to.match(
+          new RegExp(
+            `^IpfsRemoteStore ${name.replace('.', '\\.')} carries credentials in the URL .*Pass them in headers instead`
+          )
+        )
+        expect(message, name).not.to.contain('hunter2')
+      }
+    })
+
+    it('refuses a malformed probe up front', () => {
+      for (const probe of [
+        'Upload',
+        {},
+        { url: '' },
+        { url: 42 },
+        { url: 'https://ipfs.test/auth', method: 1 },
+        { url: 'https://ipfs.test/auth', headers: { Authorization: 1 } },
+        ['https://ipfs.test/auth']
+      ])
+        expect(
+          () =>
+            new IpfsRemoteStore({
+              uploadUrl: 'https://ipfs.test/add',
+              verify: false,
+              probe: probe as never
+            }),
+          JSON.stringify(probe)
+        ).to.throw(/probe must be 'upload' or \{ url, method\?, headers\? \}/)
+
+      for (const probe of [undefined, 'upload', { url: 'https://ipfs.test/a' }])
+        expect(
+          () =>
+            new IpfsRemoteStore({
+              uploadUrl: 'https://ipfs.test/add',
+              verify: false,
+              probe: probe as never
+            })
+        ).not.to.throw()
+    })
+  })
+
+  describe('redirects', () => {
+    const redirecting = (location: string) =>
+      vi.fn(
+        async (_url?: string | URL | Request, _init?: RequestInit) =>
+          new Response(null, { status: 307, headers: { location } })
+      )
+    const envelope = '{"encryptedData":"0x0102"}'
+    const hash = `0x${createHash('sha256').update(envelope).digest('hex')}`
+
+    it('never follows one with credentials or the envelope', async () => {
+      const fetchImpl = redirecting('https://evil.test/steal')
+      const store = new IpfsRemoteStore({
+        uploadUrl: 'http://127.0.0.1:5001/api/v0/add',
+        headers: { 'x-api-key': 'secret-key' },
+        probe: { url: 'http://127.0.0.1:5001/api/v0/version' },
+        fetchImpl
+      })
+
+      await expectThrowsAsync(
+        () => store.put(envelope, { did: 'did:ope:1' }),
+        /^IPFS upload failed: .*redirect \(307\) to https:\/\/evil\.test\. nautilus does not follow redirects/
+      )
+      await expectThrowsAsync(() => store.check(), /IPFS store check failed/)
+      await expectThrowsAsync(
+        () => store.verify({ type: 'ipfs', hash: CID_V1 } as never, hash),
+        /IPFS verify failed: .*redirect/
+      )
+      await expectThrowsAsync(
+        () => store.remove({ type: 'ipfs', hash: CID_V1 } as never),
+        /IPFS unpin failed: .*redirect/
+      )
+
+      expect(fetchImpl).toHaveBeenCalledTimes(4)
+      for (const [, init] of fetchImpl.mock.calls)
+        expect(init?.redirect).to.equal('manual')
+    })
+
+    it('lets only the header-less gateway read follow one', async () => {
+      const fetchImpl = fetchAnswering(200, envelope)
+
+      await new IpfsRemoteStore({
+        uploadUrl: 'https://ipfs.test/add',
+        headers: { Authorization: 'Bearer upload' },
+        gatewayUrl: 'https://gateway.test',
+        fetchImpl
+      }).verify({ type: 'ipfs', hash: CID_V1 } as never, hash)
+
+      expect(callOf(fetchImpl)[1]).to.deep.include({
+        redirect: 'follow',
+        headers: undefined
+      })
     })
   })
 })

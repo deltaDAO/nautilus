@@ -31,12 +31,20 @@
  * envelope is ciphertext either way.
  *
  * `uploadUrl`, `gatewayUrl`, `probe.url` and `unpin.url` must be `https://`, except on
- * loopback hosts or with `allowInsecureTransport`. Upstream error bodies are cut to 300 characters and scrubbed of
- * the configured header values and anything that looks like a token before they reach an
- * error message.
+ * loopback hosts or with `allowInsecureTransport`, and must not carry `user:password@`
+ * credentials (pass those in `headers`). Only the `gatewayUrl` read in `verify()` follows
+ * redirects; every other request carries credentials or the envelope, so a redirect fails
+ * it. Upstream error bodies are cut to 300 characters and scrubbed of the configured header
+ * values and anything that looks like a token before they reach an error message; network
+ * errors are rethrown without fetch's raw error as `cause`.
  */
 import type { StorageObject } from '@oceanprotocol/lib'
-import { errorMessage, fetchText } from '../utils/http.js'
+import {
+  errorMessage,
+  fetchText,
+  RedirectError,
+  RequestTimeoutError
+} from '../utils/http.js'
 import { assertSecureTransport } from '../utils/transport.js'
 import { isCid } from './cid.js'
 import type { RemoteStore } from './RemoteStore.js'
@@ -92,7 +100,8 @@ export interface IpfsRemoteStoreOptions {
    * For another service pass `{ url, method?, headers? }`, with `{cid}` in `url` where the
    * CID goes (`method` defaults to `DELETE`). Like a probe, it is sent `headers` when given,
    * and otherwise the upload `headers` only if `url` has the same origin as `uploadUrl`.
-   * `false` turns `remove()` off. A CID the service reports as not pinned counts as removed.
+   * `false` turns `remove()` off. A CID the service reports as not pinned counts as removed:
+   * Kubo's and Pinata's own JSON answers for it, and a 404 from a configured `unpin`.
    */
   unpin?:
     | false
@@ -136,6 +145,8 @@ export class IpfsRemoteStore implements RemoteStore {
     if (!options?.uploadUrl?.trim())
       throw new Error('IpfsRemoteStore needs an uploadUrl.')
 
+    // Credentials in a URL first: the transport check below echoes the URL it refuses.
+    assertUrlWithoutCredentials(options.uploadUrl, 'IpfsRemoteStore uploadUrl')
     assertSecureTransport(
       options.uploadUrl,
       'IpfsRemoteStore uploadUrl',
@@ -145,23 +156,39 @@ export class IpfsRemoteStore implements RemoteStore {
       throw new Error(
         'IpfsRemoteStore: gatewayUrl is only used to verify, so it cannot be combined with verify: false.'
       )
-    if (options.gatewayUrl)
+    if (options.gatewayUrl) {
+      assertUrlWithoutCredentials(
+        options.gatewayUrl,
+        'IpfsRemoteStore gatewayUrl'
+      )
       assertSecureTransport(
         options.gatewayUrl,
         'IpfsRemoteStore gatewayUrl',
         options.allowInsecureTransport
       )
-    if (options.probe && options.probe !== 'upload')
+    }
+    // A falsy probe is off, as in check().
+    if (options.probe) assertProbe(options.probe)
+    if (options.probe && options.probe !== 'upload') {
+      assertUrlWithoutCredentials(
+        options.probe.url,
+        'IpfsRemoteStore probe.url'
+      )
       assertSecureTransport(
         options.probe.url,
         'IpfsRemoteStore probe.url',
         options.allowInsecureTransport
       )
+    }
     if (options.unpin) {
       if (!options.unpin.url?.includes('{cid}'))
         throw new Error(
           'IpfsRemoteStore unpin.url needs a {cid} placeholder, e.g. https://pin.example.org/pins/{cid}.'
         )
+      assertUrlWithoutCredentials(
+        options.unpin.url,
+        'IpfsRemoteStore unpin.url'
+      )
       assertSecureTransport(
         options.unpin.url,
         'IpfsRemoteStore unpin.url',
@@ -248,7 +275,7 @@ export class IpfsRemoteStore implements RemoteStore {
 
     if (!isCid(hash))
       throw new Error(
-        `IPFS upload returned ${JSON.stringify(hash.slice(0, 100))}, which is not a CIDv0 (Qm…) or CIDv1 (b…/k…). The node would resolve it as a gateway path.`
+        `IPFS upload returned ${JSON.stringify(this.scrub(hash, [], 100))}, which is not a CIDv0 (Qm…) or CIDv1 (b…/k…). The node would resolve it as a gateway path.`
       )
 
     return { type: 'ipfs', hash } as StorageObject
@@ -271,10 +298,15 @@ export class IpfsRemoteStore implements RemoteStore {
       )
 
     const readBack = this.readBackRequest(hash)
-    const response = await this.send('IPFS verify', readBack.url, {
-      method: readBack.method,
-      headers: readBack.headers
-    })
+    const response = await this.send(
+      'IPFS verify',
+      readBack.url,
+      { method: readBack.method, headers: readBack.headers },
+      undefined,
+      // Only the gateway read carries neither credentials nor a body, so only it may follow
+      // a redirect (public gateways redirect to their subdomain form).
+      readBack.source === 'gateway'
+    )
 
     if (!response.ok)
       throw new Error(
@@ -324,7 +356,7 @@ export class IpfsRemoteStore implements RemoteStore {
    * account, so only pass pointers this store returned, such as `PublishResponse.stored.pointer`
    * of a superseded version or a revoked asset. Never called by nautilus on an indexed
    * asset; `publish()`, `completePublish()` and `edit()` call it only for an envelope whose
-   * metadata transaction was never sent.
+   * metadata transaction was never sent, or was mined and reverted.
    */
   async remove(pointer: StorageObject): Promise<void> {
     const type = (pointer as { type?: unknown } | undefined)?.type
@@ -348,7 +380,7 @@ export class IpfsRemoteStore implements RemoteStore {
       [unpin.secrets, this.options.headers]
     )
 
-    if (response.ok || isNotPinned(response)) return
+    if (response.ok || isNotPinned(response, unpin.service)) return
 
     throw new Error(
       `IPFS unpin of ${hash} failed: ${response.status} ${response.statusText} ${this.scrub(response.body, [unpin.secrets])}`.trim()
@@ -361,6 +393,7 @@ export class IpfsRemoteStore implements RemoteStore {
     method: string
     headers?: Record<string, string>
     secrets?: Record<string, string>
+    service: UnpinService
   } {
     const { unpin, uploadUrl } = this.options
 
@@ -374,7 +407,8 @@ export class IpfsRemoteStore implements RemoteStore {
         url,
         method: unpin.method || 'DELETE',
         headers: this.probeHeaders({ url, headers: unpin.headers }),
-        secrets: unpin.headers
+        secrets: unpin.headers,
+        service: 'custom'
       }
     }
 
@@ -400,20 +434,34 @@ export class IpfsRemoteStore implements RemoteStore {
       : undefined
   }
 
+  /**
+   * One request. A redirect is not followed, and fails it with fetchText's `RedirectError`,
+   * unless `followRedirects`: every request but the gateway read carries credential headers
+   * or the envelope, which must not reach another origin.
+   *
+   * A network error is rethrown with a scrubbed message and without the raw error as
+   * `cause`: fetch's own errors can quote a header value (`invalid header value: Bearer …`),
+   * and whatever prints the cause would undo the scrubbing.
+   */
   private async send(
     what: string,
     url: string,
     init: RequestInit,
-    secrets: (Record<string, string> | undefined)[] = [this.options.headers]
+    secrets: (Record<string, string> | undefined)[] = [this.options.headers],
+    followRedirects = false
   ) {
     try {
       return await fetchText(this.fetchImpl, url, init, {
-        timeoutMs: this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
+        timeoutMs: this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+        followRedirects
       })
     } catch (error) {
       throw new Error(
         `${what} failed: ${this.scrub(errorMessage(error), secrets)} (${originOf(url)})`,
-        { cause: error }
+        // nautilus' own errors carry no upstream text, so they can stay.
+        error instanceof RequestTimeoutError || error instanceof RedirectError
+          ? { cause: error }
+          : undefined
       )
     }
   }
@@ -421,37 +469,99 @@ export class IpfsRemoteStore implements RemoteStore {
   /** An upstream body, cut short and without anything that could be a credential. */
   private scrub(
     text: string,
-    secrets: (Record<string, string> | undefined)[] = []
+    secrets: (Record<string, string> | undefined)[] = [],
+    maxLength = MAX_BODY_IN_ERROR
   ): string {
-    return scrubSecrets(text, [this.options.headers, ...secrets])
+    return scrubSecrets(text, [this.options.headers, ...secrets], maxLength)
   }
 }
 
-/** Cuts `text` to `MAX_BODY_IN_ERROR` characters after removing secrets and token-likes. */
+/**
+ * Cuts `text` to `maxLength` characters after removing secrets and token-likes.
+ *
+ * The configured header values are replaced in the whole text first (a plain, linear
+ * search), so none is cut in half and left partly readable. Only then is the text bounded,
+ * to a few times `maxLength`, before any regular expression runs: an upstream body has no
+ * size limit, and a pattern run over megabytes of hostile input can block the event loop.
+ */
 function scrubSecrets(
   text: string,
-  headerSets: (Record<string, string> | undefined)[] = []
+  headerSets: (Record<string, string> | undefined)[] = [],
+  maxLength = MAX_BODY_IN_ERROR
 ): string {
   let scrubbed = text
 
   for (const headers of headerSets)
     for (const value of Object.values(headers ?? {})) {
-      const secret = value.replace(/^(Bearer|Basic|Token)\s+/i, '').trim()
+      const secret = String(value)
+        .replace(/^(Bearer|Basic|Token)\s+/i, '')
+        .trim()
       if (secret.length >= 4)
         scrubbed = scrubbed.split(secret).join('<redacted>')
     }
 
   scrubbed = scrubbed
+    .slice(0, maxLength * 4)
     .replace(/\b(Bearer|Basic|Token)\s+[^\s"',;]+/gi, '$1 <redacted>')
-    .replace(/eyJ[\w-]+\.[\w-]+\.[\w-]*/g, '<redacted>')
+    // Also a JWT cut short by the bound above.
+    .replace(/eyJ[\w-]*(?:\.[\w-]*){0,2}/g, '<redacted>')
     .replace(
       /((?:api[_-]?key|api[_-]?secret|secret|token|password|authorization|jwt)["']?\s*[:=]\s*["']?)[^\s"',;&}]+/gi,
       '$1<redacted>'
     )
 
-  return scrubbed.length > MAX_BODY_IN_ERROR
-    ? `${scrubbed.slice(0, MAX_BODY_IN_ERROR)}…`
+  return scrubbed.length > maxLength
+    ? `${scrubbed.slice(0, maxLength)}…`
     : scrubbed
+}
+
+/** Which unpin endpoint answered, to read a "not pinned" answer in its own format. */
+type UnpinService = 'kubo' | 'pinata' | 'custom'
+
+/**
+ * Throws for a URL that does not parse, or that carries a user name or password. fetch
+ * refuses such URLs, and the credentials would end up in error messages and logs.
+ */
+function assertUrlWithoutCredentials(url: string, what: string): void {
+  let parsed: URL
+  try {
+    parsed = new URL(url.trim())
+  } catch {
+    throw new Error(`${what} is not a valid URL.`)
+  }
+
+  if (parsed.username || parsed.password)
+    throw new Error(
+      `${what} carries credentials in the URL (user:password@host). Pass them in headers instead, e.g. headers: { Authorization: 'Basic <base64 of user:password>' }.`
+    )
+}
+
+/** Throws for a `probe` that is neither `'upload'` nor `{ url, method?, headers? }`. */
+function assertProbe(probe: unknown): void {
+  if (probe === 'upload') return
+
+  const record =
+    probe && typeof probe === 'object' && !Array.isArray(probe)
+      ? (probe as Record<string, unknown>)
+      : undefined
+  const headers = record?.headers
+
+  if (
+    record &&
+    typeof record.url === 'string' &&
+    record.url.trim() &&
+    (record.method === undefined || typeof record.method === 'string') &&
+    (headers === undefined ||
+      (headers !== null &&
+        typeof headers === 'object' &&
+        !Array.isArray(headers) &&
+        Object.values(headers).every((value) => typeof value === 'string')))
+  )
+    return
+
+  throw new Error(
+    `IpfsRemoteStore probe must be 'upload' or { url, method?, headers? } with a non-empty url and string header values; got ${typeof probe === 'string' ? 'another string' : Array.isArray(probe) ? 'an array' : record ? 'an object without them' : typeof probe}. Omit it to skip the check.`
+  )
 }
 
 /**
@@ -461,7 +571,7 @@ function scrubSecrets(
 function deriveUnpin(
   uploadUrl: string,
   cid: string
-): { url: string; method: string } | undefined {
+): { url: string; method: string; service: UnpinService } | undefined {
   let url: URL
   try {
     url = new URL(uploadUrl)
@@ -475,11 +585,13 @@ function deriveUnpin(
   if (/\/pinning\/pinFileToIPFS$/i.test(path))
     return {
       url: `${url.origin}${path.replace(/\/pinning\/pinFileToIPFS$/i, '')}/pinning/unpin/${arg}`,
-      method: 'DELETE'
+      method: 'DELETE',
+      service: 'pinata'
     }
 
   const kubo = kuboApiBase(uploadUrl)
-  if (kubo) return { url: `${kubo}/pin/rm?arg=${arg}`, method: 'POST' }
+  if (kubo)
+    return { url: `${kubo}/pin/rm?arg=${arg}`, method: 'POST', service: 'kubo' }
 
   return undefined
 }
@@ -510,13 +622,48 @@ function kuboApiBase(uploadUrl: string): string | undefined {
 }
 
 /**
- * Whether a failed unpin says the CID is not pinned (any more): Kubo's `not pinned` message,
- * Pinata's `CURRENT_USER_HAS_NOT_PINNED_CID`. Never for 401/403, which mean the key may not.
+ * Whether a failed unpin says the CID is not pinned (any more), in the answering service's
+ * own format:
+ *
+ *   - Kubo: a JSON error, `{ "Message": "not pinned…", "Type": "error" }`;
+ *   - Pinata: JSON with `error.reason` `CURRENT_USER_HAS_NOT_PINNED_CID`;
+ *   - a configured `unpin`: a 404.
+ *
+ * Never for 401/403, which mean the key may not, and never for a body that merely mentions
+ * it (a proxy's error page).
  */
-function isNotPinned(response: { status: number; body: string }): boolean {
-  if (response.status === 401 || response.status === 403) return false
+function isNotPinned(
+  response: { status: number; body: string },
+  service: UnpinService
+): boolean {
+  const { status } = response
 
-  return /not pinned|CURRENT_USER_HAS_NOT_PINNED_CID/i.test(response.body)
+  if (service === 'custom') return status === 404
+  if (status < 400 || status === 401 || status === 403) return false
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(response.body)
+  } catch {
+    return false
+  }
+  if (!parsed || typeof parsed !== 'object') return false
+
+  const record = parsed as Record<string, unknown>
+
+  if (service === 'kubo')
+    return (
+      record.Type === 'error' &&
+      typeof record.Message === 'string' &&
+      /^not pinned\b/i.test(record.Message)
+    )
+
+  const error = record.error as { reason?: unknown } | undefined
+  return (
+    !!error &&
+    typeof error === 'object' &&
+    error.reason === 'CURRENT_USER_HAS_NOT_PINNED_CID'
+  )
 }
 
 function sameOrigin(a: string, b: string): boolean {

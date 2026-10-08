@@ -25,6 +25,14 @@ export async function signS3Request(params: {
   date: Date
 }): Promise<Record<string, string>> {
   const url = new URL(params.url)
+
+  // nautilus never signs a query. Canonicalising one takes more than sorting names (values
+  // sorted too, `+` kept as is), so refuse it rather than sign something S3 would reject.
+  if (url.search)
+    throw new Error(
+      'signS3Request: URLs with a query string are not supported.'
+    )
+
   const amzDate = params.date.toISOString().replace(/[:-]|\.\d{3}/g, '')
   const day = amzDate.slice(0, 8)
   const payloadHash = await sha256Hex(params.body)
@@ -44,16 +52,10 @@ export async function signS3Request(params: {
   const names = Object.keys(headers).sort()
   const signedHeaders = names.join(';')
 
-  const query = [...url.searchParams.entries()]
-    .map(([name, value]) => [encodeRfc3986(name), encodeRfc3986(value)])
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([name, value]) => `${name}=${value}`)
-    .join('&')
-
   const canonicalRequest = [
     params.method,
     url.pathname || '/',
-    query,
+    '', // the canonical query string: always empty, see above
     names.map((name) => `${name}:${headers[name]}\n`).join(''),
     signedHeaders,
     payloadHash
