@@ -57,6 +57,7 @@ import {
   shouldResolveCredentials
 } from '../identity/policy.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
+import type { KeyedLock } from '../utils/keyedLock.js'
 import {
   assertEscrowPaymentAllowed,
   assertProviderFeesAllowed,
@@ -91,6 +92,16 @@ export interface ComputeContext {
    * `config.escrow` here when the caller set one.
    */
   escrow?: string
+  /**
+   * Serialises paid jobs that draw on the same escrow funds and authorisation: every
+   * `compute()` given the same lock runs its escrow reads, deposit, authorisation, orders
+   * and `computeStart` one job at a time per (chain, payer, payment token, payee), so each
+   * job plans its escrow from the chain state the previous one left. `Nautilus` passes one
+   * lock per instance. Without it, concurrent jobs from one payer to one environment can
+   * overwrite each other's authorisation. Jobs started from other processes or with
+   * other locks are not covered.
+   */
+  escrowLock?: KeyedLock
 }
 
 /** One resolved compute input: the asset, the chosen service, and its reference. */
@@ -236,7 +247,9 @@ export async function compute(
     consumer: environment.consumerAddress
   })
 
-  // 5-7. Fund escrow, order, start.
+  // 5-7. Fund escrow, order, start. One job at a time per payer, token and payee within
+  //      the lock's holder, so each job plans its escrow from the chain state the previous
+  //      job's lock left, not from a snapshot another job is about to change.
   const run = async () => {
     // 5. Fund and authorise escrow for exactly the amount the node quoted.
     if (escrowQuote)
@@ -277,7 +290,10 @@ export async function compute(
     return { orders, jobs }
   }
 
-  const { orders, jobs } = await run()
+  const { orders, jobs } =
+    escrowQuote && context.escrowLock
+      ? await context.escrowLock(await escrowLockKey(signer, escrowQuote), run)
+      : await run()
 
   LoggerInstance.debug(
     '[compute] started',
@@ -646,6 +662,18 @@ async function checkEscrowPayment(params: {
   await assertEscrowPaymentAllowed(quote, config, payment)
 
   return quote
+}
+
+/** The `escrowLock` key: one escrow balance and authorisation on one chain. */
+async function escrowLockKey(
+  signer: Signer,
+  quote: EscrowPaymentQuote
+): Promise<string> {
+  const payer = await signer.getAddress()
+
+  return [quote.chainId, payer, quote.token, quote.payee]
+    .map((part) => String(part).toLowerCase())
+    .join(':')
 }
 
 /**

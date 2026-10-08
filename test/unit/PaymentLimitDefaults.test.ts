@@ -209,6 +209,23 @@ describe('escrow pin in Nautilus.create', () => {
     expect(vi.mocked(compute).mock.calls[0][1].escrow).to.equal(undefined)
   })
 
+  it('passes one escrow lock per instance to every compute()', async () => {
+    const nautilus = await createNautilus({})
+    const other = await createNautilus({})
+
+    await nautilus.compute(JOB)
+    await nautilus.compute(JOB)
+    await other.compute(JOB)
+
+    const [first, second, third] = vi
+      .mocked(compute)
+      .mock.calls.map((call) => call[1].escrowLock)
+    expect(first).to.be.a('function')
+    expect(second).to.equal(first)
+    expect(third).to.be.a('function')
+    expect(third).not.to.equal(first)
+  })
+
   it('refuses a malformed config.escrow at create', async () => {
     await expectThrowsAsync(
       () => createNautilus({ config: { escrow: '0x1234' } }),

@@ -76,6 +76,7 @@ import {
 import { resolvePublisherTrustedAlgorithms } from '../utils/helpers/trusted-algorithms.js'
 import { errorMessage } from '../utils/http.js'
 import { getChainId } from '../utils/index.js'
+import { createKeyedLock } from '../utils/keyedLock.js'
 import {
   assertValidLimits,
   type EscrowPaymentLimits,
@@ -360,6 +361,14 @@ export class Nautilus {
    * lifecycle transactions for one asset never run concurrently. See `withNftLock()`.
    */
   private readonly nftLocks = new Map<string, Promise<void>>()
+
+  /**
+   * Serialises this instance's paid compute jobs per (chain, payer, payment token, payee):
+   * escrow reads, deposit, authorisation, orders and `computeStart` run one job at a time,
+   * so concurrent jobs do not overwrite each other's escrow authorisation. Jobs from other
+   * instances or processes are not covered.
+   */
+  private readonly escrowLock = createKeyedLock()
 
   /** The one-time check that the publisher is not the node's own key. */
   private nodeKeyCheck?: Promise<void>
@@ -1589,7 +1598,8 @@ export class Nautilus {
         signer: this.signer,
         chainConfig: this.config,
         credentials: this.getCredentialProvider(),
-        escrow: this.explicitEscrow
+        escrow: this.explicitEscrow,
+        escrowLock: this.escrowLock
       }
     )
   }

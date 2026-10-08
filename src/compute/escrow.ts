@@ -112,6 +112,11 @@ export interface EscrowPlan {
  * Reads the payer's escrow balance, its authorisation for the payee and its token balance,
  * and decides what to deposit and authorise. Read-only. Throws when the wallet cannot
  * cover the deposit, before anything is sent.
+ *
+ * The plan holds absolute values computed from what it read (`currentLockedAmount +
+ * amount`, `currentLocks + 1`), so it is only right until another job of the same payer
+ * and payee changes them. `compute()` therefore plans, funds and starts each job under its
+ * `escrowLock`, one job at a time per (chain, payer, token, payee).
  */
 export async function planEscrow(
   signer: Signer,

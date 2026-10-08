@@ -35,6 +35,7 @@ import { resolveEscrowPin } from '../../src/compute/escrow.js'
 import { type ComputeContext, compute } from '../../src/compute/index.js'
 import type { AssetV5 } from '../../src/ddo/index.js'
 import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
+import { createKeyedLock } from '../../src/utils/keyedLock.js'
 import { order, reuseOrder } from '../../src/utils/order.js'
 import {
   checkEscrowQuote,
@@ -1216,6 +1217,143 @@ describe('settleOrder() plans, then sends', () => {
       /neither a fixed-rate exchange nor a dispenser/
     )
     expect(vi.mocked(order)).not.toHaveBeenCalled()
+  })
+})
+
+describe('compute() concurrent jobs from one payer', () => {
+  const goodFees = { dataset: feeOf(0n), algorithm: feeOf(0n) }
+  const BLOCK_MS = 1000
+
+  /**
+   * One payer's escrow for TOKEN and PAYEE, as the contract keeps it: each deposit and
+   * authorisation lands a block after it is sent, and the node's `createLock` (run by
+   * `computeStart`, a block after the request) applies the contract's checks.
+   */
+  function chain() {
+    const state = {
+      available: 0n,
+      maxLockedAmount: 0n,
+      currentLockedAmount: 0n,
+      maxLockSeconds: 0n,
+      maxLockCounts: 0n,
+      currentLocks: 0n
+    }
+    const block = () =>
+      new Promise((resolve) => {
+        setTimeout(resolve, BLOCK_MS)
+      })
+
+    escrow.getUserFunds.mockImplementation(async () => ({
+      available: state.available,
+      locked: state.currentLockedAmount
+    }))
+    escrow.getAuthorizations.mockImplementation(async () =>
+      state.maxLockCounts === 0n ? [] : [{ payee: PAYEE, ...state }]
+    )
+    vi.mocked(sendTx).mockImplementation((async (...call: unknown[]) => {
+      const { method } = call[3] as { method: string }
+      const args = call.slice(4) as bigint[]
+      await block()
+      if (method === 'deposit') state.available += args[1]
+      if (method === 'authorize') {
+        state.maxLockedAmount = args[2]
+        state.maxLockSeconds = args[3]
+        state.maxLockCounts = args[4]
+      }
+      return { wait: async () => ({ hash: '0xescrow' }) }
+    }) as never)
+
+    async function createLock(amount: bigint) {
+      await block()
+      if (state.available < amount) throw new Error('insufficient escrow funds')
+      if (state.currentLockedAmount + amount > state.maxLockedAmount)
+        throw new Error('the lock exceeds maxLockedAmount')
+      if (state.currentLocks >= state.maxLockCounts)
+        throw new Error('the lock exceeds maxLockCounts')
+      state.available -= amount
+      state.currentLockedAmount += amount
+      state.currentLocks += 1n
+    }
+
+    return { state, createLock }
+  }
+
+  /** Two paid jobs of 1 token each, started together, run to the end on fake timers. */
+  async function twoJobs(context: Partial<Omit<ComputeContext, 'node'>>) {
+    const { createLock } = chain()
+    const jobs = [0, 1].map(() =>
+      runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL, context)
+    )
+    for (const [index, { computeStart }] of jobs.entries())
+      computeStart.mockImplementation(async () => {
+        await createLock(ONE)
+        return [{ jobId: `job-${index}` }]
+      })
+
+    const settled = Promise.allSettled(jobs.map((job) => job.running))
+    await vi.runAllTimersAsync()
+    return settled
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.mocked(sendTx).mockReset()
+    escrow.getUserFunds.mockReset()
+    escrow.getAuthorizations.mockReset()
+  })
+
+  it('runs them one after the other per payer, token and payee, each authorising on top of the last lock', async () => {
+    const results = await twoJobs({ escrowLock: createKeyedLock() })
+
+    expect(results.map((result) => result.status)).to.deep.equal([
+      'fulfilled',
+      'fulfilled'
+    ])
+    expect(
+      escrowTransactions()
+        .filter((tx) => tx.method === 'authorize')
+        .map((tx) => tx.args)
+    ).to.deep.equal([
+      [TOKEN, PAYEE, ONE, 3900n, 1n],
+      // Planned after the first job's lock: one token locked, one lock in force.
+      [TOKEN, PAYEE, 2n * ONE, 3900n, 2n]
+    ])
+  })
+
+  it('without a lock, the second job plans from the same snapshot and its lock fails', async () => {
+    // What the lock prevents: both jobs authorise maxLockedAmount = 1 token and one lock.
+    const results = await twoJobs({})
+
+    expect(results.map((result) => result.status)).to.deep.equal([
+      'fulfilled',
+      'rejected'
+    ])
+    expect((results[1] as PromiseRejectedResult).reason.message).to.match(
+      /exceeds maxLockedAmount/
+    )
+  })
+
+  it('does not hold up a job for another payee', async () => {
+    const lock = createKeyedLock()
+    const held = vi.fn()
+
+    // A job for another payee holds its own key: this one does not wait for it.
+    void lock(
+      `${CHAIN_ID}:${CONSUMER}:${TOKEN}:other`.toLowerCase(),
+      () => new Promise(held)
+    )
+
+    const { running } = runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL, {
+      escrowLock: lock
+    })
+    const settled = running.then(() => 'done')
+    await vi.runAllTimersAsync()
+
+    expect(await settled).to.equal('done')
   })
 })
 
