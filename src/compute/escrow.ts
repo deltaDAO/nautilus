@@ -31,41 +31,67 @@ const ERC20_BALANCE_ABI = [
 ] as const
 
 /**
- * The escrow contracts nautilus may fund on the config's chain, checksummed: the chain
- * config's `escrow`, then the `EnterpriseEscrow` and `Escrow` entries of Ocean's address data
- * for the chain (the file `ADDRESS_FILE` names when set, else the addresses ocean.js ships).
+ * Which rule chose the escrow contract a paid compute job may fund:
  *
- * ocean.js fills `config.escrow` from `Escrow`, while ocean-node 4.2.0 quotes
- * `EnterpriseEscrow` wherever the address data has one, so both are known. Each comes from
- * the caller's config or Ocean's address data, never from the node. Reads no chain.
+ * - `explicit`: the caller set it (`config.escrow` in `Nautilus.create`, or `escrow` in
+ *   `compute()`'s context);
+ * - `enterprise-escrow`: the `EnterpriseEscrow` entry of Ocean's address data for the chain;
+ * - `escrow`: the `Escrow` entry, on a chain whose address data lists no `EnterpriseEscrow`;
+ * - `none`: no contract is known, so paid compute is refused.
  */
-export function knownEscrowContracts(
-  chainConfig: Pick<Config, 'chainId' | 'escrow'>
-): string[] {
+export type EscrowPinRule = 'explicit' | 'enterprise-escrow' | 'escrow' | 'none'
+
+/** The one escrow contract a paid compute job may fund, and the rule that chose it. */
+export interface EscrowPin {
+  /** Checksummed. `undefined` only with the rule `none`. */
+  address?: string
+  rule: EscrowPinRule
+}
+
+/**
+ * The escrow contract a paid compute job on `chainId` may fund. Exactly one, or none:
+ *
+ * 1. `explicit`, when the caller set one: that contract, and no other.
+ * 2. Otherwise the contract ocean-node 4.2.0 itself uses for the chain
+ *    (`getEscrowContractAddressForChain`): the `EnterpriseEscrow` entry of Ocean's address
+ *    data when it has one, else its `Escrow` entry. The address data is the file
+ *    `ADDRESS_FILE` names when set, else the addresses ocean.js ships.
+ * 3. Neither: rule `none`, and paid compute is refused.
+ *
+ * ocean.js's `ConfigHelper` fills `config.escrow` from the `Escrow` entry, so a chain
+ * config's `escrow` is not a caller's choice and is not read here. Nothing comes from the
+ * node. Reads no chain. Throws when `explicit` is set but is not an address.
+ */
+export function resolveEscrowPin(
+  chainId: number,
+  explicit?: string
+): EscrowPin {
+  if (explicit !== undefined && explicit !== '') {
+    if (!isAddress(explicit))
+      throw new Error(
+        `The escrow contract set for paid compute must be an address, not '${explicit}'. Set the chain's EnterpriseEscrow contract, or leave it unset to use Ocean's address data for chain ${chainId}.`
+      )
+
+    return { address: getAddress(explicit), rule: 'explicit' }
+  }
+
   let addresses: Record<string, unknown> | null = null
 
   try {
-    addresses = getOceanArtifactsAddressesByChainId(chainConfig.chainId)
+    addresses = getOceanArtifactsAddressesByChainId(chainId)
   } catch {
     addresses = null
   }
 
-  const candidates = [
-    chainConfig.escrow,
-    addresses?.EnterpriseEscrow,
-    addresses?.Escrow
-  ]
+  const enterprise = addresses?.EnterpriseEscrow
+  if (typeof enterprise === 'string' && isAddress(enterprise))
+    return { address: getAddress(enterprise), rule: 'enterprise-escrow' }
 
-  return [
-    ...new Set(
-      candidates
-        .filter(
-          (entry): entry is string =>
-            typeof entry === 'string' && isAddress(entry)
-        )
-        .map((entry) => getAddress(entry))
-    )
-  ]
+  const plain = addresses?.Escrow
+  if (typeof plain === 'string' && isAddress(plain))
+    return { address: getAddress(plain), rule: 'escrow' }
+
+  return { rule: 'none' }
 }
 
 /** What `fundEscrow` will send, decided from chain reads before anything is sent. */

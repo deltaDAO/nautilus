@@ -1,7 +1,8 @@
 /**
  * `Nautilus.create` takes the payment limits once, as the default for every `access()` and
  * `compute()` call; an option passed to the call replaces the default of the same name.
- * A malformed limit fails at `create`, not at the first paid call.
+ * A malformed limit fails at `create`, not at the first paid call. Only the caller's own
+ * `config.escrow` reaches `compute()` as the escrow pin, not the one ocean.js fills in.
  */
 import { Wallet } from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -23,10 +24,10 @@ vi.mock('../../src/compute/index.js', async (importOriginal) => ({
 const ADDRESS = '0x0000000000000000000000000000000000000001'
 const TOKEN = '0x0000000000000000000000000000000000000fee'
 
-function createNautilus(options: NautilusOptions) {
+function createNautilus(options: NautilusOptions, chainId = 32456n) {
   return Nautilus.create(
     Wallet.createRandom().connect({
-      getNetwork: async () => ({ chainId: 32456n })
+      getNetwork: async () => ({ chainId })
     } as never),
     {
       ...options,
@@ -34,7 +35,8 @@ function createNautilus(options: NautilusOptions) {
         oceanNodeUri: 'https://ocean-node.example.com',
         nftFactoryAddress: ADDRESS,
         fixedRateExchangeAddress: ADDRESS,
-        dispenserAddress: ADDRESS
+        dispenserAddress: ADDRESS,
+        ...options.config
       }
     }
   )
@@ -124,6 +126,39 @@ describe('payment limits in Nautilus.create', () => {
     await expectThrowsAsync(
       () => createNautilus({ confirmProviderFees: true as never }),
       /confirmProviderFees must be a function/
+    )
+  })
+})
+
+describe('escrow pin in Nautilus.create', () => {
+  const OP_SEPOLIA = 11155420n
+  const ESCROW = '0x00000000000000000000000000000000000e5c40'
+
+  it('passes the caller’s config.escrow to compute() as the explicit pin', async () => {
+    const nautilus = await createNautilus({ config: { escrow: ESCROW } })
+
+    await nautilus.compute(JOB)
+
+    expect(vi.mocked(compute).mock.calls[0][1].escrow).to.equal(ESCROW)
+  })
+
+  it('passes no pin when only ocean.js filled config.escrow', async () => {
+    const nautilus = await createNautilus({}, OP_SEPOLIA)
+
+    // ocean.js's ConfigHelper fills it from the address data's plain Escrow.
+    expect(nautilus.getOceanConfig().escrow).to.equal(
+      '0x7842Fa3B2d87Ff1cd52C4152382f7C4B3406E5A6'
+    )
+
+    await nautilus.compute(JOB)
+
+    expect(vi.mocked(compute).mock.calls[0][1].escrow).to.equal(undefined)
+  })
+
+  it('refuses a malformed config.escrow at create', async () => {
+    await expectThrowsAsync(
+      () => createNautilus({ config: { escrow: '0x1234' } }),
+      /escrow is not a valid address/
     )
   })
 })

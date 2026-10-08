@@ -235,7 +235,15 @@ export interface NautilusOptions
   ddoSigner?: DdoSigner
   /** Satisfies credential-gated access. Omit to skip SSI entirely. */
   credentials?: CredentialProvider
-  /** Overrides for the chain config resolved from the signer's network. */
+  /**
+   * Overrides for the chain config resolved from the signer's network.
+   *
+   * `config.escrow`, when set here, is the only escrow contract paid compute funds. Left
+   * out, nautilus funds the chain's `EnterpriseEscrow` from Ocean's address data, else its
+   * `Escrow`: the `escrow` ocean.js's `ConfigHelper` fills in (its `Escrow` entry) does not
+   * count as a choice. Spreading `ConfigHelper`'s config in here does, so leave its
+   * `escrow` out.
+   */
   config?: Partial<Config>
   /**
    * Accept a plain `http://` `oceanNodeUri` on a host other than `localhost`,
@@ -326,6 +334,11 @@ export class Nautilus {
   private config!: Config
   private node!: OceanNodeClient
   private options: NautilusOptions
+  /**
+   * The escrow contract the caller set as `config.escrow`, if any; `compute()` funds only
+   * that one. Kept apart from `config.escrow`, which ocean.js fills from `Escrow`.
+   */
+  private explicitEscrow?: string
 
   /**
    * One promise chain per NFT (lower-cased), so this instance's publish, edit and
@@ -391,6 +404,12 @@ export class Nautilus {
       ...this.options.config
     } as Config
 
+    // Only the caller's own `config.escrow` pins the escrow contract; the one
+    // `ConfigHelper` fills in is its address data's `Escrow` entry, not a choice.
+    const escrow = this.options.config?.escrow
+    this.explicitEscrow =
+      typeof escrow === 'string' && escrow.trim() ? escrow.trim() : undefined
+
     this.assertUsableConfig()
 
     this.node = new OceanNodeClient({
@@ -431,6 +450,11 @@ export class Nautilus {
       if (!value || !isAddress(value))
         problems.push(`${field} is not a valid address`)
     }
+
+    if (this.explicitEscrow !== undefined && !isAddress(this.explicitEscrow))
+      problems.push(
+        "escrow is not a valid address (set the chain's EnterpriseEscrow contract, or leave escrow out to use Ocean's address data)"
+      )
 
     if (problems.length)
       throw new Error(
@@ -1436,7 +1460,8 @@ export class Nautilus {
         node: this.node,
         signer: this.signer,
         chainConfig: this.config,
-        credentials: this.getCredentialProvider()
+        credentials: this.getCredentialProvider(),
+        escrow: this.explicitEscrow
       }
     )
   }

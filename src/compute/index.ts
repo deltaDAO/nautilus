@@ -8,7 +8,8 @@ import type { AssetV5, ServiceV5 } from '@oceanprotocol/ddo-js'
  *     `resources: [{id: 'cpu', min, max}, ...]` with per-chain pricing, instead of the old
  *     fixed `cpuType`/`gpuType` descriptors.
  *   - **Payment runs through escrow.** `initializeCompute` returns what to lock, and the
- *     `Escrow` contract must be funded and authorised before the job starts.
+ *     escrow contract (the chain's `EnterpriseEscrow`, else its `Escrow`) must be funded
+ *     and authorised before the job starts.
  *   - **All datasets go in one array.** v1 passed `dataset` plus `additionalDatasets`.
  *   - **Free compute exists.** `freeComputeStart` needs no order, no escrow, no token.
  *   - **Output is `{remoteStorage, encryption}`.** The old hardcoded
@@ -65,10 +66,11 @@ import {
   providerFeeToSend
 } from '../utils/providerFee.js'
 import {
+  type EscrowPin,
   type EscrowPlan,
   fundEscrow,
-  knownEscrowContracts,
-  planEscrow
+  planEscrow,
+  resolveEscrowPin
 } from './escrow.js'
 
 export interface ComputeContext {
@@ -76,6 +78,15 @@ export interface ComputeContext {
   signer: Signer
   chainConfig: Config
   credentials?: CredentialProvider
+  /**
+   * The escrow contract a paid job may fund, chosen by the caller. When set, it is the only
+   * one funded. When omitted, the job funds the chain's `EnterpriseEscrow` in Ocean's
+   * address data (the file `ADDRESS_FILE` names, else the addresses ocean.js ships), else
+   * its `Escrow`; with neither, paid compute is refused. `chainConfig.escrow` is not read: ocean.js's
+   * `ConfigHelper` fills it from the `Escrow` entry. `Nautilus` passes its
+   * `config.escrow` here when the caller set one.
+   */
+  escrow?: string
 }
 
 /** One resolved compute input: the asset, the chosen service, and its reference. */
@@ -112,6 +123,8 @@ export async function compute(
   context: ComputeContext
 ): Promise<ComputeResult> {
   const { node, signer, chainConfig, credentials } = context
+  // Resolved first, so a malformed explicit escrow fails before any node call.
+  const escrowPin = resolveEscrowPin(chainConfig.chainId, context.escrow)
   const consumerAddress = await signer.getAddress()
 
   const inputs = await resolveInputs(node, config)
@@ -181,7 +194,7 @@ export async function compute(
   )
 
   // 3. The node chose the provider fees and the escrow payment: check both against what
-  //    the caller allowed, and the escrow contract against the chain config, before the
+  //    the caller allowed, and the escrow contract against the pinned one, before the
   //    first approval, deposit or order.
   const fees = inputs.map((input, index) =>
     quoteProviderFee(
@@ -201,6 +214,7 @@ export async function compute(
   const escrowPlan = await prepareEscrow({
     signer,
     chainConfig,
+    escrowPin,
     environment,
     initializeResults,
     paymentToken,
@@ -574,20 +588,22 @@ async function resolvePolicies(
  * Checks the node's escrow quote and decides what to deposit and authorise, without
  * sending anything. `undefined` when the node quoted no payment, or a payment of zero.
  *
- * The escrow contract must be one known for the chain (`knownEscrowContracts`: the chain
- * config's `escrow`, or Ocean's address data's `EnterpriseEscrow` / `Escrow`), and the
- * chain, token and payee the job's own; the amount must be within `maxEscrowPayment` or
- * confirmed by `confirmEscrowPayment`. Each refusal is an `EscrowPaymentNotAllowedError`.
+ * The escrow contract must be the pinned one (`resolveEscrowPin`: the caller's explicit
+ * choice, else the chain's `EnterpriseEscrow` in Ocean's address data, else its `Escrow`),
+ * and the chain, token and payee the job's own; the amount must be within
+ * `maxEscrowPayment` or confirmed by `confirmEscrowPayment`. Each refusal is an `EscrowPaymentNotAllowedError`.
  */
 async function prepareEscrow(params: {
   signer: Signer
   chainConfig: Config
+  escrowPin: EscrowPin
   environment: ComputeEnvironment
   initializeResults: ProviderComputeInitializeResults
   paymentToken: string
   config: ComputeConfig
 }): Promise<EscrowPlan | undefined> {
-  const { signer, chainConfig, environment, paymentToken, config } = params
+  const { signer, chainConfig, escrowPin, environment, paymentToken, config } =
+    params
   const payment = params.initializeResults.payment
 
   if (!payment) {
@@ -598,7 +614,7 @@ async function prepareEscrow(params: {
   }
 
   const quote = checkEscrowQuote(payment, {
-    escrow: knownEscrowContracts(chainConfig),
+    pin: escrowPin,
     chainId: chainConfig.chainId,
     token: paymentToken,
     payee: environment.consumerAddress

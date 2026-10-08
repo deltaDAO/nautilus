@@ -203,13 +203,11 @@ function createComputeNodeMock(
 const signer = {
   getAddress: async () => '0x0000000000000000000000000000000000c05e5a'
 } as unknown as Signer
-const chainConfig = {
-  chainId: CHAIN_ID,
-  escrow: PAYMENT.escrowAddress
-} as unknown as Config
+const chainConfig = { chainId: CHAIN_ID } as unknown as Config
 
+/** The fixtures' escrow, set explicitly: the test chain has none in Ocean's address data. */
 function computeContext(client: OceanNodeClient) {
-  return { node: client, signer, chainConfig }
+  return { node: client, signer, chainConfig, escrow: PAYMENT.escrowAddress }
 }
 
 beforeEach(() => {

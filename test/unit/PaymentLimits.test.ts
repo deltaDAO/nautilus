@@ -3,9 +3,10 @@
  *
  * The node chooses the provider fee's token and amount, and the compute escrow's contract
  * and amount. These tests pin that nautilus pays a non-zero fee only within
- * `maxProviderFee` or with `confirmProviderFees`, funds only an escrow contract known for
- * the chain (the config's `escrow`, or Ocean's address data's `EnterpriseEscrow` /
- * `Escrow`), and only within `maxEscrowPayment` or with `confirmEscrowPayment`; that every
+ * `maxProviderFee` or with `confirmProviderFees`, funds only the escrow contract pinned for
+ * the chain (the caller's explicit choice, else the chain's `EnterpriseEscrow` in Ocean's
+ * address data, else its `Escrow`), and only within `maxEscrowPayment` or with
+ * `confirmEscrowPayment`; that every
  * refusal comes before the first approval, deposit or order; and that the escrow is
  * approved, funded and authorised for exact amounts.
  *
@@ -29,12 +30,13 @@ import { getAddress, type Signer } from 'ethers'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComputeConfig } from '../../src/@types/Compute.js'
 import { access, settleOrder } from '../../src/access/index.js'
-import { knownEscrowContracts } from '../../src/compute/escrow.js'
-import { compute } from '../../src/compute/index.js'
+import { resolveEscrowPin } from '../../src/compute/escrow.js'
+import { type ComputeContext, compute } from '../../src/compute/index.js'
 import type { AssetV5 } from '../../src/ddo/index.js'
 import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
 import { order, reuseOrder } from '../../src/utils/order.js'
 import {
+  checkEscrowQuote,
   EscrowPaymentNotAllowedError,
   ProviderFeeNotAllowedError
 } from '../../src/utils/paymentLimits.js'
@@ -146,9 +148,9 @@ function feeOf(amount: bigint, token = TOKEN) {
 }
 
 const signer = { getAddress: async () => CONSUMER } as unknown as Signer
+/** No `escrow`: the pin comes from `compute()`'s context, never from the chain config. */
 const chainConfig = {
   chainId: CHAIN_ID,
-  escrow: ESCROW,
   gasFeeMultiplier: 1
 } as unknown as Config
 
@@ -224,15 +226,20 @@ const ALLOW_ALL = {
   maxEscrowPayment: { token: TOKEN, amount: ONE }
 }
 
+/**
+ * Runs `compute()` against a node answering `quote`. The escrow is pinned to `ESCROW`
+ * explicitly unless `context` says otherwise (the test chain has no escrow in Ocean's
+ * address data).
+ */
 function runCompute(
   quote: object,
   config: Partial<ComputeConfig> = {},
-  chain: Config = chainConfig
+  context: Partial<Omit<ComputeContext, 'node'>> = {}
 ) {
   const { client, computeStart } = computeNode(quote)
   const running = compute(
     { ...JOB, ...config },
-    { node: client, signer, chainConfig: chain }
+    { node: client, signer, chainConfig, escrow: ESCROW, ...context }
   )
 
   return { running, computeStart }
@@ -388,7 +395,7 @@ describe('compute() provider fees', () => {
 describe('compute() escrow contract and quote', () => {
   const goodFees = { dataset: feeOf(0n), algorithm: feeOf(0n) }
 
-  it('refuses an escrow contract other than the chain config’s, even when confirmed', async () => {
+  it('refuses an escrow contract other than the pinned one, even when confirmed', async () => {
     const confirm = vi.fn(() => true)
 
     const thrown = await runCompute(
@@ -399,7 +406,8 @@ describe('compute() escrow contract and quote', () => {
     expect(thrown).to.be.instanceOf(EscrowPaymentNotAllowedError)
     expect(thrown.reason).to.equal('escrow-address')
     expect(thrown.message).to.contain(ATTACKER)
-    expect(thrown.message).to.contain(ESCROW)
+    expect(thrown.message).to.contain(getAddress(ESCROW))
+    expect(thrown.message).to.contain('rule: explicit')
     expect(confirm).not.toHaveBeenCalled()
     expect(vi.mocked(EscrowContract)).not.toHaveBeenCalled()
     expectNothingSent()
@@ -418,15 +426,36 @@ describe('compute() escrow contract and quote', () => {
     expectNothingSent()
   })
 
-  it('refuses when the chain config knows no escrow contract', async () => {
-    const thrown = await runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL, {
-      chainId: CHAIN_ID
-    } as Config).running.catch((caught) => caught)
+  it('refuses when no escrow is set and the address data lists none for the chain', async () => {
+    // Pontus-X devnet (the test chain) is in the addresses ocean.js ships, without an
+    // escrow. A chain config's escrow, as ocean.js fills it, does not count as a choice.
+    const saved = process.env.ADDRESS_FILE
+    delete process.env.ADDRESS_FILE
+    try {
+      const confirm = vi.fn(() => true)
+      const thrown = await runCompute(
+        quoteWith(goodFees, PAYMENT),
+        {
+          ...ALLOW_ALL,
+          confirmEscrowPayment: confirm
+        },
+        {
+          escrow: undefined,
+          chainConfig: { ...chainConfig, escrow: ESCROW } as Config
+        }
+      ).running.catch((caught) => caught)
 
-    expect(thrown).to.be.instanceOf(EscrowPaymentNotAllowedError)
-    expect(thrown.reason).to.equal('unknown-escrow')
-    expect(thrown.message).to.match(/config\.escrow/)
-    expectNothingSent()
+      expect(thrown).to.be.instanceOf(EscrowPaymentNotAllowedError)
+      expect(thrown.reason).to.equal('unknown-escrow')
+      expect(thrown.message).to.match(
+        /EnterpriseEscrow contract as config\.escrow/
+      )
+      expect(confirm).not.toHaveBeenCalled()
+      expect(vi.mocked(EscrowContract)).not.toHaveBeenCalled()
+      expectNothingSent()
+    } finally {
+      if (saved !== undefined) process.env.ADDRESS_FILE = saved
+    }
   })
 
   it.each([
@@ -465,9 +494,10 @@ describe('compute() escrow contract and quote', () => {
   })
 })
 
-describe('compute() escrow contracts known for the chain', () => {
+describe('compute() escrow pin', () => {
   const goodFees = { dataset: feeOf(0n), algorithm: feeOf(0n) }
   const ENTERPRISE = getAddress('0x00000000000000000000000000000000e5c4e5c4')
+  const CHOSEN = getAddress('0x0000000000000000000000000000000000c405e0')
   const savedAddressFile = process.env.ADDRESS_FILE
   let dir: string
 
@@ -491,29 +521,74 @@ describe('compute() escrow contracts known for the chain', () => {
     process.env.ADDRESS_FILE = file
   }
 
-  // ocean-node 4.2.0 quotes EnterpriseEscrow wherever the address data has one, while
-  // ocean.js fills config.escrow from Escrow.
-  it('funds the address data’s EnterpriseEscrow when the node names it', async () => {
+  /** `compute()` with no explicit escrow, the node naming `escrowAddress`. */
+  function runDefault(
+    escrowAddress: string,
+    config: Partial<ComputeConfig> = {}
+  ) {
+    return runCompute(
+      quoteWith(goodFees, { ...PAYMENT, escrowAddress }),
+      { ...ALLOW_ALL, ...config },
+      // As ocean.js's ConfigHelper fills it: the address data's Escrow. Not a choice.
+      {
+        escrow: undefined,
+        chainConfig: { ...chainConfig, escrow: ESCROW } as Config
+      }
+    )
+  }
+
+  async function refusal(running: Promise<unknown>) {
+    const thrown = await running.catch((caught) => caught)
+    expect(thrown).to.be.instanceOf(EscrowPaymentNotAllowedError)
+    expect(vi.mocked(EscrowContract)).not.toHaveBeenCalled()
+    expectNothingSent()
+    return thrown as EscrowPaymentNotAllowedError
+  }
+
+  it('funds the explicit escrow, and only that one', async () => {
     useAddressData({ Escrow: ESCROW, EnterpriseEscrow: ENTERPRISE })
 
     const { running, computeStart } = runCompute(
-      quoteWith(goodFees, {
-        ...PAYMENT,
-        escrowAddress: ENTERPRISE.toLowerCase()
-      }),
-      ALLOW_ALL
+      quoteWith(goodFees, { ...PAYMENT, escrowAddress: CHOSEN.toLowerCase() }),
+      ALLOW_ALL,
+      { escrow: CHOSEN.toLowerCase() }
     )
     await running
+    expect(vi.mocked(EscrowContract).mock.calls[0][0]).to.equal(CHOSEN)
+    expect(computeStart).toHaveBeenCalledOnce()
 
+    // The address data's EnterpriseEscrow and Escrow are refused once a choice is made.
+    for (const other of [ENTERPRISE, ESCROW]) {
+      vi.clearAllMocks()
+      const thrown = await refusal(
+        runCompute(
+          quoteWith(goodFees, { ...PAYMENT, escrowAddress: other }),
+          { ...ALLOW_ALL, confirmEscrowPayment: () => true },
+          { escrow: CHOSEN }
+        ).running
+      )
+      expect(thrown.reason).to.equal('escrow-address')
+      expect(thrown.message).to.contain(`is ${CHOSEN}`)
+      expect(thrown.message).to.contain('rule: explicit')
+    }
+  })
+
+  it('funds only the EnterpriseEscrow on a chain whose address data has both', async () => {
+    useAddressData({ Escrow: ESCROW, EnterpriseEscrow: ENTERPRISE })
+
+    const { running, computeStart } = runDefault(ENTERPRISE.toLowerCase())
+    await running
+
+    const config = { ...chainConfig, escrow: ESCROW }
     expect(vi.mocked(EscrowContract)).toHaveBeenCalledWith(
       ENTERPRISE,
       signer,
       CHAIN_ID,
-      chainConfig
+      config
     )
     expect(vi.mocked(approveWei)).toHaveBeenCalledExactlyOnceWith(
       signer,
-      chainConfig,
+      config,
       CONSUMER,
       TOKEN,
       ENTERPRISE,
@@ -525,72 +600,199 @@ describe('compute() escrow contracts known for the chain', () => {
       args: [TOKEN, ONE]
     })
     expect(computeStart).toHaveBeenCalledOnce()
+
+    vi.clearAllMocks()
+    const confirm = vi.fn(() => true)
+    const thrown = await refusal(
+      runDefault(ESCROW, { confirmEscrowPayment: confirm }).running
+    )
+    expect(thrown.reason).to.equal('escrow-address')
+    expect(thrown.message).to.contain(`is ${ENTERPRISE}`)
+    expect(thrown.message).to.contain(
+      'rule: EnterpriseEscrow from the address data'
+    )
+    expect(confirm).not.toHaveBeenCalled()
   })
 
-  it('funds the address data’s escrow when the chain config has none', async () => {
-    useAddressData({ EnterpriseEscrow: ENTERPRISE })
+  it('falls back to Escrow on a chain whose address data has no EnterpriseEscrow', async () => {
+    useAddressData({ Escrow: ESCROW })
 
-    const { running, computeStart } = runCompute(
-      quoteWith(goodFees, { ...PAYMENT, escrowAddress: ENTERPRISE }),
-      ALLOW_ALL,
-      { chainId: CHAIN_ID, gasFeeMultiplier: 1 } as unknown as Config
-    )
+    const { running, computeStart } = runDefault(ESCROW)
     await running
-
-    expect(vi.mocked(EscrowContract).mock.calls[0][0]).to.equal(ENTERPRISE)
+    expect(vi.mocked(EscrowContract).mock.calls[0][0]).to.equal(
+      getAddress(ESCROW)
+    )
     expect(computeStart).toHaveBeenCalledOnce()
   })
 
-  it('still refuses a contract neither the config nor the address data lists', async () => {
-    useAddressData({ Escrow: ESCROW, EnterpriseEscrow: ENTERPRISE })
-    const confirm = vi.fn(() => true)
+  it('refuses when nothing is set and the address data lists no escrow', async () => {
+    useAddressData({})
 
-    const thrown = await runCompute(
-      quoteWith(goodFees, { ...PAYMENT, escrowAddress: ATTACKER }),
-      { ...ALLOW_ALL, confirmEscrowPayment: confirm }
-    ).running.catch((caught) => caught)
+    const thrown = await refusal(
+      runDefault(ESCROW, { confirmEscrowPayment: () => true }).running
+    )
+    expect(thrown.reason).to.equal('unknown-escrow')
+    expect(thrown.message).to.contain(
+      "Set the chain's EnterpriseEscrow contract as config.escrow"
+    )
+  })
 
-    expect(thrown).to.be.instanceOf(EscrowPaymentNotAllowedError)
-    expect(thrown.reason).to.equal('escrow-address')
-    expect(thrown.message).to.contain(ENTERPRISE)
-    expect(thrown.message).to.contain(getAddress(ESCROW))
-    expect(confirm).not.toHaveBeenCalled()
-    expect(vi.mocked(EscrowContract)).not.toHaveBeenCalled()
+  it.each([
+    [
+      'explicit',
+      { Escrow: ESCROW, EnterpriseEscrow: ENTERPRISE },
+      CHOSEN,
+      CHOSEN,
+      'rule: explicit'
+    ],
+    [
+      'enterprise-escrow',
+      { Escrow: ESCROW, EnterpriseEscrow: ENTERPRISE },
+      undefined,
+      ENTERPRISE,
+      'rule: EnterpriseEscrow from the address data'
+    ],
+    [
+      'escrow',
+      { Escrow: ESCROW },
+      undefined,
+      getAddress(ESCROW),
+      'rule: Escrow fallback'
+    ]
+  ])(
+    'refuses an attacker’s escrow under the rule %s, even when confirmed',
+    async (_rule, data, escrow, expected, rule) => {
+      useAddressData(data)
+      const confirm = vi.fn(() => true)
+
+      const thrown = await refusal(
+        runCompute(
+          quoteWith(goodFees, { ...PAYMENT, escrowAddress: ATTACKER }),
+          { ...ALLOW_ALL, confirmEscrowPayment: confirm },
+          { escrow }
+        ).running
+      )
+      expect(thrown.reason).to.equal('escrow-address')
+      expect(thrown.message).to.contain(ATTACKER)
+      expect(thrown.message).to.contain(`is ${expected}`)
+      expect(thrown.message).to.contain(rule)
+      expect(confirm).not.toHaveBeenCalled()
+    }
+  )
+
+  it('refuses a malformed explicit escrow before calling the node', async () => {
+    const { client } = computeNode(quoteWith(goodFees, PAYMENT))
+    const resolve = vi.spyOn(client, 'resolve')
+
+    await expectThrowsAsync(
+      () =>
+        compute(JOB, {
+          node: client,
+          signer,
+          chainConfig,
+          escrow: '0x1234'
+        }),
+      /must be an address, not '0x1234'/
+    )
+    expect(resolve).not.toHaveBeenCalled()
     expectNothingSent()
   })
+})
 
-  it('lists the config’s escrow, then the address data’s EnterpriseEscrow and Escrow', () => {
-    const other = getAddress('0x00000000000000000000000000000000000e5c41')
-    useAddressData({ Escrow: other, EnterpriseEscrow: ENTERPRISE })
+describe('resolveEscrowPin()', () => {
+  const OP_SEPOLIA = 11155420
+  const OP_SEPOLIA_ENTERPRISE_ESCROW = getAddress(
+    '0xfa48673a7C36A2A768f89AC1ee8C355D5c367B02'
+  )
+  const OP_SEPOLIA_ESCROW = getAddress(
+    '0x7842Fa3B2d87Ff1cd52C4152382f7C4B3406E5A6'
+  )
+  const savedAddressFile = process.env.ADDRESS_FILE
 
-    expect(
-      knownEscrowContracts({ chainId: CHAIN_ID, escrow: ESCROW.toLowerCase() })
-    ).to.deep.equal([getAddress(ESCROW), ENTERPRISE, other])
-    // A config escrow that repeats one from the address data is listed once.
-    expect(
-      knownEscrowContracts({ chainId: CHAIN_ID, escrow: other })
-    ).to.deep.equal([other, ENTERPRISE])
+  beforeEach(() => {
+    delete process.env.ADDRESS_FILE
   })
 
-  it('knows OP Sepolia’s Escrow and EnterpriseEscrow from the addresses ocean.js ships', () => {
-    delete process.env.ADDRESS_FILE
-    const opSepolia = new ConfigHelper().getConfig(11155420)
+  afterEach(() => {
+    if (savedAddressFile === undefined) delete process.env.ADDRESS_FILE
+    else process.env.ADDRESS_FILE = savedAddressFile
+  })
 
-    expect(opSepolia?.escrow).to.equal(
-      getAddress('0x7842Fa3B2d87Ff1cd52C4152382f7C4B3406E5A6')
+  /** OP Sepolia's escrow quote, as ocean-node would send it, naming `escrowAddress`. */
+  function opSepoliaQuote(escrowAddress: string) {
+    return {
+      ...PAYMENT,
+      chainId: OP_SEPOLIA,
+      escrowAddress: escrowAddress.toLowerCase()
+    }
+  }
+
+  function check(escrowAddress: string, explicit?: string) {
+    return checkEscrowQuote(opSepoliaQuote(escrowAddress), {
+      pin: resolveEscrowPin(OP_SEPOLIA, explicit),
+      chainId: OP_SEPOLIA,
+      token: TOKEN,
+      payee: PAYEE
+    })
+  }
+
+  it('pins OP Sepolia’s EnterpriseEscrow from the addresses ocean.js ships', () => {
+    // ocean.js fills config.escrow from the plain Escrow; nautilus pins EnterpriseEscrow,
+    // the contract ocean-node 4.2.0 uses for the chain.
+    expect(new ConfigHelper().getConfig(OP_SEPOLIA)?.escrow).to.equal(
+      OP_SEPOLIA_ESCROW
     )
-    expect(
-      knownEscrowContracts({ chainId: 11155420, escrow: opSepolia?.escrow })
-    ).to.deep.equal([
-      getAddress('0x7842Fa3B2d87Ff1cd52C4152382f7C4B3406E5A6'),
-      getAddress('0xfa48673a7C36A2A768f89AC1ee8C355D5c367B02')
-    ])
+    expect(resolveEscrowPin(OP_SEPOLIA)).to.deep.equal({
+      address: OP_SEPOLIA_ENTERPRISE_ESCROW,
+      rule: 'enterprise-escrow'
+    })
   })
 
-  it('knows none on a chain with no config escrow and no address data for it', () => {
-    delete process.env.ADDRESS_FILE
+  it('accepts OP Sepolia’s EnterpriseEscrow and refuses its Escrow by default', () => {
+    expect(check(OP_SEPOLIA_ENTERPRISE_ESCROW)?.escrowAddress).to.equal(
+      OP_SEPOLIA_ENTERPRISE_ESCROW
+    )
 
-    expect(knownEscrowContracts({ chainId: CHAIN_ID })).to.deep.equal([])
+    let thrown: unknown
+    try {
+      check(OP_SEPOLIA_ESCROW)
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).to.be.instanceOf(EscrowPaymentNotAllowedError)
+    expect((thrown as EscrowPaymentNotAllowedError).reason).to.equal(
+      'escrow-address'
+    )
+    expect((thrown as Error).message).to.contain(
+      `is ${OP_SEPOLIA_ENTERPRISE_ESCROW}`
+    )
+  })
+
+  it('accepts OP Sepolia’s Escrow only when the caller chooses it', () => {
+    expect(check(OP_SEPOLIA_ESCROW, OP_SEPOLIA_ESCROW)?.escrowAddress).to.equal(
+      OP_SEPOLIA_ESCROW
+    )
+    expect(() =>
+      check(OP_SEPOLIA_ENTERPRISE_ESCROW, OP_SEPOLIA_ESCROW)
+    ).to.throw(EscrowPaymentNotAllowedError, /rule: explicit/)
+  })
+
+  it('pins nothing on Pontus-X devnet, whose address data lists no escrow', () => {
+    expect(resolveEscrowPin(32456)).to.deep.equal({ rule: 'none' })
+    expect(resolveEscrowPin(32456, ESCROW.toLowerCase())).to.deep.equal({
+      address: getAddress(ESCROW),
+      rule: 'explicit'
+    })
+  })
+
+  it('treats an empty explicit escrow as unset, and refuses a malformed one', () => {
+    expect(resolveEscrowPin(OP_SEPOLIA, '')).to.deep.equal({
+      address: OP_SEPOLIA_ENTERPRISE_ESCROW,
+      rule: 'enterprise-escrow'
+    })
+    expect(() => resolveEscrowPin(OP_SEPOLIA, 'not-an-address')).to.throw(
+      /must be an address/
+    )
   })
 })
 

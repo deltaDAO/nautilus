@@ -13,6 +13,7 @@
  * Everything here is read-only: no RPC call, no transaction.
  */
 import { getAddress, isAddress } from 'ethers'
+import type { EscrowPin } from '../compute/escrow.js'
 import { chargedProviderFee, type ProviderFeeLike } from './providerFee.js'
 
 /** An amount of one ERC20 token, in the token's smallest unit (wei for 18 decimals). */
@@ -45,8 +46,9 @@ export interface ProviderFeeQuote {
 /** The escrow payment `compute()` would fund, as passed to `confirmEscrowPayment`. */
 export interface EscrowPaymentQuote {
   /**
-   * The escrow contract, checksummed. Always one known for the chain: the chain config's
-   * `escrow`, or the `Escrow` / `EnterpriseEscrow` entry of Ocean's address data.
+   * The escrow contract, checksummed. Always the one pinned for the chain: the contract the
+   * caller set as `config.escrow`, else the chain's `EnterpriseEscrow` in Ocean's address
+   * data, else its `Escrow`.
    */
   escrowAddress: string
   /** The payment token, checksummed. */
@@ -85,9 +87,9 @@ export interface ProviderFeeLimits {
  * How much a compute job may deposit and authorise in escrow without asking.
  *
  * Without either option, a paid job is refused with an `EscrowPaymentNotAllowedError`
- * before anything is approved or sent. Neither option can allow an escrow contract that is
- * not known for the chain: the chain config's `escrow`, or the `Escrow` / `EnterpriseEscrow`
- * entry of Ocean's address data.
+ * before anything is approved or sent. Neither option can allow an escrow contract other
+ * than the one pinned for the chain: the contract the caller set as `config.escrow`, else
+ * the chain's `EnterpriseEscrow` in Ocean's address data, else its `Escrow`.
  */
 export interface EscrowPaymentLimits {
   /**
@@ -144,9 +146,12 @@ export class ProviderFeeNotAllowedError extends Error {
 
 /** Why an escrow payment was refused. */
 export type EscrowPaymentRefusal =
-  /** No escrow contract is known for the chain to compare the node's with. */
+  /**
+   * No escrow contract is pinned for the chain: none was set, and Ocean's address data
+   * lists no `EnterpriseEscrow` or `Escrow` for it.
+   */
   | 'unknown-escrow'
-  /** The node named an escrow contract that is not one known for the chain. */
+  /** The node named an escrow contract other than the one pinned for the chain. */
   | 'escrow-address'
   /** The quote is for another chain, token or payee than this job, or is malformed. */
   | 'mismatch'
@@ -344,20 +349,17 @@ export async function assertEscrowPaymentAllowed(
 }
 
 /**
- * Checks the node's escrow quote against the job and the chain config, and returns it as
- * a quote, or `undefined` when it asks for nothing. Throws an
- * `EscrowPaymentNotAllowedError` when the contract is none of the known escrow contracts
- * for the chain (or none is known), or the chain, token or payee differ from the job's, or
- * a field is missing or not an exact integer.
+ * Checks the node's escrow quote against the job and the escrow pin, and returns it as a
+ * quote, or `undefined` when it asks for nothing. Throws an `EscrowPaymentNotAllowedError`
+ * when no contract is pinned, the quote names another contract than the pinned one, the
+ * chain, token or payee differ from the job's, or a field is missing or not an exact
+ * integer.
  */
 export function checkEscrowQuote(
   payment: unknown,
   expected: {
-    /**
-     * The escrow contracts known for the chain (see `knownEscrowContracts`), or one. Entries
-     * that are not addresses are ignored.
-     */
-    escrow: string | readonly (string | undefined)[] | undefined
+    /** The escrow contract the job may fund, from `resolveEscrowPin`. */
+    pin: EscrowPin
     chainId: number
     token: string
     payee: string
@@ -366,21 +368,13 @@ export function checkEscrowQuote(
   const quote = (payment ?? {}) as Record<string, unknown>
   const mismatch = (detail: string) =>
     new EscrowPaymentNotAllowedError(payment, 'mismatch', detail)
+  const { pin, chainId } = expected
 
-  const known = [
-    ...new Set(
-      [expected.escrow]
-        .flat()
-        .filter((entry): entry is string => !!entry && isAddress(entry))
-        .map((entry) => getAddress(entry))
-    )
-  ]
-
-  if (!known.length)
+  if (pin.rule === 'none' || !pin.address)
     throw new EscrowPaymentNotAllowedError(
       payment,
       'unknown-escrow',
-      `no escrow contract is known for chain ${expected.chainId}: the chain config has no escrow, and Ocean's address data lists no Escrow or EnterpriseEscrow for it, so the one the node named (${String(quote.escrowAddress)}) cannot be checked. Pass the escrow contract your node uses as config.escrow to Nautilus.create.`
+      `no escrow contract is pinned for chain ${chainId}: none was set explicitly, and Ocean's address data for the chain (the file ADDRESS_FILE names, else the addresses ocean.js ships) lists no EnterpriseEscrow or Escrow, so the one the node named (${String(quote.escrowAddress)}) cannot be checked. Set the chain's EnterpriseEscrow contract as config.escrow in Nautilus.create (or as escrow in compute()'s context).`
     )
 
   const escrow =
@@ -388,11 +382,11 @@ export function checkEscrowQuote(
       ? getAddress(quote.escrowAddress)
       : undefined
 
-  if (!escrow || !known.includes(escrow))
+  if (escrow !== pin.address)
     throw new EscrowPaymentNotAllowedError(
       payment,
       'escrow-address',
-      `the node named escrow contract ${String(quote.escrowAddress)}, but the escrow contracts known for chain ${expected.chainId} are ${known.join(', ')} (the chain config's escrow and Ocean's address data). Only those are funded or authorised.`
+      `the node named escrow contract ${String(quote.escrowAddress)}, but the only escrow contract funded on chain ${chainId} is ${pin.address}, ${PIN_RULES[pin.rule]}.`
     )
 
   if (quote.chainId !== undefined && Number(quote.chainId) !== expected.chainId)
@@ -435,7 +429,7 @@ export function checkEscrowQuote(
   if (amount === 0n) return undefined
 
   return {
-    escrowAddress: escrow,
+    escrowAddress: pin.address,
     token: getAddress(expected.token),
     amount,
     payee: getAddress(expected.payee),
@@ -445,6 +439,16 @@ export function checkEscrowQuote(
 }
 
 // #region helpers
+
+/** How each rule of `resolveEscrowPin` is named in a refusal. */
+const PIN_RULES: Record<Exclude<EscrowPin['rule'], 'none'>, string> = {
+  explicit:
+    "the contract set explicitly (rule: explicit; config.escrow in Nautilus.create, or escrow in compute()'s context)",
+  'enterprise-escrow':
+    "the chain's EnterpriseEscrow in Ocean's address data (rule: EnterpriseEscrow from the address data; set config.escrow to choose another)",
+  escrow:
+    "the chain's Escrow in Ocean's address data, which lists no EnterpriseEscrow for it (rule: Escrow fallback; set config.escrow to choose another)"
+}
 
 /**
  * A non-negative integer amount, exactly: a bigint, a decimal (or `0x`) integer string, or
