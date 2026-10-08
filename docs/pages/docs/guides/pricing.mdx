@@ -70,6 +70,12 @@ publisher chose, and pulls it from you during the order. It is reported separate
 allowance for it on your behalf.
 :::
 
+`order()` approves everything the order pulls from you: the purchase, the publish-market
+fee and the provider fee. An ERC20 approval replaces the previous one rather than adding to
+it, so amounts that share a token and a spender get one allowance for their sum, and an
+allowance you already hold is not approved again. Every check (pricing, exchange, fee
+collectors, the provider fee) runs before the first approval.
+
 ## Charging a consume-market fee
 
 Your cut is a **fraction of the swap**, not an amount — `'0.01'` is 1% — and it needs the
@@ -120,12 +126,21 @@ if (hasReusableOrder(initialize)) {
 }
 ```
 
-:::danger[Currently always false]
-ocean-node 3.2.21's access `initialize` returns `{ providerFee, datatoken, nonce, computeAddress }`
-and **no `validOrder`**, so this is always `false` and every
-[`access`](/docs/api/nautilus/access) buys a fresh datatoken — even within the timeout. On a
-paid asset that is repeated payment for access you already hold, so cache the download URL
-rather than re-calling `access`.
+nautilus reuses an order whenever the node reports one in `validOrder`: as it stands when
+no new provider fee is due, or extended with `reuseOrder` when one is. What `initialize`
+returns depends on the endpoint:
+
+| ocean-node | Access `initialize` | `initializeCompute` |
+| --- | --- | --- |
+| 3.0 – 4.2 | `{ providerFee, datatoken, nonce, computeAddress }`, with no `validOrder` | `validOrder` per input, when the request carries a `transferTxId` that is still valid |
+
+:::warning
+With these versions, `hasReusableOrder` is `false` for an access `initialize`, so each
+[`access`](/docs/api/nautilus/access) call places a new order, also within the service's
+timeout. [`compute`](/docs/api/nautilus/compute) does not send a `transferTxId` with its
+inputs, so it orders each of them too. On a paid asset, keep the download URL rather than
+calling `access` again. A node that reports `validOrder` is followed with no change on your
+side.
 :::
 
 ## Coming from v1

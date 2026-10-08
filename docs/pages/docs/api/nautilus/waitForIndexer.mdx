@@ -82,10 +82,15 @@ wait at or below 18 requests a minute. A shorter interval can run into the limit
 especially right after a publish, which makes its own requests to the same node.
 
 A rate-limit answer is not counted as a failed lookup. On `429`, or `403` "Too many active
-connections" (the node's `MAX_CONNECTIONS_PER_MINUTE`), the next round waits as long as
-the node asks ("Try again in N seconds", or `Retry-After`), or twice as long as the last
-wait, up to 60 s. If the time runs out while the node keeps refusing, the timeout error
-says so.
+connections" (the node's `MAX_CONNECTIONS_PER_MINUTE`), the next round waits longer:
+`2 × intervalMs`, doubling with each rate-limit answer in a row, and at least as long as
+the node asks ("Try again in N seconds", or `Retry-After` in seconds or as an HTTP date)
+plus a second. It never waits more than 60 s at a time. If the time runs out while the
+node keeps refusing, the timeout error says so.
+
+When `timeoutMs` is up, the wait makes one last lookup before it throws, so it can end up to
+one request later. Each request gets at least a second (or `requestTimeoutMs`, when that is
+shorter), even when less of `timeoutMs` is left.
 
 :::info
 Without a `txid`, the indexing state is not checked: the wait only polls for the asset until
@@ -106,7 +111,10 @@ The indexed asset.
   and the node's record on `state`. It extends `OceanNodeError`. Only thrown when a `txid` is
   passed.
 - `OceanNodeError` — the asset did not appear within `timeoutMs`. The message names the last
-  request error, if there was one.
+  request error, if one is still unresolved: an error that a later answer cleared is not
+  reported.
+- `OceanNodeError` — `intervalMs`, `timeoutMs`, `requestTimeoutMs` or
+  `maxConsecutiveFailures` is negative or not a finite number (`Infinity`, `NaN`).
 - `OceanNodeError` — `maxConsecutiveFailures` asset lookups in a row failed (a network error,
   a request timeout, or an HTTP status other than 2xx and 404), so a wrong node URI or a node
   answering 500 is reported as such instead of being waited out. A 404 counts as "not indexed
@@ -152,9 +160,10 @@ indexed transaction id, so `waitForIndexer(did, receipt.hash)` cannot wait for i
 | `maxConsecutiveFailures` | `number` | `5` | How many failed asset lookups in a row throw an `OceanNodeError` before the timeout. |
 | `signal` | `AbortSignal` | — | Cancel the wait. Aborting rejects with the signal's reason. |
 
-`publish`, `completePublish` and `edit` take only `intervalMs` and `timeoutMs`, through their
-`waitForIndexer` option.
+`publish`, `completePublish` and `edit` take only `intervalMs`, `timeoutMs` and `signal`,
+through their `waitForIndexer` option.
 
 The 2.0.0-beta.0 options `interval` and `maxRetries` still work for now: they are mapped to
 `intervalMs = interval` and `timeoutMs = interval × maxRetries`, with a one-time
-`console.warn`, and will be removed. Rename them.
+`console.warn`, and will be removed. Rename them. `maxRetries` without `interval` counts
+beta.0's default 30 s interval, so `{ maxRetries: 10 }` waits 5 minutes, polling every 7 s.

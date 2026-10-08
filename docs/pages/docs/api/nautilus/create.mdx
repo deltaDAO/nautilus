@@ -21,7 +21,7 @@ merges `ConfigHelper`'s defaults for that chain with whatever you pass in `confi
 `config.chainId` that differs from the provider's chain throws, because the contract
 addresses would then belong to another chain than the transactions.
 
-`oceanNodeUri` must be `https://`, except on `localhost`, `127.0.0.1`, `::1` and
+`oceanNodeUri` must be `https://`, except on `localhost`, `127.0.0.0/8`, `::1` and
 `*.localhost`: the plaintext DDO pointer and the signed DDO go to the node for encryption.
 See [`allowInsecureTransport`](#allowinsecuretransport).
 
@@ -144,12 +144,23 @@ const nautilus = await Nautilus.create(signer, {
 - Type: `boolean`
 - Default: `false`
 
-Accept a plain `http://` `oceanNodeUri` on a host other than `localhost`, `127.0.0.1`, `::1`
+Accept a plain `http://` `oceanNodeUri` on a host other than `localhost`, `127.0.0.0/8`, `::1`
 or `*.localhost`, for example on a private network. Without it, `create` throws for such a
-URI. A peer id or multiaddr is not affected.
+URI. The URI is judged as `fetch` parses it, so `http:host` counts as plain `http://`; see
+[the ocean-node URI](/docs/guides/config#the-ocean-node-uri). A peer id or multiaddr is not affected. The node
+client applies the same setting to the service endpoints it encrypts and checks files on.
 
 `S3RemoteStore` and `IpfsRemoteStore` have their own `allowInsecureTransport` option for their
 endpoints.
+
+##### requestTimeoutMs
+
+- Type: `number`
+- Default: `120000` (120 s)
+
+How long one `encrypt` call to the node may take, including the signature and one retry after
+a rejected nonce. Passed to the node clients `create` builds; see
+[`OceanNodeClient`](/docs/api/node/OceanNodeClient).
 
 ## Throws
 

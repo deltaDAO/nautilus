@@ -26,8 +26,10 @@ See [`create`](/docs/api/nautilus/create) for the full option reference.
 
 ### The two-step bootstrap
 
-The `credentials` option needs an `OceanNodeClient`, and the only way to get one is from an
-instance. So build a throwaway instance first, take its client, and pass it to the real one.
+The `credentials` option needs an `OceanNodeClient`. You can
+[construct one](/docs/api/node/OceanNodeClient) yourself with the node URI, chain id and
+auth, but the simplest way is to let an instance resolve all of that from the signer and
+the config: build a throwaway instance first, take its client, and pass it to the real one.
 
 ```ts twoslash
 import { JsonRpcProvider, Wallet } from 'ethers'
@@ -61,7 +63,7 @@ and builds a client; it sends no transaction. The remote store needs no bootstra
 | `remoteStore` | `RemoteStore` | Where the encrypted DDO envelope is stored. **Required to publish** — nautilus writes an encrypted `{remote}` pointer on chain, not the document. Use `IpfsRemoteStore` or `S3RemoteStore`; `NodePersistentRemoteStore` is rejected. See [remote stores](/docs/guides/remote-stores). |
 | `ddoSigner` | `DdoSigner` | Signs the DDO as a verifiable credential. Defaults to the Ethereum key (`ETH-EIP191`). See [signing](/docs/guides/signing). |
 | `credentials` | `CredentialProvider` | Satisfies credential-gated access. Omit to skip SSI entirely. See [credential-gated assets](/docs/guides/identity). |
-| `allowInsecureTransport` | `boolean` | Accept a plain `http://` `oceanNodeUri` on a host other than `localhost`, `127.0.0.1`, `::1` or `*.localhost`. Default `false`. See [`create`](/docs/api/nautilus/create#allowinsecuretransport). |
+| `allowInsecureTransport` | `boolean` | Accept a plain `http://` `oceanNodeUri` on a host other than `localhost`, `127.0.0.0/8`, `::1` or `*.localhost`. Default `false`. See [`create`](/docs/api/nautilus/create#allowinsecuretransport). |
 
 ## `PublishOptions`
 

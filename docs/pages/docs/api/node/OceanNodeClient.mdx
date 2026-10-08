@@ -40,7 +40,8 @@ const node = new OceanNodeClient({
 | `chainId` | `number` | |
 | `auth` | `NodeAuth` | A `Signer`, a JWT auth token, or a pre-computed signature. |
 | `consumerAddress` | `string` | **Required when `auth` is a JWT**, which nautilus cannot decode. |
-| `allowInsecureTransport` | `boolean` | Accept a plain `http://` `nodeUri` on a host other than `localhost`, `127.0.0.1`, `::1` or `*.localhost`. Default `false`: the constructor throws an `OceanNodeError`, the same rule as `Nautilus.create`. Carried over to `forEndpoint` clients. |
+| `allowInsecureTransport` | `boolean` | Accept a plain `http://` `nodeUri` on a host other than `localhost`, `127.0.0.0/8`, `::1` or `*.localhost`. Default `false`: the constructor throws an `OceanNodeError`, the same rule as `Nautilus.create`. It also applies to the `nodeUri` argument of `encrypt` and `getFileInfo`. Carried over to `forEndpoint` clients. |
+| `requestTimeoutMs` | `number` | How long one `encrypt` call may run, its nonce retry included. Default `120000` (2 minutes, room for a wallet's signature prompt). Must be a positive finite number. Carried over to `forEndpoint` clients. |
 
 ## Selected methods
 
@@ -147,6 +148,11 @@ different key than the node's.
 on-chain pointer. `nodeUri` defaults to the client's node; node keys are node-local, so a
 service's files must be encrypted by the node in its `serviceEndpoint`.
 
+- Another `nodeUri` gets the client's transport rule, since the plaintext and the signed
+  command go to it: a plain `http://` URI on a non-loopback host throws an `OceanNodeError`
+  (`encrypt`) before anything is sent, unless the client has `allowInsecureTransport`.
+  `getFileInfo(file, withChecksum?, signal?, nodeUri?)` does the same (`getFileInfo`).
+
 - It throws an `OceanNodeError` (`encrypt`) unless the node answers with `0x` hex:
   *"the node returned an empty ciphertext"*, or *"the node did not return ciphertext: …"* with
   the node's message cut to 200 characters. ocean.js passes an HTTP error body through as if
@@ -158,6 +164,11 @@ service's files must be encrypted by the node in its `serviceEndpoint`.
 - With `Signer` auth, one client runs its encrypt calls one at a time, because concurrent
   calls read the same nonce and the node rejects all but one. A publish with several services
   therefore encrypts their files one after the other.
+- Each call has `requestTimeoutMs` (default 2 minutes) from the moment it starts; time spent
+  waiting behind other calls does not count. A call that runs out throws an
+  `OceanNodeError` (*"timed out after … ms"*) and the next call starts, so one node that
+  does not answer cannot hold up the client. Aborting `signal`, while the call waits or
+  runs, rejects with the signal's reason.
 
 ### Files and storage
 

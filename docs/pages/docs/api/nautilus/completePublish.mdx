@@ -29,16 +29,26 @@ the NFT exists without metadata.
 `completePublish` picks up from there, on the same NFT. Before any transaction it:
 
 1. refuses an NFT that already has metadata — use [`edit`](/docs/api/nautilus/edit) for
-   that;
+   that — or whose lifecycle state takes none (DEPRECATED, REVOKED);
 2. checks that the **signer owns the NFT** and that the configured ERC721 factory
-   (`nftFactoryAddress`) **created it**, so it never writes a DDO onto someone else's NFT;
+   (`nftFactoryAddress`) **created it**, so it never writes a DDO onto someone else's NFT. An
+   `asset.owner` other than the signer is refused too;
 3. matches the services to the NFT's datatokens (`getTokensList`, in creation order). A
-   service that already names a datatoken must name one of the NFT's. The NFT's other
-   datatokens — the one bundled at mint first — go, in service order, to the services without
-   one. If the NFT has more unclaimed datatokens than there are services without one, it
-   refuses, because it cannot tell which belongs where: set `datatokenAddress` on each
-   service then;
-4. runs the same checks as `publish()` — options and lifecycle state, the remote store,
+   service that already names a datatoken must name one of the NFT's, and no two services
+   may name the same one. The NFT's other datatokens — the one bundled at mint first — go, in
+   service order, to the services without one. If the NFT has more unclaimed datatokens than
+   there are services without one, it refuses, because it cannot tell which belongs where:
+   set `datatokenAddress` on each service then;
+4. reads the pricing of every reused datatoken that has some, and refuses unless it matches
+   the service's pricing config: the scheme (`'fixed'` or `'free'`), the payment collector,
+   and for a fixed rate the exchange owner, base token, rate, market fee and its collector,
+   allowed consumer and `withMint`; for a dispenser that it is active, its owner,
+   `maxTokens`, `maxBalance`, allowed swapper and minting. `completePublish` never changes
+   existing pricing. A mismatch on a datatoken matched only by creation order asks you to
+   set `datatokenAddress` on each service instead;
+5. checks that the signer holds the NFT's `updateMetadata` permission, and `deployERC20`
+   when a datatoken or its pricing is to be created;
+6. runs the same checks as `publish()` — options and lifecycle state, the remote store,
    trusted algorithms, services, local validation and the store's `check()`.
 
 Then it prices a reused datatoken whose pricing was never created, creates datatokens only for
@@ -90,9 +100,9 @@ Same as [`publish`](/docs/api/nautilus/publish#options-optional).
 | Property | Type | |
 | --- | --- | --- |
 | `nftAddress` | `string` | The NFT that was minted. |
-| `datatokens` | `string[]` | The datatokens created before the failure, including one whose pricing then failed. |
+| `datatokens` | `string[]` | The datatokens this `publish()` created before the failure, including one whose pricing then failed. `publish()` clears any `datatokenAddress` a service carried before it starts, since it always mints new ones. |
 | `cause` | `unknown` | The original error (native `Error.cause`). |
-| `stored` | `StoredBeforeFailure \| undefined` | Set when the envelope had been stored: its redacted `pointer`, `metadataHash`, and `cleanup` — `'removed'` (the transaction was never sent, so nautilus removed the object), `'not-removed'` (never sent, but the store could not remove it; `removeError` says why) or `'kept'` (the transaction was sent and may be mined). See [when a write fails](/docs/guides/remote-stores#when-a-write-fails-after-the-envelope-is-stored). |
+| `stored` | `StoredBeforeFailure \| undefined` | Set when the envelope had been stored: its redacted `pointer`, `metadataHash`, and `cleanup` — `'removed'` (the transaction was never sent, or was mined and reverted, so nautilus removed the object), `'not-removed'` (nothing points at it, but the store could not remove it; `removeError` says why) or `'kept'` (the transaction was sent and may be mined). See [when a write fails](/docs/guides/remote-stores#when-a-write-fails-after-the-envelope-is-stored). |
 
 With `stored.cleanup === 'kept'` the NFT may get its metadata after all, and the message says
 so instead of claiming it has none. Wait until the transaction is mined or dropped before

@@ -75,6 +75,9 @@ call **before their first transaction**. The NFT has to exist before the DDO can
 because the DID derives from its address, so a store that fails only at `put` leaves an NFT
 without metadata (or, on an edit, datatokens minted for nothing). Throw here if you can tell
 up front that `put` will fail: bad credentials, missing scopes, an unreachable endpoint.
+It runs on every one of those calls, edits included, so keep it cheap: whatever it writes
+(`IpfsRemoteStore`'s `probe: 'upload'`, `S3RemoteStore`'s probe objects) is written again
+each time.
 
 ```ts twoslash
 import type { RemoteStore } from '@deltadao/nautilus'
@@ -127,10 +130,11 @@ secrets read `'<redacted>'`: in a `url`, the user info, every query value and th
 
 nautilus calls it in one case only: `publish`, `completePublish` or `edit` stored the envelope
 and then failed **before the metadata transaction was sent** (a failed `verify`, a pointer the
-node would not encrypt, a transaction that could not be built). Nothing can point at that
-object, so it is removed, best effort; the outcome is on
+node would not encrypt, a transaction that could not be built), or the transaction was
+rejected or mined and reverted. Nothing can point at that object, so it is removed, best
+effort; the outcome is on
 [`error.stored`](/docs/guides/remote-stores#when-a-write-fails-after-the-envelope-is-stored).
-Once the transaction may have been sent, nautilus never removes anything. Cleaning up is up
+Once the transaction may have been mined, nautilus never removes anything. Cleaning up is up
 to you, and an asset that should stay indexed needs two envelopes for good: the **creation**
 one (from `publish()`), because a node reindex replays the asset from its creation event and
 drops it from the index when that envelope is gone, and the **current** one. Intermediate

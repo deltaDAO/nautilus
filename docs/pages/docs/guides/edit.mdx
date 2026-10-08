@@ -283,8 +283,10 @@ in a block and ignores the rest, and nothing on chain shows that it dropped one.
 
 Within one `Nautilus` instance this cannot happen. Its `publish()` (once the NFT is minted),
 `completePublish()`, `edit()` and `setAssetLifecycleState()` calls for one NFT run one after
-the other, and each waits for its receipt before the next one sends anything. `edit()` does
-**not** wait for the previous change to be indexed; pass `waitForIndexer` (or call
+the other, and each waits for its receipt before the next one sends anything. `edit()` reads
+the NFT's lifecycle state and checks the signer's permissions only once its turn comes, so it
+sees a revoke this instance started before it. It does **not** wait for the previous change
+to be indexed; pass `waitForIndexer` (or call
 [`waitForIndexer`](/docs/api/nautilus/waitForIndexer)) when you need to read it back.
 
 Separate instances or processes writing to the same asset can still land in one block. So

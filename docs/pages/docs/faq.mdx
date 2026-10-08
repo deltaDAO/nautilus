@@ -65,12 +65,15 @@ Credential gating is enforced on **consumption**, not on publication.
 
 ## Why am I paying twice for the same asset?
 
-ocean-node's access `initialize` returns `{ providerFee, datatoken, nonce, computeAddress }`
-and **no `validOrder`**, so `hasReusableOrder()` is false and every
-[`access`](/docs/api/nautilus/access) buys a fresh datatoken — even inside the service
-timeout, where you already hold a valid order.
+nautilus reuses an order only when the node's `initialize` reports one in `validOrder`. In
+ocean-node 3.0 to 4.2, the access `initialize` returns
+`{ providerFee, datatoken, nonce, computeAddress }`, without `validOrder`, so
+`hasReusableOrder()` is false and each [`access`](/docs/api/nautilus/access) call places a
+new order, also inside the service timeout. (`initializeCompute` reports `validOrder` for
+an input whose request carries a still-valid `transferTxId`.)
 
-On a paid asset, cache the download URL you get back rather than calling `access` again.
+On a paid asset, keep the download URL you get back rather than calling `access` again.
+See [Do you already hold an order?](/docs/guides/pricing#do-you-already-hold-an-order).
 
 ## Never put `127.0.0.1` in a DDO
 

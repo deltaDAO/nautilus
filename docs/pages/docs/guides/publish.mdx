@@ -186,8 +186,10 @@ try {
 }
 ```
 
-Before any transaction, `completePublish` checks that the signer owns the NFT and that the
-configured factory created it. See [`completePublish`](/docs/api/nautilus/completePublish).
+Before any transaction, `completePublish` checks that the signer owns the NFT, that the
+configured factory created it, that the signer holds the permissions the writes need, and
+that every reused datatoken that already has pricing is priced the way its service says. See
+[`completePublish`](/docs/api/nautilus/completePublish).
 
 Once the metadata transaction is mined, nothing is left to complete. A wait for the indexer
 that fails, or a `MetadataConflictError` (another metadata transaction for the NFT in the

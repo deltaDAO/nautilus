@@ -29,10 +29,11 @@ What happens in order:
 2. Credentials are satisfied for **all** inputs. A failure here aborts the whole job with
    nothing spent — the reason this comes first.
 3. `initializeCompute` quotes the job: provider fees, reusable orders and the escrow amount.
-   Every provider fee's signature is checked locally, as for
-   [`access`](/docs/api/nautilus/access): a fee the datatoken would reject throws a
-   `ProviderFeeSignatureError` before escrow or any order. A compute fee is the same on
-   every request, so it is not requested again; contact the node operator if this
+   The provider fee of every input that will be ordered is checked locally, as for
+   [`access`](/docs/api/nautilus/access): a fee that is missing, lacks a field, or that the
+   datatoken would reject throws a `ProviderFeeSignatureError` before escrow or any order.
+   A compute fee is the same on every request, so `initializeCompute` is called once and a
+   bad fee is refused at once, not requested again; contact the node operator if this
    happens.
 4. Escrow is funded and the environment authorised to draw the quoted amount.
 5. Each input is ordered — reusing an existing order where the node says one is valid.

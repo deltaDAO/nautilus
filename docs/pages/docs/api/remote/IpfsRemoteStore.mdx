@@ -62,13 +62,16 @@ reach will publish fine and then fail to index. See
 | `verify` | `false` | — | Publish without reading the envelope back: `verify()` resolves without a request. Only for a store with neither `gatewayUrl` nor a Kubo `uploadUrl`; not together with `gatewayUrl`. |
 | `unpin` | `false \| { url: string; method?: string; headers?: Record<string, string> }` | derived from `uploadUrl` | How [`remove()`](#remove) unpins. `url` contains `{cid}`; `method` defaults to `DELETE`. `false` turns `remove()` off. |
 | `extractCid` | `(response: unknown) => string \| undefined` | `Hash`/`cid`/`Cid`/`IpfsHash`/`hash` | Override CID extraction. |
-| `allowInsecureTransport` | `boolean` | `false` | Allow a plain `http://` `uploadUrl`, `gatewayUrl`, `probe.url` or `unpin.url` on a host other than `localhost`, `127.0.0.1`, `::1` or `*.localhost`. |
+| `allowInsecureTransport` | `boolean` | `false` | Allow a plain `http://` `uploadUrl`, `gatewayUrl`, `probe.url` or `unpin.url` on a host other than `localhost`, `127.0.0.0/8`, `::1` or `*.localhost`. |
 | `requestTimeoutMs` | `number` | `60000` | Timeout of each request, body included. |
 | `fetchImpl` | `typeof fetch` | `fetch` | Inject a custom fetch. |
 
 The constructor throws without an `uploadUrl`, for an `unpin.url` without `{cid}`, for
-`gatewayUrl` together with `verify: false`, and for a plain `http://` `uploadUrl`, `gatewayUrl`, `probe.url` or `unpin.url` on a non-loopback host
-unless `allowInsecureTransport` is set.
+`gatewayUrl` together with `verify: false`, for a `probe` that is neither `'upload'` nor
+`{ url, method?, headers? }`, for an `uploadUrl`, `gatewayUrl`, `probe.url` or `unpin.url`
+that does not parse or carries `user:password@` credentials (pass them in `headers`
+instead), and for a plain `http://` one of those on a non-loopback host unless
+`allowInsecureTransport` is set.
 
 The payload is uploaded unchanged, as a multipart `file` field (`application/json`, named
 `<did>.json`). Produces an `{ type: 'ipfs', hash }` pointer. Throws when the upload fails, the
@@ -77,7 +80,12 @@ response carries no CID, or the CID is not a CIDv0 (`Qm…`) or a base32/base36 
 
 Upstream error bodies are cut to 300 characters and scrubbed before they reach an error
 message: the configured header values and anything that looks like a token read
-`<redacted>`.
+`<redacted>`. That includes a 2xx body echoed as a CID that is not one, and fetch's own
+error text: a network error is rethrown without fetch's raw error as `cause`.
+
+Only the `gatewayUrl` read in [`verify()`](#verify) follows redirects. Every other request
+(upload, probe, unpin, Kubo `cat`) carries the upload `headers` or the envelope, so a
+redirect fails it with a message naming the origin it pointed to; configure the final URL.
 
 
 ## check
@@ -138,8 +146,11 @@ Unpins the CID of an `{ type: 'ipfs', hash }` pointer, such as
 A configured `unpin.url` gets `unpin.headers` when given, and otherwise the upload `headers`
 only if it has the same origin as `uploadUrl`.
 
-It is idempotent: an answer saying the CID is not pinned (Kubo's `not pinned`, Pinata's
-`CURRENT_USER_HAS_NOT_PINNED_CID`) counts as removed, except with a 401 or 403. It throws for a
+It is idempotent: an answer saying the CID is not pinned counts as removed, in the format of
+the service that answers — Kubo's JSON error with a `Message` starting `not pinned`, Pinata's
+JSON with `error.reason` `CURRENT_USER_HAS_NOT_PINNED_CID`, or a `404` from a configured
+`unpin` — except with a 401 or 403. A body that merely mentions it, like a proxy's error
+page, does not count. It throws for a
 pointer that is not `ipfs` or whose hash is not a CID, and with the scrubbed upstream answer
 when the service refuses.
 
@@ -149,7 +160,8 @@ gateways that fetched the CID may serve it until they garbage-collect it. The co
 ciphertext either way.
 
 nautilus calls it itself only when a `publish`, `completePublish` or `edit` stored the envelope
-and then failed before its metadata transaction was sent; the outcome is on
+and then failed before its metadata transaction was sent, or that transaction was rejected
+or mined and reverted; the outcome is on
 [`error.stored`](/docs/guides/remote-stores#when-a-write-fails-after-the-envelope-is-stored).
 
 :::warning

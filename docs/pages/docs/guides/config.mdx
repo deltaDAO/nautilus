@@ -53,10 +53,16 @@ const customConfig: Partial<Config> = {
 A peer id or multiaddr also works instead of an HTTP URL, in which case ocean.js talks to
 the node over libp2p rather than REST.
 
-An HTTP URL must be `https://`, except on `localhost`, `127.0.0.1`, `::1` and `*.localhost`:
+An HTTP URL must be `https://`, except on `localhost`, `127.0.0.0/8`, `::1` and `*.localhost`:
 the plaintext DDO pointer and the signed DDO go to this node for encryption, and node auth
 travels with every request. `Nautilus.create` throws for a plain `http://` URI elsewhere
 unless you pass `allowInsecureTransport: true` next to `config`.
+
+The URL is judged the way `fetch` parses it, so spellings such as `http:host` or `http:/host`
+count as plain `http://`, and a URL containing a tab, a line break or another control
+character is refused. `*.localhost` names are trusted without being resolved; they are
+reserved for loopback (RFC 6761), but if your resolver does not map them there, use
+`localhost` or `127.0.0.1` instead.
 
 It must be an
 [OceanProtocolEnterprise ocean-node](https://github.com/OceanProtocolEnterprise/ocean-node)

@@ -52,7 +52,7 @@ Optional:
 `example.env` documents every variable inline. Your account needs funds for gas, and for any
 non-free asset it buys. Contact deltaDAO at contact@delta-dao.com for tokens and onboarding.
 
-Plain `http://` URLs are accepted only for `localhost`, `127.0.0.1`, `::1` and `*.localhost`
+Plain `http://` URLs are accepted only for `localhost`, `127.0.0.0/8`, `::1` and `*.localhost`
 (nautilus requires `https://` for `OCEAN_NODE_URI`, `S3_ENDPOINT` and `IPFS_UPLOAD_URL`
 elsewhere, and the examples have no switch to relax that). `S3_NODE_ENDPOINT` may be `http://`,
 since only the node connects to it.

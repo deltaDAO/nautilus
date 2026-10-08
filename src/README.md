@@ -185,7 +185,7 @@ missing field or a bad store key costs no gas. If the node cannot index the asse
 then, and the error carries the full result as `error.published`.
 
 `oceanNodeUri` and the store endpoints must be `https://`, except on `localhost`,
-`127.0.0.1`, `::1` and `*.localhost` (like the local Kubo node above); pass
+`127.0.0.0/8`, `::1` and `*.localhost` (like the local Kubo node above); pass
 `allowInsecureTransport: true` to accept plain `http://` elsewhere.
 
 To keep DDOs in an S3 bucket (AWS S3, Exoscale SOS, MinIO) instead, use `S3RemoteStore`.

@@ -74,10 +74,10 @@ node's key can read them, and they can never be removed.
 
 | Option | Type | Default | Purpose |
 | --- | --- | --- | --- |
-| `endpoint` | `string` | — | Where this store uploads, e.g. `https://sos-de-fra-1.exo.io`. No scheme means `https://`. Plain `http://` only on `localhost`, `127.0.0.1`, `::1` and `*.localhost`, or with `allowInsecureTransport`. Required. |
-| `nodeEndpoint` | `string` | `endpoint` | The endpoint written into the pointer, for when the node reaches the bucket differently than you do. May be `http://` (e.g. `http://minio:9000` inside Docker): nautilus never connects to it. |
+| `endpoint` | `string` | — | Where this store uploads, e.g. `https://sos-de-fra-1.exo.io`. No scheme means `https://`. Plain `http://` only on `localhost`, `127.0.0.0/8`, `::1` and `*.localhost`, or with `allowInsecureTransport`. Required. |
+| `nodeEndpoint` | `string` | `endpoint` | The endpoint written into the pointer, for when the node reaches the bucket differently than you do. May be `http://` (e.g. `http://minio:9000` inside Docker): nautilus never connects to it. The pointer gets it (or `endpoint`) with an explicit, lowercase scheme; none means `https://`. |
 | `region` | `string` | `'us-east-1'` | As on the node. For Exoscale, the zone. |
-| `bucket` | `string` | — | Required. |
+| `bucket` | `string` | — | Required. An S3 bucket name: 3–63 lowercase letters, digits, dots and hyphens, starting and ending with a letter or digit. |
 | `prefix` | `string` | `''` | Prepended to every object key as is, e.g. `'ddo/'` (without the `/`, `'ddo'` gives `ddo<DID hash>/…`). Scope the read key to it. |
 | `forcePathStyle` | `boolean` | `false` | Path-style addressing (`endpoint/bucket/key`) for uploads. `true` for MinIO, and required when `endpoint` is an IP address or `localhost`. |
 | `nodeForcePathStyle` | `boolean` | `forcePathStyle` | The addressing style written into the pointer. Required to be `true` (directly or through `forcePathStyle`) when `nodeEndpoint` is an IP address or `localhost`. |
@@ -98,6 +98,10 @@ The constructor throws when:
 - the read and write access key ids are the same, unless `allowSharedCredentials` is set;
 - `endpoint` is plain `http://` on a non-loopback host, unless `allowInsecureTransport` is
   set;
+- `endpoint` or `nodeEndpoint` has a scheme other than `http://` or `https://`;
+- `bucket` breaks the S3 naming rules (it goes into the request URL), or contains dots while
+  `endpoint` is `https://` with virtual-host addressing: `bucket.with.dots.host` does not
+  match the endpoint's certificate, so set `forcePathStyle: true`;
 - `prefix` has an empty, `.` or `..` segment, starts with `/` or contains a backslash (it may
   end in `/`). S3 does not normalise keys but URL handling does, so the upload and the node's
   read would reach different objects;
@@ -116,7 +120,7 @@ import type { S3Pointer } from '@deltadao/nautilus'
 const pointer: S3Pointer = {
   type: 's3',
   s3Access: {
-    endpoint: 'http://minio:9000', // nodeEndpoint, or endpoint // [!code focus]
+    endpoint: 'http://minio:9000', // nodeEndpoint, or endpoint, with a lowercase scheme // [!code focus]
     region: 'us-east-1',
     bucket: 'ddos',
     objectKey: 'ddo/<DID hash>/<envelope sha256>.json',
@@ -137,21 +141,32 @@ Called by [`publish`](/docs/api/nautilus/publish),
 [`completePublish`](/docs/api/nautilus/completePublish) and [`edit`](/docs/api/nautilus/edit)
 before their first transaction. It:
 
-1. uploads a small probe under a random key, `<prefix>nautilus-store-check-<uuid>.json`, with
-   the **write** key;
+1. uploads a small probe with the **write** key, at a random key shaped like a real object,
+   `<prefix>nautilus-store-check/<64 random hex>.json`, so a policy that grants access only
+   to `<prefix>*/*` is probed as well;
 2. reads it back with the **read** key, as the node will (though through `endpoint`, not
    `nodeEndpoint`), and fails if the content differs;
-3. makes sure the read key can **neither PUT nor DELETE**: it tries both with the read key.
-   Only an explicit `403` (`AccessDenied`, or no error code) counts as "cannot"; any other
-   answer fails the check, because it says nothing about the key. If the read key can write
+3. makes sure the read key can **neither PUT nor DELETE**: it tries both with the read key,
+   the PUT at another such key. Only an explicit `403 AccessDenied` counts as "cannot"; any
+   other answer, a bare `403` from a proxy included, fails the check, because it says
+   nothing about the key. If the read key can write
    or delete, the check fails — or, with `allowWritableReadKey`, warns. Skipped when both keys
    are the same (`allowSharedCredentials`);
 4. deletes every probe it wrote with the write key, also when a step above failed. A failed
    cleanup never hides the first error: both are thrown together as an `AggregateError`. A
    cleanup failure on its own fails the check too, since `remove()` would not work either.
+   A probe that is already gone (`404`) counts as cleaned up.
+
+`check()` does not try version-level actions. On a versioned bucket, a read key allowed
+`s3:DeleteObjectVersion` (or to change version ACLs or retention) passes it, so make sure its
+policy grants `s3:GetObject` and nothing that writes. Deleting a probe there leaves its
+version behind a delete marker; a lifecycle rule on `<prefix>nautilus-store-check/` removes
+them.
 
 S3 errors are turned into actionable messages: a signature mismatch (check the secret,
-`region` and `forcePathStyle`), an unknown access key, a missing bucket, or access denied with
+`region` and `forcePathStyle`), an unknown access key, a bucket in another region (naming
+it, when S3 does), a redirect (not followed with a signed request; it means `region` or
+`endpoint` does not match the bucket), a missing bucket, a missing object, or access denied with
 the permission the key needs (`s3:GetObject` for the read key, `s3:PutObject` and
 `s3:DeleteObject` for the write key). Network errors and timeouts name the method, bucket,
 key, the key's role and the origin.
@@ -192,11 +207,13 @@ await store.remove(stored.pointer) // [!code focus]
 Deletes the object behind a pointer this store returned, with the write key — for example
 [`PublishResponse.stored.pointer`](/docs/api/PublishResponse#stored), whose secret is
 redacted (only `bucket` and `objectKey` are used), or an older version after an edit. Throws
-for anything but an `s3` pointer with an `objectKey` under this store's `prefix` in this
-store's bucket, and for an object key with an empty, `.` or `..` segment, a leading `/` or a
-backslash.
+for anything but an `s3` pointer into this store's bucket whose `objectKey` has the exact
+shape `put()` writes, `<prefix><DID hash>/<sha256>.json`, and for an object key with an
+empty, `.` or `..` segment, a leading `/` or a backslash. An object that is already gone
+(`404 NoSuchKey`) counts as removed.
 
-nautilus calls it itself only for an envelope whose metadata transaction was never sent; see
+nautilus calls it itself only for an envelope whose metadata transaction was never sent, or
+mined and reverted; see
 [`RemoteStore.remove`](/docs/api/remote/RemoteStore#remove-optional).
 
 :::warning

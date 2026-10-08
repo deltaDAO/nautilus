@@ -225,6 +225,7 @@ const node = new OceanNodeClient({
 ```
 
 `nodeUri` also accepts a peerId or multiaddr, which switches it to the libp2p transport. A
-plain `http://` `nodeUri` on a host other than `localhost`, `127.0.0.1`, `::1` or
+plain `http://` `nodeUri` on a host other than `localhost`, `127.0.0.0/8`, `::1` or
 `*.localhost` throws an `OceanNodeError`, as in `Nautilus.create`, unless you pass
-`allowInsecureTransport: true`; `forEndpoint` applies the same rule to the other node.
+`allowInsecureTransport: true`; `forEndpoint` applies the same rule to the other node, and
+`encrypt` and `getFileInfo` to their `nodeUri` argument (a service's `serviceEndpoint`).

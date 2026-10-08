@@ -47,8 +47,9 @@ const { ddo, nftAddress } = await nautilus.publish(asset) // [!code focus]
 What happens in order:
 
 1. The options and the requested lifecycle state are checked (`encrypt: false` and the
-   states `DEPRECATED`/`REVOKED_BY_PUBLISHER` throw), and the remote store is resolved
-   (`NodePersistentRemoteStore` throws).
+   states `DEPRECATED`/`REVOKED_BY_PUBLISHER` throw), an `asset.owner` other than the signer
+   is refused, and the remote store is resolved (`NodePersistentRemoteStore` throws). A
+   `datatokenAddress` left on a service is cleared: `publish()` always mints new datatokens.
 2. Trusted algorithms are resolved to their container and file checksums, the services are
    checked, and the DDO is **validated locally** against the DDO v5 SHACL schema. All of this
    happens before any NFT exists, so a missing field costs no gas.
@@ -76,7 +77,11 @@ What happens in order:
 9. Right before the transaction, nautilus asserts that the pointer is node ciphertext under
    flags `0x02`, that the node written on chain is the one that encrypted, and that neither
    the requested state nor the NFT's state on chain is `DEPRECATED` or `REVOKED_BY_PUBLISHER`.
-   Then the pointer is written onto the NFT.
+   Then the pointer is written onto the NFT: nautilus builds the transaction with ocean.js
+   and sends it with the signer, so it can tell a wallet rejection and a mined revert, after
+   which no transaction points at the stored envelope and it is removed again, from a
+   transaction that may have been mined. On a confidential chain (`sdk: 'oasis'`) the send
+   stays with ocean.js, which encrypts it, and cannot tell these apart.
 10. After the receipt, nautilus checks that block for another metadata event of the same NFT
     and throws a `MetadataConflictError` if there is one, because ocean-node indexes only the
     first.
@@ -112,13 +117,14 @@ Built with the [`AssetBuilder`](/docs/api/AssetBuilder).
 
 ##### waitForIndexer
 
-- Type: `boolean | { intervalMs?: number; timeoutMs?: number }`
+- Type: `boolean | { intervalMs?: number; timeoutMs?: number; signal?: AbortSignal }`
 - Default: `false`
 
 Block until ocean-node's indexer has the asset, so the result is immediately resolvable.
 Sets `indexed: true` on the response. Pass an object to tune the polling: `intervalMs`
 defaults to 7 seconds (at most 18 requests a minute, under ocean-node's default rate limit
-of 30), `timeoutMs` to 5 minutes. A rate-limited poll backs off instead of failing; see
+of 30), `timeoutMs` to 5 minutes; aborting `signal` stops the wait and rejects with its
+reason. A rate-limited poll backs off instead of failing; see
 [waitForIndexer](/docs/api/nautilus/waitForIndexer#polling-rate-and-rate-limits).
 
 ```ts twoslash
@@ -136,7 +142,9 @@ await nautilus.publish(asset, { // [!code focus]
 
 When the node records that it could not index the asset, this throws an `IndexingError`
 carrying the node's message. On timeout it throws an `OceanNodeError`. Either way, the asset
-is already on chain, and the error carries the full response as `error.published`. See
+is already on chain, and the error carries the full response as `error.published`; an abort
+reason that cannot take it (a `DOMException`, a string) is wrapped in an `Error` that does,
+with the reason as `cause`. See
 [`waitForIndexer`](/docs/api/nautilus/waitForIndexer).
 
 ##### remoteStore / ddoSigner
@@ -165,7 +173,7 @@ node-encrypted, and passing `encrypt: false` throws.
 ## Throws
 
 - **Before any transaction:** `encrypt: false`, a `DEPRECATED` or `REVOKED_BY_PUBLISHER`
-  lifecycle state, an asset without services, a missing or unsupported remote store, a
+  lifecycle state, an `asset.owner` other than the signer, an asset without services, a missing or unsupported remote store, a
   failing store `check()`, an invalid DDO, a DDO too large for the node to decrypt (its
   signed envelope could exceed the node's 100 KB decrypt request limit, counting the
   encrypted files and up to 1024 characters of JWS header and signature), an unreachable
@@ -179,7 +187,8 @@ node-encrypted, and passing `encrypt: false` throws.
   `nftAddress` and the same asset to
   [`completePublish`](/docs/api/nautilus/completePublish) to finish the publish on that NFT.
   When the envelope had already been stored, `stored` says what became of it: removed again
-  (the metadata transaction was never sent), left because the store could not remove it, or
+  (the metadata transaction was never sent, or was mined and reverted), left because the
+  store could not remove it, or
   kept because the transaction was sent and may still be mined — then wait for it before
   completing. See [when a write fails](/docs/guides/remote-stores#when-a-write-fails-after-the-envelope-is-stored).
 - **`MetadataConflictError`**, when another metadata transaction for the NFT landed in the

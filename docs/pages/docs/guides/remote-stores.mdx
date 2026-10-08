@@ -58,9 +58,11 @@ node (`/api/v0/cat`) before the metadata transaction; see
 (`b…`/`k…`).
 
 `uploadUrl` (and `gatewayUrl`, `probe.url`, `unpin.url`) must be `https://`, except on `localhost`,
-`127.0.0.1`, `::1` and `*.localhost` — the local Kubo node above is fine. Pass
+`127.0.0.0/8`, `::1` and `*.localhost` — the local Kubo node above is fine. Pass
 `allowInsecureTransport: true` to accept plain `http://` elsewhere, e.g. on a private
-network.
+network. None of them may carry `user:password@` credentials; put those in `headers`
+(`Authorization: 'Basic …'`). Only the `gatewayUrl` read follows redirects: every other
+request carries your headers or the envelope, so a redirect fails it.
 
 If you run Kubo yourself, apply its `server` profile (`ipfs config profile apply server`).
 With the default settings it announces private and loopback addresses to the whole network.
@@ -250,20 +252,26 @@ is written on chain. So the store works with **two keys**.
    the prefix. It never leaves your machine.
 3. **A read-only key** scoped to the prefix (`s3:GetObject` only). It goes into the
    node-encrypted on-chain pointer of every asset, **forever**.
-4. **`check()`** probes both before anything is minted: it uploads a probe under a random key
-   with the write key, reads it back with the read key, makes sure the read key can neither
-   write nor delete (unless both are the same key) — only an explicit `403 AccessDenied`
-   counts as "cannot" — and deletes the probes. `verify()` reads every stored envelope back
-   with the read key before the metadata transaction.
+4. **`check()`** probes both before anything is minted: it uploads a probe with the write
+   key, shaped like a real object (`<prefix>nautilus-store-check/<random hex>.json`), reads
+   it back with the read key, makes sure the read key can neither write nor delete (unless
+   both are the same key) — only an explicit `403 AccessDenied` counts as "cannot" — and
+   deletes the probes. It does not try version-level actions, so on a versioned bucket make
+   sure the read key has no `s3:DeleteObjectVersion` either. `verify()` reads every stored
+   envelope back with the read key before the metadata transaction.
 5. **Endpoints.** `endpoint` is where you upload, and must be `https://` unless it is a
    loopback host or you pass `allowInsecureTransport: true`. `nodeEndpoint` is what the node
    is told, when it reaches the bucket differently (`127.0.0.1:9000` for you, `minio:9000`
    inside Docker); it defaults to `endpoint` and may be `http://`, since only the node
-   connects to it.
+   connects to it. The pointer gets it with an explicit, lowercase scheme (none means
+   `https://`). Signed requests never follow a redirect; S3 redirects when `region` or
+   `endpoint` does not match the bucket, and the error says so.
 6. **Addressing.** `forcePathStyle: true` for MinIO and other path-style stores; the default
    is virtual-host style (`bucket.endpoint/key`). On an IP address or `localhost` endpoint
    virtual-host style cannot work, so the constructor throws until you set `forcePathStyle`
-   (or `nodeForcePathStyle` for `nodeEndpoint`).
+   (or `nodeForcePathStyle` for `nodeEndpoint`). A bucket name with dots needs
+   `forcePathStyle: true` over `https://`, since `bucket.with.dots.host` does not match the
+   endpoint's certificate. The bucket name must follow the S3 naming rules.
 7. **Keys.** `prefix` must not contain empty, `.` or `..` segments, a leading `/` or a
    backslash.
 8. **Region.** Defaults to `us-east-1`, as on the node. On Exoscale, it is the zone.
@@ -339,7 +347,7 @@ is, so give it its trailing `/`), and an edit writes a new object next to the ol
 live version never changes under its pointer. Clean up with `remove()`, using the write key,
 but keep the creation and the current envelope of every asset that should stay indexed (see
 [cleaning up](#cleaning-up)). It takes the redacted pointer from `PublishResponse.stored` as
-is, and only deletes objects under `prefix` in the configured bucket:
+is, and only deletes keys of that exact shape under `prefix` in the configured bucket:
 
 ```ts twoslash
 import { Nautilus, S3RemoteStore, type NautilusAsset } from '@deltadao/nautilus'
@@ -364,9 +372,9 @@ depends on whether that transaction may exist:
 
 | The failure | The transaction | The stored object | `error.stored.cleanup` |
 | --- | --- | --- | --- |
-| encrypting the pointer, `verify()`, building the transaction (permission, gas estimate) | never sent | removed with the store's `remove()` | `'removed'` |
-| the same, but the store has no `remove()` or it failed | never sent | left; nothing points at it | `'not-removed'`, with `removeError` |
-| sent, then no receipt (rejected, reverted, timed out — ocean.js does not say which) | may be mined | **kept**: it may be what the NFT now points at | `'kept'` |
+| encrypting the pointer, `verify()`, building the transaction (permission, gas estimate), a wallet or RPC refusal (`ACTION_REJECTED`, `INSUFFICIENT_FUNDS`…), a mined revert | never sent, or changed nothing | removed with the store's `remove()` | `'removed'` |
+| the same, but the store has no `remove()` or it failed | nothing points at it | left | `'not-removed'`, with `removeError` |
+| sent, then no receipt (timeout, network error; on `sdk: 'oasis'` also a rejection or revert, which ocean.js does not tell apart) | may be mined | kept | `'kept'` |
 | after the receipt (`waitForIndexer`, `MetadataConflictError`) | mined | kept, it is the live version | — (the error carries `published`) |
 
 `error.stored` also carries the redacted `pointer` and the `metadataHash`, and the error
@@ -610,7 +618,7 @@ pointer type.
 
 The interface is one required method, `put`, and three optional ones: `check`, `verify`, and
 `remove` for cleanup (nautilus calls `remove` only for an envelope whose metadata transaction
-was never sent; see [when a write fails](#when-a-write-fails-after-the-envelope-is-stored)).
+was never sent, or mined and reverted; see [when a write fails](#when-a-write-fails-after-the-envelope-is-stored)).
 
 ```ts twoslash
 import type { RemoteStore } from '@deltadao/nautilus'
