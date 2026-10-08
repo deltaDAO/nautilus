@@ -660,6 +660,7 @@ describe('access with an order on chain', () => {
         return node
       },
       resolve: async () => asset,
+      policySessionAddress: (address: string) => address,
       hasPolicyServer: async () => false,
       initialize: async () => ({ datatoken: DATATOKEN_ADDRESS, providerFee }),
       getDownloadUrl: vi.fn(async () => 'https://node.test.invalid/download')
