@@ -8,7 +8,8 @@
  * and the streamable logs are gone.
  *
  * `ProviderInstance` is stubbed, so these run the real `OceanNodeClient` and `Nautilus`
- * code down to the ocean.js call.
+ * code down to the ocean.js call. Over HTTP the streamable logs are requested by nautilus
+ * itself, so `fetch` is stubbed for them.
  */
 
 import {
@@ -77,9 +78,12 @@ async function read(source: AsyncIterable<Uint8Array>): Promise<string> {
   return text
 }
 
-function client(): OceanNodeClient {
+/** A peer id: the libp2p transport, where the logs still go through ocean.js. */
+const PEER = '16Uiu2HAmPeerIdOnly'
+
+function client(nodeUri = 'https://node.test.invalid'): OceanNodeClient {
   return new OceanNodeClient({
-    nodeUri: 'https://node.test.invalid',
+    nodeUri,
     chainId: 32456,
     auth: Wallet.createRandom()
   })
@@ -112,7 +116,25 @@ function statusAnswers(...answers: NodeComputeJob[][]) {
 const askedFor = (spy: ReturnType<typeof statusAnswers>) =>
   spy.mock.calls.map((call) => call[2])
 
+/**
+ * Answers the streamable-logs request with `status` and `body`; any other request fails.
+ * The signer's nonce is stubbed too.
+ */
+function logsAnswer(status: number, body: string) {
+  vi.spyOn(ProviderInstance, 'getNonce').mockResolvedValue(0)
+  const fetch = vi.fn(async (url: string | URL | Request) => {
+    if (!String(url).includes('/api/services/computeStreamableLogs'))
+      throw new Error(`unexpected request ${String(url)}`)
+
+    return new Response(body, { status })
+  })
+  vi.stubGlobal('fetch', fetch)
+
+  return fetch
+}
+
 afterEach(() => {
+  vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
 
@@ -192,13 +214,29 @@ describe('OceanNodeClient compute jobs', () => {
     expect(job.jobId).to.equal(JOB_ID)
   })
 
-  it('fails clearly when the node streams no logs', async () => {
+  it('fails clearly when the node streams no logs over P2P', async () => {
     vi.spyOn(ProviderInstance, 'computeStreamableLogs').mockResolvedValue(null)
 
     await expectThrowsAsync(
-      () => client().getComputeLogs(JOB_ID),
+      () => client(PEER).getComputeLogs(JOB_ID),
       `[ocean-node] computeStreamableLogs: the node returned no logs for job ${JOB_ID}`
     )
+  })
+
+  it('asks for the logs under the qualified id, and reports a refusal with its status', async () => {
+    const fetch = logsAnswer(404, 'Job not found or not running')
+
+    const error = await client()
+      .getComputeLogs(JOB_ID)
+      .catch((caught) => caught)
+
+    expect(error.message).to.equal(
+      '[ocean-node] computeStreamableLogs: HTTP 404: Job not found or not running'
+    )
+    expect(error.status).to.equal(404)
+    expect(
+      new URL(String(fetch.mock.calls[0][0])).searchParams.get('jobId')
+    ).to.equal(JOB_ID)
   })
 })
 
@@ -313,20 +351,20 @@ describe('Nautilus compute jobs', () => {
   it('getComputeLogs streams the live logs of a running job', async () => {
     const nautilus = await createNautilus()
     statusAnswers([statusJob({ status: 40, results: [] })])
-    const logs = vi
-      .spyOn(ProviderInstance, 'computeStreamableLogs')
-      .mockResolvedValue(stream('live'))
+    const logs = logsAnswer(200, 'live')
 
     expect(
       await read(await nautilus.getComputeLogs({ jobId: JOB_ID }))
     ).to.equal('live')
-    expect(logs.mock.calls[0][2]).to.equal(JOB_ID)
+    expect(
+      new URL(String(logs.mock.calls[0][0])).searchParams.get('jobId')
+    ).to.equal(JOB_ID)
   })
 
   it("getComputeLogs reads a finished job's algorithmLog result", async () => {
     const nautilus = await createNautilus()
     statusAnswers([statusJob()])
-    const logs = vi.spyOn(ProviderInstance, 'computeStreamableLogs')
+    const logs = logsAnswer(200, 'live')
     const result = vi
       .spyOn(ProviderInstance, 'getComputeResult')
       .mockResolvedValue(stream('algorithm log'))
@@ -341,7 +379,8 @@ describe('Nautilus compute jobs', () => {
   it('getComputeLogs falls back to the algorithmLog when the job finishes meanwhile', async () => {
     const nautilus = await createNautilus()
     statusAnswers([statusJob({ status: 40, results: [] })], [statusJob()])
-    vi.spyOn(ProviderInstance, 'computeStreamableLogs').mockResolvedValue(null)
+    // How the node refuses the logs of a job that is no longer running.
+    logsAnswer(404, 'Job not found or not running')
     const result = vi
       .spyOn(ProviderInstance, 'getComputeResult')
       .mockResolvedValue(stream('algorithm log'))

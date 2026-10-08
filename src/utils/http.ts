@@ -164,28 +164,7 @@ export async function fetchText(
       signal: controller.signal
     })
 
-    // Node's fetch hands back the 3xx itself; browsers an opaque `opaqueredirect` (status 0).
-    if (
-      !followRedirects &&
-      (response.type === 'opaqueredirect' ||
-        (response.status >= 300 &&
-          response.status < 400 &&
-          response.status !== 304))
-    ) {
-      await response.body?.cancel?.().catch(() => undefined)
-      throw new RedirectError(
-        url,
-        response.status,
-        response.headers?.get?.('location')
-      )
-    }
-
-    // Before the body is read: the answer of a plain-http hop is not used.
-    const finalUrl = response.url || url
-    if (followRedirects && isInsecureRedirect(url, finalUrl)) {
-      await response.body?.cancel?.().catch(() => undefined)
-      throw new RedirectError(url, response.status, finalUrl, true)
-    }
+    const finalUrl = await assertRedirectRule(response, url, followRedirects)
 
     const body = await response.text()
     const retryAfter = response.headers?.get?.('retry-after') ?? undefined
@@ -206,6 +185,94 @@ export async function fetchText(
   } finally {
     clearTimeout(timer)
     signal?.removeEventListener('abort', onAbort)
+  }
+}
+
+/**
+ * The redirect rule of `fetchText` for one response: throws a `RedirectError` (after
+ * cancelling the body) for a 3xx unless `followRedirects`, and for a followed redirect that
+ * ended on plain `http://` on a non-loopback host. Returns the URL that answered.
+ */
+async function assertRedirectRule(
+  response: Response,
+  url: string,
+  followRedirects: boolean
+): Promise<string> {
+  // Node's fetch hands back the 3xx itself; browsers an opaque `opaqueredirect` (status 0).
+  if (
+    !followRedirects &&
+    (response.type === 'opaqueredirect' ||
+      (response.status >= 300 &&
+        response.status < 400 &&
+        response.status !== 304))
+  ) {
+    await response.body?.cancel?.().catch(() => undefined)
+    throw new RedirectError(
+      url,
+      response.status,
+      response.headers?.get?.('location')
+    )
+  }
+
+  // Before the body is read: the answer of a plain-http hop is not used.
+  const finalUrl = response.url || url
+  if (followRedirects && isInsecureRedirect(url, finalUrl)) {
+    await response.body?.cancel?.().catch(() => undefined)
+    throw new RedirectError(url, response.status, finalUrl, true)
+  }
+
+  return finalUrl
+}
+
+/**
+ * Like `fetchText`, but resolves with the `Response` as soon as its headers arrived and
+ * leaves the body to the caller, e.g. to stream it. `timeoutMs` covers the request up to the
+ * headers; `signal` stays attached to the body. Same errors and redirect rule as
+ * `fetchText`.
+ */
+export async function fetchResponse(
+  fetchImpl: typeof fetch,
+  url: string,
+  init: RequestInit,
+  options: FetchTextOptions
+): Promise<Response> {
+  const { timeoutMs, signal, followRedirects = false } = options
+
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0)
+    throw new RangeError(
+      `timeoutMs must be a finite number of milliseconds, 0 or more; got ${timeoutMs}`
+    )
+
+  if (signal?.aborted) throw signal.reason
+
+  const controller = new AbortController()
+  let timedOut = false
+  const timer = setTimeout(
+    () => {
+      timedOut = true
+      controller.abort()
+    },
+    Math.min(timeoutMs, MAX_TIMER_MS)
+  )
+
+  try {
+    const response = await fetchImpl(url, {
+      ...init,
+      redirect: followRedirects ? 'follow' : 'manual',
+      signal: signal
+        ? AbortSignal.any([signal, controller.signal])
+        : controller.signal
+    })
+    await assertRedirectRule(response, url, followRedirects)
+
+    return response
+  } catch (error) {
+    if (signal?.aborted) throw signal.reason
+    if (timedOut) throw new RequestTimeoutError(timeoutMs)
+
+    throw error
+  } finally {
+    clearTimeout(timer)
   }
 }
 

@@ -952,7 +952,7 @@ describe('getNodeAddress', () => {
 
     await expectThrowsAsync(
       () => client().getNodeAddress(),
-      '[ocean-node] getNodeAddress: 502 Bad Gateway upstream down'
+      '[ocean-node] getNodeAddress: HTTP 502 Bad Gateway: upstream down'
     )
   })
 
@@ -1063,7 +1063,7 @@ describe('getIndexerNonceState', () => {
     for (const [body, status, message] of [
       ['<html/>', 200, /not JSON/],
       ['{"nonce":"abc"}', 200, /unusable nonce/],
-      ['nope', 500, /getIndexerNonceState: 500/]
+      ['nope', 500, /getIndexerNonceState: HTTP 500: nope/]
     ] as const) {
       stubNonce(body, status)
 

@@ -272,8 +272,8 @@ export interface NautilusOptions
    */
   allowInsecureTransport?: boolean
   /**
-   * Per-call timeout for the node client's `encrypt` calls, passed to `OceanNodeClient`.
-   * Default 120 s.
+   * Per-call timeout for the node client's `encrypt` calls, and for `initialize` and the
+   * start of `getComputeLogs` over HTTP, passed to `OceanNodeClient`. Default 120 s.
    */
   requestTimeoutMs?: number
 }
