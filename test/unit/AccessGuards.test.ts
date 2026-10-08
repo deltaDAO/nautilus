@@ -404,6 +404,18 @@ describe('compute() consumer parameters', () => {
     expectNothingSent(calls)
   })
 
+  it('refuses a service id an input does not have, as access() does', async () => {
+    const { running, calls } = run({
+      dataset: { did: ASSET_DID, serviceId: 'no-such-service' },
+      algorithm: { did: ALGO_DID }
+    })
+
+    expect((await rejection(running)).message).to.equal(
+      `Asset ${ASSET_DID} has no service with id no-such-service.`
+    )
+    expectNothingSent(calls)
+  })
+
   it('applies to freeCompute() as well', async () => {
     const { running, calls } = run(
       {

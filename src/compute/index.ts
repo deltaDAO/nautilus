@@ -34,6 +34,7 @@ import type {
   ComputeResult,
   FreeComputeConfig
 } from '../@types/Compute.js'
+import { selectService } from '../access/guards.js'
 import {
   planSettlement,
   type SettlementPlan,
@@ -42,7 +43,6 @@ import {
 import {
   getDatatokenForService,
   getMetadata,
-  getServiceByType,
   getServiceIndex,
   getServices
 } from '../ddo/read.js'
@@ -372,24 +372,20 @@ async function resolveInputs(
       // they are routinely published with only an `access` service (v1 ordered
       // `services[0]` regardless of type, and the node accepts it), so the algorithm
       // prefers a compute service but falls back to the first one.
-      const service = ref.serviceId
-        ? findServiceById(asset, ref.serviceId)
-        : isAlgorithm
-          ? getServiceByType(asset, 'compute') || getServices(asset)[0]
-          : getServiceByType(asset, 'compute')
+      const service =
+        selectService(asset, ref.did, ref.serviceId, 'compute') ??
+        (isAlgorithm ? getServices(asset)[0] : undefined)
 
       if (!service)
         throw new Error(
-          ref.serviceId
-            ? `Asset ${ref.did} has no service with id ${ref.serviceId}.`
-            : isAlgorithm
-              ? `Asset ${ref.did} has no services.`
-              : `Asset ${ref.did} has no 'compute' service.`
+          isAlgorithm
+            ? `Asset ${ref.did} has no services.`
+            : `Asset ${ref.did} has no 'compute' service.`
         )
 
       if (!isAlgorithm && service.type !== 'compute')
         throw new Error(
-          `Service ${ref.serviceId} of ${ref.did} is a '${service.type}' service; compute jobs need a 'compute' service.`
+          `Service ${service.id} of ${ref.did} is a '${service.type}' service; compute jobs need a 'compute' service.`
         )
 
       // Consumer parameters are checked here, before the environment, any policy session,
@@ -418,12 +414,6 @@ async function resolveInputs(
         algocustomdata
       }
     })
-  )
-}
-
-function findServiceById(asset: AssetV5, serviceId: string) {
-  return asset.credentialSubject?.services?.find(
-    (service) => service.id === serviceId
   )
 }
 
