@@ -666,10 +666,12 @@ Two refusals come before any node call other than resolving the asset:
   `initialize`.
 - **`userdata` must fit the service's consumer parameters**: every `required` parameter
   present, `text` a string, `number` a finite number (`'5'` is refused), `boolean` a
-  boolean, `select` one of its option keys, and no undeclared keys when the service
-  declares any. Otherwise a `ConsumerParameterError` (`issues`, `did`, `serviceId`,
-  `field`) is thrown. v1 and 2.0.0-beta.1 sent whatever was passed. Fix the values, or
-  check them first with `checkConsumerParameters(service.consumerParameters, userdata)`.
+  boolean, `select` one of its option keys (a `select` without usable options takes no
+  value), and no undeclared keys when the service declares any. Otherwise a
+  `ConsumerParameterError` (`issues`, `did`, `serviceId`, `field`) is thrown. v1 and
+  2.0.0-beta.1 sent whatever was passed. Fix the values, or check them first with
+  `checkConsumerParameters(service.consumerParameters, userdata)`. Keys set to `undefined`
+  or `null` are no longer sent.
 
 ## 9. Compute
 
