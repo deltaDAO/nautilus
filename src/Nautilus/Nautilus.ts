@@ -9,6 +9,7 @@ import {
   type LogLevel,
   Nft,
   NftFactory,
+  type NodeComputeJob,
   type SearchQuery
 } from '@oceanprotocol/lib'
 import {
@@ -33,6 +34,7 @@ import type {
 import type { AssetState } from '../@types/Nautilus.js'
 import { access } from '../access/index.js'
 import { compute, freeCompute, selectEnvironment } from '../compute/index.js'
+import { findResultIndex, isJobFinished } from '../compute/jobs.js'
 import { getLifecycleState, getNftAddress } from '../ddo/read.js'
 import type { DdoCredentials } from '../ddo/types.js'
 import { assertValid } from '../ddo/validate.js'
@@ -342,29 +344,6 @@ function hasAddressAllowList(credentials: DdoCredentials | undefined): boolean {
  * const { url } = await nautilus.access({ assetDid: 'did:ope:…' })
  * ```
  */
-/**
- * The results endpoint addresses a job as `<environmentHash>-<jobId>`.
- *
- * It splits on the first dash to recover the compute environment
- * (`getResults.ts`), so a bare job id resolves to an empty hash and the node
- * answers "Invalid C2D Environment". Every other compute endpoint takes the
- * plain id, which is why this only applies here.
- */
-function qualifyJobId(job: { jobId: string; environment?: string }): string {
-  const [environmentHash] = (job.environment ?? '').split('-')
-
-  if (!environmentHash) return job.jobId
-
-  // Idempotent on purpose: `compute`/`freeCompute` hand back an already
-  // qualified id while `getComputeStatus` reports the bare one, so this is
-  // reached with both forms.
-  const bare = job.jobId.startsWith(`${environmentHash}-`)
-    ? job.jobId.slice(environmentHash.length + 1)
-    : job.jobId
-
-  return `${environmentHash}-${bare}`
-}
-
 export class Nautilus {
   private signer: Signer
   private config!: Config
@@ -1686,108 +1665,147 @@ export class Nautilus {
     })
   }
 
+  /**
+   * The status of a job, or `undefined` when the node does not know it.
+   *
+   * `jobId` is the `<environmentHash>-<jobId>` id `compute()` and `freeCompute()` return,
+   * and the job comes back under that same id. A bare id is refused: the node would answer
+   * with every job of the consumer instead.
+   */
   async getComputeStatus(
     config: ComputeStatusConfig
-  ): Promise<ComputeJob | undefined> {
+  ): Promise<NodeComputeJob | undefined> {
     return this.nodeFor(config.nodeUri).getComputeJob(config.jobId)
   }
 
-  /** `JobFinished` and `JobSettle` — see `getComputeResult` below. */
-  private static readonly TERMINAL_JOB_STATUSES = [70, 71]
-
   /**
-   * A download URL for a finished job's result.
+   * A download URL for a finished job's result: its `output` (the job's `outputs.tar`)
+   * unless `resultIndex` names another.
    *
-   * Defaults to the first `output` result. Statuses 70 (`JobFinished`) and 71
-   * (`JobSettle`) are both terminal for results — see `TERMINAL_JOB_STATUSES`.
+   * `undefined`, with a log line saying why, when the node does not know the job, the job
+   * has not finished (status below `70`), or it has no such result.
    */
   async getComputeResult(
     config: ComputeResultConfig
   ): Promise<string | undefined> {
     const node = this.nodeFor(config.nodeUri)
-    const job = await node.getComputeJob(config.jobId)
+    const result = await this.findResult(node, config)
 
-    if (!job) {
-      LoggerInstance.warn(`[compute] node does not know job ${config.jobId}`)
+    if ('pending' in result) {
+      LoggerInstance.log(`[compute] ${result.pending}`)
       return undefined
     }
 
-    /**
-     * 70 is `JobFinished`, 71 is `JobSettle`. Both are terminal as far as
-     * results go: by the time a job reaches 71 the algorithm has run and the
-     * node has already listed its outputs — it is only waiting on the
-     * payment-claim cron, which a free job never has anything to do for.
-     * Treating 71 as unfinished made results unreachable for the whole of that
-     * window (an hour by default).
-     */
-    if (!Nautilus.TERMINAL_JOB_STATUSES.includes(job.status)) {
-      LoggerInstance.log(
-        `[compute] job ${config.jobId} is not finished yet (status ${job.status}: ${job.statusText})`
-      )
+    if ('missing' in result) {
+      LoggerInstance.warn(`[compute] ${result.missing}`)
       return undefined
     }
 
-    const index =
-      config.resultIndex ??
-      job.results?.findIndex((result) => result.type === 'output')
-
-    if (index === undefined || index < 0) {
-      LoggerInstance.error(
-        `[compute] job ${config.jobId} has no 'output' result; pass resultIndex explicitly. Results: ${JSON.stringify(job.results)}`
-      )
-      return undefined
-    }
-
-    return node.getComputeResultUrl(qualifyJobId(job), index)
+    return node.getComputeResultUrl(result.jobId, result.index)
   }
 
-  /** Streams a result instead of returning a URL. */
+  /**
+   * Streams a finished job's result, chosen as `getComputeResult` chooses it: its `output`
+   * unless `resultIndex` names another. Throws where `getComputeResult` returns
+   * `undefined`.
+   */
   async streamComputeResult(
     config: ComputeResultConfig
   ): Promise<ComputeResultStream> {
     const node = this.nodeFor(config.nodeUri)
-    const job = await node.getComputeJob(config.jobId)
+    const result = await this.findResult(node, config)
 
-    if (!job)
-      throw new Error(`[compute] node does not know job ${config.jobId}`)
+    if ('pending' in result) throw new Error(`[compute] ${result.pending}`)
+    if ('missing' in result) throw new Error(`[compute] ${result.missing}`)
 
-    return node.getComputeResult(
-      qualifyJobId({ ...job, jobId: config.jobId }),
-      config.resultIndex ?? 0
-    )
+    return node.getComputeResult(result.jobId, result.index)
   }
 
-  /** Streamable job logs — useful while a job is still running. */
-  async getComputeLogs(config: ComputeStatusConfig): Promise<unknown> {
+  /**
+   * A job's algorithm logs: streamed live while the algorithm runs, and read from the
+   * job's `algorithmLog` result once it has finished, since the node streams logs only
+   * while the algorithm runs.
+   */
+  async getComputeLogs(
+    config: ComputeStatusConfig
+  ): Promise<ComputeResultStream> {
     const node = this.nodeFor(config.nodeUri)
+    let job = await this.requireJob(node, config.jobId)
 
-    return node.getComputeLogs(await this.qualify(node, config.jobId))
+    if (!isJobFinished(job)) {
+      try {
+        return await node.getComputeLogs(job.jobId)
+      } catch (error) {
+        // The job may have finished since its status was read.
+        const latest = await node.getComputeJob(job.jobId)
+        if (!latest || !isJobFinished(latest)) throw error
+        job = latest
+      }
+    }
+
+    const index = findResultIndex(job, 'algorithmLog')
+
+    if (index === undefined)
+      throw new Error(
+        `[compute] job ${job.jobId} has finished and has no 'algorithmLog' result. Results: ${JSON.stringify(job.results)}`
+      )
+
+    return node.getComputeResult(job.jobId, index)
   }
 
   async stopCompute(config: StopComputeConfig): Promise<ComputeJob[]> {
-    const node = this.nodeFor(config.nodeUri)
-
-    return node.computeStop(
-      await this.qualify(node, config.jobId),
+    return this.nodeFor(config.nodeUri).computeStop(
+      config.jobId,
       config.agreementId
     )
   }
 
-  /**
-   * Rewrites a bare job id into the `<environmentHash>-<jobId>` form.
-   *
-   * The results, streamable-logs and stop handlers all recover the compute
-   * environment by splitting the id on its first dash, so a bare id leaves them
-   * with an empty hash and they answer "Invalid C2D Environment" — or, for
-   * stop, a bare 500. `getComputeStatus` is the exception: it tolerates either.
-   *
-   * nautilus reports bare ids everywhere (see `normaliseJobIds`), so this is
-   * where the node's preferred form is put back.
-   */
-  private async qualify(node: OceanNodeClient, jobId: string): Promise<string> {
+  /** The job, or an error saying the node does not know it. */
+  private async requireJob(
+    node: OceanNodeClient,
+    jobId: string
+  ): Promise<NodeComputeJob> {
     const job = await node.getComputeJob(jobId)
 
-    return job ? qualifyJobId({ ...job, jobId }) : jobId
+    if (!job)
+      throw new Error(
+        `[compute] node ${node.nodeUri} does not know job ${jobId}`
+      )
+
+    return job
+  }
+
+  /**
+   * Finds the result `getComputeResult` and `streamComputeResult` read: `resultIndex`, or
+   * the finished job's `output`. `pending` while the job runs, `missing` when the node does
+   * not know the job or it has no such result.
+   */
+  private async findResult(
+    node: OceanNodeClient,
+    config: ComputeResultConfig
+  ): Promise<
+    { jobId: string; index: number } | { pending: string } | { missing: string }
+  > {
+    const job = await node.getComputeJob(config.jobId)
+
+    if (!job)
+      return {
+        missing: `node ${node.nodeUri} does not know job ${config.jobId}`
+      }
+
+    if (!isJobFinished(job))
+      return {
+        pending: `job ${job.jobId} is not finished yet (status ${job.status}: ${job.statusText})`
+      }
+
+    const index = config.resultIndex ?? findResultIndex(job, 'output')
+
+    if (index === undefined)
+      return {
+        missing: `job ${job.jobId} has no 'output' result; pass resultIndex to read another. Results: ${JSON.stringify(job.results)}`
+      }
+
+    return { jobId: job.jobId, index }
   }
 
   /** A client for another node, when a job runs somewhere other than the default. */

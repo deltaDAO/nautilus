@@ -10,6 +10,7 @@ import {
   timestamp
 } from '../../src/ddo/project.js'
 import { getMetadata } from '../../src/ddo/read.js'
+import { assertValid } from '../../src/ddo/validate.js'
 import {
   ASSET_DID,
   CHAIN_ID,
@@ -192,6 +193,73 @@ describe('DDO v5 projection', () => {
     expect(timestamp(new Date('2026-01-01T00:00:00.123Z'))).to.equal(
       '2026-01-01T00:00:00Z'
     )
+  })
+})
+
+describe('compute block on algorithm services', () => {
+  const computeService: ServiceV5 = {
+    ...service,
+    type: 'compute',
+    compute: {
+      allowRawAlgorithm: false,
+      allowNetworkAccess: false,
+      publisherTrustedAlgorithmPublishers: [],
+      publisherTrustedAlgorithms: []
+    }
+  }
+
+  function servicesOf(type: string, services: ServiceV5[]) {
+    const ddo = project(
+      { ...baseState(), metadata: { ...baseState().metadata, type } },
+      { create: true, chainId: CHAIN_ID, nftAddress: NFT_ADDRESS, services }
+    )
+
+    return (ddo.credentialSubject as { services: ServiceV5[] }).services
+  }
+
+  it('omits it on every service of an algorithm', () => {
+    const [projected] = servicesOf('algorithm', [computeService])
+
+    expect(projected).not.to.have.property('compute')
+    expect(projected.type).to.equal('compute')
+    // The builder's service is left as it was.
+    expect(computeService).to.have.property('compute')
+  })
+
+  it('keeps it on a dataset, where it says which algorithms may run', () => {
+    const [projected] = servicesOf('dataset', [computeService])
+
+    expect(projected.compute).to.deep.equal(computeService.compute)
+  })
+
+  it('projects an algorithm with a compute service that ddo-js validates', async () => {
+    const ddo = project(
+      {
+        ...baseState(),
+        metadata: {
+          ...baseState().metadata,
+          type: 'algorithm',
+          algorithm: {
+            language: 'python',
+            version: '0.1.0',
+            container: {
+              entrypoint: 'python $ALGO',
+              image: 'oceanprotocol/algo_dockers',
+              tag: 'python-branin',
+              checksum: `sha256:${'a'.repeat(64)}`
+            }
+          }
+        }
+      },
+      {
+        create: true,
+        chainId: CHAIN_ID,
+        nftAddress: NFT_ADDRESS,
+        services: [computeService]
+      }
+    )
+
+    await assertValid(ddo)
   })
 })
 

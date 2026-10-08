@@ -3,6 +3,7 @@ import type {
   ComputeJob,
   ComputeOutput,
   ComputeResourceRequest,
+  NodeComputeJob,
   ProviderComputeInitializeResults
 } from '@oceanprotocol/lib'
 import type {
@@ -58,8 +59,9 @@ export interface ComputeConfig extends ProviderFeeLimits, EscrowPaymentLimits {
    */
   computeEnv?: string
   /**
-   * Resources to request. Defaults to each resource's `min` (or 1) as advertised by the
-   * environment.
+   * Resources to request. Each resource the environment lists (for a free job, its `free`
+   * list) that is left out gets its minimum, raised to `1` for `cpu`, `ram` and `disk`
+   * within its maximum, so a job never runs without a CPU or memory limit by default.
    */
   resources?: ComputeResources
   /** Job duration in seconds. Capped to the environment's `maxJobDuration`. */
@@ -90,6 +92,10 @@ export type FreeComputeConfig = Omit<
 >
 
 export interface ComputeStatusConfig {
+  /**
+   * The job's `<environmentHash>-<jobId>` id, as `compute()` and `freeCompute()` return
+   * it. A bare id is refused.
+   */
   jobId: string
   /** Defaults to the node the Nautilus instance is configured with. */
   nodeUri?: string
@@ -97,7 +103,10 @@ export interface ComputeStatusConfig {
 }
 
 export interface ComputeResultConfig extends ComputeStatusConfig {
-  /** Defaults to the first `output` result. */
+  /**
+   * The `index` of the result to read, from the job's `results`. Defaults to its `output`
+   * result, the job's `outputs.tar`.
+   */
   resultIndex?: number
 }
 
@@ -121,4 +130,4 @@ export interface ComputeResult {
   orders: Record<string, string>
 }
 
-export type { ComputeEnvironment, ComputeJob, ComputeOutput }
+export type { ComputeEnvironment, ComputeJob, ComputeOutput, NodeComputeJob }

@@ -10,6 +10,7 @@ import {
   type ComputeAlgorithm,
   type ComputeAsset,
   type ComputeEnvironment,
+  type ComputeResourceRequest,
   type Config,
   EscrowContract,
   sendTx
@@ -18,7 +19,7 @@ import type { Signer } from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComputeConfig } from '../../src/@types/Compute.js'
 import { sendSettlement } from '../../src/access/settlement.js'
-import { compute } from '../../src/compute/index.js'
+import { compute, freeCompute } from '../../src/compute/index.js'
 import type { AssetV5 } from '../../src/ddo/index.js'
 import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
 import { ProviderFeeSignatureError } from '../../src/utils/providerFee.js'
@@ -148,6 +149,7 @@ function environmentFixture(): ComputeEnvironment {
 interface ComputeStartCall {
   datasets: ComputeAsset[]
   algorithm: ComputeAlgorithm
+  resources?: ComputeResourceRequest[]
 }
 
 /**
@@ -170,10 +172,14 @@ function goodFeesFor(assets: Record<string, AssetV5>) {
 
 function createComputeNodeMock(
   assets: Record<string, AssetV5>,
-  initializeAnswers: unknown[] = [goodFeesFor(assets)]
+  initializeAnswers: unknown[] = [goodFeesFor(assets)],
+  environment: ComputeEnvironment = environmentFixture()
 ) {
-  const calls: { computeStart: ComputeStartCall[]; initializeCompute: number } =
-    { computeStart: [], initializeCompute: 0 }
+  const calls: {
+    computeStart: ComputeStartCall[]
+    freeComputeStart: ComputeStartCall[]
+    initializeCompute: number
+  } = { computeStart: [], freeComputeStart: [], initializeCompute: 0 }
 
   const client = {
     nodeUri: 'https://node.test.invalid',
@@ -189,7 +195,7 @@ function createComputeNodeMock(
     },
 
     async getComputeEnvironments() {
-      return [environmentFixture()]
+      return [environment]
     },
 
     // Without a `payment` in the quote `ensureEscrow` skips funding; the fee tests below
@@ -203,6 +209,11 @@ function createComputeNodeMock(
 
     async computeStart(params: ComputeStartCall) {
       calls.computeStart.push(params)
+      return [{ jobId: 'job-1' }]
+    },
+
+    async freeComputeStart(params: ComputeStartCall) {
+      calls.freeComputeStart.push(params)
       return [{ jobId: 'job-1' }]
     }
   } as unknown as OceanNodeClient
@@ -457,5 +468,123 @@ describe('compute() provider-fee signature pre-check', () => {
     expect(vi.mocked(sendTx)).toHaveBeenCalledOnce()
     expect(vi.mocked(sendSettlement)).toHaveBeenCalledTimes(2)
     expect(calls.computeStart).to.have.length(1)
+  })
+})
+
+describe('default compute resources', () => {
+  /**
+   * An environment as ocean-node 4.2 advertises one: cpu, ram and disk with a minimum of
+   * `0`, which a job that leaves them out gets, and which means no limit at all.
+   */
+  function environmentWith(): ComputeEnvironment {
+    return {
+      ...environmentFixture(),
+      resources: [
+        { id: 'cpu', min: 0, max: 8 },
+        { id: 'ram', min: 0, max: 16 },
+        { id: 'disk', min: 0, max: 100 },
+        { id: 'gpu', min: 0, max: 2 }
+      ],
+      free: {
+        resources: [
+          { id: 'cpu', max: 1 },
+          { id: 'ram', min: 0, max: 2 },
+          { id: 'disk', min: 2, max: 10 },
+          { id: 'gpu', max: 0 }
+        ]
+      }
+    } as unknown as ComputeEnvironment
+  }
+
+  const inputs = () => ({
+    [ASSET_DID]: getComputeAssetFixture(),
+    [ALGO_DID]: accessOnlyAlgorithm()
+  })
+
+  it('requests at least 1 cpu, ram and disk for a free job, within its free limits', async () => {
+    const { client, calls } = createComputeNodeMock(
+      inputs(),
+      undefined,
+      environmentWith()
+    )
+
+    await freeCompute(
+      { dataset: { did: ASSET_DID }, algorithm: { did: ALGO_DID } },
+      computeContext(client)
+    )
+
+    expect(calls.freeComputeStart[0].resources).to.deep.equal([
+      { id: 'cpu', amount: 1 },
+      { id: 'ram', amount: 1 },
+      { id: 'disk', amount: 2 },
+      { id: 'gpu', amount: 0 }
+    ])
+  })
+
+  it('requests at least 1 cpu, ram and disk for a paid job, and no GPU', async () => {
+    const { client, calls } = createComputeNodeMock(
+      inputs(),
+      undefined,
+      environmentWith()
+    )
+
+    await computeAllowed(
+      { dataset: { did: ASSET_DID }, algorithm: { did: ALGO_DID } },
+      computeContext(client)
+    )
+
+    expect(calls.computeStart[0].resources).to.deep.equal([
+      { id: 'cpu', amount: 1 },
+      { id: 'ram', amount: 1 },
+      { id: 'disk', amount: 1 },
+      { id: 'gpu', amount: 0 }
+    ])
+  })
+
+  it('keeps the requested amounts and fills in the resources left out', async () => {
+    const { client, calls } = createComputeNodeMock(
+      inputs(),
+      undefined,
+      environmentWith()
+    )
+
+    await computeAllowed(
+      {
+        dataset: { did: ASSET_DID },
+        algorithm: { did: ALGO_DID },
+        resources: [
+          { id: 'ram', amount: 4 },
+          { id: 'gpu', amount: 1 }
+        ]
+      },
+      computeContext(client)
+    )
+
+    expect(calls.computeStart[0].resources).to.deep.equal([
+      { id: 'ram', amount: 4 },
+      { id: 'gpu', amount: 1 },
+      { id: 'cpu', amount: 1 },
+      { id: 'disk', amount: 1 }
+    ])
+  })
+
+  it('requests no more than a resource offers', async () => {
+    const environment = environmentWith()
+    environment.resources = [{ id: 'ram', min: 0, max: 0 }] as never
+
+    const { client, calls } = createComputeNodeMock(
+      inputs(),
+      undefined,
+      environment
+    )
+
+    await computeAllowed(
+      { dataset: { did: ASSET_DID }, algorithm: { did: ALGO_DID } },
+      computeContext(client)
+    )
+
+    expect(calls.computeStart[0].resources).to.deep.equal([
+      { id: 'ram', amount: 0 }
+    ])
   })
 })

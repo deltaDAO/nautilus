@@ -110,27 +110,12 @@ interface ResolvedInput {
   isAlgorithm: boolean
 }
 
-/** Runs a paid compute job. */
 /**
- * The node reports a started job as `<environmentHash>-<jobId>` but reports the
- * same job as a bare id everywhere else — `getComputeStatus`, `getComputeLogs`
- * and `stopCompute` all expect and return the short form. Normalise on the way
- * out so every nautilus API speaks one dialect; the qualified form is rebuilt
- * internally where the node insists on it (see `getComputeResult`).
+ * Runs a paid compute job.
+ *
+ * Each returned job's `jobId` is `<environmentHash>-<jobId>`, the form every job method
+ * takes (see `./jobs.ts`).
  */
-function normaliseJobIds(jobs: ComputeJob[]): ComputeJob[] {
-  return jobs.map((job) => {
-    // `environment` is present at runtime but absent from ocean.js's ComputeJob.
-    const { environment } = job as ComputeJob & { environment?: string }
-    const [environmentHash] = (environment ?? '').split('-')
-
-    if (!environmentHash || !job.jobId?.startsWith(`${environmentHash}-`))
-      return job
-
-    return { ...job, jobId: job.jobId.slice(environmentHash.length + 1) }
-  })
-}
-
 export async function compute(
   config: ComputeConfig,
   context: ComputeContext
@@ -300,7 +285,7 @@ export async function compute(
   )
 
   return {
-    jobs: normaliseJobIds(jobs),
+    jobs,
     environment,
     initializeResults,
     orders
@@ -351,7 +336,7 @@ export async function freeCompute(
     outputBucketId: config.outputBucketId
   })
 
-  return { jobs: normaliseJobIds(jobs), environment }
+  return { jobs, environment }
 }
 
 // #region inputs
@@ -515,21 +500,48 @@ function resolvePaymentToken(
   return match.feeToken
 }
 
-/** Defaults each resource to the environment's declared minimum, or 1. */
+/**
+ * Resources every environment has, and that a job gets no limit on when it requests `0` of
+ * them: ocean-node sets a container's CPU and memory limits only for an amount above `0`.
+ */
+const BASELINE_RESOURCES = ['cpu', 'ram', 'disk']
+
+/**
+ * The resources a job requests: the caller's, and for every other resource the
+ * environment lists (for a free job, its `free` list), a default.
+ *
+ * The default is the resource's minimum, raised to `1` for `cpu`, `ram` and `disk` within
+ * its maximum: a node fills a resource left out with its minimum, which is often `0`, so a
+ * job would otherwise run without a memory limit. Other resources, such as GPUs, default to
+ * their minimum.
+ */
 function resolveResources(
   environment: ComputeEnvironment,
-  requested?: ComputeResourceRequest[],
+  requested: ComputeResourceRequest[] = [],
   free = false
 ): ComputeResourceRequest[] {
-  if (requested?.length) return requested
+  const advertised = free
+    ? (environment.free?.resources ?? [])
+    : (environment.resources ?? [])
 
-  const available =
-    (free ? environment.free?.resources : environment.resources) || []
+  const defaults = advertised
+    .filter((resource) => !requested.some((entry) => entry.id === resource.id))
+    .map((resource) => {
+      // A free resource without its own bounds has the environment's.
+      const paid = environment.resources?.find(
+        (candidate) => candidate.id === resource.id
+      )
+      const min = resource.min ?? paid?.min ?? 0
+      const max = resource.max ?? paid?.max ?? min
+      const floor = BASELINE_RESOURCES.includes(resource.id) ? 1 : 0
 
-  return available.map((resource) => ({
-    id: resource.id,
-    amount: resource.min ?? 1
-  }))
+      return {
+        id: resource.id,
+        amount: Math.max(min, Math.min(floor, max))
+      }
+    })
+
+  return [...requested, ...defaults]
 }
 
 function resolveMaxJobDuration(

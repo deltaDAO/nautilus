@@ -169,7 +169,8 @@ export function project(
     nftAddress,
     version,
     metadata,
-    services,
+    services:
+      metadata.type === 'algorithm' ? services.map(withoutCompute) : services,
     credentials: state.credentials
   }
 
@@ -186,6 +187,24 @@ export function project(
   else if (ddo.issuer === undefined) ddo.issuer = ''
 
   return ddo
+}
+
+/**
+ * An algorithm's service without a `compute` block.
+ *
+ * The block (`allowRawAlgorithm`, `allowNetworkAccess`, `publisherTrustedAlgorithms`,
+ * `publisherTrustedAlgorithmPublishers`) says which algorithms may run on a dataset.
+ * ocean-node reads it from the dataset's service only, and the v5 shapes do not require it,
+ * so an algorithm carries none: an empty trusted list there would read as "no algorithm may
+ * run". Applied to every service of an algorithm, kept ones included.
+ */
+function withoutCompute(service: ServiceV5): ServiceV5 {
+  if (!service.compute) return service
+
+  const copy = { ...service }
+  delete copy.compute
+
+  return copy
 }
 
 /**

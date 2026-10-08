@@ -1,0 +1,396 @@
+/**
+ * Compute job ids, results and logs against ocean-node's job commands.
+ *
+ * ocean-node names a job `<environmentHash>-<jobId>`. Its status command filters on a job
+ * only when given that form; given a bare id it lists every job of the consumer, and
+ * nautilus used to take the first of those, so an unknown id returned another job. On a
+ * finished job the results are `imageLog`, `configurationLog`, `algorithmLog`, `output`,
+ * and the streamable logs are gone.
+ *
+ * `ProviderInstance` is stubbed, so these run the real `OceanNodeClient` and `Nautilus`
+ * code down to the ocean.js call.
+ */
+
+import {
+  type ComputeResult,
+  type NodeComputeJob,
+  ProviderInstance
+} from '@oceanprotocol/lib'
+import { Wallet } from 'ethers'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  assertQualifiedJobId,
+  findResultIndex,
+  qualifiedJobId
+} from '../../src/compute/jobs.js'
+import { Nautilus } from '../../src/index.js'
+import { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
+import { expectThrowsAsync } from '../helpers.js'
+
+const ADDRESS = '0x0000000000000000000000000000000000000001'
+const ENV_HASH = '9f86d081884c7d65'
+const ENVIRONMENT = `${ENV_HASH}-2c26b46b68ffc68ff99b453c1d304134`
+const BARE_ID = '3a7bd3e2360a3d29eea436fcfb7e44c7'
+const JOB_ID = `${ENV_HASH}-${BARE_ID}`
+const OTHER_BARE_ID = 'b5bb9d8014a0f9b1d61e21e796d78dcc'
+
+/**
+ * The results ocean-node 4.2 lists for a finished job whose results stay on the node.
+ * ocean.js's `ComputeResultType` has neither `imageLog` nor `configurationLog`.
+ */
+const RESULTS = [
+  { filename: 'image.log', filesize: 10, type: 'imageLog', index: 0 },
+  {
+    filename: 'configuration.log',
+    filesize: 10,
+    type: 'configurationLog',
+    index: 1
+  },
+  { filename: 'algorithm.log', filesize: 10, type: 'algorithmLog', index: 2 },
+  { filename: 'outputs.tar', filesize: 10, type: 'output', index: 3 }
+] as unknown as ComputeResult[]
+
+/** A job as the status command reports it: bare id, environment beside it. */
+function statusJob(overrides: Partial<NodeComputeJob> = {}): NodeComputeJob {
+  return {
+    owner: ADDRESS,
+    jobId: BARE_ID,
+    environment: ENVIRONMENT,
+    dateCreated: '0',
+    dateFinished: '0',
+    status: 70,
+    statusText: 'Job finished',
+    results: RESULTS,
+    expireTimestamp: 0,
+    ...overrides
+  } as NodeComputeJob
+}
+
+const stream = (text: string) =>
+  (async function* () {
+    yield new TextEncoder().encode(text)
+  })()
+
+async function read(source: AsyncIterable<Uint8Array>): Promise<string> {
+  let text = ''
+  for await (const chunk of source) text += new TextDecoder().decode(chunk)
+  return text
+}
+
+function client(): OceanNodeClient {
+  return new OceanNodeClient({
+    nodeUri: 'https://node.test.invalid',
+    chainId: 32456,
+    auth: Wallet.createRandom()
+  })
+}
+
+function createNautilus() {
+  return Nautilus.create(
+    Wallet.createRandom().connect({
+      getNetwork: async () => ({ chainId: 32456n })
+    } as never),
+    {
+      config: {
+        oceanNodeUri: 'https://ocean-node.example.com',
+        nftFactoryAddress: ADDRESS,
+        fixedRateExchangeAddress: ADDRESS,
+        dispenserAddress: ADDRESS
+      }
+    }
+  )
+}
+
+/** The node's status answer: `jobs`, whatever id it was asked for. */
+function statusAnswers(...answers: NodeComputeJob[][]) {
+  const spy = vi.spyOn(ProviderInstance, 'computeStatus')
+  for (const jobs of answers) spy.mockResolvedValueOnce(jobs)
+  return spy
+}
+
+/** The job id each status call asked for. */
+const askedFor = (spy: ReturnType<typeof statusAnswers>) =>
+  spy.mock.calls.map((call) => call[2])
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+describe('compute job ids', () => {
+  it('qualifies a bare id from its environment, and leaves a qualified one', () => {
+    expect(
+      qualifiedJobId({ jobId: BARE_ID, environment: ENVIRONMENT })
+    ).to.equal(JOB_ID)
+    expect(
+      qualifiedJobId({ jobId: JOB_ID, environment: ENVIRONMENT })
+    ).to.equal(JOB_ID)
+    expect(qualifiedJobId({ jobId: BARE_ID })).to.equal(BARE_ID)
+  })
+
+  it('refuses an id without its environment hash', () => {
+    expect(() => assertQualifiedJobId(BARE_ID)).to.throw(
+      /not in the form <environmentHash>-<jobId>/
+    )
+    expect(() => assertQualifiedJobId(`-${BARE_ID}`)).to.throw()
+    expect(() => assertQualifiedJobId(`${ENV_HASH}-`)).to.throw()
+    expect(() => assertQualifiedJobId(JOB_ID)).not.to.throw()
+  })
+
+  it('finds a result by type, by the index the node gave it', () => {
+    expect(findResultIndex({ results: RESULTS }, 'output')).to.equal(3)
+    expect(findResultIndex({ results: RESULTS }, 'algorithmLog')).to.equal(2)
+    expect(
+      findResultIndex({ results: RESULTS.slice(0, 3) }, 'output')
+    ).to.equal(undefined)
+  })
+})
+
+describe('OceanNodeClient compute jobs', () => {
+  it('asks the node for the qualified id and reports the job under it', async () => {
+    const spy = statusAnswers([statusJob()])
+
+    const job = await client().getComputeJob(JOB_ID)
+
+    expect(askedFor(spy)).to.deep.equal([JOB_ID])
+    expect(job?.jobId).to.equal(JOB_ID)
+    expect(job?.environment).to.equal(ENVIRONMENT)
+  })
+
+  it('returns undefined when the answer holds only other jobs', async () => {
+    statusAnswers([statusJob({ jobId: OTHER_BARE_ID })])
+
+    expect(await client().getComputeJob(JOB_ID)).to.equal(undefined)
+  })
+
+  it('returns undefined when the node knows no such job', async () => {
+    statusAnswers([])
+
+    expect(await client().getComputeJob(JOB_ID)).to.equal(undefined)
+  })
+
+  it('refuses a bare id before asking the node', async () => {
+    const spy = statusAnswers([statusJob()])
+
+    await expectThrowsAsync(
+      () => client().getComputeJob(BARE_ID),
+      /not in the form <environmentHash>-<jobId>/
+    )
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it('returns started jobs under their qualified id', async () => {
+    vi.spyOn(ProviderInstance, 'freeComputeStart').mockResolvedValue([
+      { ...statusJob({ status: 0 }), jobId: JOB_ID }
+    ])
+
+    const [job] = await client().freeComputeStart({
+      computeEnv: ENVIRONMENT,
+      datasets: [],
+      algorithm: {}
+    })
+
+    expect(job.jobId).to.equal(JOB_ID)
+  })
+
+  it('fails clearly when the node streams no logs', async () => {
+    vi.spyOn(ProviderInstance, 'computeStreamableLogs').mockResolvedValue(null)
+
+    await expectThrowsAsync(
+      () => client().getComputeLogs(JOB_ID),
+      `[ocean-node] computeStreamableLogs: the node returned no logs for job ${JOB_ID}`
+    )
+  })
+})
+
+describe('Nautilus compute jobs', () => {
+  it('getComputeStatus returns the job under the id compute() returned', async () => {
+    const nautilus = await createNautilus()
+    const spy = statusAnswers([statusJob({ status: 40 })])
+
+    const job = await nautilus.getComputeStatus({ jobId: JOB_ID })
+
+    expect(askedFor(spy)).to.deep.equal([JOB_ID])
+    expect(job?.jobId).to.equal(JOB_ID)
+    expect(job?.status).to.equal(40)
+  })
+
+  it('getComputeStatus returns undefined for an unknown job, not another one', async () => {
+    const nautilus = await createNautilus()
+    statusAnswers([statusJob({ jobId: OTHER_BARE_ID })])
+
+    expect(await nautilus.getComputeStatus({ jobId: JOB_ID })).to.equal(
+      undefined
+    )
+  })
+
+  it("getComputeResult returns the URL of the job's output", async () => {
+    const nautilus = await createNautilus()
+    statusAnswers([statusJob()])
+    const url = vi
+      .spyOn(ProviderInstance, 'getComputeResultUrl')
+      .mockResolvedValue('https://node.test.invalid/result')
+
+    expect(await nautilus.getComputeResult({ jobId: JOB_ID })).to.equal(
+      'https://node.test.invalid/result'
+    )
+    expect(url.mock.calls[0].slice(2)).to.deep.equal([JOB_ID, 3])
+  })
+
+  it('getComputeResult returns undefined for an unknown or unfinished job', async () => {
+    const nautilus = await createNautilus()
+    statusAnswers(
+      [statusJob({ jobId: OTHER_BARE_ID })],
+      [statusJob({ status: 40, results: RESULTS.slice(0, 1) })]
+    )
+    const url = vi.spyOn(ProviderInstance, 'getComputeResultUrl')
+
+    expect(await nautilus.getComputeResult({ jobId: JOB_ID })).to.equal(
+      undefined
+    )
+    expect(await nautilus.getComputeResult({ jobId: JOB_ID })).to.equal(
+      undefined
+    )
+    expect(url).not.toHaveBeenCalled()
+  })
+
+  it('getComputeResult reads at 71 (JobSettle) too', async () => {
+    const nautilus = await createNautilus()
+    statusAnswers([statusJob({ status: 71 })])
+    vi.spyOn(ProviderInstance, 'getComputeResultUrl').mockResolvedValue('url')
+
+    expect(await nautilus.getComputeResult({ jobId: JOB_ID })).to.equal('url')
+  })
+
+  it('streamComputeResult streams the output, not the first result', async () => {
+    const nautilus = await createNautilus()
+    statusAnswers([statusJob()])
+    const result = vi
+      .spyOn(ProviderInstance, 'getComputeResult')
+      .mockResolvedValue(stream('outputs.tar'))
+
+    const body = await nautilus.streamComputeResult({ jobId: JOB_ID })
+
+    expect(await read(body)).to.equal('outputs.tar')
+    expect(result.mock.calls[0].slice(2, 4)).to.deep.equal([JOB_ID, 3])
+  })
+
+  it('streamComputeResult honours resultIndex', async () => {
+    const nautilus = await createNautilus()
+    statusAnswers([statusJob()])
+    const result = vi
+      .spyOn(ProviderInstance, 'getComputeResult')
+      .mockResolvedValue(stream('image log'))
+
+    await nautilus.streamComputeResult({ jobId: JOB_ID, resultIndex: 0 })
+
+    expect(result.mock.calls[0].slice(2, 4)).to.deep.equal([JOB_ID, 0])
+  })
+
+  it('streamComputeResult throws for an unknown job, an unfinished one, or no output', async () => {
+    const nautilus = await createNautilus()
+    statusAnswers(
+      [],
+      [statusJob({ status: 40 })],
+      [statusJob({ results: RESULTS.slice(0, 3) })]
+    )
+    const result = vi.spyOn(ProviderInstance, 'getComputeResult')
+
+    await expectThrowsAsync(
+      () => nautilus.streamComputeResult({ jobId: JOB_ID }),
+      /does not know job/
+    )
+    await expectThrowsAsync(
+      () => nautilus.streamComputeResult({ jobId: JOB_ID }),
+      /is not finished yet \(status 40/
+    )
+    await expectThrowsAsync(
+      () => nautilus.streamComputeResult({ jobId: JOB_ID }),
+      /has no 'output' result/
+    )
+    expect(result).not.toHaveBeenCalled()
+  })
+
+  it('getComputeLogs streams the live logs of a running job', async () => {
+    const nautilus = await createNautilus()
+    statusAnswers([statusJob({ status: 40, results: [] })])
+    const logs = vi
+      .spyOn(ProviderInstance, 'computeStreamableLogs')
+      .mockResolvedValue(stream('live'))
+
+    expect(
+      await read(await nautilus.getComputeLogs({ jobId: JOB_ID }))
+    ).to.equal('live')
+    expect(logs.mock.calls[0][2]).to.equal(JOB_ID)
+  })
+
+  it("getComputeLogs reads a finished job's algorithmLog result", async () => {
+    const nautilus = await createNautilus()
+    statusAnswers([statusJob()])
+    const logs = vi.spyOn(ProviderInstance, 'computeStreamableLogs')
+    const result = vi
+      .spyOn(ProviderInstance, 'getComputeResult')
+      .mockResolvedValue(stream('algorithm log'))
+
+    expect(
+      await read(await nautilus.getComputeLogs({ jobId: JOB_ID }))
+    ).to.equal('algorithm log')
+    expect(logs).not.toHaveBeenCalled()
+    expect(result.mock.calls[0].slice(2, 4)).to.deep.equal([JOB_ID, 2])
+  })
+
+  it('getComputeLogs falls back to the algorithmLog when the job finishes meanwhile', async () => {
+    const nautilus = await createNautilus()
+    statusAnswers([statusJob({ status: 40, results: [] })], [statusJob()])
+    vi.spyOn(ProviderInstance, 'computeStreamableLogs').mockResolvedValue(null)
+    const result = vi
+      .spyOn(ProviderInstance, 'getComputeResult')
+      .mockResolvedValue(stream('algorithm log'))
+
+    expect(
+      await read(await nautilus.getComputeLogs({ jobId: JOB_ID }))
+    ).to.equal('algorithm log')
+    expect(result.mock.calls[0].slice(2, 4)).to.deep.equal([JOB_ID, 2])
+  })
+
+  it('getComputeLogs throws for an unknown job', async () => {
+    const nautilus = await createNautilus()
+    statusAnswers([statusJob({ jobId: OTHER_BARE_ID })])
+
+    await expectThrowsAsync(
+      () => nautilus.getComputeLogs({ jobId: JOB_ID }),
+      /does not know job/
+    )
+  })
+
+  it('stopCompute sends the id as given, without a status lookup', async () => {
+    const nautilus = await createNautilus()
+    const status = statusAnswers()
+    const stop = vi
+      .spyOn(ProviderInstance, 'computeStop')
+      .mockResolvedValue([statusJob({ status: 40 })])
+
+    const [job] = await nautilus.stopCompute({ jobId: JOB_ID })
+
+    expect(stop.mock.calls[0][0]).to.equal(JOB_ID)
+    expect(job.jobId).to.equal(JOB_ID)
+    expect(status).not.toHaveBeenCalled()
+  })
+
+  it('refuses a bare id on every job method', async () => {
+    const nautilus = await createNautilus()
+    const status = statusAnswers()
+    const stop = vi.spyOn(ProviderInstance, 'computeStop')
+
+    for (const call of [
+      () => nautilus.getComputeStatus({ jobId: BARE_ID }),
+      () => nautilus.getComputeResult({ jobId: BARE_ID }),
+      () => nautilus.streamComputeResult({ jobId: BARE_ID }),
+      () => nautilus.getComputeLogs({ jobId: BARE_ID }),
+      () => nautilus.stopCompute({ jobId: BARE_ID })
+    ])
+      await expectThrowsAsync(call, /not in the form <environmentHash>-<jobId>/)
+
+    expect(status).not.toHaveBeenCalled()
+    expect(stop).not.toHaveBeenCalled()
+  })
+})

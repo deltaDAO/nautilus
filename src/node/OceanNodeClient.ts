@@ -37,6 +37,7 @@ import {
   type DownloadResponse,
   type FileInfo,
   LoggerInstance,
+  type NodeComputeJob,
   type NodeStatus,
   type PersistentStorageFileEntry,
   type ProviderComputeInitializeResults,
@@ -55,6 +56,7 @@ import {
   type Signer,
   toUtf8Bytes
 } from 'ethers'
+import { assertQualifiedJobId, withQualifiedJobId } from '../compute/jobs.js'
 import type { PolicyServerPayload } from '../ddo/types.js'
 import { PolicyServerAction } from '../identity/CredentialProvider.js'
 import {
@@ -1779,7 +1781,7 @@ export class OceanNodeClient {
       )
     )
 
-    return toJobArray('computeStart', jobs)
+    return toJobArray('computeStart', jobs).map(withQualifiedJobId)
   }
 
   /** Free compute: no order, no escrow, no payment token. Gated by `env.free`. */
@@ -1815,14 +1817,22 @@ export class OceanNodeClient {
       )
     )
 
-    return toJobArray('freeComputeStart', jobs)
+    return toJobArray('freeComputeStart', jobs).map(withQualifiedJobId)
   }
 
+  /**
+   * Jobs of this client's consumer, with ids in the `<environmentHash>-<jobId>` form.
+   *
+   * With a `jobId`, which must be in that form, the node answers with that job only.
+   * Without one, it lists every job of the consumer, or of `agreementId`.
+   */
   async computeStatus(
     jobId?: string,
     agreementId?: string,
     signal?: AbortSignal
-  ): Promise<ComputeJob[]> {
+  ): Promise<NodeComputeJob[]> {
+    if (jobId !== undefined) assertQualifiedJobId(jobId)
+
     const status = await attempt('computeStatus', () =>
       ProviderInstance.computeStatus(
         this.nodeUri,
@@ -1833,17 +1843,23 @@ export class OceanNodeClient {
       )
     )
 
-    return Array.isArray(status) ? status : status ? [status] : []
+    const jobs = Array.isArray(status) ? status : status ? [status] : []
+
+    return jobs.map(withQualifiedJobId)
   }
 
-  /** Status of one job, or `undefined` if the node does not know it. */
+  /**
+   * Status of one job, or `undefined` if the node does not know it.
+   *
+   * @param jobId `<environmentHash>-<jobId>`, as `computeStart` returns it
+   */
   async getComputeJob(
     jobId: string,
     signal?: AbortSignal
-  ): Promise<ComputeJob | undefined> {
+  ): Promise<NodeComputeJob | undefined> {
     const jobs = await this.computeStatus(jobId, undefined, signal)
 
-    return jobs.find((job) => job.jobId === jobId) || jobs[0]
+    return jobs.find((job) => job.jobId === jobId)
   }
 
   async computeStop(
@@ -1851,6 +1867,8 @@ export class OceanNodeClient {
     agreementId?: string,
     signal?: AbortSignal
   ): Promise<ComputeJob[]> {
+    assertQualifiedJobId(jobId)
+
     const jobs = await attempt('computeStop', () =>
       ProviderInstance.computeStop(
         jobId,
@@ -1861,10 +1879,12 @@ export class OceanNodeClient {
       )
     )
 
-    return toJobArray('computeStop', jobs)
+    return toJobArray('computeStop', jobs).map(withQualifiedJobId)
   }
 
   async getComputeResultUrl(jobId: string, index: number): Promise<string> {
+    assertQualifiedJobId(jobId)
+
     const url = await attempt('getComputeResultUrl', () =>
       ProviderInstance.getComputeResultUrl(
         this.nodeUri,
@@ -1889,6 +1909,8 @@ export class OceanNodeClient {
     index: number,
     offset = 0
   ): Promise<ComputeResultStream> {
+    assertQualifiedJobId(jobId)
+
     return attempt('getComputeResult', () =>
       ProviderInstance.getComputeResult(
         this.nodeUri,
@@ -1900,15 +1922,34 @@ export class OceanNodeClient {
     )
   }
 
-  async getComputeLogs(jobId: string, signal?: AbortSignal): Promise<unknown> {
-    return attempt('computeStreamableLogs', () =>
-      ProviderInstance.computeStreamableLogs(
-        this.nodeUri,
-        this.auth,
-        jobId,
-        signal
-      )
+  /**
+   * Streams a running job's algorithm output. The node serves these logs only while the
+   * algorithm runs; a finished job's are in its `algorithmLog` result.
+   */
+  async getComputeLogs(
+    jobId: string,
+    signal?: AbortSignal
+  ): Promise<ComputeResultStream> {
+    assertQualifiedJobId(jobId)
+
+    const logs: ComputeResultStream | null = await attempt(
+      'computeStreamableLogs',
+      () =>
+        ProviderInstance.computeStreamableLogs(
+          this.nodeUri,
+          this.auth,
+          jobId,
+          signal
+        )
     )
+
+    if (!logs)
+      throw new OceanNodeError(
+        'computeStreamableLogs',
+        `the node returned no logs for job ${jobId}`
+      )
+
+    return logs
   }
 
   // #endregion
