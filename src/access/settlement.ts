@@ -49,7 +49,7 @@ export type SettleOrderParams = {
    * The service, to look up a previous order on chain when the node reports no
    * `validOrder`. Without it only the node's `validOrder` is reused.
    */
-  service?: { id: string; timeout: number }
+  service?: { id: string; timeout?: number }
   /**
    * The asset's DID, named with `service.id` in the fee passed to `confirmProviderFees`
    * and in a `ProviderFeeNotAllowedError`.

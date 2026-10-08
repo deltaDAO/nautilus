@@ -121,7 +121,7 @@ export async function access(
     initialized,
     consumer: consumerAddress,
     did: asset.id,
-    service: { id: service.id, timeout: Number(service.timeout) },
+    service: { id: service.id, timeout: service.timeout },
     maxProviderFee: config.maxProviderFee,
     confirmProviderFees: config.confirmProviderFees
   })
