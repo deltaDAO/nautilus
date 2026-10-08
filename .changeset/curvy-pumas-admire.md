@@ -60,13 +60,14 @@ written, and the DDO never goes on chain.
   `nodeUri` (an `OceanNodeError`, opt out with its own `allowInsecureTransport: true`), and
   so do `forEndpoint`, which carries the flag over, and `encrypt` and `getFileInfo` for a
   `nodeUri` other than the client's own (a service's `serviceEndpoint`).
-- **Redirects are not followed** on the requests nautilus sends itself: the node lookups
-  (asset, indexing state, node address, indexer nonce), every `S3RemoteStore` request, and
-  `IpfsRemoteStore` uploads, `probe`, `unpin` and Kubo `cat` reads. A 3xx fails the request
-  and names the target origin, instead of carrying credentials or the envelope there. Only
-  the `gatewayUrl` read in `IpfsRemoteStore.verify()`, which sends neither, follows
-  redirects. Requests ocean.js sends (`encrypt`, `initialize`, `getFileInfo`, …) are
-  unchanged.
+- **Redirects are not followed** on the requests nautilus sends with credentials or a body:
+  every `S3RemoteStore` request, and `IpfsRemoteStore` uploads, `probe`, `unpin` and Kubo
+  `cat` reads. A 3xx fails the request and names the target origin. The read-only node GETs
+  (`waitForIndexer`'s asset lookup, indexing state, node address, indexer nonce) and the
+  `gatewayUrl` read in `IpfsRemoteStore.verify()` send neither, so they follow redirects; a
+  redirect that ends on plain `http://` on a non-loopback host fails them, unless the
+  requested URL was such a URL already (`allowInsecureTransport`). Requests ocean.js sends
+  (`encrypt`, `initialize`, `getFileInfo`, `resolve`, …) are unchanged.
 - **`IpfsRemoteStore` refuses `user:password@` credentials** in `uploadUrl`, `gatewayUrl`,
   `probe.url` and `unpin.url` (pass them in `headers`), and URLs that do not parse.
 - **`Nautilus.create` refuses a `config.chainId` that differs from the signer's chain.**
@@ -106,7 +107,8 @@ written, and the DDO never goes on chain.
   active connections" instead of counting it as a failed lookup: `2 × intervalMs`,
   doubling with each rate-limit answer in a row, and at least as long as the node asks
   ("Try again in N seconds", or `Retry-After` in seconds or as an HTTP date) plus 1 s, but
-  never more than 60 s.
+  never more than 60 s. An `intervalMs` under 1 s counts as 1 s for the backoff, so
+  `intervalMs: 0` still waits 2, 4, 8 … s.
 - **The same-block guard changed.** `edit()` no longer waits for this instance's previous
   metadata change to be indexed; see `MetadataConflictError` below.
 - **nautilus now calls a store's `remove()` itself**, only when no metadata transaction can
@@ -115,9 +117,12 @@ written, and the DDO never goes on chain.
   wallet or RPC refusal), or the transaction was mined and reverted. The object is removed,
   best effort (`stored.cleanup: 'removed'`); never once the transaction may have been
   mined. To tell these apart, nautilus builds the transaction with ocean.js
-  (`Nft.setMetadataTx`) and sends it with the signer. On `sdk: 'oasis'` chains the send
-  stays with ocean.js, unchanged, so there a rejection or revert after the send keeps the
-  envelope (`'kept'`).
+  (`Nft.setMetadataTx`) and sends it with the signer. A send error that carries a
+  transaction hash (ethers' `info.sendTransactionHash` after `JsonRpcSigner` stops polling,
+  or `transactionHash`/`hash`) counts as sent whatever its code, and so does ethers'
+  "provider destroyed" for a request already at the RPC: the envelope is kept. On
+  `sdk: 'oasis'` chains the send stays with ocean.js, unchanged, so there a rejection or
+  revert after the send keeps the envelope (`'kept'`).
 - **A `DdoSigner`'s output is checked**: the returned JWS must decode, and its payload (`vc`
   unwrapped, as the node does) must be the validated DDO. Allowed on top: the JWT
   registered claims, `type: ['VerifiableCredential']`, an `issuer` differing only in the
@@ -151,19 +156,22 @@ written, and the DDO never goes on chain.
   the first error. `allowSharedCredentials` warns once that the write key ends up in every
   on-chain pointer. The bucket name must follow the S3 naming rules, and a dotted bucket
   over https needs `forcePathStyle`; an `endpoint` or `nodeEndpoint` with a scheme other
-  than `http(s)://` is refused; keys and `prefix` with `.`/`..` or empty segments, a
+  than `http(s)://`, or with a user name or password (requests are signed with the key pairs
+  only, and the userinfo would end up in the pointer and in error messages), is refused; keys and `prefix` with `.`/`..` or empty segments, a
   leading `/` or a backslash are refused; virtual-host addressing on an IP or `localhost`
   endpoint is refused with a hint to set `forcePathStyle: true` (also for `nodeEndpoint`).
   `remove()` only deletes keys of the exact shape `put()` writes, in the configured bucket,
   and counts `NoSuchKey` as removed. Signed requests never follow redirects: a redirect or
   a region mismatch names the region and endpoint to fix, and `NoSuchKey` is reported as a
   missing object. Network errors carry method, bucket, key and role, and every request has
-  a timeout (`requestTimeoutMs`, default 30 s).
+  a timeout (`requestTimeoutMs`, default 30 s; the constructor throws unless it is a finite
+  number of milliseconds above 0, and clamps it to 2^31−1).
 - **`IpfsRemoteStore`**: works with Pinata's `pinFileToIPFS`; `probe` (`'upload'` or
   `{ url, method?, headers? }`, validated in the constructor) catches a bad key before
   anything is minted, and the upload headers only go to a probe URL on the upload origin
   unless `probe.headers` is given; `gatewayUrl` (or a Kubo `uploadUrl`) drives `verify()`,
-  `verify: false` opts out; returned CIDs are validated; `requestTimeoutMs` (default 60 s).
+  `verify: false` opts out; returned CIDs are validated; `requestTimeoutMs` (default 60 s,
+  checked in the constructor as for `S3RemoteStore`).
   Error bodies, a non-CID 2xx body included, are cut to 300 characters and scrubbed of the
   configured header values and tokens; the text is bounded before any pattern runs, so a
   large hostile body cannot block the event loop. Network errors carry no raw fetch error
@@ -179,7 +187,10 @@ written, and the DDO never goes on chain.
   whose pricing failed, creates only the missing ones, and lists every service. It refuses
   a reused datatoken whose existing pricing differs from the service's pricing config
   (scheme, rate, base token, owner, payment collector, fees, dispenser limits), and a
-  creation-order match whose pricing does not fit.
+  creation-order match whose pricing does not fit. So that the metadata is not written
+  twice, it refuses while the signer has pending transactions, and takes
+  `metadataTxHash` (new `CompletePublishOptions`, from `PublishIncompleteError.stored.txHash`):
+  it then also refuses while that transaction is pending or once it succeeded.
 - **Results survive a failed wait.** When the metadata transaction was mined but
   `waitForIndexer` fails or times out, the thrown error carries the full `PublishResponse`
   as `error.published` (type `PublishedNotIndexed`), for `publish`, `completePublish` and
@@ -192,7 +203,10 @@ written, and the DDO never goes on chain.
   left, but at least 1 s unless `requestTimeoutMs` is shorter) and `maxConsecutiveFailures`
   (default 5), rejects with the `signal`'s reason on abort, polls once more when
   `timeoutMs` is up, and names the last request error in the timeout message, unless a
-  later answer cleared it. `publish`/`edit` accept
+  later answer cleared it. Over a P2P node URI, `requestTimeoutMs` bounds each asset lookup
+  as a whole (ocean.js's dial and retries included), and a lookup that runs out counts
+  towards `maxConsecutiveFailures`, so the wait ends on time even without a `signal`.
+  `publish`/`edit` accept
   `waitForIndexer: { intervalMs, timeoutMs, signal }`; an abort reason that cannot take
   `error.published` (a `DOMException`, a string) is wrapped in an `Error` that carries it,
   with the reason as `cause`.
@@ -220,8 +234,8 @@ written, and the DDO never goes on chain.
 - **`error.stored`** (type `StoredBeforeFailure`, also `PublishIncompleteError.stored`): when a
   write fails after the envelope was stored, the redacted pointer, the hash and
   `cleanup: 'removed' | 'not-removed' | 'kept'`. `'kept'` means the metadata transaction was
-  sent and may be mined; `PublishIncompleteError` then no longer claims the NFT has no
-  metadata. `PublishIncompleteError.cause` is the native `Error.cause`.
+  sent and may be mined, and `txHash` names it when its hash is known;
+  `PublishIncompleteError` then no longer claims the NFT has no metadata. `PublishIncompleteError.cause` is the native `Error.cause`.
 - **Hardening:** the store's pointer is validated and encrypted as one plain snapshot (an
   inherited `type` or a getter can no longer pass the check and serialize differently); an
   unreadable on-chain metadata state now throws instead of reading as ACTIVE; `S3RemoteStore`
@@ -242,9 +256,9 @@ written, and the DDO never goes on chain.
 - **Clearer edit error:** editing a loaded service's `serviceEndpoint` without adding its
   files again now explains that files are encrypted for the node in the endpoint, so both
   must change together.
-- **New exported types:** `FailedWithStoredObject`, `StoredBeforeFailure`,
-  `PublishedNotIndexed`, `IndexerNonceState`, `IndexingState`, `IndexingStateQuery`,
-  `WaitForIndexerOptions`.
+- **New exported types:** `CompletePublishOptions`, `FailedWithStoredObject`,
+  `StoredBeforeFailure`, `PublishedNotIndexed`, `IndexerNonceState`, `IndexingState`,
+  `IndexingStateQuery`, `WaitForIndexerOptions`.
 - **No more orphaned NFTs without a way back.** A failure after the NFT is minted throws a
   `PublishIncompleteError` with `nftAddress` and `datatokens`; `completePublish(nftAddress,
   asset)` finishes the publish on that NFT. `edit()` runs the store check before minting a
@@ -273,6 +287,16 @@ written, and the DDO never goes on chain.
   approval) when they shared a token, and the order reverted, on template 1 after the
   purchase. Every check (pricing, exchange, fee collectors, provider fee) now runs before
   the first approval. Approvals in different tokens are unchanged.
+- **`order()` and `settleOrder()` refuse a `payer` other than the signer** before any
+  allowance read or transaction. The datatoken and the exchange take every amount from the
+  transaction's sender; another payer's allowance could skip the merged purchase approval on
+  templates 2 and 4, so `buyFromFreAndOrder` reverted.
+- **`edit()` writes the NFT's current on-chain lifecycle state** unless the builder sets one
+  with `setLifecycleState()` (new `NautilusAsset.hasRequestedLifecycleState`), so an edit
+  built from a stale copy no longer undoes `setAssetLifecycleState()`.
+- **A metadata transaction the wallet sped up** (`TRANSACTION_REPLACED`, `reason:
+  'repriced'`) is no longer reported as a failure: the replacement's receipt is the result,
+  and a reverted replacement is handled as a revert.
 - **A provider fee amount of `'0x0'` or `'00'` is no fee due**: the amount is compared as a
   number, so an order in force with such a fee is reused as it stands.
 - **A stored pointer that cannot be redacted** no longer stops `RemoteStore.remove()` after

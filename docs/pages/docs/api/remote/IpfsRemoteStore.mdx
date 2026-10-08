@@ -63,15 +63,16 @@ reach will publish fine and then fail to index. See
 | `unpin` | `false \| { url: string; method?: string; headers?: Record<string, string> }` | derived from `uploadUrl` | How [`remove()`](#remove) unpins. `url` contains `{cid}`; `method` defaults to `DELETE`. `false` turns `remove()` off. |
 | `extractCid` | `(response: unknown) => string \| undefined` | `Hash`/`cid`/`Cid`/`IpfsHash`/`hash` | Override CID extraction. |
 | `allowInsecureTransport` | `boolean` | `false` | Allow a plain `http://` `uploadUrl`, `gatewayUrl`, `probe.url` or `unpin.url` on a host other than `localhost`, `127.0.0.0/8`, `::1` or `*.localhost`. |
-| `requestTimeoutMs` | `number` | `60000` | Timeout of each request, body included. |
+| `requestTimeoutMs` | `number` | `60000` | Timeout of each request, body included. A finite number of milliseconds, more than 0; above 2^31 − 1 it is clamped to that. |
 | `fetchImpl` | `typeof fetch` | `fetch` | Inject a custom fetch. |
 
 The constructor throws without an `uploadUrl`, for an `unpin.url` without `{cid}`, for
 `gatewayUrl` together with `verify: false`, for a `probe` that is neither `'upload'` nor
 `{ url, method?, headers? }`, for an `uploadUrl`, `gatewayUrl`, `probe.url` or `unpin.url`
 that does not parse or carries `user:password@` credentials (pass them in `headers`
-instead), and for a plain `http://` one of those on a non-loopback host unless
-`allowInsecureTransport` is set.
+instead), for a plain `http://` one of those on a non-loopback host unless
+`allowInsecureTransport` is set, and for a `requestTimeoutMs` that is not a finite number of
+milliseconds above 0.
 
 The payload is uploaded unchanged, as a multipart `file` field (`application/json`, named
 `<did>.json`). Produces an `{ type: 'ipfs', hash }` pointer. Throws when the upload fails, the

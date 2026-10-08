@@ -74,8 +74,8 @@ node's key can read them, and they can never be removed.
 
 | Option | Type | Default | Purpose |
 | --- | --- | --- | --- |
-| `endpoint` | `string` | — | Where this store uploads, e.g. `https://sos-de-fra-1.exo.io`. No scheme means `https://`. Plain `http://` only on `localhost`, `127.0.0.0/8`, `::1` and `*.localhost`, or with `allowInsecureTransport`. Required. |
-| `nodeEndpoint` | `string` | `endpoint` | The endpoint written into the pointer, for when the node reaches the bucket differently than you do. May be `http://` (e.g. `http://minio:9000` inside Docker): nautilus never connects to it. The pointer gets it (or `endpoint`) with an explicit, lowercase scheme; none means `https://`. |
+| `endpoint` | `string` | — | Where this store uploads, e.g. `https://sos-de-fra-1.exo.io`. No scheme means `https://`. Plain `http://` only on `localhost`, `127.0.0.0/8`, `::1` and `*.localhost`, or with `allowInsecureTransport`. No `user:password@` in the URL. Required. |
+| `nodeEndpoint` | `string` | `endpoint` | The endpoint written into the pointer, for when the node reaches the bucket differently than you do. May be `http://` (e.g. `http://minio:9000` inside Docker): nautilus never connects to it. The pointer gets it (or `endpoint`) with an explicit, lowercase scheme; none means `https://`. No `user:password@` in the URL. |
 | `region` | `string` | `'us-east-1'` | As on the node. For Exoscale, the zone. |
 | `bucket` | `string` | — | Required. An S3 bucket name: 3–63 lowercase letters, digits, dots and hyphens, starting and ending with a letter or digit. |
 | `prefix` | `string` | `''` | Prepended to every object key as is, e.g. `'ddo/'` (without the `/`, `'ddo'` gives `ddo<DID hash>/…`). Scope the read key to it. |
@@ -86,7 +86,7 @@ node's key can read them, and they can never be removed.
 | `allowSharedCredentials` | `boolean` | `false` | Accept one key pair for both. The write key then sits in every pointer, forever, and a one-time `console.warn` says so. |
 | `allowWritableReadKey` | `boolean` | `false` | Let `check()` pass, with a warning, although the read key can write or delete. |
 | `allowInsecureTransport` | `boolean` | `false` | Accept a plain `http://` `endpoint` on a non-loopback host. |
-| `requestTimeoutMs` | `number` | `30000` | Timeout of each request, body included. A network error or a 500/502/503/504 is retried once, freshly signed; a timeout is not. |
+| `requestTimeoutMs` | `number` | `30000` | Timeout of each request, body included. A finite number of milliseconds, more than 0; above 2^31 − 1 it is clamped to that. A network error or a 500/502/503/504 is retried once, freshly signed; a timeout is not. |
 | `fetchImpl` | `typeof fetch` | `fetch` | Inject a custom fetch. |
 | `now` | `() => Date` | `() => new Date()` | The clock used for signing. For tests only. |
 
@@ -99,6 +99,11 @@ The constructor throws when:
 - `endpoint` is plain `http://` on a non-loopback host, unless `allowInsecureTransport` is
   set;
 - `endpoint` or `nodeEndpoint` has a scheme other than `http://` or `https://`;
+- `endpoint` or `nodeEndpoint` carries a user name or password (`user:password@host`).
+  Requests are signed with the key pairs and sent to the host alone, and the endpoint would
+  otherwise reach the pointer (`PublishResponse.stored.pointer` included, where only the
+  secret key is redacted) and error messages. The message does not repeat the URL;
+- `requestTimeoutMs` is not a finite number of milliseconds above 0;
 - `bucket` breaks the S3 naming rules (it goes into the request URL), or contains dots while
   `endpoint` is `https://` with virtual-host addressing: `bucket.with.dots.host` does not
   match the endpoint's certificate, so set `forcePathStyle: true`;

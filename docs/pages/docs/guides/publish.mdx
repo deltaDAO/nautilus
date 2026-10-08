@@ -188,7 +188,10 @@ try {
 
 Before any transaction, `completePublish` checks that the signer owns the NFT, that the
 configured factory created it, that the signer holds the permissions the writes need, and
-that every reused datatoken that already has pricing is priced the way its service says. See
+that every reused datatoken that already has pricing is priced the way its service says. It
+also refuses while the signer has pending transactions: when the error's `stored.cleanup` is
+`'kept'`, the metadata transaction was sent and may still be mined. Pass
+`{ metadataTxHash: error.stored.txHash }` to have that exact transaction checked too. See
 [`completePublish`](/docs/api/nautilus/completePublish).
 
 Once the metadata transaction is mined, nothing is left to complete. A wait for the indexer

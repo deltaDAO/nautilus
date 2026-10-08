@@ -85,18 +85,28 @@ A rate-limit answer is not counted as a failed lookup. On `429`, or `403` "Too m
 connections" (the node's `MAX_CONNECTIONS_PER_MINUTE`), the next round waits longer:
 `2 × intervalMs`, doubling with each rate-limit answer in a row, and at least as long as
 the node asks ("Try again in N seconds", or `Retry-After` in seconds or as an HTTP date)
-plus a second. It never waits more than 60 s at a time. If the time runs out while the
-node keeps refusing, the timeout error says so.
+plus a second. An `intervalMs` under 1 s counts as 1 s here, so even `intervalMs: 0` backs
+off by 2, 4, 8 … seconds; the `403` comes without `Retry-After`. It never waits more than
+60 s at a time. If the time runs out while the node keeps refusing, the timeout error says
+so.
 
 When `timeoutMs` is up, the wait makes one last lookup before it throws, so it can end up to
 one request later. Each request gets at least a second (or `requestTimeoutMs`, when that is
 shorter), even when less of `timeoutMs` is left.
 
+The lookups send no credentials, so they follow redirects, for example from a reverse proxy
+in front of `/api/aquarius`. A redirect that ends on plain `http://` on a host other than
+loopback fails the lookup, unless the node URI is plain `http://` already
+(`allowInsecureTransport`).
+
 :::info
 Without a `txid`, the indexing state is not checked: the wait only polls for the asset until
 the timeout. Over a P2P node URI there is no state endpoint, and the wait also falls back to
-polling until the timeout; there, a failed lookup cannot be told apart from "not indexed
-yet", so `maxConsecutiveFailures` does not apply.
+polling until the timeout. There, ocean.js reports a failed lookup as "not indexed yet", so
+only a lookup that does not answer within `requestTimeoutMs` counts towards
+`maxConsecutiveFailures`. That timeout bounds each P2P lookup as a whole, ocean.js's own
+dial and retries included, so a peer that does not answer cannot hold the wait past
+`timeoutMs`.
 :::
 
 ## Returns
@@ -116,10 +126,10 @@ The indexed asset.
 - `OceanNodeError` — `intervalMs`, `timeoutMs`, `requestTimeoutMs` or
   `maxConsecutiveFailures` is negative or not a finite number (`Infinity`, `NaN`).
 - `OceanNodeError` — `maxConsecutiveFailures` asset lookups in a row failed (a network error,
-  a request timeout, or an HTTP status other than 2xx and 404), so a wrong node URI or a node
-  answering 500 is reported as such instead of being waited out. A 404 counts as "not indexed
-  yet", and a rate-limit answer (`429`, or `403` "Too many active connections") makes the
-  wait back off; neither is a failure.
+  a request timeout, a redirect to plain `http://`, or an HTTP status other than 2xx and
+  404), so a wrong node URI or a node answering 500 is reported as such instead of being
+  waited out. A 404 counts as "not indexed yet", and a rate-limit answer (`429`, or `403`
+  "Too many active connections") makes the wait back off; neither is a failure.
 - The signal's `reason`, when `signal` aborts the wait.
 
 A failing or missing state endpoint does not throw: the wait just loses its early exit and
@@ -156,7 +166,7 @@ indexed transaction id, so `waitForIndexer(did, receipt.hash)` cannot wait for i
 | --- | --- | --- | --- |
 | `intervalMs` | `number` | `7000` | Delay between polls. The default keeps one wait at or below 18 requests a minute. |
 | `timeoutMs` | `number` | `300000` (5 min) | How long to wait before throwing. |
-| `requestTimeoutMs` | `number` | `15000` | Timeout of each request to the node, capped by what is left of `timeoutMs`. |
+| `requestTimeoutMs` | `number` | `15000` | Timeout of each request to the node (over P2P, of each lookup), capped by what is left of `timeoutMs`. |
 | `maxConsecutiveFailures` | `number` | `5` | How many failed asset lookups in a row throw an `OceanNodeError` before the timeout. |
 | `signal` | `AbortSignal` | — | Cancel the wait. Aborting rejects with the signal's reason. |
 

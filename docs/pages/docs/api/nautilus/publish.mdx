@@ -80,8 +80,12 @@ What happens in order:
    Then the pointer is written onto the NFT: nautilus builds the transaction with ocean.js
    and sends it with the signer, so it can tell a wallet rejection and a mined revert, after
    which no transaction points at the stored envelope and it is removed again, from a
-   transaction that may have been mined. On a confidential chain (`sdk: 'oasis'`) the send
-   stays with ocean.js, which encrypts it, and cannot tell these apart.
+   transaction that may have been mined. A failed send whose error carries the transaction's
+   hash (ethers sets `info.sendTransactionHash` when it gives up polling for a transaction the
+   wallet already broadcast) counts as sent, whatever its code. A transaction the wallet sped
+   up (same call, higher fee) counts as this one: its replacement's receipt is returned, or
+   its revert reported. On a confidential chain (`sdk: 'oasis'`) the send stays with
+   ocean.js, which encrypts it, and cannot tell these apart.
 10. After the receipt, nautilus checks that block for another metadata event of the same NFT
     and throws a `MetadataConflictError` if there is one, because ocean-node indexes only the
     first.
@@ -190,7 +194,7 @@ node-encrypted, and passing `encrypt: false` throws.
   (the metadata transaction was never sent, or was mined and reverted), left because the
   store could not remove it, or
   kept because the transaction was sent and may still be mined — then wait for it before
-  completing. See [when a write fails](/docs/guides/remote-stores#when-a-write-fails-after-the-envelope-is-stored).
+  completing, and pass `stored.txHash` to `completePublish` as `metadataTxHash`. See [when a write fails](/docs/guides/remote-stores#when-a-write-fails-after-the-envelope-is-stored).
 - **`MetadataConflictError`**, when another metadata transaction for the NFT landed in the
   same block, and **`IndexingError`** / **`OceanNodeError`**, from `waitForIndexer`, when the
   node could not index the asset or did not within the timeout. These are not wrapped in a

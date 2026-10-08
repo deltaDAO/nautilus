@@ -372,9 +372,9 @@ depends on whether that transaction may exist:
 
 | The failure | The transaction | The stored object | `error.stored.cleanup` |
 | --- | --- | --- | --- |
-| encrypting the pointer, `verify()`, building the transaction (permission, gas estimate), a wallet or RPC refusal (`ACTION_REJECTED`, `INSUFFICIENT_FUNDS`…), a mined revert | never sent, or changed nothing | removed with the store's `remove()` | `'removed'` |
+| encrypting the pointer, `verify()`, building the transaction (permission, gas estimate), a wallet or RPC refusal (`ACTION_REJECTED`, `INSUFFICIENT_FUNDS`…) whose error carries no transaction hash, a mined revert (also of a sped-up replacement), a cancelled or replaced transaction | never sent, or changed nothing | removed with the store's `remove()` | `'removed'` |
 | the same, but the store has no `remove()` or it failed | nothing points at it | left | `'not-removed'`, with `removeError` |
-| sent, then no receipt (timeout, network error; on `sdk: 'oasis'` also a rejection or revert, which ocean.js does not tell apart) | may be mined | kept | `'kept'` |
+| sent, then no receipt (timeout, network error, any send error that carries the transaction hash, such as ethers' `info.sendTransactionHash`; on `sdk: 'oasis'` also a rejection or revert, which ocean.js does not tell apart) | may be mined | kept | `'kept'`, with `txHash` when known |
 | after the receipt (`waitForIndexer`, `MetadataConflictError`) | mined | kept, it is the live version | — (the error carries `published`) |
 
 `error.stored` also carries the redacted `pointer` and the `metadataHash`, and the error

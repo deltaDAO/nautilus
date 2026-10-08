@@ -62,6 +62,12 @@ index metadata for such an asset, and both states are one-way. Use
 [`setAssetLifecycleState`](/docs/api/nautilus/setAssetLifecycleState) to move an asset there.
 See [lifecycle states](/docs/api/nautilus/setAssetLifecycleState#states).
 
+The lifecycle state written with the metadata is the one the NFT has on chain when `edit()`
+reads it, unless the builder sets one with `setLifecycleState()`. The state an
+`AssetBuilder` takes over from the fetched asset is not written back, so an edit built from a
+copy fetched before a [`setAssetLifecycleState`](/docs/api/nautilus/setAssetLifecycleState)
+(or one the index has not caught up with) does not undo that change.
+
 To change a price without touching the DDO, use
 [`setServicePrice`](/docs/api/nautilus/setServicePrice) instead.
 
@@ -101,7 +107,8 @@ Same as [`publish`](/docs/api/nautilus/publish#options-optional).
   stored it carries `error.stored` (type `StoredBeforeFailure`): the redacted pointer, the
   hash, and whether nautilus removed the unused object again (`cleanup: 'removed'`), could
   not (`'not-removed'`), or kept it because the metadata transaction had been sent and may be
-  mined (`'kept'`). See [when a write fails](/docs/guides/remote-stores#when-a-write-fails-after-the-envelope-is-stored).
+  mined (`'kept'`), with the transaction's hash as `txHash` when it is known. A transaction
+  the wallet sped up is not a failure: the replacement's receipt is the result. See [when a write fails](/docs/guides/remote-stores#when-a-write-fails-after-the-envelope-is-stored).
 - **After the metadata transaction was mined:** a `MetadataConflictError`, or the
   `IndexingError` / `OceanNodeError` of `waitForIndexer`. Each carries the full
   `PublishResponse` as `error.published` (type `PublishedNotIndexed`) — see
