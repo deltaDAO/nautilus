@@ -44,7 +44,8 @@ export type ComputeResources = ComputeResourceRequest[]
  * `maxProviderFee` / `confirmProviderFees` decide whether the inputs' provider fees may be
  * paid, and `maxEscrowPayment` / `confirmEscrowPayment` how much the job may lock in
  * escrow. Without them (here or in `Nautilus.create`), a non-zero fee or payment is
- * refused before anything is spent.
+ * refused before anything is spent. Setting either option of a pair here, even to
+ * `undefined`, replaces both `Nautilus.create` defaults of that pair.
  */
 export interface ComputeConfig extends ProviderFeeLimits, EscrowPaymentLimits {
   dataset: ComputeAssetRef

@@ -1,6 +1,7 @@
 /**
  * `Nautilus.create` takes the payment limits once, as the default for every `access()` and
- * `compute()` call; an option passed to the call replaces the default of the same name.
+ * `compute()` call; a call that sets either option of a pair (`maxProviderFee` /
+ * `confirmProviderFees`, `maxEscrowPayment` / `confirmEscrowPayment`) replaces that pair.
  * A malformed limit fails at `create`, not at the first paid call. Only the caller's own
  * `config.escrow` reaches `compute()` as the escrow pin, not the one ocean.js fills in.
  */
@@ -77,28 +78,81 @@ describe('payment limits in Nautilus.create', () => {
     })
   })
 
-  it('lets each call replace a default of the same name, keeping the others', async () => {
-    const fallback = () => true
+  it('replaces a pair of defaults as a whole when the call sets either option of it', async () => {
+    const permissive = vi.fn(() => true)
     const nautilus = await createNautilus({
       maxProviderFee: { token: TOKEN, amount: 5n },
-      confirmProviderFees: fallback,
-      maxEscrowPayment: { token: TOKEN, amount: 7n }
+      confirmProviderFees: permissive,
+      maxEscrowPayment: { token: TOKEN, amount: 7n },
+      confirmEscrowPayment: permissive
     })
 
+    // A tight per-call ceiling must not inherit the permissive default callback.
     await nautilus.access({
       assetDid: 'did:ope:data',
       maxProviderFee: { token: TOKEN, amount: 1n }
     })
     await nautilus.compute({ ...JOB, maxEscrowPayment: [] })
 
-    expect(vi.mocked(access).mock.calls[0][0]).to.deep.include({
-      maxProviderFee: { token: TOKEN, amount: 1n },
-      confirmProviderFees: fallback
+    const [accessConfig] = vi.mocked(access).mock.calls[0]
+    expect(accessConfig.maxProviderFee).to.deep.equal({
+      token: TOKEN,
+      amount: 1n
     })
-    expect(vi.mocked(compute).mock.calls[0][0]).to.deep.include({
+    expect(accessConfig.confirmProviderFees).to.equal(undefined)
+
+    // The escrow pair is the call's own; the provider-fee pair, untouched, is the default.
+    const [computeConfig] = vi.mocked(compute).mock.calls[0]
+    expect(computeConfig.maxEscrowPayment).to.deep.equal([])
+    expect(computeConfig.confirmEscrowPayment).to.equal(undefined)
+    expect(computeConfig.maxProviderFee).to.deep.equal({
+      token: TOKEN,
+      amount: 5n
+    })
+    expect(computeConfig.confirmProviderFees).to.equal(permissive)
+  })
+
+  it('takes a per-call callback without the default ceiling', async () => {
+    const decline = () => false
+    const nautilus = await createNautilus({
       maxProviderFee: { token: TOKEN, amount: 5n },
-      maxEscrowPayment: []
+      maxEscrowPayment: { token: TOKEN, amount: 7n }
     })
+
+    await nautilus.compute({
+      ...JOB,
+      confirmProviderFees: decline,
+      confirmEscrowPayment: decline
+    })
+
+    const [config] = vi.mocked(compute).mock.calls[0]
+    expect(config.maxProviderFee).to.equal(undefined)
+    expect(config.confirmProviderFees).to.equal(decline)
+    expect(config.maxEscrowPayment).to.equal(undefined)
+    expect(config.confirmEscrowPayment).to.equal(decline)
+  })
+
+  it('clears a default when the call sets its option to undefined', async () => {
+    const nautilus = await createNautilus({
+      confirmProviderFees: () => true,
+      confirmEscrowPayment: () => true
+    })
+
+    await nautilus.access({
+      assetDid: 'did:ope:data',
+      confirmProviderFees: undefined
+    })
+    await nautilus.compute({ ...JOB, maxEscrowPayment: undefined })
+
+    const [accessConfig] = vi.mocked(access).mock.calls[0]
+    expect(accessConfig.maxProviderFee).to.equal(undefined)
+    expect(accessConfig.confirmProviderFees).to.equal(undefined)
+
+    const [computeConfig] = vi.mocked(compute).mock.calls[0]
+    expect(computeConfig.maxEscrowPayment).to.equal(undefined)
+    expect(computeConfig.confirmEscrowPayment).to.equal(undefined)
+    // The provider-fee pair, which the call left alone, is still the default.
+    expect(computeConfig.confirmProviderFees).to.be.a('function')
   })
 
   it('passes nothing when neither the call nor create sets a limit', async () => {

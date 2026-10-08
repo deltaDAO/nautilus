@@ -7,7 +7,8 @@ import type { ProviderFeeLimits } from '../utils/paymentLimits.js'
  * `maxProviderFee` / `confirmProviderFees` decide whether the node's provider fee may be
  * paid. Without either (here or in `Nautilus.create`), a non-zero fee is refused with a
  * `ProviderFeeNotAllowedError` before anything is spent. In a download the node is the
- * service's `serviceEndpoint`, which the publisher chooses.
+ * service's `serviceEndpoint`, which the publisher chooses. Setting either option here,
+ * even to `undefined`, replaces both `Nautilus.create` defaults.
  */
 export interface AccessConfig extends ProviderFeeLimits {
   assetDid: string

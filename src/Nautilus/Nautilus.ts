@@ -217,9 +217,11 @@ function attachPublished(
 
 /**
  * `maxProviderFee`, `confirmProviderFees`, `maxEscrowPayment` and `confirmEscrowPayment`
- * set the default for every `access()` and `compute()` call of this instance. An option
- * passed to the call itself replaces the default of the same name. Without them, a
- * non-zero provider fee or escrow payment is refused before anything is spent.
+ * set the default for every `access()` and `compute()` call of this instance. Each pair
+ * is replaced as a whole: a call that sets `maxProviderFee` or `confirmProviderFees` (even
+ * to `undefined`) uses its own pair and neither provider-fee default, and the same holds
+ * for `maxEscrowPayment` / `confirmEscrowPayment`. Without them, a non-zero provider fee
+ * or escrow payment is refused before anything is spent.
  */
 export interface NautilusOptions
   extends ProviderFeeLimits,
@@ -1512,24 +1514,39 @@ export class Nautilus {
     )
   }
 
-  /** Fills the provider-fee options the call leaves out from `Nautilus.create`'s. */
+  /**
+   * The provider-fee pair for a call: the call's own when it sets either option, else
+   * `Nautilus.create`'s.
+   *
+   * The pair is taken as a whole, never merged field by field: a call that sets a tight
+   * `maxProviderFee` must not inherit a permissive `confirmProviderFees` default. A key
+   * the call sets to `undefined` counts as set, so `{ confirmProviderFees: undefined }`
+   * clears the default callback.
+   */
   private withProviderFeeDefaults<T extends ProviderFeeLimits>(config: T): T {
+    if ('maxProviderFee' in config || 'confirmProviderFees' in config)
+      return config
+
     return {
       ...config,
-      maxProviderFee: config.maxProviderFee ?? this.options.maxProviderFee,
-      confirmProviderFees:
-        config.confirmProviderFees ?? this.options.confirmProviderFees
+      maxProviderFee: this.options.maxProviderFee,
+      confirmProviderFees: this.options.confirmProviderFees
     }
   }
 
-  /** Fills the escrow options the call leaves out from `Nautilus.create`'s. */
+  /**
+   * The escrow pair for a call: the call's own when it sets `maxEscrowPayment` or
+   * `confirmEscrowPayment`, else `Nautilus.create`'s. Taken as a whole, like
+   * `withProviderFeeDefaults`.
+   */
   private withEscrowDefaults<T extends EscrowPaymentLimits>(config: T): T {
+    if ('maxEscrowPayment' in config || 'confirmEscrowPayment' in config)
+      return config
+
     return {
       ...config,
-      maxEscrowPayment:
-        config.maxEscrowPayment ?? this.options.maxEscrowPayment,
-      confirmEscrowPayment:
-        config.confirmEscrowPayment ?? this.options.confirmEscrowPayment
+      maxEscrowPayment: this.options.maxEscrowPayment,
+      confirmEscrowPayment: this.options.confirmEscrowPayment
     }
   }
 
