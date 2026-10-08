@@ -6,8 +6,9 @@
  * and the plaintext pointer could still travel in clear.
  */
 
+import { ProviderInstance } from '@oceanprotocol/lib'
 import { Wallet } from 'ethers'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Nautilus } from '../../src/Nautilus/Nautilus.js'
 import {
   OceanNodeClient,
@@ -48,6 +49,23 @@ describe('OceanNodeClient transport rule', () => {
     }
   })
 
+  it('refuses the spellings fetch reads as plain http://', () => {
+    for (const uri of [
+      'http:ocean-node.example.com',
+      'http:/ocean-node.example.com',
+      'http:\\\\ocean-node.example.com',
+      'ht\ttp://ocean-node.example.com',
+      'http\n://ocean-node.example.com'
+    ]) {
+      const error = thrownBy(() => create(uri))
+
+      expect(error, JSON.stringify(uri)).to.be.instanceOf(OceanNodeError)
+      expect((error as Error).message, JSON.stringify(uri)).to.match(
+        /^\[ocean-node\] create: nodeUri (uses plain http:\/\/|contains a control character)/
+      )
+    }
+  })
+
   it('accepts https, loopback http and P2P node ids', () => {
     for (const uri of [
       'https://ocean-node.example.com',
@@ -69,6 +87,80 @@ describe('OceanNodeClient transport rule', () => {
 
   it('rejects an http URL that does not parse', () => {
     expect(thrownBy(() => create('http://'))).to.be.instanceOf(OceanNodeError)
+  })
+
+  describe('a per-call nodeUri (a service endpoint)', () => {
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    const FILE = { type: 'url', url: 'https://data.example/x', method: 'GET' }
+
+    it('refuses plain http in encrypt and getFileInfo before sending anything', async () => {
+      const encrypt = vi.spyOn(ProviderInstance, 'encrypt')
+      const fileInfo = vi.spyOn(ProviderInstance, 'getFileInfo')
+      const client = create('https://ocean-node.example.com')
+
+      for (const endpoint of [
+        'http://other-node.example.com',
+        'http:other-node.example.com'
+      ]) {
+        const encrypted = await client
+          .encrypt({ a: 1 }, undefined, undefined, endpoint)
+          .catch((thrown: unknown) => thrown)
+        const checked = await client
+          .getFileInfo(FILE as never, false, undefined, endpoint)
+          .catch((thrown: unknown) => thrown)
+
+        expect(encrypted, endpoint).to.be.instanceOf(OceanNodeError)
+        expect((encrypted as OceanNodeError).operation).to.equal('encrypt')
+        expect((encrypted as Error).message).to.match(
+          /nodeUri uses plain http:\/\/.*allowInsecureTransport: true/
+        )
+        expect(checked, endpoint).to.be.instanceOf(OceanNodeError)
+        expect((checked as OceanNodeError).operation).to.equal('getFileInfo')
+      }
+
+      expect(encrypt).not.toHaveBeenCalled()
+      expect(fileInfo).not.toHaveBeenCalled()
+    })
+
+    it('sends to https and loopback endpoints, and anywhere with allowInsecureTransport', async () => {
+      const encrypt = vi
+        .spyOn(ProviderInstance, 'encrypt')
+        .mockResolvedValue('0xabcd')
+      const fileInfo = vi
+        .spyOn(ProviderInstance, 'getFileInfo')
+        .mockResolvedValue([])
+
+      const strict = create('https://ocean-node.example.com')
+      for (const endpoint of [
+        'https://other-node.example.com',
+        'http://127.0.0.1:8001'
+      ]) {
+        expect(
+          await strict.encrypt({ a: 1 }, undefined, undefined, endpoint)
+        ).to.equal('0xabcd')
+        await strict.getFileInfo(FILE as never, false, undefined, endpoint)
+      }
+
+      const insecure = create('https://ocean-node.example.com', true)
+      await insecure.encrypt(
+        { a: 1 },
+        undefined,
+        undefined,
+        'http://other-node.example.com'
+      )
+      await insecure.getFileInfo(
+        FILE as never,
+        false,
+        undefined,
+        'http://other-node.example.com'
+      )
+
+      expect(encrypt).toHaveBeenCalledTimes(3)
+      expect(fileInfo).toHaveBeenCalledTimes(3)
+    })
   })
 
   describe('forEndpoint', () => {
@@ -121,6 +213,28 @@ describe('OceanNodeClient transport rule', () => {
       expect(
         node.forEndpoint('http://other-node.example.com').nodeUri
       ).to.equal('http://other-node.example.com')
+    })
+
+    it('hands requestTimeoutMs to its node client', async () => {
+      const nautilus = await Nautilus.create(
+        Wallet.createRandom().connect({
+          getNetwork: async () => ({ chainId: 32456n })
+        } as never),
+        {
+          requestTimeoutMs: 4321,
+          config: {
+            oceanNodeUri: 'https://ocean-node.example.com',
+            nftFactoryAddress: ADDRESS,
+            fixedRateExchangeAddress: ADDRESS,
+            dispenserAddress: ADDRESS
+          }
+        }
+      )
+
+      expect(
+        (nautilus.getNodeClient() as unknown as { requestTimeoutMs: number })
+          .requestTimeoutMs
+      ).to.equal(4321)
     })
 
     it('still refuses plain http without it', async () => {

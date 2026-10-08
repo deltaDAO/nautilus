@@ -118,20 +118,24 @@ export type PublishedNotIndexed = Error & { published: PublishResponse }
  * `error.stored` (and on `PublishIncompleteError.stored`). Present when the envelope had
  * been stored but its metadata transaction was not confirmed.
  *
- * Nothing on chain points at an envelope whose transaction was never sent, so nautilus
- * deletes it with `RemoteStore.remove()`. Once the transaction was sent it may have been
- * mined and the envelope may be what the NFT now points at, so nautilus leaves it alone.
+ * Nothing on chain points at an envelope whose transaction was never sent, or was mined and
+ * reverted, so nautilus deletes it with `RemoteStore.remove()`. Once the transaction was
+ * sent it may have been mined and the envelope may be what the NFT now points at, so
+ * nautilus leaves it alone.
  */
 export interface StoredBeforeFailure {
-  /** The pointer the store returned, redacted as in `PublishResponse.stored`. */
+  /**
+   * The pointer the store returned, redacted as in `PublishResponse.stored`. A pointer that
+   * cannot be copied (a custom store's BigInt or cycle) is reported as `{ type }` alone.
+   */
   pointer: StorageObject
   /** `0x` + sha256 of the stored envelope. */
   metadataHash: string
   /**
-   * - `'removed'`: the metadata transaction was never sent, and `remove()` deleted the
-   *   object.
-   * - `'not-removed'`: the transaction was never sent, but the store has no `remove()` or
-   *   it failed (`removeError`). Nothing points at the object; delete or unpin it yourself.
+   * - `'removed'`: the metadata transaction was never sent (or was mined and reverted), and
+   *   `remove()` deleted the object.
+   * - `'not-removed'`: the same, but the store has no `remove()` or it failed
+   *   (`removeError`). Nothing points at the object; delete or unpin it yourself.
    * - `'kept'`: the transaction was sent and may have been mined. Check the NFT's metadata
    *   (`getAsset()`, or `completePublish()`, which refuses an NFT with metadata) before
    *   removing the object: if the transaction landed, the asset needs it.

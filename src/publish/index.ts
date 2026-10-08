@@ -26,9 +26,11 @@ import {
   ZERO_ADDRESS
 } from '@oceanprotocol/lib'
 import {
+  isError,
   parseUnits,
   type Signer,
   type TransactionReceipt,
+  type TransactionResponse,
   toBeHex
 } from 'ethers'
 import type { PublishResponse, StoredBeforeFailure } from '../@types/Publish.js'
@@ -336,14 +338,16 @@ function storedOf(error: unknown): StoredBeforeFailure | undefined {
  * Decides what happens to an envelope that was stored for a write that then failed, and
  * records it on the error as `error.stored`. Not exported from the package.
  *
- * - `sent: false`: the metadata transaction was never handed to the chain, so nothing can
- *   point at the object. It is removed with `RemoteStore.remove()`, best effort: a failing
- *   or missing `remove()` is reported in `stored`, never instead of the original error.
+ * - `sent: false`: no metadata transaction can point at the object: it was never broadcast,
+ *   or it was mined and reverted. It is removed with `RemoteStore.remove()`, best effort: a
+ *   failing or missing `remove()` is reported in `stored`, never instead of the original
+ *   error.
  * - `sent: true`: the transaction may have been mined and the object may be what the NFT
  *   now points at. It is kept.
  *
- * Returns the error to throw: the original one (with `stored` and a note in its message),
- * or an `Error` wrapping a thrown non-object.
+ * Never throws: `remove()` is attempted even when the pointer cannot be copied for the
+ * report. Returns the error to throw: the original one (with `stored` and a note in its
+ * message), or an `Error` wrapping a thrown non-object.
  */
 export async function settleStoredEnvelope(
   error: unknown,
@@ -356,16 +360,13 @@ export async function settleStoredEnvelope(
 ): Promise<unknown> {
   const { remoteStore, storedPointer, metadataHash, sent } = params
 
-  // Already settled further in (the error passed through two layers).
-  if (storedOf(error)) return error
-
   const target: Error =
     error instanceof Error
       ? error
       : new Error(errorMessage(error), { cause: error })
 
   const stored: StoredBeforeFailure = {
-    pointer: redactPointer(storedPointer),
+    pointer: reportablePointer(storedPointer),
     metadataHash,
     cleanup: 'kept'
   }
@@ -400,6 +401,23 @@ export async function settleStoredEnvelope(
   }
 
   return target
+}
+
+/**
+ * The stored pointer, redacted, for `error.stored`. A pointer `redactPointer` cannot copy
+ * (a BigInt or a cycle from a custom store) is reported by its type alone, so the report
+ * never leaks a secret and never stops the cleanup.
+ */
+function reportablePointer(pointer: StorageObject): StorageObject {
+  try {
+    return redactPointer(pointer)
+  } catch {
+    const type = (pointer as { type?: unknown } | null | undefined)?.type
+
+    return {
+      type: typeof type === 'string' ? type : 'unknown'
+    } as unknown as StorageObject
+  }
 }
 
 /**
@@ -556,11 +574,47 @@ export async function prepareMetadataForWrite(params: {
 }
 
 /**
+ * Where the metadata transaction got to, for the caller's cleanup of the stored envelope:
+ *
+ * - `'sent'`: it may have reached the chain, so the NFT may point at the envelope.
+ * - `'reverted'`: it was mined and reverted, or another transaction with the same nonce
+ *   took its place, so it changed no metadata and nothing points at the envelope.
+ */
+export type MetadataWriteProgress = 'sent' | 'reverted'
+
+/**
+ * ethers error codes that mean the transaction was never broadcast: the wallet refused to
+ * sign it, or the signer or the RPC refused it before accepting it. Any other failure of
+ * the send (a timeout, a network or server error, a custom signer's own error) may come
+ * after the broadcast, so it counts as sent.
+ */
+const NOT_BROADCAST_CODES = [
+  'ACTION_REJECTED',
+  'INSUFFICIENT_FUNDS',
+  'REPLACEMENT_UNDERPRICED',
+  'INVALID_ARGUMENT',
+  'UNSUPPORTED_OPERATION'
+] as const
+
+function neverBroadcast(error: unknown): boolean {
+  return NOT_BROADCAST_CODES.some((code) => isError(error, code))
+}
+
+/**
  * Writes the metadata pointer onto the NFT. Not exported from the package: it only takes
  * what `prepareMetadataForWrite()` produced.
  *
- * `onSent` runs once the transaction may have reached the chain. A failure before it means
- * nothing was sent, which is what lets the caller remove the stored envelope safely.
+ * `onProgress('sent')` runs once the transaction may have reached the chain, and
+ * `onProgress('reverted')` once it is known to have changed nothing. A failure before
+ * `'sent'`, or after `'reverted'`, means no transaction points at the envelope, which is
+ * what lets the caller remove it safely.
+ *
+ * The transaction is built with ocean.js (`Nft.setMetadataTx`: permission read, gas
+ * estimate) and sent with `signer.sendTransaction`, so a wallet rejection, a mined revert
+ * and a lost receipt can be told apart. ocean.js's own `setMetadata` returns `null` for all
+ * three. On a confidential chain (`config.sdk === 'oasis'`), ocean.js wraps the signer so
+ * the transaction is encrypted; that wrapper is internal to ocean.js, so there the send
+ * stays with `Nft.setMetadata`, and the transaction counts as sent once it returns.
  */
 export async function writeMetadata(params: {
   signer: Signer
@@ -569,7 +623,7 @@ export async function writeMetadata(params: {
   nodeUri: string
   lifecycleState: number
   prepared: PreparedWrite
-  onSent?: () => void
+  onProgress?: (progress: MetadataWriteProgress) => void
 }): Promise<TransactionReceipt> {
   const { signer, chainConfig, nftAddress, nodeUri, lifecycleState } = params
   const prepared = params.prepared.written
@@ -595,11 +649,7 @@ export async function writeMetadata(params: {
     flags: prepared.flags
   })
 
-  // ocean.js's `setMetadata` first builds the transaction (permission read, gas estimate),
-  // which throws on failure, and then sends it, which never throws: it returns `null` for
-  // any failure, including one after the broadcast. So a throw from here means nothing was
-  // sent, and once it returns the transaction may be on its way.
-  const response = await nft.setMetadata(
+  const args = [
     nftAddress,
     publisher,
     lifecycleState,
@@ -608,10 +658,107 @@ export async function writeMetadata(params: {
     toBeHex(prepared.flags),
     prepared.metadata,
     prepared.metadataHash
-  )
-  params.onSent?.()
+  ] as const
 
-  return confirmTransaction('setMetadata', response)
+  if (chainConfig.sdk === 'oasis') {
+    // ocean.js builds the transaction first, which throws on failure (nothing sent), then
+    // sends it through its confidential signer and waits, returning `null` for any failure
+    // after that: a rejection, a revert or a lost receipt alike. So once it returns, the
+    // transaction may have been mined.
+    const response = await nft.setMetadata(...args)
+    params.onProgress?.('sent')
+
+    return confirmTransaction('setMetadata', response)
+  }
+
+  // Throws before anything is sent: the permission read or the gas estimate failed.
+  const request = await nft.setMetadataTx(...args)
+
+  let response: TransactionResponse
+  try {
+    response = await signer.sendTransaction(request)
+  } catch (error) {
+    if (!neverBroadcast(error)) params.onProgress?.('sent')
+    throw error
+  }
+  params.onProgress?.('sent')
+
+  let receipt: TransactionReceipt | null
+  try {
+    receipt = await response.wait()
+  } catch (error) {
+    const unchanged = unchangedBy(error)
+    if (!unchanged) throw error
+
+    params.onProgress?.('reverted')
+    throw new Error(
+      `setMetadata transaction ${response.hash} ${unchanged}, so it did not change the metadata of NFT ${nftAddress}.`,
+      { cause: error }
+    )
+  }
+
+  if (!receipt)
+    throw new Error(
+      `setMetadata transaction ${response.hash} was submitted but never confirmed.`
+    )
+
+  // A custom signer's `wait()` may hand back a reverted receipt instead of throwing.
+  if (receipt.status === 0) {
+    params.onProgress?.('reverted')
+    throw new Error(
+      `setMetadata transaction ${receipt.hash} was mined in block ${receipt.blockNumber} but reverted, so it did not change the metadata of NFT ${nftAddress}.`
+    )
+  }
+
+  return receipt
+}
+
+/**
+ * How a transaction left the metadata unchanged, from the error ethers' `wait()` threw: it
+ * was mined and reverted, or another transaction with the same nonce and different data
+ * took its place (`cancelled`). `undefined` when it may have changed it.
+ */
+function unchangedBy(error: unknown): string | undefined {
+  if (isError(error, 'CALL_EXCEPTION') && error.receipt?.status === 0)
+    return `was mined in block ${error.receipt.blockNumber} but reverted`
+
+  if (isError(error, 'TRANSACTION_REPLACED') && error.cancelled)
+    return `was replaced by ${error.hash}`
+
+  return undefined
+}
+
+/**
+ * Refuses, before any transaction, a signer without the NFT permissions a write needs:
+ * `updateMetadata` for the metadata transaction, and `deployERC20` when datatokens or their
+ * pricing will be created. Not exported from the package.
+ */
+export async function assertNftPermissions(params: {
+  signer: Signer
+  chainConfig: Config
+  nftAddress: string
+  deployDatatokens: boolean
+  operation: string
+}): Promise<void> {
+  const { signer, chainConfig, nftAddress, deployDatatokens, operation } =
+    params
+
+  const address = await signer.getAddress()
+  const permissions = await new Nft(
+    signer,
+    chainConfig.chainId,
+    chainConfig
+  ).getNftPermissions(nftAddress, address)
+
+  const missing = [
+    ...(permissions?.updateMetadata ? [] : ['updateMetadata']),
+    ...(deployDatatokens && !permissions?.deployERC20 ? ['deployERC20'] : [])
+  ]
+
+  if (missing.length)
+    throw new Error(
+      `${operation}: ${address} lacks the ${missing.join(' and ')} permission on NFT ${nftAddress}, so the write would revert. Nothing was sent. The NFT's owner can grant it (addToMetadataList, addToCreateERC20List).`
+    )
 }
 
 /**

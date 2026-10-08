@@ -35,7 +35,8 @@ vi.mock('../../src/publish/index.js', async (importOriginal) => {
   }
 })
 
-// The NFT's on-chain state, read before an edit: ACTIVE, with metadata.
+// The NFT's on-chain state, read before an edit: ACTIVE, with metadata, and the signer's
+// permissions on it.
 vi.mock('@oceanprotocol/lib', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>()
 
@@ -44,6 +45,14 @@ vi.mock('@oceanprotocol/lib', async (importOriginal) => {
     Nft: class {
       async getMetadata() {
         return ['https://node.test.invalid', '0x', 0, true]
+      }
+      async getNftPermissions() {
+        return {
+          manager: true,
+          deployERC20: true,
+          updateMetadata: true,
+          store: true
+        }
       }
     }
   }

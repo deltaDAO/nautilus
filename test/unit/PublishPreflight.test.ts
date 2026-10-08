@@ -42,8 +42,11 @@ import {
   prepareMetadataForWrite,
   writeMetadata
 } from '../../src/publish/index.js'
+import { readExistingPricing } from '../../src/publish/reuse.js'
 import { NodePersistentRemoteStore } from '../../src/remote/NodePersistentRemoteStore.js'
 import type { RemoteStore } from '../../src/remote/RemoteStore.js'
+import { setMetadataState } from '../../src/utils/contracts.js'
+import { getPricingInfo } from '../../src/utils/pricing.js'
 import { resetWarnings } from '../../src/utils/warn.js'
 import {
   ASSET_DID,
@@ -71,6 +74,8 @@ const nftState = vi.hoisted(() => ({
   /** What `ERC721Factory.erc721List(nft)` answers; `''` means "the NFT itself". */
   factoryListed: '',
   datatokens: [] as string[],
+  /** What `getNftPermissions(nft, signer)` answers. */
+  permissions: { updateMetadata: true, deployERC20: true },
   /** Metadata events in the receipt's block, for the same-block check. */
   blockEvents: undefined as
     | { transactionHash: string; index: number }[]
@@ -94,6 +99,9 @@ vi.mock('@oceanprotocol/lib', async (importOriginal) => {
       async getNftOwner() {
         return nftState.owner
       }
+      async getNftPermissions() {
+        return { manager: true, store: true, ...nftState.permissions }
+      }
     },
     NftFactory: class {
       async checkNFT(nftAddress: string) {
@@ -109,10 +117,32 @@ vi.mock('../../src/utils/contracts.js', async (importOriginal) => {
   return {
     ...actual,
     getNftDatatokens: vi.fn(async () => nftState.datatokens),
+    setMetadataState: vi.fn(async () => ({ hash: '0xstate' })),
     getMetadataEventsInBlock: vi.fn(async () => {
       if (!nftState.blockEvents) throw new Error('no logs in this test')
       return nftState.blockEvents
     })
+  }
+})
+
+/** A dispenser as `publish()` creates it for a `{ type: 'free' }` service. */
+const freeDispenser = vi.hoisted(() => ({
+  schema: 'free' as const,
+  active: true,
+  owner: '',
+  maxTokens: '1.0',
+  maxBalance: '100000000.0',
+  allowedSwapper: '0x0000000000000000000000000000000000000000',
+  isMinter: true,
+  paymentCollector: ''
+}))
+
+vi.mock('../../src/publish/reuse.js', async (importOriginal) => {
+  const actual = await importOriginal<object>()
+
+  return {
+    ...actual,
+    readExistingPricing: vi.fn(async () => freeDispenser)
   }
 })
 
@@ -136,10 +166,16 @@ vi.mock('../../src/publish/index.js', async (importOriginal) => {
       datatokenAddress: DATATOKEN_ADDRESS,
       tx: { hash: '0xnft' }
     })),
-    createDatatokenForService: vi.fn(async () => ({
-      datatokenAddress: DATATOKEN_ADDRESS,
-      tx: { hash: '0xdatatoken' }
-    })),
+    // Like the real one, it records the datatoken on the service.
+    createDatatokenForService: vi.fn(
+      async ({ service }: { service: { datatokenAddress?: string } }) => {
+        service.datatokenAddress = DATATOKEN_ADDRESS
+        return {
+          datatokenAddress: DATATOKEN_ADDRESS,
+          tx: { hash: '0xdatatoken' }
+        }
+      }
+    ),
     createPricingForDatatoken: vi.fn(async () => ({ hash: '0xpricing' })),
     // The real `PreparedWrite` shape; the format itself is covered by RemoteFormat.test.ts.
     prepareMetadataForWrite: vi.fn(async () => ({
@@ -253,10 +289,19 @@ beforeEach(() => {
   nftState.owner = SIGNER_ADDRESS
   nftState.factoryListed = ''
   nftState.datatokens = [DATATOKEN_ADDRESS]
+  nftState.permissions = { updateMetadata: true, deployERC20: true }
   nftState.blockEvents = undefined
+  freeDispenser.owner = SIGNER_ADDRESS
+  freeDispenser.paymentCollector = SIGNER_ADDRESS
   vi.mocked(writeMetadata).mockImplementation(
     async () => ({ hash: '0xsetmetadata', blockNumber: 100 }) as never
   )
+  vi.mocked(getPricingInfo).mockImplementation(
+    async () => ({ schema: 'free' }) as never
+  )
+  vi.mocked(readExistingPricing).mockImplementation(async () => ({
+    ...freeDispenser
+  }))
 })
 
 describe('publish pre-transaction validation', () => {
@@ -505,16 +550,95 @@ describe('publish after the mint', () => {
     expect(fromEdit.published.nftAddress).to.equal(NFT_ADDRESS)
   })
 
-  it('reports indexed: true once the indexer has it', async () => {
+  it('reports indexed: true once the indexer has it, polling as asked', async () => {
     const { nautilus, node } = await createNautilus()
+    const signal = new AbortController().signal
 
     const response = await nautilus.publish(validAsset(), {
-      waitForIndexer: { intervalMs: 10, timeoutMs: 1000 }
+      waitForIndexer: { intervalMs: 10, timeoutMs: 1000, signal }
     })
 
     expect(response.indexed).to.equal(true)
+    expect(node.calls.waitForIndexer).to.have.length(1)
+    expect(node.calls.waitForIndexer[0]).to.deep.equal({
+      did: ASSET_DID,
+      txid: '0xsetmetadata',
+      options: { intervalMs: 10, timeoutMs: 1000, signal }
+    })
+    expect(node.calls.waitForIndexer[0].options?.signal).to.equal(signal)
+  })
+
+  it('polls with the client defaults for waitForIndexer: true', async () => {
+    const { nautilus, node } = await createNautilus()
+
+    await nautilus.edit(new AssetBuilder(getAssetFixture()).build(), {
+      waitForIndexer: true
+    })
+
     expect(node.calls.waitForIndexer).to.deep.equal([
-      { did: ASSET_DID, txid: '0xsetmetadata' }
+      { did: ASSET_DID, txid: '0xsetmetadata', options: {} }
+    ])
+  })
+
+  it('carries the result on an abort reason that cannot take it', async () => {
+    // An AbortSignal's default reason is a DOMException, whose message is a getter; a
+    // string reason is no object at all. Neither may lose error.published.
+    for (const reason of [
+      new DOMException('This operation was aborted', 'AbortError'),
+      'stopped by the caller'
+    ]) {
+      const { nautilus } = await createNautilus({
+        node: { indexingError: reason as unknown as Error }
+      })
+
+      const thrown = (await nautilus
+        .publish(validAsset(), { waitForIndexer: true })
+        .catch((error) => error)) as PublishedNotIndexed
+
+      expect(thrown).to.be.instanceOf(Error)
+      expect(thrown.cause).to.equal(reason)
+      expect(thrown.message).to.match(
+        /(aborted|stopped by the caller).*0xsetmetadata was mined.*error\.published/
+      )
+      expect(thrown.published.nftAddress).to.equal(NFT_ADDRESS)
+    }
+  })
+})
+
+describe('publish with datatokens left from an earlier attempt', () => {
+  it('mints fresh ones and reports only those, so completePublish can finish', async () => {
+    const { nautilus } = await createNautilus()
+    const asset = new AssetBuilder()
+      .setType('dataset')
+      .setName('Two services')
+      .setProvidedBy('deltaDAO AG')
+      .setDescription('A description')
+      .addService(service())
+      .addService(service('https://files.test.invalid/b.csv'))
+      .build()
+
+    // Left by an earlier publish() on another NFT, or copied by ServiceBuilder.
+    asset.ddo.services[0].datatokenAddress = FOREIGN_DATATOKEN
+    asset.ddo.services[1].datatokenAddress = FOREIGN_DATATOKEN
+
+    // The second service's datatoken creation fails: it never gets a new one.
+    vi.mocked(createDatatokenForService).mockRejectedValueOnce(
+      new Error('rpc went away')
+    )
+
+    const error = (await nautilus
+      .publish(asset)
+      .catch((thrown) => thrown)) as PublishIncompleteError
+
+    expect(error).to.be.instanceOf(PublishIncompleteError)
+    expect(error.datatokens).to.deep.equal([DATATOKEN_ADDRESS])
+    expect(asset.ddo.services[1].datatokenAddress).to.equal(undefined)
+
+    const response = await nautilus.completePublish(NFT_ADDRESS, asset)
+
+    expect(response.services.map((entry) => entry.reused)).to.deep.equal([
+      true,
+      undefined
     ])
   })
 })
@@ -582,7 +706,6 @@ describe('completePublish before any transaction', () => {
   })
 
   it('reuses a datatoken whose pricing failed, and prices it', async () => {
-    const { getPricingInfo } = await import('../../src/utils/pricing.js')
     vi.mocked(getPricingInfo).mockResolvedValueOnce({
       schema: 'none'
     } as never)
@@ -608,6 +731,86 @@ describe('completePublish before any transaction', () => {
     ).to.deep.equal([DATATOKEN_ADDRESS, SECOND_DATATOKEN])
   })
 
+  it('refuses two services naming the same datatoken', async () => {
+    nftState.datatokens = [DATATOKEN_ADDRESS, SECOND_DATATOKEN]
+    const { nautilus } = await createNautilus()
+    const asset = new AssetBuilder()
+      .setType('dataset')
+      .setName('Two services')
+      .setProvidedBy('deltaDAO AG')
+      .setDescription('A description')
+      .addService(service())
+      .addService(service('https://files.test.invalid/b.csv'))
+      .build()
+    asset.ddo.services[0].datatokenAddress = SECOND_DATATOKEN
+    // Same datatoken, other case: still the same one.
+    asset.ddo.services[1].datatokenAddress =
+      SECOND_DATATOKEN.toUpperCase().replace('0X', '0x')
+
+    await expectThrowsAsync(
+      () => nautilus.completePublish(NFT_ADDRESS, asset),
+      /more than one service names datatoken 0x1111/
+    )
+    expect(vi.mocked(createDatatokenForService)).not.toHaveBeenCalled()
+    expect(vi.mocked(createPricingForDatatoken)).not.toHaveBeenCalled()
+    expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+  })
+
+  it('refuses an NFT in a lifecycle state that takes no metadata', async () => {
+    const { nautilus } = await createNautilus()
+    nftState.state = 3
+
+    await expectThrowsAsync(
+      () => nautilus.completePublish(NFT_ADDRESS, validAsset()),
+      /NFT 0x.* is in lifecycle state 3/
+    )
+    expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+  })
+
+  it('refuses a signer without the permissions the writes need', async () => {
+    const { nautilus } = await createNautilus()
+
+    nftState.permissions = { updateMetadata: false, deployERC20: true }
+    await expectThrowsAsync(
+      () => nautilus.completePublish(NFT_ADDRESS, validAsset()),
+      /completePublish: 0x.* lacks the updateMetadata permission.*Nothing was sent/
+    )
+
+    // A second service needs a new datatoken, so deployERC20 is needed too.
+    nftState.permissions = { updateMetadata: true, deployERC20: false }
+    const asset = new AssetBuilder()
+      .setType('dataset')
+      .setName('Two services')
+      .setProvidedBy('deltaDAO AG')
+      .setDescription('A description')
+      .addService(service())
+      .addService(service('https://files.test.invalid/b.csv'))
+      .build()
+    await expectThrowsAsync(
+      () => nautilus.completePublish(NFT_ADDRESS, asset),
+      /lacks the deployERC20 permission/
+    )
+
+    expect(vi.mocked(createDatatokenForService)).not.toHaveBeenCalled()
+    expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+
+    // Reusing the one datatoken as it is creates nothing, so updateMetadata is enough.
+    await nautilus.completePublish(NFT_ADDRESS, validAsset())
+    expect(vi.mocked(writeMetadata)).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses an asset owner other than the signer', async () => {
+    const { nautilus } = await createNautilus()
+    const asset = validAsset()
+    asset.owner = OWNER_ADDRESS
+
+    await expectThrowsAsync(
+      () => nautilus.completePublish(NFT_ADDRESS, asset),
+      /completePublish: the asset's owner 0x0DB8.* is not the signer/
+    )
+    expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+  })
+
   it('refuses when the NFT has more unclaimed datatokens than services need', async () => {
     nftState.datatokens = [DATATOKEN_ADDRESS, SECOND_DATATOKEN]
     const { nautilus } = await createNautilus()
@@ -616,6 +819,124 @@ describe('completePublish before any transaction', () => {
       () => nautilus.completePublish(NFT_ADDRESS, validAsset()),
       /2 datatoken\(s\) no service names.*Set datatokenAddress on each service/
     )
+  })
+})
+
+describe('completePublish and the pricing of a reused datatoken', () => {
+  const fixedService = () =>
+    new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+      serviceType: ServiceTypes.ACCESS
+    })
+      .setServiceEndpoint('https://node.test.invalid')
+      .setName('Paid Service')
+      .setPricing({
+        type: 'fixed',
+        freCreationParams: {
+          fixedRateAddress: DATATOKEN_ADDRESS,
+          baseTokenAddress: OWNER_ADDRESS,
+          baseTokenDecimals: 18,
+          datatokenDecimals: 18,
+          fixedRate: '10',
+          marketFee: '0',
+          marketFeeCollector: OWNER_ADDRESS
+        }
+      })
+      .addFile({
+        type: 'url',
+        url: 'https://files.test.invalid/paid.csv',
+        method: 'GET'
+      })
+      .build()
+
+  const assetWith = (...services: ReturnType<typeof service>[]) => {
+    const builder = new AssetBuilder()
+      .setType('dataset')
+      .setName('Priced services')
+      .setProvidedBy('deltaDAO AG')
+      .setDescription('A description')
+    for (const entry of services) builder.addService(entry)
+    return builder.build()
+  }
+
+  it('reuses a datatoken whose pricing matches the service', async () => {
+    const { nautilus } = await createNautilus()
+
+    const response = await nautilus.completePublish(NFT_ADDRESS, validAsset())
+
+    expect(vi.mocked(readExistingPricing)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(createPricingForDatatoken)).not.toHaveBeenCalled()
+    expect(response.services[0]).to.deep.include({
+      datatokenAddress: DATATOKEN_ADDRESS,
+      reused: true
+    })
+  })
+
+  it('refuses a named datatoken priced differently, before any transaction', async () => {
+    nftState.datatokens = [DATATOKEN_ADDRESS, SECOND_DATATOKEN]
+    // The second datatoken got a dispenser; its service wants a fixed rate.
+    const { nautilus } = await createNautilus()
+    const asset = assetWith(service(), fixedService())
+    asset.ddo.services[1].datatokenAddress = SECOND_DATATOKEN
+
+    await expectThrowsAsync(
+      () => nautilus.completePublish(NFT_ADDRESS, asset),
+      /datatoken 0x1111.*which service Paid Service names, is priced differently.*priced 'free', the service 'fixed'.*nothing was sent/
+    )
+    expect(vi.mocked(createDatatokenForService)).not.toHaveBeenCalled()
+    expect(vi.mocked(createPricingForDatatoken)).not.toHaveBeenCalled()
+    expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+  })
+
+  it('refuses a dispenser of another owner', async () => {
+    vi.mocked(readExistingPricing).mockResolvedValueOnce({
+      ...freeDispenser,
+      owner: OWNER_ADDRESS
+    })
+    const { nautilus } = await createNautilus()
+
+    await expectThrowsAsync(
+      () => nautilus.completePublish(NFT_ADDRESS, validAsset()),
+      /the dispenser owner is 0x0DB8.*Set datatokenAddress on each service/
+    )
+    expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+  })
+
+  it('does not match by creation order when the pricing says otherwise', async () => {
+    // Rebuilt in another order: the fixed-rate service now comes first, but the first
+    // datatoken is the free one minted with the NFT.
+    nftState.datatokens = [DATATOKEN_ADDRESS, SECOND_DATATOKEN]
+    vi.mocked(getPricingInfo).mockImplementation(
+      async (_signer, datatoken) =>
+        ({
+          schema: datatoken === SECOND_DATATOKEN ? 'fixed' : 'free',
+          exchangeId: '0x01'
+        }) as never
+    )
+    const { nautilus } = await createNautilus()
+
+    await expectThrowsAsync(
+      () =>
+        nautilus.completePublish(
+          NFT_ADDRESS,
+          assetWith(fixedService(), service())
+        ),
+      /datatoken 0x.* would go to service Paid Service by creation order, but its pricing does not match.*Set datatokenAddress on each service/
+    )
+    expect(vi.mocked(createPricingForDatatoken)).not.toHaveBeenCalled()
+    expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+  })
+
+  it('refuses an unpriced datatoken for a service without a pricing config, before any transaction', async () => {
+    vi.mocked(getPricingInfo).mockResolvedValueOnce({ schema: 'none' } as never)
+    const { nautilus } = await createNautilus()
+    const asset = validAsset()
+    asset.ddo.services[0].pricing = undefined
+
+    await expectThrowsAsync(
+      () => nautilus.completePublish(NFT_ADDRESS, asset),
+      /has no pricing, and service .* has no pricing config/
+    )
+    expect(vi.mocked(createPricingForDatatoken)).not.toHaveBeenCalled()
   })
 })
 
@@ -688,8 +1009,8 @@ describe('the stored envelope after a failed write', () => {
     const { remove, store } = removableStore()
     const { nautilus } = await createNautilus({ remoteStore: store })
     vi.mocked(writeMetadata).mockImplementationOnce(async (params) => {
-      params.onSent?.()
-      throw new Error('setMetadata failed: ocean.js returned no transaction.')
+      params.onProgress?.('sent')
+      throw new Error('setMetadata transaction 0xabc timed out')
     })
 
     const error = (await nautilus
@@ -738,9 +1059,21 @@ describe('the stored envelope after a failed write', () => {
       }
     })
 
-    await expectThrowsAsync(() =>
-      nautilus.publish(validAsset(), { waitForIndexer: true })
+    const thrown = (await nautilus
+      .publish(validAsset(), { waitForIndexer: true })
+      .catch((error) => error)) as PublishedNotIndexed & { stored?: unknown }
+
+    expect(thrown).to.be.instanceOf(OceanNodeError)
+    expect(thrown.message).to.match(
+      /not indexed.*0xsetmetadata was mined.*error\.published/
     )
+    expect(vi.mocked(writeMetadata)).toHaveBeenCalledTimes(1)
+    expect(thrown.published.setMetadataTxReceipt.hash).to.equal('0xsetmetadata')
+    expect(thrown.published.stored.pointer).to.deep.equal({
+      type: 'ipfs',
+      hash: STORED_CID
+    })
+    expect(thrown.stored).to.equal(undefined)
     expect(remove).not.toHaveBeenCalled()
   })
 })
@@ -759,6 +1092,80 @@ describe('edit', () => {
 
     expect(check).toHaveBeenCalledTimes(1)
     expect(vi.mocked(createDatatokenForService)).not.toHaveBeenCalled()
+  })
+
+  it('names the datatoken it minted when the pricing then fails', async () => {
+    const { nautilus } = await createNautilus()
+    const asset = new AssetBuilder(getAssetFixture())
+      .addService(service('https://files.test.invalid/b.csv'))
+      .build()
+    const added = asset.ddo.services[asset.ddo.services.length - 1]
+
+    vi.mocked(createDatatokenForService).mockImplementationOnce(
+      async ({ service: target }) => {
+        target.datatokenAddress = SECOND_DATATOKEN
+        throw new Error('execution reverted: dispenser already exists')
+      }
+    )
+
+    const thrown = (await nautilus
+      .edit(asset)
+      .catch((error) => error)) as Error & { datatokens: string[] }
+
+    expect(thrown.message).to.match(
+      /dispenser already exists edit\(\) had created datatoken\(s\) 0x1111.*error\.datatokens.*no pricing yet/
+    )
+    expect(thrown.datatokens).to.deep.equal([SECOND_DATATOKEN])
+    expect(added.datatokenAddress).to.equal(SECOND_DATATOKEN)
+    expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+  })
+
+  it('names the datatoken it minted when the metadata write then fails', async () => {
+    const { nautilus } = await createNautilus()
+    vi.mocked(writeMetadata).mockRejectedValueOnce(
+      new Error('Caller is not Metadata updater')
+    )
+
+    const thrown = (await nautilus
+      .edit(
+        new AssetBuilder(getAssetFixture())
+          .addService(service('https://files.test.invalid/b.csv'))
+          .build()
+      )
+      .catch((error) => error)) as Error & { datatokens: string[] }
+
+    expect(thrown.datatokens).to.deep.equal([DATATOKEN_ADDRESS])
+    expect(thrown.message).to.match(
+      /Caller is not Metadata updater.*had created datatoken\(s\) 0x/
+    )
+    expect(thrown.message).not.to.match(/no pricing yet/)
+  })
+
+  it('refuses a signer without the permissions the edit needs, before any transaction', async () => {
+    const { nautilus } = await createNautilus()
+
+    nftState.permissions = { updateMetadata: false, deployERC20: true }
+    await expectThrowsAsync(
+      () => nautilus.edit(new AssetBuilder(getAssetFixture()).build()),
+      /edit: 0x.* lacks the updateMetadata permission/
+    )
+
+    nftState.permissions = { updateMetadata: true, deployERC20: false }
+    await expectThrowsAsync(
+      () =>
+        nautilus.edit(
+          new AssetBuilder(getAssetFixture())
+            .addService(service('https://files.test.invalid/b.csv'))
+            .build()
+        ),
+      /lacks the deployERC20 permission/
+    )
+    expect(vi.mocked(createDatatokenForService)).not.toHaveBeenCalled()
+    expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+
+    // No newly priced service, no datatoken to create: updateMetadata is enough.
+    await nautilus.edit(new AssetBuilder(getAssetFixture()).build())
+    expect(vi.mocked(writeMetadata)).toHaveBeenCalledTimes(1)
   })
 
   it('does not wait for the indexer between sequential writes', async () => {
@@ -898,6 +1305,50 @@ describe('setup', () => {
 })
 
 describe('lifecycle state', () => {
+  it('reads the state for edit() after a revoke this instance started', async () => {
+    const { nautilus } = await createNautilus()
+    vi.mocked(setMetadataState).mockImplementationOnce(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      nftState.state = 3
+      return { hash: '0xstate' } as never
+    })
+    const fixture = getAssetFixture()
+
+    const [revoke, edit] = await Promise.allSettled([
+      nautilus.setAssetLifecycleState(fixture, 3),
+      nautilus.edit(
+        new AssetBuilder(fixture)
+          .addService(service('https://files.test.invalid/b.csv'))
+          .build()
+      )
+    ])
+
+    expect(revoke.status).to.equal('fulfilled')
+    expect(edit.status).to.equal('rejected')
+    expect(String((edit as PromiseRejectedResult).reason)).to.match(
+      /lifecycle state 3/
+    )
+    expect(vi.mocked(createDatatokenForService)).not.toHaveBeenCalled()
+    expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+  })
+
+  it('refuses to publish for an owner other than the signer, before the mint', async () => {
+    const { nautilus } = await createNautilus()
+    const asset = validAsset()
+    asset.owner = OWNER_ADDRESS
+
+    await expectThrowsAsync(
+      () => nautilus.publish(asset),
+      /publish: the asset's owner 0x0DB8.* is not the signer .*Nothing was sent/
+    )
+    expect(vi.mocked(createNftWithService)).not.toHaveBeenCalled()
+
+    // The signer's own address, in any case, is fine.
+    asset.owner = SIGNER_ADDRESS.toLowerCase()
+    await nautilus.publish(asset)
+    expect(vi.mocked(createNftWithService)).toHaveBeenCalledTimes(1)
+  })
+
   it('refuses to publish an asset built as DEPRECATED', async () => {
     const { nautilus } = await createNautilus()
     const asset = validAsset()

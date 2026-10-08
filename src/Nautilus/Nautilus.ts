@@ -47,9 +47,11 @@ import {
   assertDid,
   assertEncryptOption,
   assertWritableState,
-  readMetadataState
+  readMetadataState,
+  readMetadataStatus
 } from '../publish/envelope.js'
 import {
+  assertNftPermissions,
   createDatatokenForService,
   createNftWithService,
   createPricingForDatatoken,
@@ -60,6 +62,7 @@ import {
   waitForMetadataPermission,
   writeMetadata
 } from '../publish/index.js'
+import { pricingMismatches, readExistingPricing } from '../publish/reuse.js'
 import { NodePersistentRemoteStore } from '../remote/NodePersistentRemoteStore.js'
 import type { RemoteStore } from '../remote/RemoteStore.js'
 import { type DdoSigner, Eip191VcSigner } from '../signing/vc.js'
@@ -92,17 +95,20 @@ function indexerOptions(options: PublishOptions): WaitForIndexerOptions {
     : {}
 }
 
-/** Whether the NFT already carries metadata (`getMetaData()`'s `hasMetaData`). */
-async function hasMetadata(
-  signer: Signer,
-  config: Config,
-  nftAddress: string
-): Promise<boolean> {
-  const metadata = (await new Nft(signer, config.chainId, config).getMetadata(
-    nftAddress
-  )) as unknown[]
+/** A datatoken `completePublish()` reuses, and whether only the creation order says so. */
+interface ReusedDatatoken {
+  token: string
+  byOrder: boolean
+}
 
-  return Boolean(metadata?.[3])
+/**
+ * One service in `completePublish()`: the datatoken it reuses, if any, and whether that
+ * datatoken's pricing still has to be created.
+ */
+interface ReuseStep {
+  service: NautilusService<ServiceTypes, FileTypes>
+  datatokenAddress?: string
+  price?: boolean
 }
 
 /**
@@ -111,15 +117,19 @@ async function hasMetadata(
  * A service that already names a datatoken must name one of the NFT's. The NFT's other
  * datatokens go, in creation order, to the services without one, in service order: the
  * order `publish()` created them in. Services left over get new datatokens. More unclaimed
- * datatokens than services to give them to is ambiguous, so that is refused.
+ * datatokens than services to give them to is ambiguous, so that is refused. A match by
+ * order is then checked against the datatoken's pricing (`completePublish()`).
  */
 function reconcileDatatokens(
   services: NautilusService<ServiceTypes, FileTypes>[],
   onNft: string[],
   nftAddress: string
-): Map<NautilusService<ServiceTypes, FileTypes>, string> {
+): Map<NautilusService<ServiceTypes, FileTypes>, ReusedDatatoken> {
   const known = new Map(onNft.map((token) => [token.toLowerCase(), token]))
-  const reuse = new Map<NautilusService<ServiceTypes, FileTypes>, string>()
+  const reuse = new Map<
+    NautilusService<ServiceTypes, FileTypes>,
+    ReusedDatatoken
+  >()
   const claimed = new Set<string>()
 
   for (const service of services) {
@@ -138,7 +148,7 @@ function reconcileDatatokens(
       )
 
     claimed.add(key)
-    reuse.set(service, token)
+    reuse.set(service, { token, byOrder: false })
   }
 
   const unclaimed = onNft.filter((token) => !claimed.has(token.toLowerCase()))
@@ -150,26 +160,53 @@ function reconcileDatatokens(
     )
 
   unclaimed.forEach((token, index) => {
-    reuse.set(without[index], token)
+    reuse.set(without[index], { token, byOrder: true })
   })
 
   return reuse
 }
 
 /**
+ * Adds `extra` to the error and `note` to its message. An error that cannot take them (a
+ * frozen one, a `DOMException` abort reason, whose `message` is a getter, or a thrown
+ * string) is wrapped instead: a new `Error` with the note and `extra`, the original as its
+ * `cause`.
+ */
+function annotateError<T extends object>(
+  error: unknown,
+  extra: T,
+  note: string
+): Error & T {
+  if (error && typeof error === 'object')
+    try {
+      Object.assign(error, extra)
+      const target = error as Error
+      if (typeof target.message !== 'string') throw new TypeError('no message')
+      target.message += note
+      return target as Error & T
+    } catch {
+      // Wrapped below.
+    }
+
+  return Object.assign(
+    new Error(`${errorMessage(error)}${note}`, { cause: error }),
+    extra
+  )
+}
+
+/**
  * Attaches the response of a write whose metadata transaction was mined to the error that
  * followed it, as `error.published`, and says so in the message.
  */
-function attachPublished(error: unknown, published: PublishResponse): unknown {
-  if (!error || typeof error !== 'object') return error
-
-  const target = error as Error & { published?: PublishResponse }
-  target.published = published
-
-  if (typeof target.message === 'string')
-    target.message += ` The metadata transaction ${published.setMetadataTxReceipt.hash} was mined, so ${published.nftAddress} carries the new metadata; the full result is on error.published.`
-
-  return target
+function attachPublished(
+  error: unknown,
+  published: PublishResponse
+): Error & { published: PublishResponse } {
+  return annotateError(
+    error,
+    { published },
+    ` The metadata transaction ${published.setMetadataTxReceipt.hash} was mined, so ${published.nftAddress} carries the new metadata; the full result is on error.published.`
+  )
 }
 
 export interface NautilusOptions {
@@ -189,18 +226,24 @@ export interface NautilusOptions {
   config?: Partial<Config>
   /**
    * Accept a plain `http://` `oceanNodeUri` on a host other than `localhost`,
-   * `127.0.0.1`, `::1` or `*.localhost`. Default `false`: the plaintext pointer (an S3 read
+   * `127.0.0.0/8`, `::1` or `*.localhost`. Default `false`: the plaintext pointer (an S3 read
    * key included) and the signed DDO go to the node for encryption, and node auth travels
    * with every request.
    */
   allowInsecureTransport?: boolean
+  /**
+   * Per-call timeout for the node client's `encrypt` calls, passed to `OceanNodeClient`.
+   * Default 120 s.
+   */
+  requestTimeoutMs?: number
 }
 
 export interface PublishOptions {
   /**
    * Block until the indexer has the asset, so the result is immediately resolvable. Pass
-   * `{ intervalMs, timeoutMs }` to tune the polling. Throws an `IndexingError` when the
-   * node records that it could not index the asset, and an `OceanNodeError` on timeout.
+   * `{ intervalMs, timeoutMs }` to tune the polling, and `signal` to stop waiting. Throws
+   * an `IndexingError` when the node records that it could not index the asset, and an
+   * `OceanNodeError` on timeout; an abort rejects with the signal's reason.
    * Either way the metadata transaction was mined: the error carries the full
    * `PublishResponse` as `error.published` (see `PublishedNotIndexed`).
    *
@@ -209,7 +252,7 @@ export interface PublishOptions {
    */
   waitForIndexer?:
     | boolean
-    | Pick<WaitForIndexerOptions, 'intervalMs' | 'timeoutMs'>
+    | Pick<WaitForIndexerOptions, 'intervalMs' | 'timeoutMs' | 'signal'>
   /** Override the remote store for this call. */
   remoteStore?: RemoteStore
   /** Override the DDO signer for this call. */
@@ -338,7 +381,8 @@ export class Nautilus {
       nodeUri: this.config.oceanNodeUri as string,
       chainId: this.config.chainId,
       auth: this.signer,
-      allowInsecureTransport: this.options.allowInsecureTransport
+      allowInsecureTransport: this.options.allowInsecureTransport,
+      requestTimeoutMs: this.options.requestTimeoutMs
     })
   }
 
@@ -455,11 +499,17 @@ export class Nautilus {
     assertEncryptOption(options)
     assertWritableState(asset.lifecycleState ?? 0, 'the asset')
 
-    const owner = asset.owner || (await this.signer.getAddress())
+    const owner = await this.ownerForNewAsset(asset, 'publish')
     const services = asset.ddo.services
 
     if (!services.length)
       throw new Error('Cannot publish an asset with no services.')
+
+    // A publish always mints fresh datatokens. A `datatokenAddress` still on a service (from
+    // an earlier attempt, or copied by `ServiceBuilder`) belongs to another NFT: it would end
+    // up in `PublishIncompleteError.datatokens`, and `completePublish()` would then refuse
+    // the service for naming a datatoken this NFT does not have.
+    for (const service of services) service.datatokenAddress = undefined
 
     // Everything that does not need an on-chain address happens first. A missing remote
     // store, an unreachable serviceEndpoint or a file the node cannot read are all
@@ -548,10 +598,12 @@ export class Nautilus {
    * `publish()` throws a `PublishIncompleteError` in that case. Pass its `nftAddress` and
    * the asset, either the same object or one rebuilt the same way. Before any
    * transaction this checks that the signer owns the NFT, that the configured ERC721
-   * factory created it, and that every datatoken a service already names belongs to it.
-   * Services without a datatoken get the NFT's unclaimed ones (the one bundled at mint
-   * first, in service order) and only the rest get new ones; a reused datatoken whose
-   * pricing never got created is priced now. The response lists every service. Refuses an
+   * factory created it, that its lifecycle state takes metadata, that the signer holds the
+   * permissions the writes need, and that every datatoken a service already names belongs
+   * to it. Services without a datatoken get the NFT's unclaimed ones (the one bundled at
+   * mint first, in service order) and only the rest get new ones. A reused datatoken whose
+   * pricing never got created is priced now; one that has pricing must match the service's
+   * pricing config, or the call is refused. The response lists every service. Refuses an
    * NFT that already has metadata; use `edit()` there.
    */
   async completePublish(
@@ -565,24 +617,43 @@ export class Nautilus {
     if (!isAddress(nftAddress))
       throw new Error(`completePublish: ${nftAddress} is not an address.`)
 
-    const owner = asset.owner || (await this.signer.getAddress())
+    const owner = await this.ownerForNewAsset(asset, 'completePublish')
     const services = asset.ddo.services
 
     if (!services.length)
       throw new Error('Cannot publish an asset with no services.')
 
     const response = await this.withNftLock(nftAddress, async () => {
-      if (await hasMetadata(this.signer, this.config, nftAddress))
+      const status = await readMetadataStatus(
+        new Nft(this.signer, this.config.chainId, this.config),
+        nftAddress
+      )
+
+      if (status.hasMetadata)
         throw new Error(
           `${nftAddress} already has metadata, so there is no publish left to complete. Use edit() to change it.`
         )
+      assertWritableState(status.state, `NFT ${nftAddress}`)
 
       await this.assertOwnFactoryNft(nftAddress)
-      const reuse = reconcileDatatokens(
+      const plan = await this.planReuse(
         services,
-        await getNftDatatokens(this.signer, nftAddress),
-        nftAddress
+        reconcileDatatokens(
+          services,
+          await getNftDatatokens(this.signer, nftAddress),
+          nftAddress
+        ),
+        owner
       )
+      await assertNftPermissions({
+        signer: this.signer,
+        chainConfig: this.config,
+        nftAddress,
+        deployDatatokens: plan.some(
+          (step) => !step.datatokenAddress || step.price
+        ),
+        operation: 'completePublish'
+      })
 
       const remoteStore = this.requireRemoteStore(options)
       const ddoSigner = this.resolveDdoSigner(options)
@@ -600,31 +671,32 @@ export class Nautilus {
       await this.warnIfPublisherIsNode()
       await this.assertIndexerNotStuck(options)
 
+      // Every reused datatoken is on its service before the first transaction, so a retry
+      // after a failure further down finds them by name.
+      for (const step of plan)
+        if (step.datatokenAddress)
+          step.service.datatokenAddress = step.datatokenAddress
+
       const published: PublishedService[] = []
 
-      for (const service of services) {
-        const existing = reuse.get(service)
-
-        if (!existing) {
+      for (const { service, datatokenAddress, price } of plan) {
+        if (!datatokenAddress) {
           published.push(
             ...(await this.createDatatokens(nftAddress, [service], owner))
           )
           continue
         }
 
-        service.datatokenAddress = existing
-        const pricing = await getPricingInfo(this.signer, existing, this.config)
-
         published.push({
           service,
-          datatokenAddress: existing,
+          datatokenAddress,
           reused: true,
-          ...(pricing.schema === 'none'
+          ...(price
             ? {
                 tx: await createPricingForDatatoken({
                   signer: this.signer,
                   chainConfig: this.config,
-                  datatokenAddress: existing,
+                  datatokenAddress,
                   service,
                   owner
                 })
@@ -650,6 +722,92 @@ export class Nautilus {
     })
 
     return this.finishWrite(response, options)
+  }
+
+  /**
+   * What `completePublish()` does for each service, decided from chain reads alone before
+   * any transaction: reuse a datatoken as it is, reuse it and create its pricing, or
+   * (no `datatokenAddress`) create a new one.
+   *
+   * A reused datatoken that has pricing must match the service's pricing config
+   * (`pricingMismatches`), since `completePublish()` does not change existing pricing. A
+   * mismatch on a datatoken matched only by creation order means the order cannot be
+   * trusted, so the caller is asked to name the datatokens.
+   */
+  private async planReuse(
+    services: NautilusService<ServiceTypes, FileTypes>[],
+    reuse: Map<NautilusService<ServiceTypes, FileTypes>, ReusedDatatoken>,
+    owner: string
+  ): Promise<ReuseStep[]> {
+    const plan: ReuseStep[] = []
+
+    for (const service of services) {
+      const match = reuse.get(service)
+      const name = service.name || service.id
+
+      if (!match) {
+        plan.push({ service })
+        continue
+      }
+
+      const info = await getPricingInfo(this.signer, match.token, this.config)
+
+      if (info.schema === 'none') {
+        if (!service.pricing)
+          throw new Error(
+            `completePublish: datatoken ${match.token} has no pricing, and service ${name} has no pricing config to create it from. Call setPricing() on the service.`
+          )
+
+        plan.push({ service, datatokenAddress: match.token, price: true })
+        continue
+      }
+
+      const mismatches = pricingMismatches({
+        pricing: service.pricing,
+        existing: await readExistingPricing({
+          signer: this.signer,
+          chainConfig: this.config,
+          datatokenAddress: match.token,
+          info
+        }),
+        owner,
+        nftFactoryAddress: this.config.nftFactoryAddress as string
+      })
+
+      if (mismatches.length)
+        throw new Error(
+          match.byOrder
+            ? `completePublish: datatoken ${match.token} would go to service ${name} by creation order, but its pricing does not match that service's: ${mismatches.join('; ')}. Nothing was sent. Set datatokenAddress on each service to say which datatoken belongs to it.`
+            : `completePublish: datatoken ${match.token}, which service ${name} names, is priced differently from the service's pricing config: ${mismatches.join('; ')}. completePublish() does not change existing pricing, so nothing was sent. Make the service's setPricing() match the datatoken's pricing.`
+        )
+
+      plan.push({ service, datatokenAddress: match.token })
+    }
+
+    return plan
+  }
+
+  /**
+   * The owner of a new asset, which must be the signer. The NFT, its datatokens and their
+   * pricing are created for `asset.owner`, but the transactions after the mint need the
+   * signer to hold the NFT's roles, so an `asset.owner` other than the signer would leave
+   * the NFT stranded without metadata. Refused before the mint.
+   */
+  private async ownerForNewAsset(
+    asset: NautilusAsset,
+    operation: string
+  ): Promise<string> {
+    const signer = getAddress(await this.signer.getAddress())
+
+    if (
+      asset.owner &&
+      (!isAddress(asset.owner) || getAddress(asset.owner) !== signer)
+    )
+      throw new Error(
+        `${operation}: the asset's owner ${asset.owner} is not the signer ${signer}. The NFT, its datatokens and their pricing are created for the asset's owner, while every transaction after the mint needs the signer to hold the NFT's roles. Nothing was sent. Publish with the owner's signer, or transfer the NFT once it is published.`
+      )
+
+    return asset.owner || signer
   }
 
   /**
@@ -684,27 +842,37 @@ export class Nautilus {
       )
   }
 
-  /** Creates a datatoken, with its pricing, on the NFT for each service. */
+  /**
+   * Creates a datatoken, with its pricing, on the NFT for each service.
+   *
+   * `createDatatokenForService()` sets `service.datatokenAddress` before the pricing, so a
+   * pricing failure still leaves the datatoken on record for `PublishIncompleteError`.
+   * Every datatoken this creates, priced or not, is also added to `created`.
+   */
   private async createDatatokens(
     nftAddress: string,
     services: NautilusService<ServiceTypes, FileTypes>[],
-    owner: string
+    owner: string,
+    created: string[] = []
   ): Promise<PublishedService[]> {
     const published: PublishedService[] = []
 
     for (const service of services) {
-      // Sets `service.datatokenAddress` before pricing, so a pricing failure still leaves
-      // the datatoken on record for `PublishIncompleteError`.
-      const { datatokenAddress, tx } = await createDatatokenForService({
-        signer: this.signer,
-        chainConfig: this.config,
-        nftAddress,
-        service,
-        owner
-      })
+      const before = service.datatokenAddress
+      try {
+        const { datatokenAddress, tx } = await createDatatokenForService({
+          signer: this.signer,
+          chainConfig: this.config,
+          nftAddress,
+          service,
+          owner
+        })
 
-      service.datatokenAddress = datatokenAddress
-      published.push({ service, datatokenAddress, tx })
+        published.push({ service, datatokenAddress, tx })
+      } finally {
+        if (service.datatokenAddress && service.datatokenAddress !== before)
+          created.push(service.datatokenAddress)
+      }
     }
 
     return published
@@ -715,7 +883,9 @@ export class Nautilus {
    *
    * Only services carrying a new pricing config get a new datatoken; everything else is
    * merged over the published document, so changing one field does not require resupplying
-   * the rest. The remote store is checked before any datatoken is minted.
+   * the rest. Before any datatoken is minted, the remote store is checked, and so are the
+   * NFT's lifecycle state and the signer's permissions, under the per-NFT lock. A failure
+   * after a datatoken was created names it, as `error.datatokens`.
    */
   async edit(
     asset: NautilusAsset,
@@ -733,52 +903,70 @@ export class Nautilus {
 
     const nftAddress = getNftAddress(baseline)
     const owner = asset.owner || (await this.signer.getAddress())
-
-    // Before anything is spent: a DEPRECATED or REVOKED asset can never take metadata again.
-    assertWritableState(
-      await readMetadataState(
-        new Nft(this.signer, this.config.chainId, this.config),
-        nftAddress
-      ),
-      `NFT ${nftAddress}`
-    )
-
-    const remoteStore = this.requireRemoteStore(options)
-    const ddoSigner = this.resolveDdoSigner(options)
-    const issuer = await ddoSigner.getIssuer()
-
-    await resolvePublisherTrustedAlgorithms(this.node, asset.ddo.services)
-    await this.assertServicesPublishable(asset.ddo.services)
-    // The NFT is real on an edit; only the datatokens of newly priced services are not.
-    await this.assertValidBeforeSpend({
-      asset,
-      create: false,
-      nftAddress,
-      issuer
-    })
-    await remoteStore.check?.()
-    await this.warnIfPublisherIsNode()
-    await this.assertIndexerNotStuck(options)
+    const priced = asset.ddo.services.filter((service) => service.pricing)
 
     const response = await this.withNftLock(nftAddress, async () => {
-      const published: PublishedService[] = []
-
-      for (const service of asset.ddo.services) {
-        if (!service.pricing) continue
-
-        published.push(
-          ...(await this.createDatatokens(nftAddress, [service], owner))
-        )
-      }
-
-      const result = await this.writeAsset({
-        asset,
+      // Inside the lock, so a lifecycle change this instance started for the NFT has landed:
+      // a DEPRECATED or REVOKED asset can never take metadata again.
+      assertWritableState(
+        await readMetadataState(
+          new Nft(this.signer, this.config.chainId, this.config),
+          nftAddress
+        ),
+        `NFT ${nftAddress}`
+      )
+      await assertNftPermissions({
+        signer: this.signer,
+        chainConfig: this.config,
         nftAddress,
+        deployDatatokens: priced.length > 0,
+        operation: 'edit'
+      })
+
+      const remoteStore = this.requireRemoteStore(options)
+      const ddoSigner = this.resolveDdoSigner(options)
+      const issuer = await ddoSigner.getIssuer()
+
+      await resolvePublisherTrustedAlgorithms(this.node, asset.ddo.services)
+      await this.assertServicesPublishable(asset.ddo.services)
+      // The NFT is real on an edit; only the datatokens of newly priced services are not.
+      await this.assertValidBeforeSpend({
+        asset,
         create: false,
-        remoteStore,
-        ddoSigner,
+        nftAddress,
         issuer
       })
+      await remoteStore.check?.()
+      await this.warnIfPublisherIsNode()
+      await this.assertIndexerNotStuck(options)
+
+      const published: PublishedService[] = []
+      const created: string[] = []
+      let minting = true
+      let result: Awaited<ReturnType<Nautilus['writeAsset']>>
+      try {
+        published.push(
+          ...(await this.createDatatokens(nftAddress, priced, owner, created))
+        )
+        minting = false
+
+        result = await this.writeAsset({
+          asset,
+          nftAddress,
+          create: false,
+          remoteStore,
+          ddoSigner,
+          issuer
+        })
+      } catch (error) {
+        if (!created.length) throw error
+
+        throw annotateError(
+          error,
+          { datatokens: created },
+          ` edit() had created datatoken(s) ${created.join(', ')} on NFT ${nftAddress} (error.datatokens, and on each service's datatokenAddress)${minting ? `; ${created[created.length - 1]} may have no pricing yet` : ''}. Unless the metadata transaction was sent, no metadata references them, and a retried edit() creates new ones.`
+        )
+      }
 
       return this.assertAloneInBlock({
         ...result,
@@ -1085,8 +1273,9 @@ export class Nautilus {
 
     const lifecycleState = (asset.lifecycleState ?? 0) as number
 
-    // From here the envelope is stored. A failure before the transaction is sent orphans
-    // it, so it is removed again; once the transaction may be on chain it is kept.
+    // From here the envelope is stored. A failure while no transaction can point at it
+    // (before the broadcast, or after a mined revert) orphans it, so it is removed again;
+    // once the transaction may be on chain it is kept.
     let sent = false
     let setMetadataTxReceipt: TransactionReceipt
     try {
@@ -1104,8 +1293,8 @@ export class Nautilus {
         nodeUri: this.config.oceanNodeUri as string,
         lifecycleState,
         prepared,
-        onSent: () => {
-          sent = true
+        onProgress: (progress) => {
+          sent = progress === 'sent'
         }
       })
     } catch (error) {
@@ -1336,7 +1525,8 @@ export class Nautilus {
       nodeUri,
       chainId: this.config.chainId,
       auth: this.signer,
-      allowInsecureTransport: this.options.allowInsecureTransport
+      allowInsecureTransport: this.options.allowInsecureTransport,
+      requestTimeoutMs: this.options.requestTimeoutMs
     })
   }
 

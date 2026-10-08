@@ -725,6 +725,17 @@ export async function readMetadataState(
   nft: Pick<Nft, 'getMetadata'>,
   nftAddress: string
 ): Promise<number> {
+  return (await readMetadataStatus(nft, nftAddress)).state
+}
+
+/**
+ * The NFT's lifecycle state and whether it carries metadata, from one `getMetaData()`
+ * read (`metaDataState` and `hasMetaData`).
+ */
+export async function readMetadataStatus(
+  nft: Pick<Nft, 'getMetadata'>,
+  nftAddress: string
+): Promise<{ state: number; hasMetadata: boolean }> {
   const metadata = (await nft.getMetadata(nftAddress)) as unknown[]
   const state = Array.isArray(metadata) ? metadata[2] : undefined
 
@@ -734,7 +745,7 @@ export async function readMetadataState(
       `Could not read the metadata state of NFT ${nftAddress} (getMetaData returned ${JSON.stringify(metadata, (_key, value) => (typeof value === 'bigint' ? value.toString() : value))}).`
     )
 
-  return Number(state)
+  return { state: Number(state), hasMetadata: Boolean(metadata[3]) }
 }
 
 /**

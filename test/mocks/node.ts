@@ -1,7 +1,8 @@
 import type { AssetV5 } from '../../src/ddo/index.js'
 import type {
   IndexerNonceState,
-  OceanNodeClient
+  OceanNodeClient,
+  WaitForIndexerOptions
 } from '../../src/node/OceanNodeClient.js'
 
 /**
@@ -81,7 +82,12 @@ export interface NodeMock {
     encrypt: unknown[]
     /** The metadata `encrypt` calls only, in order: envelope content, then pointer. */
     metadataEncrypt: unknown[]
-    waitForIndexer: { did: string; txid?: string }[]
+    /** Every `waitForIndexer` call, with the polling options it was given. */
+    waitForIndexer: {
+      did: string
+      txid?: string
+      options?: WaitForIndexerOptions
+    }[]
     getFileInfo: unknown[]
     checkDidFiles: unknown[]
     getIndexerNonceState: number
@@ -164,8 +170,12 @@ export function createNodeMock(options: NodeMockOptions = {}): NodeMock {
       return asset
     },
 
-    async waitForIndexer(did: string, txid?: string) {
-      calls.waitForIndexer.push({ did, txid })
+    async waitForIndexer(
+      did: string,
+      txid?: string,
+      indexerOptions?: WaitForIndexerOptions
+    ) {
+      calls.waitForIndexer.push({ did, txid, options: indexerOptions })
 
       if (options.indexingError) throw options.indexingError
 

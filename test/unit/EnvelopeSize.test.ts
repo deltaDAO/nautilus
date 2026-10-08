@@ -196,22 +196,43 @@ describe('assertDdoFitsDecryptLimit', () => {
 
   it('never passes a DDO whose envelope the default signer makes too large', async () => {
     const node = createNodeMock()
-
-    for (let length = 17_500; length < 18_500; length += 37) {
-      const ddo = ddoOf(length)
-      let fits = true
+    const fits = (length: number) => {
       try {
-        assertDdoFitsDecryptLimit(ddo, issuer)
+        assertDdoFitsDecryptLimit(ddoOf(length), issuer)
+        return true
       } catch {
-        fits = false
+        return false
       }
-
-      if (fits)
-        await buildEnvelope(
-          node.client,
-          (await new Eip191VcSigner(wallet).sign(ddo)).jwt
-        )
     }
+
+    // The largest description the check passes, by binary search: the check is cheap and
+    // monotonic in the length. The range must straddle it, or nothing below is exercised.
+    let low = 16_500
+    let high = 18_500
+    expect(fits(low)).to.equal(true)
+    expect(fits(high)).to.equal(false)
+    while (high - low > 1) {
+      const mid = Math.floor((low + high) / 2)
+      if (fits(mid)) low = mid
+      else high = mid
+    }
+
+    // The check passes it, so its real envelope must fit: the most it lets through, and a
+    // spread of lengths below. Without the check, `low` would be 18_499, whose envelope
+    // the default signer makes too large.
+    const jwts: string[] = []
+    for (const length of [low, low - 1, low - 113, 16_500]) {
+      const { jwt } = await new Eip191VcSigner(wallet).sign(ddoOf(length))
+      await buildEnvelope(node.client, jwt)
+      jwts.push(jwt)
+    }
+
+    expect(node.calls.metadataEncrypt).to.have.length(4)
+    // And it is close: the allowance for the JWS header and signature is all that keeps
+    // the bound above the real length.
+    expect(maxDecryptableJwsLength() - jwts[0].length).to.be.below(
+      JWS_SIGNING_ALLOWANCE
+    )
   })
 
   it('leaves room for walt.id: a 200-character key id and a 4096-bit RSA signature', () => {
