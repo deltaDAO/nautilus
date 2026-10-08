@@ -63,6 +63,7 @@ import type { PolicyServerPayload } from '../ddo/types.js'
 import { PolicyServerAction } from '../identity/CredentialProvider.js'
 import {
   errorMessage,
+  type FetchedResponse,
   type FetchedText,
   fetchResponse,
   fetchText,
@@ -1285,9 +1286,11 @@ export class OceanNodeClient {
   /**
    * A read-only `GET` to the node that follows redirects, e.g. from a reverse proxy in front
    * of `/api/aquarius`. Safe because it carries no credentials (no `Authorization`, no
-   * token, no body), only `Accept`. The transport rule still applies to where it ends:
-   * `fetchText` refuses a redirect to plain `http://` on a non-loopback host, unless the
-   * node URI is such a URL already (`allowInsecureTransport`).
+   * token, no body), only `Accept`. `fetchText` still refuses a redirect that ends on plain
+   * `http://` on a non-loopback host (unless the node URI is such a URL already,
+   * `allowInsecureTransport`), and one that ends on a loopback, private or link-local host
+   * unless the node is on one itself, so no public node can make nautilus read an internal
+   * service and relay its answer in an error message.
    */
   private getPublic(
     url: string,
@@ -1798,7 +1801,9 @@ export class OceanNodeClient {
    *
    * Over HTTP this sends `GET /api/services/initialize` itself, so a refusal throws an
    * `OceanNodeError` with the node's status and text (`HTTP 403: Error: Access to asset …
-   * was denied`); the request carries no credentials. Over P2P it goes through ocean.js.
+   * was denied`). The request is not signed, but its query carries the consumer's address
+   * and `userdata`, so a redirect is not followed: it throws an `OceanNodeError`. Over P2P
+   * it goes through ocean.js.
    */
   async initialize(
     did: string,
@@ -1828,13 +1833,11 @@ export class OceanNodeClient {
       if (options.validUntil)
         query.set('validUntil', String(options.validUntil))
 
-      // No credentials, so redirects are followed, as `getPublic` does.
       const response = await this.send(
         'initialize',
         `${this.baseUrl()}/api/services/initialize?${query}`,
         { method: 'GET', headers: { Accept: 'application/json' } },
-        options.signal,
-        true
+        options.signal
       )
 
       return nodeJson<ProviderInitialize>('initialize', response)
@@ -2172,7 +2175,7 @@ export class OceanNodeClient {
       return logs
     }
 
-    let response: Response
+    let response: FetchedResponse
     try {
       const { consumerAddress, nonce, signature, authorization } =
         await this.signCommand(
@@ -2197,21 +2200,15 @@ export class OceanNodeClient {
       throw OceanNodeError.from(operation, error)
     }
 
-    if (!response.ok) {
-      const body = await response.text().catch(() => '')
+    if (!response.ok)
       throw new OceanNodeError(
         operation,
-        describeAnswer({
-          status: response.status,
-          statusText: response.statusText,
-          body
-        }),
+        describeAnswer(response),
         undefined,
         response.status
       )
-    }
 
-    return responseBodyToAsyncIterable(response.body)
+    return responseBodyToAsyncIterable(response.response.body)
   }
 
   // #endregion

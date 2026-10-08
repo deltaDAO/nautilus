@@ -45,6 +45,71 @@ function isLoopbackIpv4(host: string): boolean {
   return !!octets && octets.slice(1).every((octet) => Number(octet) <= 255)
 }
 
+/**
+ * Hosts that are not on the public internet: loopback (see `isLoopbackHost`), the IPv4
+ * private, shared (CGNAT), link-local (cloud metadata at `169.254.169.254`) and `0.0.0.0/8`
+ * ranges, IPv6 `::`, unique-local (`fc00::/7`), link-local (`fe80::/10`) and IPv4-mapped
+ * forms of those, single-label names (`metadata`, a container name) and the `.local`,
+ * `.internal`, `.lan` and `.home.arpa` suffixes.
+ *
+ * Judged on the name alone, without resolving it: a public name that resolves to an
+ * internal address is not caught.
+ */
+export function isInternalHost(hostname: string): boolean {
+  const host = hostname
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '')
+    .replace(/\.$/, '')
+
+  if (!host || isLoopbackHost(host)) return true
+
+  const ipv4 = ipv4Octets(host) ?? mappedIpv4Octets(host)
+  if (ipv4) return isInternalIpv4(ipv4)
+
+  if (host.includes(':')) {
+    const first = Number.parseInt(host.split(':')[0] || '0', 16)
+    return (
+      /^[0:]+$/.test(host) ||
+      (first & 0xfe00) === 0xfc00 ||
+      (first & 0xffc0) === 0xfe80
+    )
+  }
+
+  return !host.includes('.') || /\.(local|internal|lan|home\.arpa)$/.test(host)
+}
+
+/** The four octets of a dotted-decimal IPv4 address. */
+function ipv4Octets(host: string): number[] | undefined {
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host)
+  const octets = match?.slice(1).map(Number)
+
+  return octets?.every((octet) => octet <= 255) ? octets : undefined
+}
+
+/** The IPv4 address in an IPv4-mapped IPv6 address (`::ffff:a.b.c.d` or `::ffff:xxxx:xxxx`). */
+function mappedIpv4Octets(host: string): number[] | undefined {
+  const dotted = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(host)
+  if (dotted) return ipv4Octets(dotted[1])
+
+  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host)
+  if (!hex) return undefined
+
+  const [high, low] = [hex[1], hex[2]].map((part) => Number.parseInt(part, 16))
+  return [high >> 8, high & 0xff, low >> 8, low & 0xff]
+}
+
+function isInternalIpv4([a, b]: number[]): boolean {
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168)
+  )
+}
+
 /** Whether the host is an IP address (v4 or v6) rather than a DNS name. */
 export function isIpAddress(hostname: string): boolean {
   const host = hostname.replace(/^\[|\]$/g, '')

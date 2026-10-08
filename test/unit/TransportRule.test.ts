@@ -11,13 +11,16 @@ import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  fetchResponse,
   fetchText,
+  MAX_ERROR_BODY_BYTES,
   MAX_TIMER_MS,
   RedirectError,
   RequestTimeoutError
 } from '../../src/utils/http.js'
 import {
   assertSecureTransport,
+  isInternalHost,
   isLoopbackHost,
   parseHttpUrl
 } from '../../src/utils/transport.js'
@@ -133,6 +136,48 @@ describe('isLoopbackHost', () => {
       '[::ffff:127.0.0.1]'
     ])
       expect(isLoopbackHost(host), host).to.equal(false)
+  })
+})
+
+describe('isInternalHost', () => {
+  it('names loopback, private, link-local and intranet hosts', () => {
+    for (const url of [
+      'http://localhost',
+      'http://127.0.0.1',
+      'http://10.1.2.3',
+      'http://172.16.0.1',
+      'http://172.31.255.255',
+      'http://192.168.1.1',
+      'http://169.254.169.254',
+      'http://100.64.0.1',
+      'http://0.0.0.0',
+      // The URL parser's other notations of 127.0.0.1 and 169.254.169.254.
+      'http://2130706433',
+      'http://0xa9.0xfe.0xa9.0xfe',
+      'http://[::1]',
+      'http://[::]',
+      'http://[fd00::1]',
+      'http://[fe80::1]',
+      'http://[::ffff:169.254.169.254]',
+      'http://[::ffff:10.0.0.1]',
+      'http://metadata',
+      'http://metadata.google.internal',
+      'http://printer.local',
+      'http://router.home.arpa'
+    ])
+      expect(isInternalHost(new URL(url).hostname), url).to.equal(true)
+  })
+
+  it('leaves public hosts alone', () => {
+    for (const url of [
+      'https://node.example',
+      'http://8.8.8.8',
+      'http://172.32.0.1',
+      'http://100.128.0.1',
+      'http://[2001:db8::1]',
+      'http://[::ffff:8.8.8.8]'
+    ])
+      expect(isInternalHost(new URL(url).hostname), url).to.equal(false)
   })
 })
 
@@ -280,8 +325,9 @@ describe('fetchText', () => {
     it('accepts https, loopback http, and http when the request was plain http already', async () => {
       for (const [requested, finalUrl] of [
         ['https://node.example/x', 'https://mirror.example/x'],
-        ['https://node.example/x', 'http://127.0.0.1:8001/x'],
         ['http://localhost:8001/x', 'http://localhost:8002/x'],
+        // The node is on a private network itself.
+        ['https://10.0.0.5/x', 'https://10.0.0.6/x'],
         // allowInsecureTransport: the request already went out in clear.
         ['http://node.example/x', 'http://mirror.example/x']
       ]) {
@@ -295,6 +341,33 @@ describe('fetchText', () => {
         )
 
         expect(response.url, `${requested} -> ${finalUrl}`).to.equal(finalUrl)
+      }
+    })
+
+    it('refuses one from a public host to an internal one, unread', async () => {
+      for (const finalUrl of [
+        'http://127.0.0.1:8001/x',
+        'https://169.254.169.254/latest/meta-data/',
+        'https://10.0.0.5/x',
+        'https://[fd00::1]/x',
+        'https://metadata.google.internal/x'
+      ]) {
+        const { fetchImpl, cancel } = landedOn(finalUrl, 'secret-credentials')
+
+        const error = await fetchText(
+          fetchImpl,
+          'https://node.example/api/aquarius/assets/ddo/x',
+          { method: 'GET' },
+          { timeoutMs: 1000, followRedirects: true }
+        ).catch((thrown: unknown) => thrown)
+
+        expect(error, finalUrl).to.be.instanceOf(RedirectError)
+        expect((error as RedirectError).internal).to.equal(true)
+        expect((error as Error).message).to.contain(
+          'https://node.example redirected to a loopback, private or link-local host'
+        )
+        expect((error as Error).message).not.to.contain('secret')
+        expect(cancel).toHaveBeenCalledOnce()
       }
     })
 
@@ -452,5 +525,164 @@ describe('fetchText', () => {
         `http://127.0.0.1:${port}/aquarius/assets/ddo/x`
       )
     })
+  })
+})
+
+describe('fetchResponse and the error body', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** A body that sends `chunks` and then stays open until the request is aborted. */
+  const openStream = (init: RequestInit | undefined, chunks: string[] = []) => {
+    const pulled: string[] = []
+    const cancelled = vi.fn()
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        init?.signal?.addEventListener('abort', () =>
+          controller.error(new DOMException('aborted', 'AbortError'))
+        )
+      },
+      pull(controller) {
+        const next = chunks.shift()
+        if (next === undefined) return new Promise(() => {})
+        pulled.push(next)
+        controller.enqueue(new TextEncoder().encode(next))
+      },
+      cancel: cancelled
+    })
+    return { body, pulled, cancelled }
+  }
+
+  it('reads at most MAX_ERROR_BODY_BYTES of an error answer and cancels the rest', async () => {
+    const chunk = 'x'.repeat(16 * 1024)
+    let stream: ReturnType<typeof openStream> | undefined
+
+    const answer = await fetchText(
+      (async (_url: unknown, init?: RequestInit) => {
+        stream = openStream(init, Array(100).fill(chunk))
+        return new Response(stream.body, { status: 500 })
+      }) as typeof fetch,
+      'https://node.example/x',
+      {},
+      { timeoutMs: 1000 }
+    )
+
+    expect(answer.status).to.equal(500)
+    expect(answer.body).to.have.length(MAX_ERROR_BODY_BYTES)
+    expect(stream?.pulled.length).to.be.below(100)
+    expect(stream?.cancelled).toHaveBeenCalledOnce()
+  })
+
+  it('reads a 2xx answer whole', async () => {
+    const body = 'y'.repeat(MAX_ERROR_BODY_BYTES * 2)
+
+    const answer = await fetchText(
+      (async () => new Response(body)) as typeof fetch,
+      'https://node.example/x',
+      {},
+      { timeoutMs: 1000 }
+    )
+
+    expect(answer.body).to.equal(body)
+  })
+
+  it('times out while an error body is still being read', async () => {
+    vi.useFakeTimers()
+    const fetchImpl = (async (_url: unknown, init?: RequestInit) =>
+      new Response(openStream(init, ['partial']).body, {
+        status: 502
+      })) as typeof fetch
+
+    for (const send of [fetchText, fetchResponse]) {
+      const pending = send(
+        fetchImpl,
+        'https://node.example/x',
+        {},
+        { timeoutMs: 50 }
+      ).catch((error: unknown) => error)
+
+      await vi.advanceTimersByTimeAsync(60)
+      expect(await pending, send.name).to.be.instanceOf(RequestTimeoutError)
+    }
+  })
+
+  it("rejects with the caller's reason when it aborts", async () => {
+    for (const send of [fetchText, fetchResponse]) {
+      const controller = new AbortController()
+      const reason = new Error('stop')
+      const pending = send(
+        (async (_url: unknown, init?: RequestInit) =>
+          new Response(openStream(init).body, { status: 500 })) as typeof fetch,
+        'https://node.example/x',
+        {},
+        { timeoutMs: 10_000, signal: controller.signal }
+      ).catch((error: unknown) => error)
+
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      controller.abort(reason)
+      expect(await pending, send.name).to.equal(reason)
+    }
+  })
+
+  it('hands back a 2xx response unread, its stream outliving the timeout', async () => {
+    vi.useFakeTimers()
+    let stream: ReturnType<typeof openStream> | undefined
+
+    const answer = await fetchResponse(
+      (async (_url: unknown, init?: RequestInit) => {
+        stream = openStream(init, ['a', 'b'])
+        return new Response(stream.body)
+      }) as typeof fetch,
+      'https://node.example/logs',
+      {},
+      { timeoutMs: 50 }
+    )
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(answer.ok).to.equal(true)
+    if (!answer.ok) return
+    const reader = answer.response.body?.getReader()
+    const decoder = new TextDecoder()
+    expect(decoder.decode((await reader?.read())?.value)).to.equal('a')
+    expect(decoder.decode((await reader?.read())?.value)).to.equal('b')
+  })
+
+  it('reads an error answer as text', async () => {
+    const answer = await fetchResponse(
+      (async () =>
+        new Response('Job not found', {
+          status: 404,
+          statusText: 'Not Found'
+        })) as typeof fetch,
+      'https://node.example/logs',
+      {},
+      { timeoutMs: 1000 }
+    )
+
+    expect(answer).to.deep.include({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+      body: 'Job not found'
+    })
+  })
+
+  it('refuses a redirect, as fetchText does', async () => {
+    const error = await fetchResponse(
+      (async () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: 'https://elsewhere.example/x' }
+        })) as typeof fetch,
+      'https://node.example/logs?signature=0xabc',
+      {},
+      { timeoutMs: 1000 }
+    ).catch((thrown: unknown) => thrown)
+
+    expect(error).to.be.instanceOf(RedirectError)
+    expect((error as RedirectError).locationOrigin).to.equal(
+      'https://elsewhere.example'
+    )
   })
 })
