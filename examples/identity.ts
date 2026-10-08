@@ -360,7 +360,7 @@ export async function publishGatedDataset(
       'revoked-status-list'
     ])
     .setVpPolicies(CredentialListTypes.ALLOW, [
-      'holder-binding',
+      { policy: 'holder-binding' },
       { policy: 'minimum-credentials', args: '1' }
     ])
     .build()
@@ -435,7 +435,7 @@ export async function publishGatedComputeDataset(
       'not-before',
       'revoked-status-list'
     ])
-    .setVpPolicies(CredentialListTypes.ALLOW, ['holder-binding'])
+    .setVpPolicies(CredentialListTypes.ALLOW, [{ policy: 'holder-binding' }])
     .build()
 
   const result = await publishAsset(nautilus, asset)
