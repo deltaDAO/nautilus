@@ -117,6 +117,14 @@ function expectNothingSent(calls: string[]) {
   expect(sendTransaction).not.toHaveBeenCalled()
 }
 
+/** The `parameter:reason` pairs of a `ConsumerParameterError`. */
+function refusals(error: Error): string[] {
+  expect(error).to.be.instanceOf(ConsumerParameterError)
+  return (error as ConsumerParameterError).issues.map(
+    ({ parameter, reason }) => `${parameter}:${reason}`
+  )
+}
+
 async function rejection(promise: Promise<unknown>): Promise<Error> {
   try {
     await promise
@@ -167,7 +175,7 @@ describe('access() pre-order checks', () => {
 
     const error = await rejection(accessing)
 
-    expect(error).to.be.instanceOf(ConsumerParameterError)
+    expect(refusals(error)).to.deep.equal(['surname:missing'])
     expect(error.message).to.match(/'surname' is required/)
     expectNothingSent(calls)
   })
@@ -177,7 +185,9 @@ describe('access() pre-order checks', () => {
       userdata: { surname: 'Doe', region: 'asia' }
     })
 
-    expect(await rejection(accessing)).to.be.instanceOf(ConsumerParameterError)
+    expect(refusals(await rejection(accessing))).to.deep.equal([
+      'region:not-an-option'
+    ])
     expectNothingSent(calls)
   })
 
@@ -188,7 +198,7 @@ describe('access() pre-order checks', () => {
 
     const error = await rejection(accessing)
 
-    expect(error).to.be.instanceOf(ConsumerParameterError)
+    expect(refusals(error)).to.deep.equal(['row:unknown'])
     expect(error.message).to.match(/'row' is not a declared parameter/)
     expectNothingSent(calls)
   })
@@ -333,7 +343,7 @@ describe('compute() consumer parameters', () => {
 
     const error = await rejection(running)
 
-    expect(error).to.be.instanceOf(ConsumerParameterError)
+    expect(refusals(error)).to.deep.equal(['age:wrong-type'])
     expect(error).to.include({
       did: ASSET_DID,
       serviceId: SERVICE_ID,
@@ -350,7 +360,7 @@ describe('compute() consumer parameters', () => {
 
     const error = await rejection(running)
 
-    expect(error).to.be.instanceOf(ConsumerParameterError)
+    expect(refusals(error)).to.deep.equal(['age:wrong-type'])
     expect(error).to.include({ did: ALGO_DID, field: 'algocustomdata' })
     expectNothingSent(calls)
   })
@@ -399,8 +409,8 @@ describe('compute() consumer parameters', () => {
 
     const error = await rejection(running)
 
+    expect(refusals(error)).to.deep.equal(['epochs:unknown'])
     expect(error).to.include({ did: ALGO_DID, field: 'userdata' })
-    expect(error.message).to.match(/'epochs' is not a declared parameter/)
     expectNothingSent(calls)
   })
 
@@ -426,7 +436,10 @@ describe('compute() consumer parameters', () => {
       freeCompute
     )
 
-    expect(await rejection(running)).to.be.instanceOf(ConsumerParameterError)
+    const error = await rejection(running)
+
+    expect(refusals(error)).to.deep.equal(['age:wrong-type'])
+    expect(error).to.include({ did: ASSET_DID, field: 'userdata' })
     expectNothingSent(calls)
   })
 
