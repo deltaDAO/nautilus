@@ -9,6 +9,7 @@
  */
 import type { Config } from '@oceanprotocol/lib'
 import {
+  getAddress,
   hexlify,
   Interface,
   type Log,
@@ -21,6 +22,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { access, settleOrder } from '../../src/access/index.js'
 import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
 import { order, reuseOrder } from '../../src/utils/order.js'
+import {
+  ProviderFeeNotAllowedError,
+  type ProviderFeeQuote
+} from '../../src/utils/paymentLimits.js'
 import {
   findPreviousOrder,
   type PreviousOrderQuery
@@ -467,9 +472,8 @@ describe('access with an order on chain', () => {
     return () => vi.useRealTimers()
   })
 
-  it('reports the reused order', async () => {
-    chain.started(tx(1), 3_600)
-
+  /** `access()` against a node quoting a fee of `amount`, with no `validOrder`. */
+  function download(amount: string, limits: object = {}) {
     const asset = getAssetFixture()
     const providerFee = signedProviderFee({
       providerData: hexlify(
@@ -480,7 +484,7 @@ describe('access with an order on chain', () => {
           })
         )
       ),
-      providerFeeAmount: '0'
+      providerFeeAmount: amount
     })
 
     const node = {
@@ -492,24 +496,90 @@ describe('access with an order on chain', () => {
       hasPolicyServer: async () => false,
       initialize: async () => ({ datatoken: DATATOKEN_ADDRESS, providerFee }),
       getDownloadUrl: vi.fn(async () => 'https://node.test.invalid/download')
-    } as unknown as OceanNodeClient
+    }
 
     const signer = {
       getAddress: async () => CONSUMER,
       provider: chain
     } as unknown as Signer
 
-    const result = await access(
-      { assetDid: ASSET_DID },
+    const result = access(
+      { assetDid: ASSET_DID, ...limits },
       {
-        node,
+        node: node as unknown as OceanNodeClient,
         signer,
         chainConfig: { chainId: 32456 } as unknown as Config
       }
     )
 
+    return { result, node }
+  }
+
+  it('reports the reused order', async () => {
+    chain.started(tx(1), 3_600)
+
+    const result = await download('0').result
+
     expect(result).to.include({ transferTxId: tx(1), reusedOrder: true })
     expect(vi.mocked(order)).not.toHaveBeenCalled()
     expect(vi.mocked(reuseOrder)).not.toHaveBeenCalled()
+  })
+
+  it('asks no consent for a quoted fee it does not pay, using the order as it stands', async () => {
+    chain.started(tx(1), 3_600)
+
+    // No ceiling and no callback: a fee that were paid would be refused.
+    const result = await download('30').result
+
+    expect(result).to.include({ transferTxId: tx(1), reusedOrder: true })
+
+    const confirm = vi.fn((_fees: ProviderFeeQuote[]) => false)
+    await download('30', { confirmProviderFees: confirm }).result
+
+    expect(confirm).not.toHaveBeenCalled()
+    expect(vi.mocked(order)).not.toHaveBeenCalled()
+    expect(vi.mocked(reuseOrder)).not.toHaveBeenCalled()
+  })
+
+  it('asks for the quoted fee when the order’s fee expired, and pays exactly it', async () => {
+    chain.started(tx(1), 3_600, { fee: { validUntil: NOW - 1 } })
+    const confirm = vi.fn((_fees: ProviderFeeQuote[]) => true)
+
+    const result = await download('30', { confirmProviderFees: confirm }).result
+
+    expect(result).to.include({ transferTxId: '0xreusetx', reusedOrder: true })
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(confirm.mock.calls[0][0]).to.deep.equal([
+      {
+        token: getAddress(PROVIDER_FEE_TOKEN),
+        amount: 30n,
+        collector: PROVIDER_FEE_WALLET.address,
+        datatoken: DATATOKEN_ADDRESS,
+        did: ASSET_DID,
+        serviceId: SERVICE_ID
+      }
+    ])
+    expect(vi.mocked(reuseOrder)).toHaveBeenCalledOnce()
+    expect(vi.mocked(reuseOrder).mock.calls[0][0]).to.deep.include({
+      validOrderTx: tx(1),
+      maxProviderFee: [{ token: getAddress(PROVIDER_FEE_TOKEN), amount: 30n }],
+      confirmProviderFees: undefined
+    })
+    expect(vi.mocked(order)).not.toHaveBeenCalled()
+  })
+
+  it('refuses the fee a declined callback did not allow, before any transaction', async () => {
+    chain.started(tx(1), 3_600, { fee: { validUntil: NOW - 1 } })
+
+    const { result, node } = download('30', {
+      confirmProviderFees: () => false
+    })
+    const thrown = await result.catch((caught) => caught)
+
+    expect(thrown).to.be.instanceOf(ProviderFeeNotAllowedError)
+    expect(thrown.reason).to.equal('declined')
+    expect(vi.mocked(reuseOrder)).not.toHaveBeenCalled()
+    expect(vi.mocked(order)).not.toHaveBeenCalled()
+    expect(node.getDownloadUrl).not.toHaveBeenCalled()
   })
 })
