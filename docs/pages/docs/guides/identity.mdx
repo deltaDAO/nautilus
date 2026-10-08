@@ -178,7 +178,7 @@ assetBuilder
     'revoked-status-list' // [!code focus]
   ]) // [!code focus]
   .setVpPolicies(CredentialListTypes.ALLOW, [ // [!code focus]
-    'holder-binding', // [!code focus]
+    { policy: 'holder-binding' }, // [!code focus]
     { policy: 'minimum-credentials', args: '1' } // [!code focus]
   ]) // [!code focus]
 ```
@@ -187,6 +187,11 @@ assetBuilder
 whole. The policy server's defaults are `signature`, `not-before` and
 `revoked-status-list`. Valid names can be listed from the verifier's
 `/openid4vc/policy-list` endpoint.
+
+VC policies are names, while every VP policy is an object, `{ policy }` or
+`{ policy, args }` with `args` as a string, as the enterprise market writes them: an asset
+whose list mixed names and objects was published but not indexed by ocean-node 4.2.x. The policy server parses `args` as JSON when it can, so `'1'` reaches the
+verifier as the number `1`; pass structured arguments through `JSON.stringify`.
 
 Gating also works per service, via
 [`ServiceBuilder.addRequestCredentials`](/docs/api/servicebuilder/addRequestCredentials) —
