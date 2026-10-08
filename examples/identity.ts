@@ -13,7 +13,6 @@ import {
   type PricingConfigWithoutOwner,
   ServiceBuilder,
   ServiceTypes,
-  StaticCredentialProvider,
   WaltIdCredentialProvider,
   WaltIdHttpWallet,
   WaltIdVcSigner,
@@ -669,58 +668,51 @@ function defaultResources(environment: ComputeEnvironment) {
 }
 
 /**
- * Reusing a session you already hold.
+ * Checks a policy-server session, and names the policies that failed.
  *
- * Useful when the exchange happened elsewhere — in a browser, say — and you only need to
- * replay the result.
- *
- * Never invent a session id. The policy server derives it from
- * `sha256(consumerAddress:documentId:serviceId)` plus a random half, and rejects any session
- * whose context does not match the request. A session is valid for exactly one
- * (asset, service, consumer) triple.
- */
-export async function consumeWithExistingSession(
-  networkConfig: NetworkConfig,
-  sessionId: string,
-  assetDid: string
-) {
-  // The session is bound to the consumer address, so replay it as the consumer.
-  const signer = getSigner(networkConfig, 'consumer')
-
-  const nautilus = await Nautilus.create(signer, {
-    config: networkConfig,
-    credentials: new StaticCredentialProvider(sessionId),
-    ...paymentLimits()
-  })
-
-  const result = await nautilus.access({ assetDid })
-
-  console.log('Download URL:', result.url)
-
-  return result
-}
-
-/**
- * Explains why a presentation was refused.
- *
- * The reason is usually one specific policy rather than a general refusal, and the verifier's
- * report says which.
+ * `access()` and `compute()` already do this after every presentation and throw a
+ * `PolicyDeniedError` whose `reason` names the failed policies. This is the same check, for a
+ * session id you have from elsewhere (an error's `details`, a browser flow).
  */
 export async function explainCredentialFailure(
   nautilus: Nautilus,
   sessionId: string
 ) {
-  const provider = createCredentialProvider(
-    nautilus
-  ) as WaltIdCredentialProvider
+  const { verified, result } = await nautilus
+    .getNodeClient()
+    .checkPolicySession(sessionId)
 
-  const reason = await provider.explainFailure(sessionId)
+  const results =
+    (
+      result as {
+        policyResults?: {
+          results?: {
+            policyResults?: {
+              is_success?: boolean
+              policy?: string
+              description?: string
+            }[]
+          }[]
+        }
+      }
+    )?.policyResults?.results ?? []
 
-  console.log(
-    reason ? `Refused because: ${reason}` : 'No failing policy was reported.'
-  )
+  const failed = results
+    .flatMap((entry) => entry.policyResults ?? [])
+    .filter((policy) => policy.is_success === false)
+    .map((policy) =>
+      [policy.policy, policy.description].filter(Boolean).join(': ')
+    )
 
-  return reason
+  if (verified) console.log('The verifier accepted this presentation.')
+  else
+    console.log(
+      failed.length
+        ? `Refused because: ${failed.join('; ')}`
+        : 'Not verified, and no failing policy was reported.'
+    )
+
+  return { verified, failed }
 }
 
 /**
@@ -731,11 +723,15 @@ export async function explainCredentialFailure(
  *
  * Two things worth knowing about deployments before you conclude gating works:
  *
- *   - ocean-node **fails open** when its `POLICY_SERVER_URL` is unset, so an unconfigured node
- *     allows everything. nautilus detects this and continues without SSI rather than failing.
- *   - Publish-time enforcement does not exist yet: the policy server's `newDDO`, `updateDDO`,
- *     `validateDDO`, `encrypt` and `decrypt` actions are stubs that always allow. Only
- *     `download` and `startCompute` are genuinely checked.
+ *   - ocean-node checks credentials with a policy server only when it has one
+ *     (`POLICY_SERVER_URL`, reported as `isPSConfigured` in its status). Without one it
+ *     checks address and access lists itself, and no `SSIpolicy` is checked. nautilus reads
+ *     the status and opens no session there.
+ *   - The policy server checks consume time: `initiate`, `download` and `startCompute`. Its
+ *     publish-time actions (`newDDO`, `updateDDO`, `validateDDO`, `encrypt`, `decrypt`)
+ *     allow every request.
+ *   - On a node with a policy server, an asset needs an address allow list
+ *     (`addCredentialAddresses`): the policy server refuses every address that is not on it.
  */
 export async function runGatedPublishAndConsume(
   credentialType = 'VerifiableId'
