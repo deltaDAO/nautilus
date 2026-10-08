@@ -659,24 +659,29 @@ describe('address credentials', () => {
   })
 
   it('removes addresses case-insensitively', () => {
-    let credentials = addCredentialAddresses({}, ALLOW, ['0xAbCdEf'])
+    let credentials = addCredentialAddresses({}, ALLOW, ['0xAbCdEf', '0x2'])
     credentials = removeCredentialAddresses(credentials, ALLOW, ['0xabcdef'])
-
-    expect(credentials.allow).to.have.length(0)
-  })
-
-  it('drops the whole entry when its last address is removed', () => {
-    let credentials = addCredentialAddresses({}, ALLOW, ['0x1', '0x2'])
-    credentials = removeCredentialAddresses(credentials, ALLOW, ['0x1'])
 
     expect(credentials.allow?.[0]).to.deep.equal({
       type: 'address',
       values: [{ address: '0x2' }]
     })
+  })
 
-    credentials = removeCredentialAddresses(credentials, ALLOW, ['0x2'])
+  it('keeps an emptied allow entry, which denies everyone', () => {
+    // The node and the policy server read an empty address allow list as deny-all.
+    // Dropping the entry instead lifted the address gate.
+    let credentials = addCredentialAddresses({}, ALLOW, ['0x1', '0x2'])
+    credentials = removeCredentialAddresses(credentials, ALLOW, ['0x1', '0x2'])
 
-    expect(credentials.allow).to.have.length(0)
+    expect(credentials.allow).to.deep.equal([{ type: 'address', values: [] }])
+  })
+
+  it('drops an emptied deny entry, which denies no one', () => {
+    let credentials = addCredentialAddresses({}, DENY, ['0x1'])
+    credentials = removeCredentialAddresses(credentials, DENY, ['0x1'])
+
+    expect(credentials.deny).to.deep.equal([])
   })
 
   it('is a no-op when removing from a list with no address entry', () => {

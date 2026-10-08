@@ -5,17 +5,17 @@
  * `../ddo/types` for why, and `policy-server/src/handlers/waltIdPolicyHandler.ts`
  * (`parseRequestCredentials`, `hasSSIPolicyToBeChecked`) for the parser this must satisfy.
  */
-import type {
-  AddressCredential,
+import {
+  type AddressCredential,
   CredentialListTypes,
-  DdoCredential,
-  DdoCredentials,
-  RequestCredential,
-  SsiPolicyCredential,
-  SsiPolicyValue,
-  StoredRequestCredential,
-  VcPolicy,
-  VpPolicy
+  type DdoCredential,
+  type DdoCredentials,
+  type RequestCredential,
+  type SsiPolicyCredential,
+  type SsiPolicyValue,
+  type StoredRequestCredential,
+  type VcPolicy,
+  type VpPolicy
 } from '../ddo/types.js'
 
 /** The policy server's own defaults, from `policy-server/default-verification-policies`. */
@@ -172,7 +172,13 @@ export function addCredentialAddresses(
   return { ...credentials, [list]: entries }
 }
 
-/** Removes addresses, dropping the whole entry when its list becomes empty. */
+/**
+ * Removes addresses.
+ *
+ * An allow entry left empty is kept as `values: []`: the node and the policy server read an
+ * empty address allow list as "deny everyone", so dropping it would lift the gate. A deny
+ * entry left empty denies no one and is dropped.
+ */
 export function removeCredentialAddresses(
   credentials: DdoCredentials,
   list: CredentialListTypes,
@@ -188,7 +194,8 @@ export function removeCredentialAddresses(
     (value) => !removed.has(value.address.toLowerCase())
   )
 
-  if (remaining.length) (entries[index] as AddressCredential).values = remaining
+  if (remaining.length || list === CredentialListTypes.ALLOW)
+    (entries[index] as AddressCredential).values = remaining
   else entries.splice(index, 1)
 
   return { ...credentials, [list]: entries }
