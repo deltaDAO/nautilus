@@ -59,9 +59,10 @@ export interface ComputeConfig extends ProviderFeeLimits, EscrowPaymentLimits {
    */
   computeEnv?: string
   /**
-   * Resources to request. Each resource the environment lists (for a free job, its `free`
-   * list) that is left out gets its minimum, raised to `1` for `cpu`, `ram` and `disk`
-   * within its maximum, so a job never runs without a CPU or memory limit by default.
+   * Resources to request, sent exactly as given. When left out, every resource the
+   * environment lists (for a free job, its `free` list) is requested at its minimum, raised
+   * to `1` for `cpu`, `ram` and `disk` within its maximum, so a job does not run without a
+   * CPU or memory limit by default.
    */
   resources?: ComputeResources
   /** Job duration in seconds. Capped to the environment's `maxJobDuration`. */

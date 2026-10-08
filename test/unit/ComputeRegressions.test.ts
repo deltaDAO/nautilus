@@ -541,31 +541,23 @@ describe('default compute resources', () => {
     ])
   })
 
-  it('keeps the requested amounts and fills in the resources left out', async () => {
+  it('sends an explicit resources list exactly as given, without defaults', async () => {
     const { client, calls } = createComputeNodeMock(
       inputs(),
       undefined,
       environmentWith()
     )
+    const resources = [
+      { id: 'ram', amount: 4 },
+      { id: 'gpu', amount: 1 }
+    ]
 
     await computeAllowed(
-      {
-        dataset: { did: ASSET_DID },
-        algorithm: { did: ALGO_DID },
-        resources: [
-          { id: 'ram', amount: 4 },
-          { id: 'gpu', amount: 1 }
-        ]
-      },
+      { dataset: { did: ASSET_DID }, algorithm: { did: ALGO_DID }, resources },
       computeContext(client)
     )
 
-    expect(calls.computeStart[0].resources).to.deep.equal([
-      { id: 'ram', amount: 4 },
-      { id: 'gpu', amount: 1 },
-      { id: 'cpu', amount: 1 },
-      { id: 'disk', amount: 1 }
-    ])
+    expect(calls.computeStart[0].resources).to.deep.equal(resources)
   })
 
   it('requests no more than a resource offers', async () => {
