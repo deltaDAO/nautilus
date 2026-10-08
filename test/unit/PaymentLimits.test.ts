@@ -203,6 +203,10 @@ function computeNode(quote: object) {
 
   const client = {
     nodeUri: 'https://node.test.invalid',
+    // A node without a policy server: no session is opened.
+    async hasPolicyServer() {
+      return false
+    },
     async resolve(did: string) {
       return assets[did]
     },
@@ -1367,6 +1371,10 @@ describe('access() provider fee', () => {
 
     const client = {
       nodeUri: 'https://node.test.invalid',
+      // A node without a policy server: no session is opened.
+      async hasPolicyServer() {
+        return false
+      },
       forEndpoint() {
         return client
       },

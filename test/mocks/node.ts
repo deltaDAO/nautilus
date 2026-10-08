@@ -73,6 +73,8 @@ export interface NodeMockOptions {
   nodeAddress?: string
   /** What `getIndexerNonceState` answers, or throws. Default: `undefined` (not served). */
   indexerNonce?: IndexerNonceState | Error
+  /** What `hasPolicyServer` answers. Default: `undefined` (the status does not say). */
+  policyServer?: boolean
 }
 
 export interface NodeMock {
@@ -91,6 +93,8 @@ export interface NodeMock {
     getFileInfo: unknown[]
     checkDidFiles: unknown[]
     getIndexerNonceState: number
+    /** The node each `hasPolicyServer` call asked. */
+    hasPolicyServer: string[]
     resolve: string[]
     /** The node each `encrypt` call was addressed to — services must use their own. */
     encryptTargets: string[]
@@ -107,6 +111,7 @@ export function createNodeMock(options: NodeMockOptions = {}): NodeMock {
     getFileInfo: [],
     checkDidFiles: [],
     getIndexerNonceState: 0,
+    hasPolicyServer: [],
     resolve: [],
     encryptTargets: [],
     fileInfoTargets: []
@@ -184,6 +189,16 @@ export function createNodeMock(options: NodeMockOptions = {}): NodeMock {
 
     async getNodeAddress() {
       return options.nodeAddress
+    },
+
+    // Every endpoint answers as this node, so the calls stay recorded in one place.
+    forEndpoint() {
+      return client
+    },
+
+    async hasPolicyServer() {
+      calls.hasPolicyServer.push(client.nodeUri)
+      return options.policyServer
     },
 
     async getIndexerNonceState() {

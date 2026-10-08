@@ -14,6 +14,11 @@ import { LoggerInstance, type StorageObject } from '@oceanprotocol/lib'
 import { Wallet } from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PublishedNotIndexed } from '../../src/@types/Publish.js'
+import { CredentialListTypes } from '../../src/ddo/types.js'
+import {
+  addCredentialAddresses,
+  addRequestCredentials
+} from '../../src/identity/policy.js'
 import { AssetBuilder } from '../../src/Nautilus/Asset/AssetBuilder.js'
 import { PLACEHOLDER_ADDRESS } from '../../src/Nautilus/Asset/NautilusDDO.js'
 import {
@@ -1431,6 +1436,91 @@ describe('setup', () => {
     await nautilus.publish(validAsset())
 
     expect(warn).not.toHaveBeenCalled()
+  })
+})
+
+describe('policy server that denies every consumer', () => {
+  const DENIES_ALL =
+    /has a policy server.*no address allow list.*denies every consumer/
+
+  function warnSpy() {
+    return vi.spyOn(LoggerInstance, 'warn').mockImplementation(() => undefined)
+  }
+
+  function warnings(warn: ReturnType<typeof warnSpy>) {
+    return warn.mock.calls.map((call) => String(call[0]))
+  }
+
+  it('warns on publish when the node has a policy server and credentials are {}', async () => {
+    const warn = warnSpy()
+    const { nautilus } = await createNautilus({ node: { policyServer: true } })
+
+    // The builder writes `credentials: {}` unless addresses are added.
+    await nautilus.publish(validAsset())
+
+    expect(warnings(warn).some((text) => DENIES_ALL.test(text))).to.equal(true)
+    expect(vi.mocked(writeMetadata)).toHaveBeenCalledTimes(1)
+  })
+
+  it('warns on publish for an allow list with no address entry', async () => {
+    const warn = warnSpy()
+    const { nautilus } = await createNautilus({ node: { policyServer: true } })
+
+    const asset = validAsset()
+    asset.ddo.credentials = addRequestCredentials(
+      {},
+      CredentialListTypes.ALLOW,
+      [{ type: 'VerifiableId' }]
+    )
+
+    await nautilus.publish(asset)
+
+    expect(warnings(warn).some((text) => DENIES_ALL.test(text))).to.equal(true)
+  })
+
+  it('warns on edit too', async () => {
+    const warn = warnSpy()
+    const { nautilus } = await createNautilus({ node: { policyServer: true } })
+
+    const fixture = getAssetFixture()
+    fixture.credentialSubject.credentials = {} as never
+
+    await nautilus.edit(new AssetBuilder(fixture).build())
+
+    expect(warnings(warn).some((text) => DENIES_ALL.test(text))).to.equal(true)
+  })
+
+  it('does not warn when the asset allows addresses', async () => {
+    const warn = warnSpy()
+    const { nautilus } = await createNautilus({ node: { policyServer: true } })
+
+    const asset = validAsset()
+    asset.ddo.credentials = addCredentialAddresses(
+      {},
+      CredentialListTypes.ALLOW,
+      [OWNER_ADDRESS]
+    )
+
+    await nautilus.publish(asset)
+
+    expect(warnings(warn).some((text) => DENIES_ALL.test(text))).to.equal(false)
+  })
+
+  it('does not warn when no node has a policy server, or says', async () => {
+    for (const policyServer of [false, undefined]) {
+      const warn = warnSpy()
+      const { nautilus, node } = await createNautilus({
+        node: { policyServer }
+      })
+
+      await nautilus.publish(validAsset())
+
+      expect(warnings(warn).some((text) => DENIES_ALL.test(text))).to.equal(
+        false
+      )
+      expect(node.calls.hasPolicyServer.length).to.be.greaterThan(0)
+      warn.mockRestore()
+    }
   })
 })
 

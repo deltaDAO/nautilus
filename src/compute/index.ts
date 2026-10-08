@@ -1,4 +1,4 @@
-import type { AssetV5, ServiceV5 } from '@oceanprotocol/ddo-js'
+import type { AssetV5 } from '@oceanprotocol/ddo-js'
 /**
  * Compute-to-Data, on the C2D v2 model.
  *
@@ -40,22 +40,14 @@ import {
   sendSettlement
 } from '../access/settlement.js'
 import {
-  getCredentials,
   getDatatokenForService,
   getMetadata,
-  getService,
   getServiceByType,
-  getServiceCredentials,
   getServiceIndex,
-  getServices,
-  supportsSsi
+  getServices
 } from '../ddo/read.js'
 import type { PolicyServerComputePayload } from '../ddo/types.js'
-import type { CredentialProvider } from '../identity/CredentialProvider.js'
-import {
-  assertPolicySatisfied,
-  shouldResolveCredentials
-} from '../identity/policy.js'
+import { PolicySessionResolver } from '../identity/PolicySessionResolver.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
 import type { KeyedLock } from '../utils/keyedLock.js'
 import {
@@ -82,7 +74,13 @@ export interface ComputeContext {
   node: OceanNodeClient
   signer: Signer
   chainConfig: Config
-  credentials?: CredentialProvider
+  /**
+   * Opens the policy-server sessions, and caches them. `Nautilus` passes one per
+   * instance, holding its `credentials`. Without it, a resolver with no credential provider
+   * is used: inputs gated by addresses work, and one that asks for a verifiable
+   * presentation is refused before anything is spent.
+   */
+  policySessions?: PolicySessionResolver
   /**
    * The escrow contract a paid job may fund, chosen by the caller. When set, it is the only
    * one funded. When omitted, the job funds the chain's `EnterpriseEscrow` in Ocean's
@@ -137,7 +135,7 @@ export async function compute(
   config: ComputeConfig,
   context: ComputeContext
 ): Promise<ComputeResult> {
-  const { node, signer, chainConfig, credentials } = context
+  const { node, signer, chainConfig } = context
   // Resolved first, so a malformed explicit escrow fails before any node call.
   const escrowPin = resolveEscrowPin(chainConfig.chainId, context.escrow)
   const consumerAddress = await signer.getAddress()
@@ -156,14 +154,15 @@ export async function compute(
     config.maxJobDuration
   )
 
-  // 1. Satisfy every policy before any order is placed. Any failure aborts the whole job
-  //    with nothing spent — the ordering here is the whole point.
+  // 1. Open every input's policy session, the algorithm's included, before any escrow,
+  //    approval or order. Any refusal aborts the whole job with nothing spent — the
+  //    ordering here is the whole point. The node checks the same sessions at
+  //    `initializeCompute` and at `computeStart`, so both get this one array.
   const policyServer = await resolvePolicies(
     node,
     inputs,
     consumerAddress,
-    credentials,
-    config.skipCredentials
+    context.policySessions
   )
 
   const validUntil = Math.floor(Date.now() / 1000) + maxJobDuration
@@ -318,7 +317,7 @@ export async function freeCompute(
   config: FreeComputeConfig,
   context: ComputeContext
 ): Promise<Omit<ComputeResult, 'initializeResults' | 'orders'>> {
-  const { node, signer, credentials } = context
+  const { node, signer } = context
   const consumerAddress = await signer.getAddress()
 
   const inputs = await resolveInputs(node, config)
@@ -333,8 +332,7 @@ export async function freeCompute(
     node,
     inputs,
     consumerAddress,
-    credentials,
-    config.skipCredentials
+    context.policySessions
   )
 
   const jobs = await node.freeComputeStart({
@@ -557,59 +555,36 @@ function resolveMaxJobDuration(
 // #region policies
 
 /**
- * Resolves one policy payload per (asset, service) pair.
+ * Opens one policy session per input, datasets and algorithm alike, each for its own
+ * (asset, service) on the node running the job: that node checks every input.
  *
- * The policy server receives the whole array on each per-asset check and selects the entry
- * matching `documentId` + `serviceId`, so both must be tagged on every element.
- *
- * Unlike the ocean-cli, a v4 asset in the batch does not disable SSI for the v5 assets
- * alongside it — each input is gated on its own version.
+ * The policy server receives the whole array on each per-input check and selects the entry
+ * matching `documentId` + `serviceId`, so both are tagged on every element, and an input
+ * never borrows another input's session. One input after the other: `initiate` is a signed
+ * command, and the node accepts each nonce once.
  */
 async function resolvePolicies(
   node: OceanNodeClient,
   inputs: ResolvedInput[],
   consumerAddress: string,
-  credentials?: CredentialProvider,
-  skip?: boolean
+  policySessions: PolicySessionResolver = new PolicySessionResolver()
 ): Promise<PolicyServerComputePayload[] | undefined> {
   const payloads: PolicyServerComputePayload[] = []
 
   for (const input of inputs) {
-    if (!supportsSsi(input.asset)) continue
+    const session = await policySessions.resolve({
+      node,
+      asset: input.asset,
+      serviceId: input.serviceId,
+      consumerAddress
+    })
 
-    const resolved = shouldResolveCredentials(credentials, skip)
-      ? await (credentials as CredentialProvider).resolve({
-          asset: input.asset,
-          serviceId: input.serviceId,
-          consumerAddress,
-          // The node running the job is the one that checks every input's policy — unlike
-          // a download, which is served by each service's own node.
-          node
-        })
-      : null
-
-    if (resolved) {
+    if (session)
       payloads.push({
-        ...resolved,
+        ...session,
         documentId: input.asset.id,
         serviceId: input.serviceId
       })
-      continue
-    }
-
-    // A gated input with no session fails the whole job here, before any order or escrow
-    // deposit. A compute job orders every input, so paying for all of them and then being
-    // refused on one is the most expensive version of this mistake.
-    assertPolicySatisfied({
-      did: input.asset.id,
-      serviceId: input.serviceId,
-      assetCredentials: getCredentials(input.asset),
-      serviceCredentials: getServiceCredentials(
-        getService(input.asset, input.serviceId) as ServiceV5
-      ),
-      resolved,
-      skipped: skip
-    })
   }
 
   return payloads.length ? payloads : undefined

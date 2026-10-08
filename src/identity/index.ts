@@ -1,4 +1,5 @@
 export * from './CredentialProvider.js'
+export * from './PolicySessionResolver.js'
 export * from './policy.js'
 export * from './session.js'
 export * from './WaltIdProvider.js'

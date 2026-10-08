@@ -1,8 +1,8 @@
 /**
- * Access: resolve, satisfy any credential policy, order, download.
+ * Access: resolve, open the policy-server session, order, download.
  *
- * The ordering here is deliberate and load-bearing: **credentials are resolved before any
- * on-chain spend**. If a policy cannot be satisfied, the caller has paid nothing.
+ * The ordering here is deliberate and load-bearing: **the policy session is opened before
+ * any on-chain spend**. If the policy server refuses, the caller has paid nothing.
  */
 
 import type { Config } from '@oceanprotocol/lib'
@@ -10,19 +10,12 @@ import { LoggerInstance } from '@oceanprotocol/lib'
 import type { Signer } from 'ethers'
 import type { AccessConfig, AccessResult } from '../@types/Access.js'
 import {
-  getCredentials,
   getDatatokenForService,
   getService,
   getServiceByType,
-  getServiceCredentials,
-  getServiceIndex,
-  supportsSsi
+  getServiceIndex
 } from '../ddo/read.js'
-import type { CredentialProvider } from '../identity/CredentialProvider.js'
-import {
-  assertPolicySatisfied,
-  shouldResolveCredentials
-} from '../identity/policy.js'
+import { PolicySessionResolver } from '../identity/PolicySessionResolver.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
 import {
   assertProviderFeesAllowed,
@@ -41,7 +34,13 @@ export interface AccessContext {
   node: OceanNodeClient
   signer: Signer
   chainConfig: Config
-  credentials?: CredentialProvider
+  /**
+   * Opens the policy-server sessions, and caches them. `Nautilus` passes one per
+   * instance, holding its `credentials`. Without it, a resolver with no credential provider
+   * is used: services gated by addresses work, and one that asks for a verifiable
+   * presentation is refused before anything is spent.
+   */
+  policySessions?: PolicySessionResolver
 }
 
 /**
@@ -53,7 +52,8 @@ export async function access(
   config: AccessConfig,
   context: AccessContext
 ): Promise<AccessResult> {
-  const { node, signer, chainConfig, credentials } = context
+  const { node, signer, chainConfig } = context
+  const policySessions = context.policySessions ?? new PolicySessionResolver()
   const consumerAddress = await signer.getAddress()
 
   const asset = await node.resolve(config.assetDid)
@@ -78,28 +78,15 @@ export async function access(
     ? node.forEndpoint(service.serviceEndpoint)
     : node
 
-  // 1. Satisfy the policy first — before spending anything.
-  const policyServer =
-    supportsSsi(asset) &&
-    shouldResolveCredentials(credentials, config.skipCredentials)
-      ? await (credentials as CredentialProvider).resolve({
-          asset,
-          serviceId: service.id,
-          consumerAddress,
-          node: serviceNode
-        })
-      : null
-
-  // ...and refuse to go on without one where the service actually demands it. An
-  // unresolved policy used to be indistinguishable from "no gating applies", so the flow
-  // ordered, paid, and only then found out it could not download.
-  assertPolicySatisfied({
-    did: asset.id,
+  // 1. Open the policy session first, before spending anything. Whenever the node has a
+  //    policy server and the asset or service has `credentials`, the download is checked
+  //    against a session, and a service gated by addresses only needs one as much as an
+  //    SSI-gated one does. A refusal throws a `PolicyDeniedError` here, with nothing paid.
+  const policyServer = await policySessions.resolve({
+    node: serviceNode,
+    asset,
     serviceId: service.id,
-    assetCredentials: getCredentials(asset),
-    serviceCredentials: getServiceCredentials(service),
-    resolved: policyServer,
-    skipped: config.skipCredentials
+    consumerAddress
   })
 
   // 2. Ask the service's node for provider fees and whether a previous order can be
@@ -153,7 +140,7 @@ export async function access(
   LoggerInstance.debug('[access] order settled', { transferTxId, reused })
 
   // 5. Build the download URL — on the service's node, which holds the decryption key —
-  // carrying the verifier session when there is one.
+  // carrying the policy session when there is one.
   const url = await serviceNode.getDownloadUrl(
     asset.id,
     service.id,

@@ -1,11 +1,14 @@
 /**
- * Verifier session cache.
+ * Policy-server session cache, used by `PolicySessionResolver`.
  *
  * The policy server derives its session ids as
  * `sha256(consumerAddress:documentId:serviceId) + '-' + random`, and rejects any session
  * whose context half does not match the request with `ADDRESS_NOT_ALLOWED`. So a session
  * is only ever valid for exactly one (asset, service, consumer) triple, and the cache key
  * must include all three.
+ *
+ * Only sessions the policy server opened, and the verifier accepted where a presentation
+ * was asked for, are stored: a refusal is asked again on the next call.
  *
  * This is the bug to avoid: the enterprise-market keys its cache on `(did, serviceId)`
  * only, so switching accounts hands the node a session minted for someone else.
@@ -26,8 +29,6 @@ export interface SessionKey {
 
 interface CacheEntry {
   sessionId: string
-  /** `true` when the policy server said no presentation was needed at all. */
-  skipped: boolean
 }
 
 function keyOf({
@@ -36,6 +37,7 @@ function keyOf({
   consumerAddress,
   nodeUri
 }: SessionKey): string {
+  // Lower-cased for the key only: the address goes to the policy server as it was given.
   return `${nodeUri}|${did}|${serviceId}|${consumerAddress.toLowerCase()}`
 }
 

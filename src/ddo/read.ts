@@ -93,6 +93,15 @@ export function getServiceCredentials(service: ServiceV5): DdoCredentials {
   return raw as DdoCredentials
 }
 
+/**
+ * Whether ocean-node checks credentials for this service: the asset or the service has a
+ * `credentials` block. The node tests the raw value for truthiness, so `{}` counts, and
+ * on a node with a policy server every such check goes to the policy server.
+ */
+export function hasCredentials(ddo: unknown, service: ServiceV5): boolean {
+  return !!asVersioned(ddo).getDDOFields().credentials || !!service.credentials
+}
+
 export function getIndexedMetadata(ddo: unknown): IndexedMetadata | undefined {
   return asVersioned(ddo).getAssetFields().indexedMetadata
 }

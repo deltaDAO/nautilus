@@ -221,48 +221,29 @@ export function requiresPresentation(
 }
 
 /**
- * Whether the configured provider should be consulted for this call.
+ * Refuses to open a policy session that cannot be completed: the service asks for a
+ * verifiable presentation (`requiresPresentation`) and no `CredentialProvider` is set to
+ * make one.
  *
- * `skipCredentials` skips the *presentation*, not the provider: one that simply replays a
- * session the caller already holds (`StaticCredentialProvider`) has no flow to skip, and
- * bypassing it threw away the very session the flag exists to reuse.
- */
-export function shouldResolveCredentials(
-  credentials: { interactive?: boolean } | undefined,
-  skip?: boolean
-): boolean {
-  if (!credentials) return false
-
-  return !(skip && credentials.interactive !== false)
-}
-
-/**
- * Refuses to go on when a gated service has no verifier session behind it.
- *
- * This is what makes "credentials before spend" true rather than aspirational. Without it
- * a missing session surfaced only when the download URL was requested — after the order
- * had been placed and paid for — because an unresolved policy is indistinguishable from
- * "no gating applies" at the point where it is resolved.
- *
- * `skipped` is the deliberate escape hatch: ocean-node fails open when it has no
- * `POLICY_SERVER_URL`, so a DDO can declare policies that the deployment never enforces.
- * A caller who knows that is the case passes `skipCredentials` and takes the risk.
+ * `PolicySessionResolver` calls this once it knows the node has a policy server, before
+ * `initiate`, so nothing is signed, ordered or paid. A service gated by addresses only
+ * needs no provider: the session `initiate` opens is all the node checks.
  */
 export function assertPolicySatisfied(params: {
   did: string
   serviceId: string
   assetCredentials: DdoCredentials | undefined
   serviceCredentials: DdoCredentials | undefined
-  resolved: unknown
-  skipped?: boolean
+  /** Whether a `CredentialProvider` is set. */
+  canPresent: boolean
 }): void {
-  if (params.resolved || params.skipped) return
+  if (params.canPresent) return
 
   if (!requiresPresentation(params.assetCredentials, params.serviceCredentials))
     return
 
   throw new Error(
-    `Service ${params.serviceId} of ${params.did} requires a verifiable presentation, but no verifier session could be resolved. Pass a CredentialProvider to Nautilus.create() — a WaltIdCredentialProvider to run the presentation, or a StaticCredentialProvider if you already hold a session id. Set skipCredentials to continue anyway (the node will refuse the request unless its policy server is disabled).`
+    `Service ${params.serviceId} of ${params.did} requires a verifiable presentation, and no credential provider is set to make one. Pass a WaltIdCredentialProvider as \`credentials\` to Nautilus.create(), or call setCredentialProvider(). Nothing was ordered or paid.`
   )
 }
 

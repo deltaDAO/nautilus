@@ -34,9 +34,12 @@ import type { AssetState } from '../@types/Nautilus.js'
 import { access } from '../access/index.js'
 import { compute, freeCompute, selectEnvironment } from '../compute/index.js'
 import { getLifecycleState, getNftAddress } from '../ddo/read.js'
+import type { DdoCredentials } from '../ddo/types.js'
 import { assertValid } from '../ddo/validate.js'
 import type { CredentialProvider } from '../identity/CredentialProvider.js'
-import { NoopCredentialProvider } from '../identity/CredentialProvider.js'
+import { PolicySessionResolver } from '../identity/PolicySessionResolver.js'
+import { isAddressCredential } from '../identity/policy.js'
+import type { SessionStore } from '../identity/session.js'
 import {
   IndexerNonceStuckError,
   isIndexerNonceSignable,
@@ -237,8 +240,18 @@ export interface NautilusOptions
    * (`alg: 'ETH-EIP191'`); pass a `WaltIdVcSigner` to issue from a real DID.
    */
   ddoSigner?: DdoSigner
-  /** Satisfies credential-gated access. Omit to skip SSI entirely. */
+  /**
+   * Answers the verifiable-presentation request of a service whose `SSIpolicy` asks for
+   * credentials, e.g. a `WaltIdCredentialProvider`. nautilus opens the policy-server
+   * session itself, so a service gated by addresses only needs none; without one, a service
+   * that asks for a presentation is refused before anything is spent.
+   */
   credentials?: CredentialProvider
+  /**
+   * Where the policy-server sessions of this instance are cached. Defaults to an in-memory
+   * store. A session is bound to one (node, asset, service, consumer).
+   */
+  sessionStore?: SessionStore
   /**
    * Overrides for the chain config resolved from the signer's network.
    *
@@ -302,6 +315,13 @@ export interface CompletePublishOptions extends PublishOptions {
    * only the signer's pending transaction count guards against a second write.
    */
   metadataTxHash?: string
+}
+
+/** Whether the asset-level `allow` list has an `address` entry naming at least one address. */
+function hasAddressAllowList(credentials: DdoCredentials | undefined): boolean {
+  return (credentials?.allow || []).some(
+    (entry) => isAddressCredential(entry) && (entry.values || []).length > 0
+  )
 }
 
 /**
@@ -373,9 +393,16 @@ export class Nautilus {
   /** The one-time check that the publisher is not the node's own key. */
   private nodeKeyCheck?: Promise<void>
 
+  /** Opens and caches the policy-server sessions of `access()` and `compute()`. */
+  private readonly policySessions: PolicySessionResolver
+
   private constructor(signer: Signer, options: NautilusOptions) {
     this.signer = signer
     this.options = options
+    this.policySessions = new PolicySessionResolver({
+      credentials: options.credentials,
+      sessionStore: options.sessionStore
+    })
   }
 
   /** Creates an instance, resolving the chain config from the signer's network. */
@@ -503,13 +530,10 @@ export class Nautilus {
     return this.signer
   }
 
-  /** Swaps in a credential provider after construction. */
+  /** Swaps in a credential provider after construction. Cached sessions stay. */
   setCredentialProvider(credentials: CredentialProvider): void {
     this.options.credentials = credentials
-  }
-
-  private getCredentialProvider(): CredentialProvider {
-    return this.options.credentials || new NoopCredentialProvider()
+    this.policySessions.setCredentialProvider(credentials)
   }
 
   // #endregion
@@ -596,6 +620,7 @@ export class Nautilus {
     // store that can tell it will fail says so now, before anything is spent.
     await remoteStore.check?.()
     await this.warnIfPublisherIsNode()
+    await this.warnIfPolicyServerDeniesAll(asset)
     await this.assertIndexerNotStuck(options)
 
     const published: PublishedService[] = []
@@ -751,6 +776,7 @@ export class Nautilus {
       })
       await remoteStore.check?.()
       await this.warnIfPublisherIsNode()
+      await this.warnIfPolicyServerDeniesAll(asset)
       await this.assertIndexerNotStuck(options)
 
       // Every reused datatoken is on its service before the first transaction, so a retry
@@ -1089,6 +1115,7 @@ export class Nautilus {
       })
       await remoteStore.check?.()
       await this.warnIfPublisherIsNode()
+      await this.warnIfPolicyServerDeniesAll(asset)
       await this.assertIndexerNotStuck(options)
 
       const published: PublishedService[] = []
@@ -1252,6 +1279,49 @@ export class Nautilus {
     })()
 
     return this.nodeKeyCheck
+  }
+
+  /**
+   * Warns when a node that checks this asset has a policy server and the asset-level
+   * `credentials` hold no address allow list: `{}`, or an `allow` list without an
+   * `address` entry that names an address. That policy server checks the consumer's
+   * address against the asset-level allow list before anything else and refuses an
+   * address that is not on it, so it refuses every consumer: the asset is published, but
+   * nobody can download it or run compute on it.
+   *
+   * The nodes asked are the configured one and each service's `serviceEndpoint`. Best
+   * effort: a node whose status cannot be read is skipped. Never throws.
+   */
+  private async warnIfPolicyServerDeniesAll(
+    asset: NautilusAsset
+  ): Promise<void> {
+    if (hasAddressAllowList(asset.ddo.credentials)) return
+
+    const endpoints = new Set([
+      this.node.nodeUri,
+      ...asset.ddo.services
+        .map((service) => service.serviceEndpoint)
+        .filter(Boolean)
+    ])
+
+    for (const endpoint of endpoints) {
+      let configured: boolean | undefined
+      try {
+        configured = await this.node.forEndpoint(endpoint).hasPolicyServer()
+      } catch (error) {
+        LoggerInstance.debug(
+          `[publish] could not ask ${endpoint} whether it has a policy server: ${errorMessage(error)}`
+        )
+        continue
+      }
+
+      if (configured) {
+        LoggerInstance.warn(
+          `[publish] ${endpoint} has a policy server, and this asset's credentials have no address allow list (credentials: {}, or an allow list without an 'address' entry). The policy server checks the consumer's address against that list first, so it denies every consumer: the asset will be published, but nobody can download it or compute on it. Add the consumers' addresses with addCredentialAddresses(CredentialListTypes.ALLOW, [...]) before publishing.`
+        )
+        return
+      }
+    }
   }
 
   /**
@@ -1569,7 +1639,7 @@ export class Nautilus {
       node: this.node,
       signer: this.signer,
       chainConfig: this.config,
-      credentials: this.getCredentialProvider()
+      policySessions: this.policySessions
     })
   }
 
@@ -1597,7 +1667,7 @@ export class Nautilus {
         node: this.node,
         signer: this.signer,
         chainConfig: this.config,
-        credentials: this.getCredentialProvider(),
+        policySessions: this.policySessions,
         escrow: this.explicitEscrow,
         escrowLock: this.escrowLock
       }
@@ -1612,7 +1682,7 @@ export class Nautilus {
       node: this.node,
       signer: this.signer,
       chainConfig: this.config,
-      credentials: this.getCredentialProvider()
+      policySessions: this.policySessions
     })
   }
 
