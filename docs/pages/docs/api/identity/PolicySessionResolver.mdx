@@ -25,14 +25,18 @@ const session = await policySessions.resolve({ // [!code focus]
   node, // the node that checks the policy // [!code focus]
   asset, // [!code focus]
   serviceId: 'a-service-id', // [!code focus]
-  consumerAddress: '0x…' // exactly the address the download or compute call uses // [!code focus]
+  consumerAddress: '0x…' // exactly the string the download or compute call uses // [!code focus]
 }) // [!code focus]
 ```
 
 ## What `resolve` does
 
 1. Neither the asset nor the service has `credentials` (`{}` counts as having them): `null`.
-2. A cached session for (node, asset, service, consumer): that one.
+2. A cached session for (node, asset, service, consumer), opened less than `sessionTtlMs`
+   ago: that one. A session that needed a presentation is first checked again
+   (`checkSessionId`), since the verifier forgets it when it expires or restarts. An entry
+   that is too old, or that the check does not report verified, is deleted and the steps
+   below run again.
 3. The node has no policy server (`isPSConfigured: false`, or `initializePSVerification`
    answers 404): `null`.
 4. The service asks for a verifiable presentation and no credential provider is set: throws,
@@ -50,6 +54,7 @@ const session = await policySessions.resolve({ // [!code focus]
 | --- | --- | --- |
 | `credentials` | `CredentialProvider` | Answers presentation requests. Not needed for address-only gates. |
 | `sessionStore` | `SessionStore` | Where verified sessions are kept. Default: [`MemorySessionStore`](/docs/api/identity/MemorySessionStore). |
+| `sessionTtlMs` | `number` | How long a cached session is reused, in ms from `initiate`. `0` caches nothing. Default: `DEFAULT_SESSION_TTL_MS`, 2 minutes. |
 
 ## Methods
 

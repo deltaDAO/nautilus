@@ -58,7 +58,10 @@ try {
 **Move the session cache to `Nautilus.create`.** `WaltIdCredentialProvider` no longer takes
 `sessionStore` and no longer has `clearSessions()` or `explainFailure()`: pass `sessionStore`
 to `Nautilus.create`, and read the failed policies from `PolicyDeniedError.reason`, or from
-`nautilus.getNodeClient().checkPolicySession(sessionId)`.
+`nautilus.getNodeClient().checkPolicySession(sessionId)`. A `SessionStore` of your own now
+stores a `SessionEntry` of `{ sessionId, createdAt, presented }` and must key on the consumer
+address exactly as given (`sessionKeyString(key)` does), not lower-cased. A cached session is
+reused for at most `sessionTtlMs` (new `Nautilus.create` option, 2 minutes by default).
 
 **`OceanNodeClient.initializePolicyVerification` throws instead of returning `null` on a
 refusal.** It returns `null` only when the node has no policy server, throws a
@@ -93,9 +96,11 @@ from a bare one you stored, put the first segment of the job's environment id in
 
 `getComputeStatus()` returns `undefined` for a job the node does not know, and reports the
 job under the id you passed. It is typed `NodeComputeJob`, which adds the node's
-`environment`, `resources` and `payment` fields to `ComputeJob`. The same applies to
-`OceanNodeClient`'s `computeStatus()`, `getComputeJob()`, `computeStop()`,
-`getComputeResultUrl()`, `getComputeResult()` and `getComputeLogs()`.
+`environment`, `resources` and `payment` fields to `ComputeJob`. `OceanNodeClient`'s
+`computeStatus()` and `getComputeJob()` return `NodeComputeJob` too, and `getComputeJob()`
+returns `undefined` for an unknown job. `getComputeLogs()` now returns a
+`ComputeResultStream` (it returned `unknown`). `computeStop()`, `getComputeResultUrl()` and
+`getComputeResult()` keep their return types. Every job method requires the qualified job id.
 
 **`streamComputeResult()` streams the job's `output`** (`outputs.tar`), as
 `getComputeResult()` does, rather than the result at index 0 (the image log). Pass
