@@ -46,7 +46,8 @@ What happens in order:
    checked against its service's consumer parameters, and the algorithm's `algocustomdata`
    against the parameters in its algorithm metadata, as for
    [`access`](/docs/api/nautilus/access): a mismatch throws a `ConsumerParameterError`
-   before the environment is read or anything is sent.
+   before the environment is read or anything is sent. Only the checked values are sent
+   on, without their `undefined` or `null` keys.
 2. On a node with a policy server, a policy-server session is opened for **every** input
    with `credentials`, datasets and algorithm alike, each for its own asset and service (see
    [credential-gated assets](/docs/guides/identity)). A refusal aborts the whole job with
@@ -333,7 +334,9 @@ lock as `context.escrowLock`.
 
 - `ConsumerParameterError`, as for [`access`](/docs/api/nautilus/access#throws): an input's
   `userdata` or the algorithm's `algocustomdata` does not fit the declared consumer
-  parameters. `error.did`, `error.serviceId` and `error.field` name the input.
+  parameters, or a `select` among them declares no usable options
+  (`'invalid-declaration'`). `error.did`, `error.serviceId` and `error.field` name the
+  input.
 - `PolicyDeniedError`, `ProviderFeeSignatureError` and `ProviderFeeNotAllowedError`, as
   for [`access`](/docs/api/nautilus/access#throws), and an `Error` when an input asks for a
   verifiable presentation and no credential provider is set.

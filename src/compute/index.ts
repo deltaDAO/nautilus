@@ -106,12 +106,18 @@ export interface ComputeContext {
   escrowLock?: KeyedLock
 }
 
-/** One resolved compute input: the asset, the chosen service, and its reference. */
+/**
+ * One resolved compute input: the asset, the chosen service, its reference, and the
+ * checked consumer-parameter values to send (without their `undefined` or `null` entries).
+ */
 interface ResolvedInput {
   ref: ComputeAssetRef
   asset: AssetV5
   serviceId: string
   isAlgorithm: boolean
+  userdata?: Record<string, unknown>
+  /** The algorithm's only. */
+  algocustomdata?: Record<string, unknown>
 }
 
 /**
@@ -160,8 +166,7 @@ export async function compute(
     .filter((input) => !input.isAlgorithm)
     .map(toComputeAsset)
   const algorithm = toComputeAlgorithm(
-    inputs.find((input) => input.isAlgorithm) as ResolvedInput,
-    config.algorithm
+    inputs.find((input) => input.isAlgorithm) as ResolvedInput
   )
 
   // Read before anything is asked or spent: an input without a datatoken cannot be
@@ -328,8 +333,7 @@ export async function freeCompute(
     computeEnv: environment.id,
     datasets: inputs.filter((input) => !input.isAlgorithm).map(toComputeAsset),
     algorithm: toComputeAlgorithm(
-      inputs.find((input) => input.isAlgorithm) as ResolvedInput,
-      config.algorithm
+      inputs.find((input) => input.isAlgorithm) as ResolvedInput
     ),
     resources: resolveResources(environment, config.resources, true),
     metadata: config.metadata,
@@ -390,20 +394,29 @@ async function resolveInputs(
 
       // Consumer parameters are checked here, before the environment, any policy session,
       // `initializeCompute` or an order: the algorithm's service takes `userdata`, its
-      // metadata `algocustomdata`.
+      // metadata `algocustomdata`. Only the checked values are sent from here on.
       const target = { did: asset.id, serviceId: service.id }
-      assertConsumerParameters(service.consumerParameters, ref.userdata, {
-        ...target,
-        field: 'userdata'
-      })
-      if (isAlgorithm)
-        assertConsumerParameters(
-          getAlgorithmConsumerParameters(asset),
-          (ref as ComputeAlgorithmRef).algocustomdata,
-          { ...target, field: 'algocustomdata' }
-        )
+      const userdata = assertConsumerParameters(
+        service.consumerParameters,
+        ref.userdata,
+        { ...target, field: 'userdata' }
+      )
+      const algocustomdata = isAlgorithm
+        ? assertConsumerParameters(
+            getAlgorithmConsumerParameters(asset),
+            (ref as ComputeAlgorithmRef).algocustomdata,
+            { ...target, field: 'algocustomdata' }
+          )
+        : undefined
 
-      return { ref, asset, serviceId: service.id, isAlgorithm }
+      return {
+        ref,
+        asset,
+        serviceId: service.id,
+        isAlgorithm,
+        userdata,
+        algocustomdata
+      }
     })
   )
 }
@@ -418,14 +431,11 @@ function toComputeAsset(input: ResolvedInput): ComputeAsset {
   return {
     documentId: input.asset.id,
     serviceId: input.serviceId,
-    ...(input.ref.userdata ? { userdata: input.ref.userdata } : {})
+    ...(input.userdata ? { userdata: input.userdata } : {})
   }
 }
 
-function toComputeAlgorithm(
-  input: ResolvedInput,
-  ref: ComputeAlgorithmRef
-): ComputeAlgorithm {
+function toComputeAlgorithm(input: ResolvedInput): ComputeAlgorithm {
   /**
    * `meta` carries the container spec, and the node needs it in the request
    * itself — `getAlgorithmImage()` reads `algorithm.meta.container` and does
@@ -433,14 +443,15 @@ function toComputeAlgorithm(
    * it starts with "Unable to extract docker image null from algoritm".
    */
   const { algorithm } = getMetadata(input.asset)
+  const { envs } = input.ref as ComputeAlgorithmRef
 
   return {
     documentId: input.asset.id,
     serviceId: input.serviceId,
     ...(algorithm ? { meta: algorithm } : {}),
-    ...(ref.userdata ? { userdata: ref.userdata } : {}),
-    ...(ref.algocustomdata ? { algocustomdata: ref.algocustomdata } : {}),
-    ...(ref.envs ? { envs: ref.envs } : {})
+    ...(input.userdata ? { userdata: input.userdata } : {}),
+    ...(input.algocustomdata ? { algocustomdata: input.algocustomdata } : {}),
+    ...(envs ? { envs } : {})
   }
 }
 

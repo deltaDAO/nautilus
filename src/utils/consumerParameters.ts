@@ -12,12 +12,18 @@
  *   - `required` and absent (`undefined` or `null`): refused. An absent optional parameter
  *     is left absent; its `default` is not filled in.
  *   - `text`: a string. `number`: a finite number (not a numeric string). `boolean`:
- *     `true` or `false`. `select`: a string that is one of the option keys.
+ *     `true` or `false`. `select`: a string that is one of the option keys. A `select`
+ *     without a single usable option is a broken declaration, and any value for it is
+ *     refused.
  *   - Any other declared type is only checked for presence.
  *
  * Keys the asset does not declare are refused when it declares at least one parameter, so a
  * typo does not reach the endpoint unnoticed. An asset that declares none takes the values
  * as they are: there is nothing to check them against.
+ *
+ * What is forwarded is the values without their absent entries: a key set to `undefined`
+ * or `null` is dropped, so it never reaches the node as `null` (or as `?key=null` in a
+ * download URL).
  */
 import { getMetadata } from '../ddo/read.js'
 import type { ConsumerParameterV5 } from '../ddo/types.js'
@@ -32,6 +38,11 @@ export type ConsumerParameterRefusal =
   | 'wrong-type'
   /** A `select` value is not one of its options. */
   | 'not-an-option'
+  /**
+   * The asset's own declaration cannot be satisfied: a `select` whose options are missing,
+   * empty or malformed, so no value can be checked against them.
+   */
+  | 'invalid-declaration'
   /** The key is not a declared parameter. */
   | 'unknown'
 
@@ -140,15 +151,26 @@ export function checkConsumerParameters(
   return issues
 }
 
-/** Throws a `ConsumerParameterError` listing every problem `checkConsumerParameters` finds. */
+/**
+ * Throws a `ConsumerParameterError` listing every problem `checkConsumerParameters` finds.
+ * Otherwise returns the values to forward: a copy without the keys set to `undefined` or
+ * `null`, or `undefined` when no values were given.
+ */
 export function assertConsumerParameters(
   declared: readonly ConsumerParameterV5[] | undefined,
   values: unknown,
   target: ConsumerParameterTarget
-): void {
+): Record<string, unknown> | undefined {
   const issues = checkConsumerParameters(declared, values)
 
   if (issues.length) throw new ConsumerParameterError(target, issues)
+  if (values === undefined || values === null) return undefined
+
+  return Object.fromEntries(
+    Object.entries(values as Record<string, unknown>).filter(
+      ([, value]) => value !== undefined && value !== null
+    )
+  )
 }
 
 /**
@@ -193,12 +215,19 @@ function checkValue(
     case 'select': {
       const options = optionKeys(parameter.options)
 
-      if (typeof value !== 'string')
-        return wrongType(
-          options.length ? `one of ${quoteAll(options)}` : 'a string'
-        )
+      // Without options there is nothing a value could be one of: the declaration is
+      // broken, and taking any string would forward whatever was typed.
+      if (!options.length)
+        return {
+          parameter: name,
+          reason: 'invalid-declaration',
+          message: `'${name}' is declared as a select without any usable options, so no value can be accepted until the asset's declaration is fixed`
+        }
 
-      if (options.length && !options.includes(value))
+      if (typeof value !== 'string')
+        return wrongType(`one of ${quoteAll(options)}`)
+
+      if (!options.includes(value))
         return {
           parameter: name,
           reason: 'not-an-option',
@@ -230,8 +259,12 @@ function optionKeys(options: unknown): string[] {
     : []
 }
 
+/** An object literal (or `Object.create(null)`): not an array, `Date`, `Map` or class instance. */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
+  if (typeof value !== 'object' || value === null) return false
+
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
 }
 
 function quoteAll(names: string[]): string {
@@ -245,6 +278,11 @@ function describe(value: unknown): string {
     return `${typeof value} ${String(value)}`
   if (Array.isArray(value)) return 'an array'
   if (value === null) return 'null'
+  if (typeof value === 'object') {
+    const name = Object.getPrototypeOf(value)?.constructor?.name
+    if (typeof name === 'string' && name !== '' && name !== 'Object')
+      return `an instance of ${name}`
+  }
 
   return `a value of type ${typeof value}`
 }

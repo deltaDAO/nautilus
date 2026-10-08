@@ -17,7 +17,7 @@ import {
   initializeWithValidProviderFee,
   providerFeeToSend
 } from '../utils/providerFee.js'
-import { selectAccessService } from './guards.js'
+import { checkAccessRequest } from './guards.js'
 import { planSettlement, sendSettlement } from './settlement.js'
 
 export { settleOrder } from './settlement.js'
@@ -56,8 +56,9 @@ export async function access(
   const asset = await node.resolve(config.assetDid)
 
   // Before any other node call or transaction: the service exists, is an 'access' service,
-  // and `userdata` fits its consumer parameters.
-  const service = selectAccessService(asset, config)
+  // and `userdata` fits its consumer parameters. Only the checked `userdata`, without its
+  // absent entries, is sent from here on.
+  const { service, userdata } = checkAccessRequest(asset, config)
 
   // Everything that talks to a node talks to *this* one: the file object was encrypted
   // with a key local to the node in the service's own endpoint, so the quote, the policy
@@ -91,7 +92,7 @@ export async function access(
       serviceNode.initialize(asset.id, service.id, {
         fileIndex: config.fileIndex,
         consumerAddress,
-        userdata: config.userdata
+        userdata
       }),
     (result) => [providerFeeToSend(result)],
     Number(service.timeout) === 0 ? { attempts: 1 } : {}
@@ -139,7 +140,7 @@ export async function access(
     {
       fileIndex: config.fileIndex,
       policyServer,
-      userdata: config.userdata
+      userdata
     }
   )
 

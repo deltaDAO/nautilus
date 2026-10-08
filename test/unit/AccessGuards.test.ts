@@ -2,7 +2,9 @@
  * The checks `access()` and `compute()` run on the resolved asset before anything else:
  * the service exists and has the right type, and `userdata` / `algocustomdata` fit the
  * declared consumer parameters. Every refusal must happen with nothing sent: the node is
- * only asked for the DDO, and no credential, order or transaction is touched.
+ * only asked for the DDO, no policy session is opened, and no order or transaction is
+ * touched. A request that passes reaches the policy sessions and the node, with only the
+ * checked values.
  */
 
 import type { Config } from '@oceanprotocol/lib'
@@ -11,7 +13,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { access } from '../../src/access/index.js'
 import { compute, freeCompute } from '../../src/compute/index.js'
 import type { AssetV5, ConsumerParameterV5 } from '../../src/ddo/index.js'
-import type { CredentialProvider } from '../../src/identity/CredentialProvider.js'
+import type { PolicySessionResolver } from '../../src/identity/PolicySessionResolver.js'
 import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
 import { ConsumerParameterError } from '../../src/utils/consumerParameters.js'
 import { order, reuseOrder } from '../../src/utils/order.js'
@@ -36,14 +38,30 @@ const PASSED = 'passed the pre-order checks'
 
 const ALGO_DID = 'did:ope:algorithm'
 
+/** The one environment the node mock offers: paid and free. */
+const ENVIRONMENT = {
+  id: 'env-1',
+  consumerAddress: '0x00000000000000000000000000000000000000c0',
+  resources: [{ id: 'cpu', min: 1, max: 4 }],
+  fees: {
+    [String(CHAIN_ID)]: [
+      { feeToken: '0xfee0000000000000000000000000000000000000' }
+    ]
+  },
+  free: { resources: [{ id: 'cpu', min: 1, max: 1 }] },
+  maxJobDuration: 3600
+}
+
 /**
- * A node client that answers `resolve` from `assets` and records every other call, which
- * throws `PASSED`.
+ * A node client that answers `resolve` from `assets` and records every other call with its
+ * arguments. `forEndpoint` and `getComputeEnvironments` answer, so a request that is let
+ * through goes on to the policy sessions; every other call throws `PASSED`.
  */
 function recordingNode(assets: Record<string, AssetV5>) {
   const calls: string[] = []
+  const args: Record<string, unknown[]> = {}
 
-  const client = new Proxy(
+  const client: OceanNodeClient = new Proxy(
     {},
     {
       get(_target, property) {
@@ -56,15 +74,20 @@ function recordingNode(assets: Record<string, AssetV5>) {
             return asset
           }
 
-        return () => {
+        return (...callArgs: unknown[]) => {
           calls.push(String(property))
+          args[String(property)] = callArgs
+
+          if (property === 'forEndpoint') return client
+          if (property === 'getComputeEnvironments')
+            return Promise.resolve([ENVIRONMENT])
           throw new Error(PASSED)
         }
       }
     }
   ) as OceanNodeClient
 
-  return { client, calls }
+  return { client, calls, args }
 }
 
 const sendTransaction = vi.fn()
@@ -73,9 +96,10 @@ const signer = {
   sendTransaction
 } as unknown as Signer
 const chainConfig = { chainId: CHAIN_ID } as unknown as Config
-const credentials = {
-  resolve: vi.fn()
-} as unknown as CredentialProvider
+/** Opens no session; a refused request must never get this far. */
+const policySessions = {
+  resolve: vi.fn(async () => undefined)
+} as unknown as PolicySessionResolver
 
 /** The download fixture with one parameter of each type; `surname` is required. */
 function accessAsset(): AssetV5 {
@@ -86,8 +110,8 @@ function accessAsset(): AssetV5 {
 }
 
 function expectNothingSent(calls: string[]) {
+  expect(vi.mocked(policySessions.resolve)).not.toHaveBeenCalled()
   expect(calls).to.deep.equal([])
-  expect(vi.mocked(credentials.resolve)).not.toHaveBeenCalled()
   expect(vi.mocked(order)).not.toHaveBeenCalled()
   expect(vi.mocked(reuseOrder)).not.toHaveBeenCalled()
   expect(sendTransaction).not.toHaveBeenCalled()
@@ -112,13 +136,13 @@ describe('access() pre-order checks', () => {
     asset: AssetV5,
     config: Partial<Parameters<typeof access>[0]> = {}
   ) {
-    const { client, calls } = recordingNode({ [asset.id]: asset })
+    const { client, calls, args } = recordingNode({ [asset.id]: asset })
     const accessing = access(
       { assetDid: asset.id, ...config },
-      { node: client, signer, chainConfig, credentials }
+      { node: client, signer, chainConfig, policySessions }
     )
 
-    return { accessing, calls }
+    return { accessing, calls, args }
   }
 
   it('refuses userdata of the wrong type with nothing sent', async () => {
@@ -168,13 +192,50 @@ describe('access() pre-order checks', () => {
     expectNothingSent(calls)
   })
 
-  it('lets fitting userdata through to the node', async () => {
-    const { accessing, calls } = accessWith(accessAsset(), {
-      userdata: { surname: 'Doe', age: 3, consent: false, region: 'us' }
+  it('refuses any value for a select that declares no options, with nothing sent', async () => {
+    const asset = accessAsset()
+    const [, , , region] = asset.credentialSubject.services[0]
+      .consumerParameters as ConsumerParameterV5[]
+    region.options = []
+
+    const { accessing, calls } = accessWith(asset, {
+      userdata: { surname: 'Doe', region: 'eu' }
     })
 
+    const error = await rejection(accessing)
+
+    expect(error).to.be.instanceOf(ConsumerParameterError)
+    expect((error as ConsumerParameterError).issues).to.deep.equal([
+      {
+        parameter: 'region',
+        reason: 'invalid-declaration',
+        message: `'region' is declared as a select without any usable options, so no value can be accepted until the asset's declaration is fixed`
+      }
+    ])
+    expectNothingSent(calls)
+  })
+
+  it('lets fitting userdata through to the policy session and the node', async () => {
+    const userdata = { surname: 'Doe', age: 3, consent: false, region: 'us' }
+    const { accessing, calls, args } = accessWith(accessAsset(), { userdata })
+
     expect((await rejection(accessing)).message).to.equal(PASSED)
-    expect(calls).to.deep.equal(['forEndpoint'])
+    expect(calls).to.deep.equal(['forEndpoint', 'initialize'])
+    expect(vi.mocked(policySessions.resolve)).toHaveBeenCalledOnce()
+    expect(args.initialize[2]).to.deep.include({ userdata })
+  })
+
+  it('sends userdata without the keys set to null or undefined', async () => {
+    const userdata = { surname: 'Doe', age: null, consent: undefined }
+    const { accessing, args } = accessWith(accessAsset(), { userdata })
+
+    expect((await rejection(accessing)).message).to.equal(PASSED)
+    const sent = (args.initialize[2] as { userdata: object }).userdata
+    expect(sent).to.deep.equal({ surname: 'Doe' })
+    expect(sent).not.to.have.property('age')
+    expect(sent).not.to.have.property('consent')
+    // The caller's object is left as it was.
+    expect(userdata).to.have.property('age', null)
   })
 
   it('lets any userdata through for a service that declares no parameters', async () => {
@@ -248,7 +309,7 @@ describe('compute() consumer parameters', () => {
     algorithm = algorithmAsset(),
     start: typeof compute | typeof freeCompute = compute
   ) {
-    const { client, calls } = recordingNode({
+    const { client, calls, args } = recordingNode({
       [ASSET_DID]: datasetAsset(),
       [ALGO_DID]: algorithm
     })
@@ -256,11 +317,11 @@ describe('compute() consumer parameters', () => {
       node: client,
       signer,
       chainConfig,
-      credentials,
+      policySessions,
       escrow: '0x00000000000000000000000000000000000e5c40'
     })
 
-    return { running, calls }
+    return { running, calls, args }
   }
 
   it("refuses a dataset's userdata of the wrong type with nothing sent", async () => {
@@ -345,13 +406,55 @@ describe('compute() consumer parameters', () => {
     expectNothingSent(calls)
   })
 
-  it('lets fitting values through to the node', async () => {
-    const { running, calls } = run({
+  it('lets fitting values through to the policy sessions and the node', async () => {
+    const { running, calls, args } = run({
       dataset: { did: ASSET_DID, userdata: { age: 1 } },
       algorithm: { did: ALGO_DID, algocustomdata: { age: 2 } }
     })
 
     expect((await rejection(running)).message).to.equal(PASSED)
-    expect(calls).to.deep.equal(['getComputeEnvironments'])
+    expect(calls).to.deep.equal(['getComputeEnvironments', 'initializeCompute'])
+    expect(vi.mocked(policySessions.resolve)).toHaveBeenCalledTimes(2)
+
+    const [request] = args.initializeCompute as [
+      {
+        datasets: { userdata?: object }[]
+        algorithm: { algocustomdata?: object }
+      }
+    ]
+    expect(request.datasets[0].userdata).to.deep.equal({ age: 1 })
+    expect(request.algorithm.algocustomdata).to.deep.equal({ age: 2 })
   })
+
+  for (const start of [compute, freeCompute])
+    it(`${start.name}() sends userdata and algocustomdata without null or undefined keys`, async () => {
+      const { running, args } = run(
+        {
+          dataset: { did: ASSET_DID, userdata: { age: null } },
+          algorithm: {
+            did: ALGO_DID,
+            userdata: { anything: 'goes', dropped: undefined },
+            algocustomdata: { age: null }
+          }
+        },
+        (() => {
+          const algorithm = algorithmAsset()
+          algorithm.credentialSubject.services[0].consumerParameters = []
+          return algorithm
+        })(),
+        start
+      )
+
+      expect((await rejection(running)).message).to.equal(PASSED)
+
+      const [request] = (args.initializeCompute ?? args.freeComputeStart) as [
+        {
+          datasets: { userdata?: object }[]
+          algorithm: { userdata?: object; algocustomdata?: object }
+        }
+      ]
+      expect(request.datasets[0].userdata).to.deep.equal({})
+      expect(request.algorithm.userdata).to.deep.equal({ anything: 'goes' })
+      expect(request.algorithm.algocustomdata).to.deep.equal({})
+    })
 })

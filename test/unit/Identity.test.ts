@@ -333,18 +333,39 @@ describe('MemorySessionStore', () => {
     nodeUri: 'https://node-a.test.invalid'
   }
 
-  it('is case-insensitive on the consumer address', () => {
-    const store = new MemorySessionStore()
-    store.set(key, { sessionId: 'x' })
+  const entry = { sessionId: 'x', createdAt: 1, presented: false }
 
-    expect(store.get({ ...key, consumerAddress: '0xabc' })?.sessionId).to.equal(
-      'x'
+  it('keys the consumer address as it is: the policy server hashes it case and all', () => {
+    const store = new MemorySessionStore()
+    store.set(key, entry)
+
+    expect(store.get(key)).to.deep.equal(entry)
+    expect(store.get({ ...key, consumerAddress: '0xabc' })).to.equal(undefined)
+  })
+
+  it('keeps the time the session was opened and whether it was presented', () => {
+    const store = new MemorySessionStore()
+    store.set(key, { sessionId: 'x', createdAt: 42, presented: true })
+
+    expect(store.get(key)).to.deep.equal({
+      sessionId: 'x',
+      createdAt: 42,
+      presented: true
+    })
+  })
+
+  it('cannot be confused by a separator inside a field', () => {
+    const store = new MemorySessionStore()
+    store.set({ ...key, did: 'a|b', serviceId: 'c' }, entry)
+
+    expect(store.get({ ...key, did: 'a', serviceId: 'b|c' })).to.equal(
+      undefined
     )
   })
 
   it('separates different services', () => {
     const store = new MemorySessionStore()
-    store.set(key, { sessionId: 'x' })
+    store.set(key, entry)
 
     expect(store.get({ ...key, serviceId: 'other' })).to.equal(undefined)
   })
@@ -352,7 +373,7 @@ describe('MemorySessionStore', () => {
   it('separates different nodes', () => {
     // A session id is minted by one policy server and meaningless to another.
     const store = new MemorySessionStore()
-    store.set(key, { sessionId: 'x' })
+    store.set(key, entry)
 
     expect(
       store.get({ ...key, nodeUri: 'https://node-b.test.invalid' })

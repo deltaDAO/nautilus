@@ -1,6 +1,7 @@
 /**
  * `checkConsumerParameters`: each declared type, required and optional parameters, select
- * options and undeclared keys.
+ * options, broken select declarations and undeclared keys. `assertConsumerParameters`: the
+ * error, and the values it returns to forward.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -91,6 +92,53 @@ describe('checkConsumerParameters', () => {
     ])
   })
 
+  it('refuses any value for a select with missing, empty or malformed options', () => {
+    for (const options of [
+      undefined,
+      [],
+      '[]',
+      'not json',
+      ['eu', 'us'],
+      [{}],
+      [null],
+      { eu: 'Europe' }
+    ]) {
+      const parameters = [
+        { ...declared[3], options }
+      ] as unknown as ConsumerParameterV5[]
+
+      for (const region of ['eu', '', 1])
+        expect(reasons({ region }, parameters)).to.deep.equal([
+          'region:invalid-declaration'
+        ])
+    }
+  })
+
+  it('names the broken select declaration in the message', () => {
+    const parameters = [
+      { ...declared[3], options: [] }
+    ] as unknown as ConsumerParameterV5[]
+
+    expect(checkConsumerParameters(parameters, { region: 'eu' })).to.deep.equal(
+      [
+        {
+          parameter: 'region',
+          reason: 'invalid-declaration',
+          message: `'region' is declared as a select without any usable options, so no value can be accepted until the asset's declaration is fixed`
+        }
+      ]
+    )
+  })
+
+  it('leaves an absent optional select with no options alone', () => {
+    const parameters = [
+      { ...declared[3], options: [] }
+    ] as unknown as ConsumerParameterV5[]
+
+    expect(reasons({}, parameters)).to.deep.equal([])
+    expect(reasons({ region: null }, parameters)).to.deep.equal([])
+  })
+
   it('reads select options stored as a JSON string', () => {
     const parameters = [
       { ...declared[3], options: JSON.stringify([{ eu: 'Europe' }]) }
@@ -134,6 +182,40 @@ describe('checkConsumerParameters', () => {
   it('refuses values that are not an object', () => {
     for (const values of ['rows=5', [1], 5])
       expect(reasons(values)).to.deep.equal([':not-object'])
+  })
+
+  it('refuses objects that are not plain: a Date, Map, Set or class instance', () => {
+    class Values {
+      surname = 'Doe'
+    }
+
+    for (const values of [
+      new Date(),
+      new Map([['surname', 'Doe']]),
+      new Set(['Doe']),
+      new Values()
+    ])
+      expect(reasons(values)).to.deep.equal([':not-object'])
+
+    expect(checkConsumerParameters(declared, new Values())[0].message).to.equal(
+      'expected an object of parameter values, got an instance of Values'
+    )
+  })
+
+  it('accepts an object without a prototype', () => {
+    const values = Object.assign(Object.create(null), { surname: 'Doe' })
+
+    expect(reasons(values)).to.deep.equal([])
+  })
+
+  it('reads only plain objects as select options', () => {
+    const parameters = [
+      { ...declared[3], options: [new Map([['eu', 'Europe']])] }
+    ] as unknown as ConsumerParameterV5[]
+
+    expect(reasons({ region: 'eu' }, parameters)).to.deep.equal([
+      'region:invalid-declaration'
+    ])
   })
 
   it('does not take inherited properties as values', () => {
@@ -187,9 +269,45 @@ describe('assertConsumerParameters', () => {
     )
   })
 
-  it('returns quietly when the values fit', () => {
-    expect(() =>
-      assertConsumerParameters(declared, valid, target)
-    ).not.to.throw()
+  it('returns a copy of the values when they fit', () => {
+    const values = { ...valid }
+    const forwarded = assertConsumerParameters(declared, values, target)
+
+    expect(forwarded).to.deep.equal(valid)
+    expect(forwarded).not.to.equal(values)
+  })
+
+  it('drops the keys set to null or undefined, leaving the input as it was', () => {
+    const values = { surname: 'Doe', age: null, consent: undefined }
+    const forwarded = assertConsumerParameters(declared, values, target)
+
+    expect(forwarded).to.deep.equal({ surname: 'Doe' })
+    expect(Object.keys(forwarded ?? {})).to.deep.equal(['surname'])
+    expect(values).to.deep.equal({
+      surname: 'Doe',
+      age: null,
+      consent: undefined
+    })
+  })
+
+  it('keeps falsy values that are not absent', () => {
+    expect(
+      assertConsumerParameters(
+        declared,
+        { surname: '', age: 0, consent: false },
+        target
+      )
+    ).to.deep.equal({ surname: '', age: 0, consent: false })
+  })
+
+  it('drops null keys when the asset declares no parameters too', () => {
+    expect(
+      assertConsumerParameters([], { anything: 'goes', empty: null }, target)
+    ).to.deep.equal({ anything: 'goes' })
+  })
+
+  it('returns undefined when no values are given', () => {
+    expect(assertConsumerParameters([], undefined, target)).to.equal(undefined)
+    expect(assertConsumerParameters([], null, target)).to.equal(undefined)
   })
 })

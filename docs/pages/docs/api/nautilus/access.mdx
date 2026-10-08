@@ -141,7 +141,9 @@ Which file of the service to download. Defaults to `0`.
 
 Values for the service's consumer parameters. They are checked against the service's
 declaration before anything is sent: required parameters present, each value of its
-declared type, a `select` value one of its options, and no undeclared keys. See
+declared type, a `select` value one of its options, and no undeclared keys. Keys set to
+`undefined` or `null` are dropped, so they reach neither `initialize` nor the download URL.
+See
 [validation](/docs/api/UserCustomParameters#validation), and the
 [ConsumerParameterBuilder](/docs/api/ConsumerParameterBuilder) for the publishing side.
 
@@ -185,7 +187,8 @@ clears the default callback.
   is set.
 - `ConsumerParameterError`: `userdata` does not fit the service's consumer parameters.
   `error.issues` lists each refused value as `{ parameter, reason, message }`, `reason`
-  being `'missing'`, `'wrong-type'`, `'not-an-option'`, `'unknown'` or `'not-object'`.
+  being `'missing'`, `'wrong-type'`, `'not-an-option'`, `'invalid-declaration'` (a
+  `select` that declares no usable options), `'unknown'` or `'not-object'`.
 - An `Error` when the asset has no service with `serviceId`, has no `access` service, or
   the service is not an `access` service.
 - `ProviderFeeSignatureError`: the node's fee is missing, incomplete, or its signature would

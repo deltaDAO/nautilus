@@ -13,6 +13,11 @@ anything.
   service's `consumerParameters` before the node is asked for a fee, and `compute()` /
   `freeCompute()` check every input's `userdata` and the algorithm's `algocustomdata`
   (against its algorithm metadata) before the environment is read.
+- **`null` consumer parameters are not sent.** An explicit `null` counted as absent for an
+  optional parameter but was still forwarded, reaching `initialize`, the download URL
+  (`?age=null`) or the job. Keys set to `undefined` or `null` are now dropped from
+  `userdata` and `algocustomdata` before anything is sent, whether or not the asset
+  declares parameters; the caller's object is left unchanged.
 - **`access()` refuses a non-access service.** On a `compute` service it called the node's
   `initialize` and failed with a JSON parse error. It now throws before any node call, naming
   `compute()` and `freeCompute()`; an asset with only a `compute` service gets the same
@@ -27,9 +32,13 @@ anything.
   - `'wrong-type'`: `text` takes a string, `number` a finite number (not `'5'`), `boolean`
     a boolean, `select` a string;
   - `'not-an-option'`: a `select` value is not one of its option keys;
+  - `'invalid-declaration'`: a `select` whose options are missing, empty or malformed.
+    Any value for it is refused (it used to take every string); an optional one can be
+    left absent;
   - `'unknown'`: a key the asset does not declare. An asset that declares no parameters
     takes any values, as before;
-  - `'not-object'`: the values are not an object.
+  - `'not-object'`: the values are not a plain object. A `Date`, `Map`, `Set` or class
+    instance is refused too.
 
   Defaults are not filled in: an absent optional parameter stays absent.
 - **`access()` downloads from `access` services only**, with an `Error` for any other
