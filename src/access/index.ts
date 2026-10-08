@@ -115,7 +115,9 @@ export async function access(
 
   await assertProviderFeesAllowed([fee], config)
 
-  // 4. Reuse or place an order, allowed to pay exactly the fee approved above.
+  // 4. Reuse or place an order, allowed to pay exactly the fee approved above. The node's
+  //    download `initialize` reports no `validOrder`, so a previous order is looked up on
+  //    chain, within the service's timeout.
   const { transferTxId, reused } = await settleOrder({
     signer,
     chainConfig,
@@ -123,6 +125,7 @@ export async function access(
     serviceIndex: getServiceIndex(asset, service.id),
     initialized,
     consumer: consumerAddress,
+    service: { id: service.id, timeout: Number(service.timeout) },
     maxProviderFee: ceilingFor([fee])
   })
 

@@ -205,11 +205,12 @@ export async function getOrderPrice(
 }
 
 /**
- * Whether the account already holds a usable order for this service.
+ * Whether the node reports a usable order for this service in `initialize`'s
+ * `validOrder`.
  *
- * Answered by the node rather than computed locally: `initialize` returns `validOrder`
- * when a previous order is still inside the service's timeout, which is both cheaper and
- * more accurate than reconstructing it from events.
+ * ocean-node's compute `initialize` reports one for an input whose `transferTxId` is still
+ * valid; its access `initialize` reports none. `access()` then looks the account's previous
+ * order up on chain itself.
  */
 export function hasReusableOrder(initialize: { validOrder?: string }): boolean {
   return Boolean(initialize?.validOrder)
