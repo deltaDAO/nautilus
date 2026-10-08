@@ -126,7 +126,11 @@ const customConfig = {
 } satisfies Partial<Config>
 ```
 
-For compute you will also need `escrow`, which is where paid jobs lock their funds.
+For paid compute, set `escrow` to the chain's **EnterpriseEscrow** contract, which is where
+paid jobs lock their funds. Pontus-X devnet's address data in ocean.js lists no escrow, so
+paid compute is refused there until you set it. On a chain whose address data has one,
+leave `escrow` out: nautilus funds the chain's `EnterpriseEscrow` (else its `Escrow`). See
+[Escrow contract](/docs/api/nautilus/compute#escrow-contract).
 
 For the full set of fields, see the
 [ocean.js `Config`](https://github.com/oceanprotocol/ocean.js/blob/main/src/config/Config.ts).

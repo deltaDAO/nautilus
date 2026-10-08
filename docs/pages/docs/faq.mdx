@@ -90,8 +90,9 @@ does, to encrypt the files object at publish time.
 payment token. It needs a compute environment that exposes free resources — if none does, the
 call fails and there is nothing to configure your way out of.
 
-[`compute`](/docs/api/nautilus/compute) orders every input, locks funds in the `Escrow`
-contract from what the node quotes, and then starts the job.
+[`compute`](/docs/api/nautilus/compute) orders every input, locks funds in the chain's
+escrow contract (its `EnterpriseEscrow` by default) from what the node quotes, and then
+starts the job.
 
 ## Why does `build()` reject my asset?
 

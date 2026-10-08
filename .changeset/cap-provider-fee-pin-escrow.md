@@ -3,7 +3,8 @@
 ---
 
 Pay a node's provider fee and compute escrow payment only with the caller's consent, and
-fund only an escrow contract known for the chain.
+fund only the escrow contract pinned for the chain: the chain's `EnterpriseEscrow` by
+default.
 
 The node chooses the provider fee of a download or compute input (its token, its amount
 and who receives it). For a download that node is the service's `serviceEndpoint`, which
@@ -25,15 +26,23 @@ the token's decimals a second time.
   or when `confirmEscrowPayment(payment)` returns `true`, or an
   `EscrowPaymentNotAllowedError` (`payment`, `reason`) is thrown before anything is sent.
   A zero payment needs nothing.
-- **Only an escrow contract known for the chain is funded**: the chain config's `escrow`,
-  or the `Escrow` or `EnterpriseEscrow` entry of Ocean's address data for the chain
-  (ocean.js's bundled addresses, or `ADDRESS_FILE` when set). ocean.js fills
-  `config.escrow` from `Escrow`, and ocean-node 4.2.0 quotes `EnterpriseEscrow` where the
-  chain has one (OP Sepolia, Optimism, Sepolia, Ethereum mainnet), so both are accepted. A
-  quote naming any other contract, another chain, token or payee, or an inexact amount, is
-  refused (`EscrowPaymentNotAllowedError`), and no callback overrides it. On a chain with
-  no known escrow (Pontus-X devnet among them), pass `config: { escrow: '0x…' }` to
-  `Nautilus.create`.
+- **Exactly one escrow contract is funded, `EnterpriseEscrow` first**:
+  1. `config.escrow`, when the caller passes it to `Nautilus.create`: that contract, and no
+     other;
+  2. otherwise the chain's `EnterpriseEscrow` in Ocean's address data (ocean.js's bundled
+     addresses, or `ADDRESS_FILE` when set), the contract ocean-node 4.2.0 uses where the
+     chain has one (OP Sepolia, Optimism, Sepolia, Ethereum mainnet);
+  3. otherwise the chain's `Escrow`.
+
+  The `escrow` ocean.js's `ConfigHelper` fills in (the address data's plain `Escrow`) is not
+  a caller's choice and is not used, so on OP Sepolia the plain `Escrow` is refused unless
+  set explicitly. A quote naming any other contract, another chain, token or payee, or an
+  inexact amount, is refused (`EscrowPaymentNotAllowedError`, its message naming the
+  expected contract and the rule that chose it), and no callback overrides it. On a chain
+  with no escrow in the address data (Pontus-X devnet among them), paid compute is refused
+  until `config.escrow` is set to the chain's EnterpriseEscrow contract. A malformed
+  `config.escrow` fails `Nautilus.create`. The standalone `compute(config, context)` takes
+  the explicit choice as `context.escrow`, and does not read `context.chainConfig.escrow`.
 - **Escrow is funded in exact amounts.** nautilus approves the escrow contract for the
   deposit only, deposits what escrow lacks for the job, and authorises the environment's
   account to lock the job's amount on top of its current locks, leaving a standing

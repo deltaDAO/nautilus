@@ -159,9 +159,10 @@ The price above is read from chain. Two more amounts are not: the node chooses t
 So nautilus pays neither without your consent. A non-zero provider fee needs
 `maxProviderFee` (per token, in the token's smallest unit) or a `confirmProviderFees`
 callback that returns `true`; an escrow payment needs `maxEscrowPayment` or
-`confirmEscrowPayment`, and is only ever paid into a known escrow contract for the chain
-(the chain config's `escrow`, or the `Escrow` / `EnterpriseEscrow` contract in Ocean's
-address data).
+`confirmEscrowPayment`, and is only ever paid into one escrow contract: the chain's
+`EnterpriseEscrow` in Ocean's address data by default (its `Escrow` where it lists no
+`EnterpriseEscrow`), or the one you set as `config.escrow`. The node's choice never counts
+(see [Escrow contract](/docs/api/nautilus/compute#escrow-contract)).
 Otherwise `access` and `compute` throw a `ProviderFeeNotAllowedError` or
 `EscrowPaymentNotAllowedError` before any approval, purchase, deposit or order. Zero fees
 need nothing.

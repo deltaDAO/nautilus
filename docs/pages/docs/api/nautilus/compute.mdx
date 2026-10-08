@@ -27,10 +27,10 @@ the amount the job locks in escrow. nautilus pays a non-zero provider fee only w
 [`maxProviderFee`](#maxproviderfee-optional) or with
 [`confirmProviderFees`](#confirmproviderfees-optional), and funds escrow only within
 [`maxEscrowPayment`](#maxescrowpayment-optional) or with
-[`confirmEscrowPayment`](#confirmescrowpayment-optional). It funds only a known escrow
-contract for the chain (`config.escrow`, or the `Escrow` / `EnterpriseEscrow` entry of
-Ocean's address data), whatever contract the node names. Each refusal is thrown before any
-approval, deposit or order. Set the ceilings once with
+[`confirmEscrowPayment`](#confirmescrowpayment-optional). It funds exactly one escrow
+contract, whatever contract the node names: the chain's **`EnterpriseEscrow`** by default,
+or the one you set as `config.escrow` (see [Escrow contract](#escrow-contract)). Each
+refusal is thrown before any approval, deposit or order. Set the ceilings once with
 [`Nautilus.create`](/docs/api/nautilus/create#maxproviderfee), or per call here.
 :::
 
@@ -56,8 +56,8 @@ What happens in order:
    transaction:
    - the inputs' non-zero provider fees, summed per token, against `maxProviderFee`, or
      `confirmProviderFees` asked once with all of them (`ProviderFeeNotAllowedError`);
-   - the escrow quote: its contract must be a known escrow contract for the chain (the
-     chain config's `escrow`, or the address data's `Escrow` / `EnterpriseEscrow`), and its
+   - the escrow quote: its contract must be the [pinned escrow contract](#escrow-contract)
+     (your `config.escrow`, else the chain's `EnterpriseEscrow`, else its `Escrow`), and its
      chain, token and payee the job's own (`EscrowPaymentNotAllowedError`, which no callback
      overrides); its amount must be within `maxEscrowPayment`, or `confirmEscrowPayment`
      must return `true` (`EscrowPaymentNotAllowedError` again);
@@ -251,15 +251,46 @@ Asked when `maxEscrowPayment` does not cover the quote, with
 Return `true` to fund it. It is asked only after the escrow contract, chain, token and payee
 passed their checks.
 
+## Escrow contract
+
+nautilus funds exactly one escrow contract per chain, chosen without the node:
+
+1. **`config.escrow`**, when you pass it to [`Nautilus.create`](/docs/api/nautilus/create#config):
+   that contract, and no other.
+2. Otherwise the chain's **`EnterpriseEscrow`** in Ocean's address data (the addresses
+   ocean.js ships, or the file `ADDRESS_FILE` names). This is the contract ocean-node 4.2.0
+   uses wherever the address data has one: OP Sepolia, Optimism, Sepolia and Ethereum
+   mainnet among the bundled chains, and the local stack.
+3. Otherwise the chain's `Escrow` in the address data, on a chain that lists no
+   `EnterpriseEscrow`.
+
+A quote naming any other contract is refused with `EscrowPaymentNotAllowedError`
+(`'escrow-address'`), whose message names the expected contract and the rule that chose it.
+No callback overrides this.
+
+On a chain whose address data lists neither (Pontus-X devnet, 32456), paid compute is
+refused (`'unknown-escrow'`) until you set the chain's **EnterpriseEscrow** contract as
+`config.escrow`. nautilus ships no Pontus-X escrow address; ask the network operator for it.
+
+:::note
+ocean.js's `ConfigHelper` fills `config.escrow` from the address data's plain `Escrow`.
+That value is not your choice and is not used. Spreading `ConfigHelper`'s config into
+`config` would make it one, so leave its `escrow` out.
+:::
+
+`compute` is also exported as a standalone function, `compute(config, context)`. Its
+`context.escrow` plays the part of `config.escrow`: set it to pin a contract, or leave it
+out for the default above. `context.chainConfig.escrow` is not read.
+
 ## Throws
 
 - `ProviderFeeSignatureError` and `ProviderFeeNotAllowedError`, as for
   [`access`](/docs/api/nautilus/access#throws).
 - `EscrowPaymentNotAllowedError`, with `error.reason`:
-  - `'unknown-escrow'`: no escrow contract is known for the chain: no `config.escrow` and no
-    `Escrow` or `EnterpriseEscrow` in Ocean's address data. Pass `config: { escrow: '0x…' }`
-    to `Nautilus.create`;
-  - `'escrow-address'`: the node named an escrow contract that is none of those;
+  - `'unknown-escrow'`: no escrow contract is pinned for the chain: no `config.escrow`, and
+    no `EnterpriseEscrow` or `Escrow` in Ocean's address data. Set the chain's
+    `EnterpriseEscrow` as `config: { escrow: '0x…' }` in `Nautilus.create`;
+  - `'escrow-address'`: the node named another contract than the pinned one;
   - `'mismatch'`: the quote is for another chain, token or payee, or its amount is not an
     exact integer;
   - `'no-limit'`, `'over-limit'` or `'declined'`: the amount was not allowed.

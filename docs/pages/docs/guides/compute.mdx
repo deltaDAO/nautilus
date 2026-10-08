@@ -117,8 +117,8 @@ What nautilus does, in order:
    exactly why it comes before the orders.
 3. Asks the node to quote the job: provider fees, reusable orders, and the escrow amount.
 4. Checks the quote against what you allowed, before any transaction: the provider fees
-   against `maxProviderFee` / `confirmProviderFees`, the escrow contract against the known
-   escrow contracts for the chain, and the escrow amount against `maxEscrowPayment` /
+   against `maxProviderFee` / `confirmProviderFees`, the escrow contract against the pinned
+   one (the chain's `EnterpriseEscrow` by default), and the escrow amount against `maxEscrowPayment` /
    `confirmEscrowPayment`.
 5. Funds and authorises escrow for exactly the quoted amount: it approves and deposits only
    what escrow lacks, and authorises the environment to lock the job's amount.
@@ -130,16 +130,18 @@ the environment accepts on your chain, and `maxJobDuration` is capped to the env
 limit with a warning.
 
 :::danger[Paid jobs move real funds]
-`compute()` orders every input and locks funds in the `Escrow` contract from what the node
+`compute()` orders every input and locks funds in the escrow contract from what the node
 quotes. The node chooses that amount and the inputs' provider fees, so set
 `maxEscrowPayment` and `maxProviderFee` (here or once in
 [`Nautilus.create`](/docs/api/nautilus/create#maxproviderfee)) to the most you are prepared
 to pay. Without them, or a confirmation callback, a paid job is refused before anything is
-spent. Escrow is only ever funded in a known escrow contract for the chain: the chain
-config's `escrow`, or the `Escrow` or `EnterpriseEscrow` entry of Ocean's address data
-(ocean.js's bundled addresses, or `ADDRESS_FILE`). ocean-node 4.2.0 uses `EnterpriseEscrow`
-where the chain has one. On a chain with neither, pass `config: { escrow: '0x…' }` to
-`Nautilus.create`.
+spent. Escrow is only ever funded in one contract: the chain's **`EnterpriseEscrow`** in
+Ocean's address data (ocean.js's bundled addresses, or `ADDRESS_FILE`), the contract
+ocean-node 4.2.0 uses where the chain has one; else the chain's `Escrow`. Passing
+`config: { escrow: '0x…' }` to `Nautilus.create` pins that contract instead, and only that
+one. On a chain with neither (Pontus-X devnet), set the chain's EnterpriseEscrow contract
+as `config.escrow`, or paid jobs are refused. See
+[Escrow contract](/docs/api/nautilus/compute#escrow-contract).
 
 The payer must differ from the environment's `consumerAddress`, or escrow rejects the
 job with "Payer cannot be payee".
