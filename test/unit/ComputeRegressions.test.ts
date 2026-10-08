@@ -560,6 +560,30 @@ describe('default compute resources', () => {
     expect(calls.computeStart[0].resources).to.deep.equal(resources)
   })
 
+  it('treats an empty resources list as none, and applies the defaults', async () => {
+    const { client, calls } = createComputeNodeMock(
+      inputs(),
+      undefined,
+      environmentWith()
+    )
+
+    await computeAllowed(
+      {
+        dataset: { did: ASSET_DID },
+        algorithm: { did: ALGO_DID },
+        resources: []
+      },
+      computeContext(client)
+    )
+
+    expect(calls.computeStart[0].resources).to.deep.equal([
+      { id: 'cpu', amount: 1 },
+      { id: 'ram', amount: 1 },
+      { id: 'disk', amount: 1 },
+      { id: 'gpu', amount: 0 }
+    ])
+  })
+
   it('requests no more than a resource offers', async () => {
     const environment = environmentWith()
     environment.resources = [{ id: 'ram', min: 0, max: 0 }] as never

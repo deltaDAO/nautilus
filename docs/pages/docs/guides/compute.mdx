@@ -135,9 +135,9 @@ one `Nautilus` instance, so two jobs started together do not overwrite each othe
 authorisation. Jobs from another instance or process are not serialised; see
 [Concurrent jobs](/docs/api/nautilus/compute#concurrent-jobs).
 
-A `resources` list is sent exactly as given, and the node gives each resource it leaves out
+A non-empty `resources` list is sent exactly as given, and the node gives each resource it leaves out
 that resource's minimum, often `0`; a job with `0` RAM runs without a memory limit. Without
-`resources`, nautilus requests every resource the environment lists at its minimum, raised to
+`resources`, or with an empty list, nautilus requests every resource the environment lists at its minimum, raised to
 `1` for `cpu`, `ram` and `disk` within the resource's maximum; other resources, such as GPUs,
 at their minimum. `paymentToken` defaults to the first token the
 environment accepts on your chain, and `maxJobDuration` is capped to the environment's limit

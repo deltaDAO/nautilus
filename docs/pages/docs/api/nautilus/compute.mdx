@@ -181,10 +181,10 @@ Environment id. Defaults to the node's first, which is logged when it happens.
 
 - Type: `ComputeResourceRequest[]`
 
-`[{ id: 'cpu', amount: 2 }]`. Ids come from `ComputeEnvironment.resources`. A list is sent
+`[{ id: 'cpu', amount: 2 }]`. Ids come from `ComputeEnvironment.resources`. A non-empty list is sent
 exactly as given: ocean-node gives each resource missing from it its minimum, usually `0`,
 and `0` CPU or RAM means the job runs without that limit, so list every resource you want
-bounded. Without `resources`, every resource the environment lists is requested at its
+bounded. Without `resources`, or with an empty list, every resource the environment lists is requested at its
 minimum, raised to `1` for `cpu`, `ram` and `disk` within the resource's maximum; other
 resources, such as GPUs, at their minimum.
 

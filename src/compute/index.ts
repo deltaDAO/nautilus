@@ -507,8 +507,9 @@ function resolvePaymentToken(
 const BASELINE_RESOURCES = ['cpu', 'ram', 'disk']
 
 /**
- * The resources a job requests: `requested` exactly as given, or, when the caller passed
- * none, every resource the environment lists (for a free job, its `free` list).
+ * The resources a job requests: a non-empty `requested` exactly as given, or, when the
+ * caller passed none or an empty list, every resource the environment lists (for a free
+ * job, its `free` list).
  *
  * Each defaults to its minimum, raised to `1` for `cpu`, `ram` and `disk` within its
  * maximum: a node fills a resource left out with its minimum, which is often `0`, so a job
@@ -520,7 +521,7 @@ function resolveResources(
   requested: ComputeResourceRequest[] | undefined,
   free = false
 ): ComputeResourceRequest[] {
-  if (requested) return requested
+  if (requested?.length) return requested
 
   const advertised = free
     ? (environment.free?.resources ?? [])

@@ -38,11 +38,12 @@ compute settings.
   id's length, not the id.
 - **Node URIs in compute errors and logs show only their origin**, since a URI can carry
   credentials; job ids are left out of those messages too.
-- **Jobs get a CPU and memory limit by default.** Without `resources`, each resource
+- **Jobs get a CPU and memory limit by default.** Without `resources` (or with `[]`), each resource
   defaulted to the environment's minimum, `0` for RAM and disk on ocean-node 4.2
   environments, so free jobs ran without a memory limit. `cpu`, `ram` and `disk` now
   default to at least `1` within the resource's maximum, on free and paid jobs; other
-  resources default to their minimum. A `resources` list is sent exactly as given.
+  resources default to their minimum. A non-empty `resources` list is sent exactly as
+  given.
 - **Algorithms carry no `compute` block.** An algorithm's compute service was published with
   a dataset's settings (`allowRawAlgorithm`, `allowNetworkAccess`, an empty
   `publisherTrustedAlgorithms`, …), which ocean-node reads from datasets only. Assets of type

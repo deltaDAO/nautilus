@@ -151,10 +151,10 @@ before it writes `outputs.tar`.
 ```
 
 **Default resources are at least 1 CPU, 1 GB of RAM and 1 GB of disk.** Without
-`resources`, each resource defaulted to the environment's minimum, which ocean-node 4.2
+`resources` (or with an empty list), each resource defaulted to the environment's minimum, which ocean-node 4.2
 environments usually set to `0`, and a `0` means no CPU or memory limit for the job. `cpu`,
 `ram` and `disk` now default to at least `1` within the resource's maximum, other resources
-(GPUs) to their minimum. A `resources` list you pass is sent exactly as given, with nothing
+(GPUs) to their minimum. A non-empty `resources` list is sent exactly as given, with nothing
 added: the node gives each resource it leaves out that resource's minimum. A paid job's escrow
 quote rises with the larger default request; pass `resources` to choose.
 
