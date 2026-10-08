@@ -19,9 +19,10 @@ still accepted for symmetry but ignored, and the node defaults to the configured
 
 ## Returns
 
-- Type: `ComputeJob[]`
+- Type: `NodeComputeJob[]`
 
-The jobs as they stand after the stop request.
+The jobs as they stand after the stop request, under their `<environmentHash>-<jobId>` ids
+and with the node's `environment`.
 
 ## Parameters
 

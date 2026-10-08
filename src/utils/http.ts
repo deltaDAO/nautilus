@@ -15,6 +15,9 @@
  * unless the request itself already went there in clear, and so does one that ends on an
  * internal host (loopback, private, link-local; see `isInternalHost`) when the request went
  * to a public one.
+ *
+ * The body is read up to `maxBodyBytes` (8 MiB by default), so a server cannot make
+ * nautilus buffer an answer of any size.
  */
 
 import { isInternalHost, isLoopbackHost } from './transport.js'
@@ -63,7 +66,17 @@ export interface FetchTextOptions {
    * already. Only the final URL is seen: fetch does not show the hops in between.
    */
   followRedirects?: boolean
+  /**
+   * The largest body read, in bytes. A larger 2xx answer throws a `ResponseTooLargeError`;
+   * a non-2xx answer is cut at `MAX_ERROR_BODY_BYTES`, or at `maxBodyBytes` when that is
+   * smaller. `fetchResponse` leaves a 2xx body to the caller. Default:
+   * `DEFAULT_MAX_BODY_BYTES` (8 MiB).
+   */
+  maxBodyBytes?: number
 }
+
+/** The default of `FetchTextOptions.maxBodyBytes`: 8 MiB. */
+export const DEFAULT_MAX_BODY_BYTES = 8 * 1024 * 1024
 
 /** The longest delay `setTimeout` takes; anything longer fires after 1 ms. */
 export const MAX_TIMER_MS = 2 ** 31 - 1
@@ -76,6 +89,17 @@ export class RequestTimeoutError extends Error {
   constructor(timeoutMs: number) {
     super(`timed out after ${timeoutMs} ms`)
     this.name = 'RequestTimeoutError'
+  }
+}
+
+/** Thrown when an answer's body is larger than `FetchTextOptions.maxBodyBytes`. */
+export class ResponseTooLargeError extends Error {
+  readonly maxBodyBytes: number
+
+  constructor(maxBodyBytes: number) {
+    super(`the answer is larger than ${maxBodyBytes} bytes`)
+    this.name = 'ResponseTooLargeError'
+    this.maxBodyBytes = maxBodyBytes
   }
 }
 
@@ -218,9 +242,9 @@ async function assertRedirectRule(
  * Rejects with `signal.reason` when the caller's `signal` aborts, with a
  * `RequestTimeoutError` on timeout, with a `RedirectError` on a 3xx answer (unless
  * `followRedirects`) and on a followed redirect the rule refuses (see
- * `FetchTextOptions.followRedirects`), with a `RangeError` for a `timeoutMs` that is
- * negative or not finite, and with fetch's own error otherwise. Timeouts above 2^31 − 1 ms
- * are clamped to that.
+ * `FetchTextOptions.followRedirects`), with a `ResponseTooLargeError` for a 2xx body over
+ * `maxBodyBytes`, with a `RangeError` for a `timeoutMs` that is negative or not finite,
+ * and with fetch's own error otherwise. Timeouts above 2^31 − 1 ms are clamped to that.
  */
 export function fetchText(
   fetchImpl: typeof fetch,
@@ -228,13 +252,18 @@ export function fetchText(
   init: RequestInit,
   options: FetchTextOptions
 ): Promise<FetchedText> {
+  const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
+
   return request(fetchImpl, url, init, options, (response, finalUrl, signal) =>
-    readAnswer(
-      response,
-      finalUrl,
-      signal,
-      response.ok ? Number.POSITIVE_INFINITY : MAX_ERROR_BODY_BYTES
-    )
+    response.ok
+      ? readAnswer(response, finalUrl, signal, maxBodyBytes, 'refuse')
+      : readAnswer(
+          response,
+          finalUrl,
+          signal,
+          errorBodyBytes(options),
+          'truncate'
+        )
   )
 }
 
@@ -243,7 +272,8 @@ export function fetchText(
  * arrived, and leaves the body to the caller, e.g. to stream it: `timeoutMs` covers the
  * request up to the headers, and `signal` stays attached to the body. A non-2xx answer is
  * read as `fetchText` reads it, within `timeoutMs`. Same errors and redirect rule as
- * `fetchText`.
+ * `fetchText`; `maxBodyBytes` bounds only the error body here, as the 2xx body is the
+ * caller's to read.
  */
 export function fetchResponse(
   fetchImpl: typeof fetch,
@@ -270,7 +300,8 @@ export function fetchResponse(
               response,
               finalUrl,
               signal,
-              MAX_ERROR_BODY_BYTES
+              errorBodyBytes(options),
+              'truncate'
             )),
             ok: false
           }
@@ -335,14 +366,29 @@ async function request<T>(
   }
 }
 
-/** An answer read as text, at most `maxBytes` of its body. */
+/**
+ * How much of an error answer's body is read: `MAX_ERROR_BODY_BYTES`, or `maxBodyBytes`
+ * when that is smaller.
+ */
+function errorBodyBytes(options: FetchTextOptions): number {
+  return Math.min(
+    MAX_ERROR_BODY_BYTES,
+    options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
+  )
+}
+
+/**
+ * An answer read as text, at most `maxBytes` of its body: past that, `'refuse'` throws a
+ * `ResponseTooLargeError` and `'truncate'` keeps the first `maxBytes`.
+ */
 async function readAnswer(
   response: Response,
   url: string,
   signal: AbortSignal,
-  maxBytes: number
+  maxBytes: number,
+  overflow: BodyOverflow
 ): Promise<FetchedText> {
-  const body = await readBoundedText(response, maxBytes, signal)
+  const body = await readBoundedText(response, maxBytes, signal, overflow)
   const retryAfter = response.headers?.get?.('retry-after') ?? undefined
 
   return {
@@ -355,18 +401,38 @@ async function readAnswer(
   }
 }
 
+/** What `readBoundedText` does with a body over its bound. */
+type BodyOverflow = 'refuse' | 'truncate'
+
 /**
- * The body as UTF-8 text, at most `maxBytes` of it; the rest of the stream is cancelled.
- * Rejects when `signal` aborts while it reads, also for a body stream that does not follow
- * the request's signal.
+ * The body as UTF-8 text, at most `maxBytes` of it, counted in bytes. Past that the rest of
+ * the stream is cancelled, and `'refuse'` throws a `ResponseTooLargeError` (also, before
+ * reading, for a declared `content-length` over it) while `'truncate'` returns what was
+ * read. Rejects when `signal` aborts while it reads, also for a body stream that does not
+ * follow the request's signal.
  */
 async function readBoundedText(
   response: Response,
   maxBytes: number,
-  signal: AbortSignal
+  signal: AbortSignal,
+  overflow: BodyOverflow
 ): Promise<string> {
+  const refuse = overflow === 'refuse'
   const reader = response.body?.getReader?.()
-  if (!reader) return (await response.text()).slice(0, maxBytes)
+
+  const declared = Number(response.headers?.get?.('content-length'))
+  if (refuse && Number.isFinite(declared) && declared > maxBytes) {
+    await reader?.cancel().catch(() => undefined)
+    throw new ResponseTooLargeError(maxBytes)
+  }
+
+  if (!reader) {
+    const text = await response.text()
+    if (!refuse) return text.slice(0, maxBytes)
+    if (new TextEncoder().encode(text).byteLength > maxBytes)
+      throw new ResponseTooLargeError(maxBytes)
+    return text
+  }
 
   const onAbort = () => {
     reader.cancel(signal.reason).catch(() => undefined)
@@ -377,20 +443,30 @@ async function readBoundedText(
   let text = ''
   let received = 0
   try {
-    while (received < maxBytes) {
+    for (;;) {
+      if (!refuse && received >= maxBytes) {
+        await reader.cancel().catch(() => undefined)
+        break
+      }
+
       const { done, value } = await reader.read()
       if (done) break
 
-      const chunk =
-        value.byteLength > maxBytes - received
-          ? value.subarray(0, maxBytes - received)
-          : value
-      received += chunk.byteLength
-      text += decoder.decode(chunk, { stream: true })
+      const room = maxBytes - received
+      if (value.byteLength > room) {
+        if (refuse) {
+          await reader.cancel().catch(() => undefined)
+          throw new ResponseTooLargeError(maxBytes)
+        }
+        received += room
+        text += decoder.decode(value.subarray(0, room), { stream: true })
+        continue
+      }
+
+      received += value.byteLength
+      text += decoder.decode(value, { stream: true })
     }
     if (signal.aborted) throw signal.reason
-
-    if (received >= maxBytes) await reader.cancel().catch(() => undefined)
 
     return text + decoder.decode()
   } finally {

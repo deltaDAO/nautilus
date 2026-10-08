@@ -12,6 +12,11 @@
  * the time it was opened, and `PolicySessionResolver` never hands out one older than its
  * `sessionTtlMs`, whatever the store.
  *
+ * A session id is a credential: it is what the node accepts for the download or compute
+ * job, and the id of a presented session lets anyone read the verifier's record through the
+ * node, the presentation included. So a store of your own gets only address-only sessions,
+ * unless the resolver is told to `persistPresentedSessions`; keep it private either way.
+ *
  * This is the bug to avoid: the enterprise-market keys its cache on `(did, serviceId)`
  * only, so switching accounts hands the node a session minted for someone else.
  */
@@ -19,10 +24,12 @@ export interface SessionKey {
   did: string
   serviceId: string
   /**
-   * The exact string sent to `initiate` and to the download or compute call.
+   * The address the session is bound to: the one the node forwards to the policy server on
+   * `initiate` (`OceanNodeClient.policySessionAddress`), which for a Signer is
+   * `signer.getAddress()` and for a JWT the address stored with the token.
    *
-   * Compared as it is, never case-folded: the policy server hashes this string into the
-   * session id, so a session opened for the checksummed address is refused for the
+   * Compared as it is, never case-folded: the policy server hashes the forwarded string into
+   * the session id, so a session opened for the checksummed address is refused for the
    * lower-cased one, and the two must not share an entry.
    */
   consumerAddress: string
@@ -79,7 +86,10 @@ export interface SessionStore {
   clear(): void
 }
 
-/** Default in-memory store. Lives for the process; swap in your own to persist. */
+/**
+ * Default in-memory store. Lives for the process; swap in your own to persist address-only
+ * sessions.
+ */
 export class MemorySessionStore implements SessionStore {
   private readonly entries = new Map<string, SessionEntry>()
 

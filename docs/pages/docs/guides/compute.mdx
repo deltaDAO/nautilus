@@ -135,10 +135,11 @@ one `Nautilus` instance, so two jobs started together do not overwrite each othe
 authorisation. Jobs from another instance or process are not serialised; see
 [Concurrent jobs](/docs/api/nautilus/compute#concurrent-jobs).
 
-Each resource you leave out of `resources` gets its minimum, raised to `1` for `cpu`, `ram`
-and `disk` within the resource's maximum: a node fills in a missing resource with its
-minimum, often `0`, and a job with `0` RAM runs without a memory limit. Other resources, such
-as GPUs, default to their minimum. `paymentToken` defaults to the first token the
+A non-empty `resources` list is sent exactly as given, and the node gives each resource it leaves out
+that resource's minimum, often `0`; a job with `0` RAM runs without a memory limit. Without
+`resources`, or with an empty list, nautilus requests every resource the environment lists at its minimum, raised to
+`1` for `cpu`, `ram` and `disk` within the resource's maximum; other resources, such as GPUs,
+at their minimum. `paymentToken` defaults to the first token the
 environment accepts on your chain, and `maxJobDuration` is capped to the environment's limit
 with a warning.
 
@@ -194,9 +195,12 @@ const job = await nautilus.getComputeStatus({ jobId }) // [!code focus]
 console.log(job?.status, job?.statusText)
 ```
 
-`undefined` means the node does not know the job. Status `70` (`JobFinished`) means the
-algorithm has run; `71` (`JobSettle`) means it has run and the node is only waiting on the
-payment-claim cron. Results are readable at either.
+`undefined` means the node does not know the job. The job has finished once the node sets
+its `dateFinished`, whether it succeeded or not, and the status says how it ended: failed
+jobs end below `70`, for example `41` when the algorithm failed or `11` when its image could
+not be pulled. Poll on `dateFinished` rather than on a status. A finished job's results are
+readable; at `71` (`JobSettle`) the node may still be writing `outputs.tar`, which is listed
+as the `output` result once it is written.
 
 The algorithm's logs are useful for debugging an algorithm you cannot otherwise observe.
 While the job runs they stream live; once it has finished, `getComputeLogs` reads the job's
@@ -214,6 +218,12 @@ const logs = await nautilus.getComputeLogs({ jobId }) // [!code focus]
 for await (const chunk of logs) process.stdout.write(chunk) // [!code focus]
 ```
 
+:::warning[Treat the job id as a secret]
+On ocean-node 4.2.2 the live-log endpoint checks that the request is signed, but not that
+the signer owns the job, so anyone who has the qualified job id can stream a running job's
+logs. Keep the id where you would keep other access details, and out of shared logs.
+:::
+
 ## Getting the results
 
 ```ts twoslash
@@ -229,8 +239,9 @@ if (resultUrl) {
 }
 ```
 
-`undefined` means the job has not finished, the node does not know it, or it produced no
-`output` result — the log line says which.
+`undefined` means the job has not finished or not listed its `output` yet, the node does not
+know it, or it produced no `output` result (a failed job usually has none) — the log line
+says which.
 
 The `output` result is `outputs.tar`, a **tar archive** of everything the algorithm wrote to
 its outputs folder, so unpack it rather than reading it as a file of its own. It is listed
@@ -266,8 +277,8 @@ It reads the same result as `getComputeResult`: the `output` unless `resultIndex
 otherwise. Where `getComputeResult` returns `undefined`, it throws.
 
 :::info
-`getComputeResult` returns `undefined` until the job reaches a finished state, rather than
-throwing — poll [`getComputeStatus`](/docs/api/nautilus/getComputeStatus) first, or use
+`getComputeResult` returns `undefined` until the job has finished (its `dateFinished` is
+set) and listed its `output`, rather than throwing — poll [`getComputeStatus`](/docs/api/nautilus/getComputeStatus) first, or use
 [`waitForComputeJob`-style polling](/docs/api/nautilus/getComputeStatus) in your own loop.
 :::
 

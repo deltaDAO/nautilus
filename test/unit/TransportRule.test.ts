@@ -16,7 +16,8 @@ import {
   MAX_ERROR_BODY_BYTES,
   MAX_TIMER_MS,
   RedirectError,
-  RequestTimeoutError
+  RequestTimeoutError,
+  ResponseTooLargeError
 } from '../../src/utils/http.js'
 import {
   assertSecureTransport,
@@ -283,6 +284,42 @@ describe('fetchText', () => {
 
     expect(fetchImpl.mock.calls[0][1]?.redirect).to.equal('follow')
     expect(response.body).to.equal('ok')
+  })
+
+  it('reads a body up to maxBodyBytes, and refuses a larger one however it is sent', async () => {
+    const send = (body: string | ReadableStream<Uint8Array>, headers = {}) =>
+      fetchText(
+        (async () =>
+          new Response(body, { status: 200, headers })) as typeof fetch,
+        'https://node.example/x',
+        { method: 'GET' },
+        { timeoutMs: 1000, maxBodyBytes: 8 }
+      )
+
+    expect((await send('12345678')).body).to.equal('12345678')
+
+    // Counted in bytes, not characters.
+    expect(await send('ééééé').catch((error) => error)).to.be.instanceOf(
+      ResponseTooLargeError
+    )
+
+    // Declared too large: refused before reading.
+    expect(
+      await send('1', { 'content-length': '1000000' }).catch((error) => error)
+    ).to.be.instanceOf(ResponseTooLargeError)
+
+    // Streamed without a length, without end: stopped once over the cap.
+    let pulled = 0
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled++
+        controller.enqueue(new Uint8Array(4))
+      }
+    })
+    expect(await send(endless).catch((error) => error)).to.be.instanceOf(
+      ResponseTooLargeError
+    )
+    expect(pulled).to.be.below(10)
   })
 
   describe('the transport rule on a followed redirect', () => {

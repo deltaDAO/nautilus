@@ -2,10 +2,11 @@
  * Reusing a download order the node does not report.
  *
  * ocean-node's access `initialize` returns no `validOrder`, so `access()` looks the
- * account's previous order up in the datatoken's events and keeps it only where the node's
- * download check would accept it: consumer or payer, service index, timeout counted from
- * the `OrderStarted` block, and a `ProviderFee` from the node's fee address for this
- * service that has not expired. The chain here is an in-memory log store.
+ * account's previous orders up in the datatoken's events and checks each transaction from
+ * its receipt the way the node's download check does: the first `OrderReused` followed,
+ * the first matching `OrderStarted` taken, its service index, the timeout counted from the
+ * `OrderStarted` block, and a `ProviderFee` the node keeps. The chain here is an in-memory
+ * store of transactions and their logs.
  */
 import type { Config } from '@oceanprotocol/lib'
 import {
@@ -66,6 +67,9 @@ const DAY = 86_400
 const LATEST = 500_000
 /** Seconds per block on the in-memory chain. */
 const BLOCK_TIME = 2
+/** The lookup's first chunk, in blocks, and the time an order must have left. */
+const CHUNK = 2_000
+const MARGIN = 600
 
 const EVENTS = new Interface([
   'event OrderStarted(address indexed consumer, address payer, uint256 amount, uint256 serviceIndex, uint256 timestamp, address indexed publishMarketAddress, uint256 blockNumber)',
@@ -80,43 +84,119 @@ const blockAt = (secondsAgo: number) =>
   LATEST - Math.floor(secondsAgo / BLOCK_TIME)
 const timeOf = (block: number) => NOW - (LATEST - block) * BLOCK_TIME
 
+interface LogFilter {
+  address: string
+  topics: (string | null)[]
+  fromBlock: number
+  toBlock: number
+}
+
+interface FeeOptions {
+  address?: string
+  serviceId?: string
+  validUntil?: number
+}
+
 class Chain {
   logs: Log[] = []
-  getLogs = vi.fn(
-    async (filter: {
-      address: string
-      topics: string[][]
-      fromBlock: number
-      toBlock: number
-    }) =>
-      this.logs.filter(
-        (log) =>
-          log.address.toLowerCase() === filter.address.toLowerCase() &&
-          filter.topics[0].includes(log.topics[0]) &&
-          log.blockNumber >= filter.fromBlock &&
-          log.blockNumber <= filter.toBlock
-      )
+  receipts = new Map<
+    string,
+    { hash: string; blockNumber: number; logs: Log[] }
+  >()
+
+  getLogs = vi.fn(async (filter: LogFilter) =>
+    this.logs.filter(
+      (log) =>
+        log.address.toLowerCase() === filter.address.toLowerCase() &&
+        filter.topics.every(
+          (topic, i) =>
+            topic === null ||
+            log.topics[i]?.toLowerCase() === topic.toLowerCase()
+        ) &&
+        log.blockNumber >= filter.fromBlock &&
+        log.blockNumber <= filter.toBlock
+    )
   )
-  getBlockNumber = vi.fn(async () => LATEST)
-  getBlock = vi.fn(async (block: number) => ({ timestamp: timeOf(block) }))
+  getBlock = vi.fn(async (tag: number | 'latest') => {
+    const number = tag === 'latest' ? LATEST : tag
+    return { number, timestamp: timeOf(number) }
+  })
+  getTransactionReceipt = vi.fn(
+    async (txId: string) => this.receipts.get(txId.toLowerCase()) ?? null
+  )
 
-  private emit(
-    name: string,
-    args: unknown[],
-    at: { txId: string; block: number },
-    address = DATATOKEN_ADDRESS
-  ): void {
-    const { data, topics } = EVENTS.encodeEventLog(name, args)
+  /** A transaction mined `secondsAgo`; its events are logged in the order they are added. */
+  tx(txId: string, secondsAgo: number) {
+    const block = blockAt(secondsAgo)
+    const receipt = { hash: txId, blockNumber: block, logs: [] as Log[] }
+    this.receipts.set(txId, receipt)
 
-    this.logs.push({
-      address,
-      data,
-      topics,
-      blockNumber: at.block,
-      index: this.logs.length,
-      transactionHash: at.txId,
-      removed: false
-    } as unknown as Log)
+    const emit = (
+      name: string,
+      args: unknown[],
+      address = DATATOKEN_ADDRESS
+    ) => {
+      const { data, topics } = EVENTS.encodeEventLog(name, args)
+      const log = {
+        address,
+        data,
+        topics,
+        blockNumber: block,
+        index: this.logs.length,
+        transactionHash: txId
+      } as unknown as Log
+
+      this.logs.push(log)
+      receipt.logs.push(log)
+    }
+
+    const events = {
+      started(
+        options: {
+          consumer?: string
+          payer?: string
+          serviceIndex?: number
+        } = {}
+      ) {
+        emit('OrderStarted', [
+          options.consumer ?? CONSUMER,
+          options.payer ?? options.consumer ?? CONSUMER,
+          10n ** 18n,
+          options.serviceIndex ?? 0,
+          timeOf(block),
+          OTHER,
+          block
+        ])
+        return events
+      },
+      reused(orderTxId: string, caller = CONSUMER) {
+        emit('OrderReused', [orderTxId, caller, timeOf(block), block])
+        return events
+      },
+      /** The node signs `validUntil` as an absolute time: `now + timeout`. */
+      fee(fee: FeeOptions = {}) {
+        emit('ProviderFee', [
+          fee.address ?? PROVIDER_FEE_WALLET.address,
+          PROVIDER_FEE_TOKEN,
+          0,
+          hexlify(
+            toUtf8Bytes(
+              JSON.stringify({
+                dt: DATATOKEN_ADDRESS.toLowerCase(),
+                id: fee.serviceId ?? SERVICE_ID
+              })
+            )
+          ),
+          27,
+          ZeroHash,
+          ZeroHash,
+          fee.validUntil ?? NOW - secondsAgo + DAY
+        ])
+        return events
+      }
+    }
+
+    return events
   }
 
   /** An order and the fee it paid, in one transaction. */
@@ -130,72 +210,21 @@ class Chain {
       fee?: FeeOptions | false
     } = {}
   ): void {
-    const block = blockAt(secondsAgo)
-    const at = { txId, block }
+    const events = this.tx(txId, secondsAgo)
 
-    if (options.fee !== false) this.fee(at, secondsAgo, options.fee)
-
-    this.emit(
-      'OrderStarted',
-      [
-        options.consumer ?? CONSUMER,
-        options.payer ?? options.consumer ?? CONSUMER,
-        10n ** 18n,
-        options.serviceIndex ?? 0,
-        timeOf(block),
-        OTHER,
-        block
-      ],
-      at
-    )
+    if (options.fee !== false) events.fee(options.fee)
+    events.started(options)
   }
 
+  /** A `reuseOrder` of `orderTxId` and the fee it paid. */
   reused(
     txId: string,
     orderTxId: string,
     secondsAgo: number,
     fee?: FeeOptions
   ): void {
-    const block = blockAt(secondsAgo)
-    const at = { txId, block }
-
-    this.emit('OrderReused', [orderTxId, CONSUMER, timeOf(block), block], at)
-    this.fee(at, secondsAgo, fee)
+    this.tx(txId, secondsAgo).reused(orderTxId).fee(fee)
   }
-
-  private fee(
-    at: { txId: string; block: number },
-    secondsAgo: number,
-    fee: FeeOptions = {}
-  ): void {
-    this.emit(
-      'ProviderFee',
-      [
-        fee.address ?? PROVIDER_FEE_WALLET.address,
-        PROVIDER_FEE_TOKEN,
-        0,
-        hexlify(
-          toUtf8Bytes(
-            JSON.stringify({
-              dt: DATATOKEN_ADDRESS.toLowerCase(),
-              id: fee.serviceId ?? SERVICE_ID
-            })
-          )
-        ),
-        27,
-        ZeroHash,
-        ZeroHash,
-        fee.validUntil ?? NOW - secondsAgo + DAY
-      ],
-      at
-    )
-  }
-}
-
-interface FeeOptions {
-  address?: string
-  serviceId?: string
-  validUntil?: number
 }
 
 let chain: Chain
@@ -218,27 +247,57 @@ function query(
 const find = (overrides: Partial<PreviousOrderQuery> = {}) =>
   findPreviousOrder(query(overrides), { now: NOW })
 
+/** The block ranges `eth_getLogs` was asked for, newest first, one per round. */
+const ranges = () =>
+  chain.getLogs.mock.calls
+    .filter((_, i) => i % 2 === 0)
+    .map(([filter]) => [filter.fromBlock, filter.toBlock])
+
 beforeEach(() => {
   vi.clearAllMocks()
   chain = new Chain()
 })
 
 describe('findPreviousOrder', () => {
-  it('finds a valid order whose fee the node still accepts, in one log read', async () => {
+  it('finds a valid order whose fee the node keeps, in one round of log reads', async () => {
     chain.started(tx(1), 3_600)
 
     expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(1) })
-    expect(chain.getLogs).toHaveBeenCalledOnce()
-    expect(chain.getBlock).not.toHaveBeenCalled()
+    expect(chain.getLogs).toHaveBeenCalledTimes(2)
   })
 
-  it('takes the newest order and the newest reuse of it with an accepted fee', async () => {
+  it('reads only the account’s orders, and every reuse to filter by caller', async () => {
+    chain.started(tx(1), 3_600)
+    await find()
+
+    const [[started], [reused]] = chain.getLogs.mock.calls
+
+    expect(started.topics).to.deep.equal([
+      EVENTS.getEvent('OrderStarted')?.topicHash,
+      `0x${CONSUMER.slice(2).padStart(64, '0')}`
+    ])
+    expect(reused.topics).to.deep.equal([
+      EVENTS.getEvent('OrderReused')?.topicHash
+    ])
+  })
+
+  it('takes the newest transaction of an order whose fee the node keeps', async () => {
     chain.started(tx(1), 20_000)
     chain.started(tx(2), 10_000)
     chain.reused(tx(3), tx(2), 5_000)
     chain.reused(tx(4), tx(2), 1_000, { serviceId: 'another-service' })
 
     expect(await find()).to.deep.equal({ orderTxId: tx(2), usableTxId: tx(3) })
+  })
+
+  it('follows a reuse in a newer chunk to its order in an older one', async () => {
+    chain.started(tx(1), 20_000, { fee: { address: OTHER } })
+    chain.reused(tx(2), tx(1), 100)
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(2) })
+    // Found in the first round: the order is read from its receipt.
+    expect(chain.getLogs).toHaveBeenCalledTimes(2)
+    expect(chain.getTransactionReceipt).toHaveBeenCalledWith(tx(1))
   })
 
   it('refuses an order past the service timeout', async () => {
@@ -254,10 +313,39 @@ describe('findPreviousOrder', () => {
     expect(await find()).to.equal(undefined)
   })
 
-  it('refuses an order about to expire, since the URL is downloaded later', async () => {
-    chain.started(tx(1), DAY - 30)
+  it('orders anew with less than the margin left, since a reuse does not restart the timeout', async () => {
+    chain.started(tx(1), DAY - MARGIN + 10, { fee: { address: OTHER } })
 
     expect(await find()).to.equal(undefined)
+
+    chain = new Chain()
+    chain.started(tx(1), DAY - MARGIN - 10, { fee: { address: OTHER } })
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1) })
+  })
+
+  it('never reuses an order of a service whose timeout is within the margin', async () => {
+    chain.started(tx(1), 10)
+
+    expect(await find({ timeout: MARGIN })).to.equal(undefined)
+    expect(chain.getLogs).not.toHaveBeenCalled()
+  })
+
+  it('treats a missing timeout as never expiring, as the node does', async () => {
+    chain.started(tx(1), 150_000)
+
+    for (const timeout of [undefined, Number.NaN])
+      expect(await find({ timeout })).to.deep.equal({
+        orderTxId: tx(1),
+        usableTxId: tx(1)
+      })
+  })
+
+  it('ignores an order without confirmations, which a reorg may drop', async () => {
+    chain.started(tx(1), 2)
+
+    expect(await find()).to.equal(undefined)
+    expect(ranges()[0][1]).to.equal(LATEST - 2)
   })
 
   it('refuses another account’s order', async () => {
@@ -266,10 +354,18 @@ describe('findPreviousOrder', () => {
     expect(await find()).to.equal(undefined)
   })
 
-  it('accepts an order the account paid for, as the node does', async () => {
+  it('accepts an order the account only paid for through its own reuse, as the node does', async () => {
     chain.started(tx(1), 3_600, { consumer: OTHER, payer: CONSUMER })
+    chain.reused(tx(2), tx(1), 100)
 
-    expect((await find())?.orderTxId).to.equal(tx(1))
+    expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(2) })
+  })
+
+  it('ignores another account’s reuse of the order', async () => {
+    chain.started(tx(1), 3_600, { fee: { address: OTHER } })
+    chain.tx(tx(2), 100).reused(tx(1), OTHER).fee()
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1) })
   })
 
   it('refuses an order for another service index', async () => {
@@ -285,13 +381,81 @@ describe('findPreviousOrder', () => {
     expect((await find())?.orderTxId).to.equal(tx(1))
   })
 
+  it('refuses a transaction whose first order of the account has another service index', async () => {
+    // The node takes the first `OrderStarted` for the account and checks its index only.
+    chain.tx(tx(1), 3_600).fee().started({ serviceIndex: 1 }).started()
+
+    expect(await find()).to.equal(undefined)
+  })
+
+  it('follows only the first reuse in a transaction, as the node does', async () => {
+    chain.started(tx(1), 3_600, { fee: { address: OTHER } })
+    // A bogus reuse ahead of the valid one: the node follows it and refuses the download.
+    chain.tx(tx(2), 100).reused(tx(9)).reused(tx(1)).fee()
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1) })
+  })
+
+  it('refuses a transaction whose first reuse was made by another caller', async () => {
+    chain.started(tx(1), 3_600, { fee: { address: OTHER } })
+    chain.tx(tx(2), 100).reused(tx(1), OTHER).reused(tx(1)).fee()
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1) })
+  })
+
   it('finds nothing without orders, reading back no further than the timeout', async () => {
     expect(await find()).to.equal(undefined)
 
-    // 86 400 s at 2 s a block is 43 200 blocks: five 10 000-block reads.
-    expect(chain.getLogs).toHaveBeenCalledTimes(5)
-    for (const [filter] of chain.getLogs.mock.calls)
-      expect(filter.toBlock - filter.fromBlock).to.be.below(10_000)
+    // The window's first block is found from two block reads, not one per chunk.
+    expect(chain.getBlock).toHaveBeenCalledTimes(3)
+    for (const [from, to] of ranges()) expect(to - from).to.be.below(CHUNK)
+
+    const oldest = Math.min(...ranges().map(([from]) => from))
+    const windowStart = blockAt(DAY - MARGIN)
+
+    expect(oldest).to.be.at.most(windowStart)
+    expect(oldest).to.be.at.least(windowStart - 2 * CHUNK)
+  })
+
+  it('stops at an order past the timeout when the window cannot be narrowed, keeping a newer one', async () => {
+    // Uneven block times: the estimated first block is still inside the window.
+    chain.getBlock.mockImplementation(async (tag: number | 'latest') => {
+      const number = tag === 'latest' ? LATEST : tag
+      return {
+        number,
+        timestamp: number === LATEST - 100_000 + 1 - 2 ? 0 : NOW
+      }
+    })
+    chain.started(tx(1), DAY + 10)
+    chain.started(tx(2), 3_600, { fee: { address: OTHER } })
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(2) })
+    expect(Math.min(...ranges().map(([from]) => from))).to.be.above(
+      blockAt(DAY + 10) - CHUNK
+    )
+  })
+
+  it('reads a chunk the RPC refuses again in halves', async () => {
+    const read = chain.getLogs.getMockImplementation()
+    chain.getLogs.mockImplementation(async (filter: LogFilter) => {
+      if (filter.toBlock - filter.fromBlock >= 500)
+        throw new Error(
+          'could not coalesce error (error={ "code": -32005, "message": "block range is too large" })'
+        )
+      return read?.(filter) ?? []
+    })
+    chain.started(tx(1), 3_600)
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(1) })
+    for (const [from, to] of ranges().slice(2))
+      expect(to - from).to.be.below(500)
+  })
+
+  it('throws an error that is not about the range', async () => {
+    chain.getLogs.mockRejectedValue(new Error('connection refused'))
+
+    await expect(find()).rejects.toThrow('connection refused')
+    expect(chain.getLogs).toHaveBeenCalledTimes(2)
   })
 
   it('reuses an order of a service with timeout 0 however old, within the read depth', async () => {
@@ -308,30 +472,33 @@ describe('findPreviousOrder', () => {
     chain.started(tx(1), 2 * 100_000 + 10, { fee: { validUntil: 0 } })
 
     expect(await find({ timeout: 0 })).to.equal(undefined)
-    expect(chain.getLogs).toHaveBeenCalledTimes(10)
-    expect(chain.getBlock).not.toHaveBeenCalled()
+    expect(ranges()).to.have.length(100_000 / CHUNK)
+    expect(chain.getBlock).toHaveBeenCalledOnce()
   })
 
-  it('needs a new fee when the node no longer accepts the order’s', async () => {
+  it('keeps a fee the way the node does: the time since its block against validUntil', async () => {
+    // The node compares `now - block.timestamp` to `validUntil`, so a fee it signed with
+    // an absolute `validUntil` in the past is still kept.
     chain.started(tx(1), 3_600, { fee: { validUntil: NOW - 1 } })
-    chain.started(tx(2), 3_000, {
-      serviceIndex: 1,
-      fee: { address: OTHER }
-    })
 
-    expect(await find()).to.deep.equal({
-      orderTxId: tx(1),
-      usableTxId: undefined
-    })
+    expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(1) })
+  })
+
+  it('needs a new fee when the time since the fee’s block, with the margin, passes validUntil', async () => {
+    chain.started(tx(1), 3_600, { fee: { validUntil: 3_600 + MARGIN - 1 } })
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1) })
+
+    chain = new Chain()
+    chain.started(tx(1), 3_600, { fee: { validUntil: 3_600 + MARGIN } })
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(1) })
   })
 
   it('needs a new fee when the fee was signed by another node', async () => {
     chain.started(tx(1), 3_600, { fee: { address: OTHER } })
 
-    expect(await find()).to.deep.equal({
-      orderTxId: tx(1),
-      usableTxId: undefined
-    })
+    expect(await find()).to.deep.equal({ orderTxId: tx(1) })
   })
 
   it('accepts a fee that never expires', async () => {
@@ -430,7 +597,7 @@ describe('settleOrder with an order on chain', () => {
   })
 
   it('orders anew when the lookup fails', async () => {
-    chain.getLogs.mockRejectedValueOnce(new Error('block range too large'))
+    chain.getLogs.mockRejectedValueOnce(new Error('connection refused'))
 
     const result = await settle({
       providerFee: signedProviderFee({ providerData, providerFeeAmount: '0' })
@@ -493,6 +660,7 @@ describe('access with an order on chain', () => {
         return node
       },
       resolve: async () => asset,
+      policySessionAddress: (address: string) => address,
       hasPolicyServer: async () => false,
       initialize: async () => ({ datatoken: DATATOKEN_ADDRESS, providerFee }),
       getDownloadUrl: vi.fn(async () => 'https://node.test.invalid/download')
@@ -542,7 +710,7 @@ describe('access with an order on chain', () => {
   })
 
   it('asks for the quoted fee when the order’s fee expired, and pays exactly it', async () => {
-    chain.started(tx(1), 3_600, { fee: { validUntil: NOW - 1 } })
+    chain.started(tx(1), 3_600, { fee: { validUntil: 60 } })
     const confirm = vi.fn((_fees: ProviderFeeQuote[]) => true)
 
     const result = await download('30', { confirmProviderFees: confirm }).result
@@ -569,7 +737,7 @@ describe('access with an order on chain', () => {
   })
 
   it('refuses the fee a declined callback did not allow, before any transaction', async () => {
-    chain.started(tx(1), 3_600, { fee: { validUntil: NOW - 1 } })
+    chain.started(tx(1), 3_600, { fee: { validUntil: 60 } })
 
     const { result, node } = download('30', {
       confirmProviderFees: () => false

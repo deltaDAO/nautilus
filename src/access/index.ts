@@ -17,7 +17,7 @@ import {
   initializeWithValidProviderFee,
   providerFeeToSend
 } from '../utils/providerFee.js'
-import { checkAccessRequest } from './guards.js'
+import { assertAccessRequest } from './guards.js'
 import { planSettlement, sendSettlement } from './settlement.js'
 
 export { settleOrder } from './settlement.js'
@@ -58,7 +58,7 @@ export async function access(
   // Before any other node call or transaction: the service exists, is an 'access' service,
   // and `userdata` fits its consumer parameters. Only the checked `userdata`, without its
   // absent entries, is sent from here on.
-  const { service, userdata } = checkAccessRequest(asset, config)
+  const { service, userdata } = assertAccessRequest(asset, config)
 
   // Everything that talks to a node talks to *this* one: the file object was encrypted
   // with a key local to the node in the service's own endpoint, so the quote, the policy
@@ -121,7 +121,7 @@ export async function access(
     initialized,
     consumer: consumerAddress,
     did: asset.id,
-    service: { id: service.id, timeout: Number(service.timeout) },
+    service: { id: service.id, timeout: service.timeout },
     maxProviderFee: config.maxProviderFee,
     confirmProviderFees: config.confirmProviderFees
   })

@@ -34,6 +34,7 @@ import type {
   ComputeResult,
   FreeComputeConfig
 } from '../@types/Compute.js'
+import { selectService } from '../access/guards.js'
 import {
   planSettlement,
   type SettlementPlan,
@@ -42,7 +43,6 @@ import {
 import {
   getDatatokenForService,
   getMetadata,
-  getServiceByType,
   getServiceIndex,
   getServices
 } from '../ddo/read.js'
@@ -372,24 +372,20 @@ async function resolveInputs(
       // they are routinely published with only an `access` service (v1 ordered
       // `services[0]` regardless of type, and the node accepts it), so the algorithm
       // prefers a compute service but falls back to the first one.
-      const service = ref.serviceId
-        ? findServiceById(asset, ref.serviceId)
-        : isAlgorithm
-          ? getServiceByType(asset, 'compute') || getServices(asset)[0]
-          : getServiceByType(asset, 'compute')
+      const service =
+        selectService(asset, ref.did, ref.serviceId, 'compute') ??
+        (isAlgorithm ? getServices(asset)[0] : undefined)
 
       if (!service)
         throw new Error(
-          ref.serviceId
-            ? `Asset ${ref.did} has no service with id ${ref.serviceId}.`
-            : isAlgorithm
-              ? `Asset ${ref.did} has no services.`
-              : `Asset ${ref.did} has no 'compute' service.`
+          isAlgorithm
+            ? `Asset ${ref.did} has no services.`
+            : `Asset ${ref.did} has no 'compute' service.`
         )
 
       if (!isAlgorithm && service.type !== 'compute')
         throw new Error(
-          `Service ${ref.serviceId} of ${ref.did} is a '${service.type}' service; compute jobs need a 'compute' service.`
+          `Service ${service.id} of ${ref.did} is a '${service.type}' service; compute jobs need a 'compute' service.`
         )
 
       // Consumer parameters are checked here, before the environment, any policy session,
@@ -418,12 +414,6 @@ async function resolveInputs(
         algocustomdata
       }
     })
-  )
-}
-
-function findServiceById(asset: AssetV5, serviceId: string) {
-  return asset.credentialSubject?.services?.find(
-    (service) => service.id === serviceId
   )
 }
 
@@ -537,41 +527,37 @@ function resolvePaymentToken(
 const BASELINE_RESOURCES = ['cpu', 'ram', 'disk']
 
 /**
- * The resources a job requests: the caller's, and for every other resource the
- * environment lists (for a free job, its `free` list), a default.
+ * The resources a job requests: a non-empty `requested` exactly as given, or, when the
+ * caller passed none or an empty list, every resource the environment lists (for a free
+ * job, its `free` list).
  *
- * The default is the resource's minimum, raised to `1` for `cpu`, `ram` and `disk` within
- * its maximum: a node fills a resource left out with its minimum, which is often `0`, so a
- * job would otherwise run without a memory limit. Other resources, such as GPUs, default to
+ * Each defaults to its minimum, raised to `1` for `cpu`, `ram` and `disk` within its
+ * maximum: a node fills a resource left out with its minimum, which is often `0`, so a job
+ * would otherwise run without a memory limit. Other resources, such as GPUs, default to
  * their minimum.
  */
 function resolveResources(
   environment: ComputeEnvironment,
-  requested: ComputeResourceRequest[] = [],
+  requested: ComputeResourceRequest[] | undefined,
   free = false
 ): ComputeResourceRequest[] {
+  if (requested?.length) return requested
+
   const advertised = free
     ? (environment.free?.resources ?? [])
     : (environment.resources ?? [])
 
-  const defaults = advertised
-    .filter((resource) => !requested.some((entry) => entry.id === resource.id))
-    .map((resource) => {
-      // A free resource without its own bounds has the environment's.
-      const paid = environment.resources?.find(
-        (candidate) => candidate.id === resource.id
-      )
-      const min = resource.min ?? paid?.min ?? 0
-      const max = resource.max ?? paid?.max ?? min
-      const floor = BASELINE_RESOURCES.includes(resource.id) ? 1 : 0
+  return advertised.map((resource) => {
+    // A free resource without its own bounds has the environment's.
+    const paid = environment.resources?.find(
+      (candidate) => candidate.id === resource.id
+    )
+    const min = resource.min ?? paid?.min ?? 0
+    const max = resource.max ?? paid?.max ?? min
+    const floor = BASELINE_RESOURCES.includes(resource.id) ? 1 : 0
 
-      return {
-        id: resource.id,
-        amount: Math.max(min, Math.min(floor, max))
-      }
-    })
-
-  return [...requested, ...defaults]
+    return { id: resource.id, amount: Math.max(min, Math.min(floor, max)) }
+  })
 }
 
 function resolveMaxJobDuration(

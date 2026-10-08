@@ -25,7 +25,9 @@ export {
   type ConsumerParameterIssue,
   type ConsumerParameterRefusal,
   type ConsumerParameterTarget,
-  checkConsumerParameters
+  checkConsumerParameters,
+  type DeclaredConsumerParameter,
+  getAlgorithmConsumerParameters
 } from './utils/consumerParameters.js'
 export { editPrice, setMetadataState } from './utils/contracts.js'
 export {

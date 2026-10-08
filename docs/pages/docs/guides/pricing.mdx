@@ -136,26 +136,37 @@ returns depends on the endpoint:
 ### Downloads: the order on chain
 
 The access `initialize` reports no `validOrder`, so [`access`](/docs/api/nautilus/access)
-looks your previous order up in the datatoken's `OrderStarted` / `OrderReused` /
-`ProviderFee` events. It keeps your newest order for the service only where the node would
-accept it at download:
+looks your previous orders up on chain: the datatoken's `OrderStarted` events with you as
+consumer, and its `OrderReused` events with you as caller. It checks each transaction, newest
+first, from its receipt exactly as the node checks the `transferTxId` of a download:
 
-- you are the order's consumer or payer;
-- it is for the same service (the service index);
-- it is inside the service's `timeout`, counted from the `OrderStarted` block (a reuse does
-  not restart it; `0` never expires), with at least 60 s to go, since the URL is
-  downloaded afterwards;
-- the order, or a reuse of it, carries a provider fee signed by the service's node for this
-  service that has not expired.
+- when the transaction holds an `OrderReused`, the first one is followed to the order it
+  names (nautilus also requires you to be that reuse's caller);
+- in the order's transaction, the first `OrderStarted` of this datatoken with you as consumer
+  or payer is taken, and refused when it is for another service index;
+- the order is inside the service's `timeout`, counted from the `OrderStarted` block (a
+  reuse does not restart it). `0` never expires, and neither does a missing timeout, as at
+  the node;
+- the transaction itself carries a provider fee signed by the service's node for this
+  service that the node keeps: `validUntil` is `0`, or the time since the transaction's
+  block is at most `validUntil`. The node signs `validUntil` as an absolute time but
+  compares it to that elapsed time, so in practice it keeps every fee it signed.
 
 With all four, the download uses that transaction and nothing is sent, so no provider fee is
 paid and no consent is asked, even when the node quotes one. With the first three only, the
 order is extended with `reuseOrder` and the fee the node quotes now. Otherwise a new order
 is placed. Either way `reusedOrder` and `transferTxId` say which.
 
-The events are read newest first, 10 000 blocks per `eth_getLogs` call, no further back
-than the service's timeout and at most 100 000 blocks. A lookup the RPC refuses places a
-new order, as before.
+An order is reused only with at least 10 minutes of its timeout left, as it stands or
+extended: the node checks it again at download, and a reuse does not restart the timeout,
+so an order about to expire is ordered anew rather than extended for a download that would
+fail. A service whose timeout is 10 minutes or less is ordered anew every time. Orders mined
+in the last two blocks are not reused either, since a reorg could still drop them.
+
+The events are read newest first, 2 000 blocks per `eth_getLogs` call (halved while the RPC
+refuses the range), back to the first block inside the service's timeout and at most
+100 000 blocks or 100 rounds of reads. An order older than that is not found, and a new one
+is placed; so is one when the RPC fails otherwise.
 
 :::warning
 [`compute`](/docs/api/nautilus/compute) does not send a `transferTxId` with its inputs, so

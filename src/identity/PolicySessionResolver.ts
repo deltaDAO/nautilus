@@ -14,6 +14,12 @@
  *
  * Every flow resolves its sessions before it asks for fees or orders anything, so a
  * refusal costs nothing.
+ *
+ * A session id is a credential. The node accepts it for the download or compute job it was
+ * opened for, and anyone holding the id of a presented session can read the verifier's
+ * record of it through the node's passthrough (`checkSessionId` is not signed), the
+ * presentation (`vp_token`) included. Keep session ids out of logs, URLs you share and
+ * stores other parties can read.
  */
 import type { AssetV5 } from '@oceanprotocol/ddo-js'
 import {
@@ -26,9 +32,11 @@ import type { PolicyServerPayload } from '../ddo/types.js'
 import {
   type OceanNodeClient,
   OceanNodeError,
+  type PolicyCheckResult,
   PolicyDeniedError,
   type PolicyServerReply
 } from '../node/OceanNodeClient.js'
+import { warnOnce } from '../utils/warn.js'
 import {
   type CredentialProvider,
   emptyPolicyServerPayload
@@ -59,8 +67,22 @@ export interface PolicySessionResolverOptions {
    * example a `WaltIdCredentialProvider`. Not needed for a service gated by addresses only.
    */
   credentials?: CredentialProvider
-  /** Where verified sessions are kept. Defaults to an in-memory store. */
+  /**
+   * Where sessions are kept. Defaults to an in-memory store.
+   *
+   * Only sessions opened without a presentation (an address-only gate) go here, unless
+   * `persistPresentedSessions`: a presented session stays in memory, in this resolver.
+   */
   sessionStore?: SessionStore
+  /**
+   * Also keep presented sessions (a service whose `SSIpolicy` asks for credentials) in
+   * `sessionStore`. Default `false`.
+   *
+   * Opt in only for a store no one else can read: the id of a presented session lets anyone
+   * read the verifier's record of it through the node, the presentation (`vp_token`) and the
+   * holder's credentials included, until the verifier forgets it.
+   */
+  persistPresentedSessions?: boolean
   /**
    * How long, in milliseconds from `initiate`, a cached session is reused. An older entry
    * is deleted and the session opened again. `0` turns the cache off. Default:
@@ -80,18 +102,22 @@ export interface PolicySessionRequest {
   asset: AssetV5
   serviceId: string
   /**
-   * Sent to `initiate` as it is, and the cache key as it is. The policy server hashes this
-   * exact string into the session id and compares it with the address of the download or
-   * compute call, so it must be the string that call is made with: `signer.getAddress()`,
-   * unchanged (checksummed, for an ethers signer), which is what ocean.js signs the
-   * download and `computeStart` with.
+   * The consumer: `signer.getAddress()`, unchanged (checksummed, for an ethers signer),
+   * which is what ocean.js sends with the download and `computeStart`.
+   *
+   * The session is opened for, and cached under, `node.policySessionAddress(consumerAddress)`:
+   * the address the node forwards to the policy server, which hashes it into the session id
+   * as it is. For a Signer that is this string; for a JWT, the address in the token.
    */
   consumerAddress: string
 }
 
 export class PolicySessionResolver {
   private credentials?: CredentialProvider
+  /** Sessions opened without a presentation, and presented ones when persisted. */
   private readonly sessions: SessionStore
+  /** Presented sessions: `sessions` when persisted, else memory only. */
+  private readonly presentedSessions: SessionStore
   private readonly sessionTtlMs: number
 
   constructor(options: PolicySessionResolverOptions = {}) {
@@ -104,7 +130,17 @@ export class PolicySessionResolver {
 
     this.credentials = options.credentials
     this.sessions = options.sessionStore || new MemorySessionStore()
+    this.presentedSessions =
+      options.persistPresentedSessions || !options.sessionStore
+        ? this.sessions
+        : new MemorySessionStore()
     this.sessionTtlMs = sessionTtlMs
+
+    if (options.sessionStore && options.persistPresentedSessions)
+      warnOnce(
+        'persist-presented-sessions',
+        'persistPresentedSessions is on: presented policy-server sessions are kept in your sessionStore. Their ids let anyone read the presentation (vp_token) through the node until the verifier forgets them; keep that store private.'
+      )
   }
 
   /** Swaps the credential provider. Sessions already verified stay cached. */
@@ -115,13 +151,15 @@ export class PolicySessionResolver {
   /** Clears the cached sessions. */
   clearSessions(): void {
     this.sessions.clear()
+    this.presentedSessions.clear()
   }
 
   /**
    * The session for one service, as the payload for the node's `policyServer` slot.
    *
    * `null` when the node checks none: neither the asset nor the service has `credentials`,
-   * or the node has no policy server.
+   * or the node's status says it has no policy server (`hasPolicyServer`). When the status
+   * cannot be read, the session is opened all the same.
    *
    * Throws a `PolicyDeniedError` when the policy server refuses the consumer, or the
    * verifier does not accept the presentation; an `Error` before `initiate` when the
@@ -131,7 +169,7 @@ export class PolicySessionResolver {
   async resolve(
     request: PolicySessionRequest
   ): Promise<PolicyServerPayload | null> {
-    const { node, asset, serviceId, consumerAddress } = request
+    const { node, asset, serviceId } = request
 
     const service = getService(asset, serviceId)
     if (!service)
@@ -139,6 +177,7 @@ export class PolicySessionResolver {
 
     if (!hasCredentials(asset, service)) return null
 
+    const consumerAddress = node.policySessionAddress(request.consumerAddress)
     const key: SessionKey = {
       nodeUri: node.nodeUri,
       did: asset.id,
@@ -172,14 +211,12 @@ export class PolicySessionResolver {
       policyServer: emptyPolicyServerPayload('')
     })
 
-    if (!reply) return null
-
     const { sessionId, redirectUri } = readInitiateReply(reply)
 
     if (!sessionId)
       throw new OceanNodeError(
         'initializePolicyVerification',
-        `the policy server opened no session for service ${serviceId} of ${asset.id}: ${JSON.stringify(reply).slice(0, 200)}`
+        `the policy server opened no session for service ${serviceId} of ${asset.id}`
       )
 
     const presented = requiresPresentation(assetCredentials, serviceCredentials)
@@ -208,13 +245,17 @@ export class PolicySessionResolver {
           did: asset.id,
           serviceId,
           consumerAddress,
-          reason: `the verifier did not accept the presentation${describeFailedPolicies(check.result)}`,
-          details: check.result
+          reason: `the verifier did not accept the presentation${describeFailedPolicies(check.policyResults)}`,
+          policyResults: check.policyResults
         })
     }
 
     if (this.sessionTtlMs > 0)
-      this.sessions.set(key, { sessionId, createdAt, presented })
+      (presented ? this.presentedSessions : this.sessions).set(key, {
+        sessionId,
+        createdAt,
+        presented
+      })
 
     return emptyPolicyServerPayload(sessionId)
   }
@@ -232,11 +273,13 @@ export class PolicySessionResolver {
     key: SessionKey,
     node: OceanNodeClient
   ): Promise<string | undefined> {
-    const entry = this.sessions.get(key)
+    const presented = this.presentedSessions.get(key)
+    const store = presented ? this.presentedSessions : this.sessions
+    const entry = presented ?? this.sessions.get(key)
     if (!entry) return undefined
 
     if (!this.isFresh(entry)) {
-      this.sessions.delete(key)
+      store.delete(key)
       return undefined
     }
 
@@ -246,7 +289,7 @@ export class PolicySessionResolver {
         .catch(() => undefined)
 
       if (!check?.verified) {
-        this.sessions.delete(key)
+        store.delete(key)
         return undefined
       }
     }
@@ -268,78 +311,30 @@ export class PolicySessionResolver {
 // #region reply shapes
 
 /**
- * The session id and openid4vp request in an `initiate` answer.
- *
- * The policy server sends both as `message: { sessionId, redirectUri }`. The session id
- * is also in the redirect, as `sessionId=` (appended to the success redirect), `id=` (a
- * configured redirect with `$id`) or `state=` (the openid4vp request), which are read in
- * that order when `message.sessionId` is missing.
+ * The session id and openid4vp request in an `initiate` answer: the policy server (1.3)
+ * sends both as `message: { sessionId, redirectUri }`.
  */
 function readInitiateReply(reply: PolicyServerReply): {
   sessionId?: string
   redirectUri?: string
 } {
-  const { message } = reply
+  const { sessionId, redirectUri } = (
+    reply.message && typeof reply.message === 'object' ? reply.message : {}
+  ) as { sessionId?: unknown; redirectUri?: unknown }
 
-  const fields =
-    typeof message === 'string'
-      ? { redirectUri: message }
-      : message && typeof message === 'object'
-        ? (message as { sessionId?: unknown; redirectUri?: unknown })
-        : {}
-
-  const redirectUri =
-    typeof fields.redirectUri === 'string' && fields.redirectUri
-      ? fields.redirectUri
-      : undefined
-
-  const sessionId =
-    (typeof fields.sessionId === 'string' && fields.sessionId) ||
-    (redirectUri &&
-      (queryParam(redirectUri, 'sessionId') ||
-        queryParam(redirectUri, 'id') ||
-        queryParam(redirectUri, 'state'))) ||
-    undefined
-
-  return { sessionId, redirectUri }
-}
-
-function queryParam(uri: string, name: string): string | undefined {
-  const match = uri.match(new RegExp(`[?&]${name}=([^&#]*)`))
-
-  return match?.[1] ? decodeURIComponent(match[1]) : undefined
-}
-
-interface SessionRecord {
-  policyResults?: {
-    results?: {
-      policyResults?: {
-        is_success?: boolean
-        policy?: string
-        policyName?: string
-        description?: string
-        reason?: string
-      }[]
-    }[]
+  return {
+    sessionId:
+      typeof sessionId === 'string' && sessionId ? sessionId : undefined,
+    redirectUri:
+      typeof redirectUri === 'string' && redirectUri ? redirectUri : undefined
   }
 }
 
-/** The VC/VP policies the verifier reports as failed, as `" (policy: reason; …)"`. */
-function describeFailedPolicies(result: unknown): string {
-  const results = (result as SessionRecord | undefined)?.policyResults?.results
-  const failures: string[] = []
-
-  for (const entry of results || [])
-    for (const policy of entry?.policyResults || [])
-      if (policy?.is_success === false)
-        failures.push(
-          [
-            policy.policy || policy.policyName,
-            policy.description || policy.reason
-          ]
-            .filter(Boolean)
-            .join(': ')
-        )
+/** The VC/VP policies the verifier reports as failed, as `" (policy: error; …)"`. */
+function describeFailedPolicies(results: PolicyCheckResult[]): string {
+  const failures = results
+    .filter((result) => !result.success)
+    .map((result) => [result.policy, result.error].filter(Boolean).join(': '))
 
   return failures.length ? ` (${failures.join('; ')})` : ''
 }

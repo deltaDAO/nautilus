@@ -408,7 +408,7 @@ export const COMMANDS: Record<string, Command> = {
   },
   'compute:status': {
     role: 'consumer',
-    summary: 'Job status (70 means finished)',
+    summary: 'Job status (finished once dateFinished is set)',
     args: ['jobId'],
     run: (ctx, jobId) => getComputeStatus(ctx.consumer, jobId)
   },
@@ -564,10 +564,11 @@ export const COMMANDS: Record<string, Command> = {
   },
   'ssi:explain': {
     summary: 'Check a policy-server session, and name the policies that failed',
-    args: ['sessionId'],
+    args: ['sessionId', 'serviceEndpoint?'],
     role: 'consumer',
     identity: true,
-    run: (ctx, sessionId) => explainCredentialFailure(ctx.consumer, sessionId)
+    run: (ctx, sessionId, serviceEndpoint) =>
+      explainCredentialFailure(ctx.consumer, sessionId, serviceEndpoint)
   },
   'ssi:round-trip': {
     usesStore: true,
