@@ -193,6 +193,11 @@ its own bucket storage.
 `computeStop(jobId, agreementId?)` · `getComputeResultUrl(jobId, index)` ·
 `getComputeResult(jobId, index, offset?)` · `getComputeLogs(jobId)`
 
+Each `jobId` is `<environmentHash>-<jobId>`, as `computeStart` and `freeComputeStart`
+return it; a bare id throws before the request. Jobs come back under that id.
+`getComputeJob` returns `undefined` when the node does not know the job, and
+`getComputeLogs` streams only while the algorithm runs.
+
 ### Identity
 
 `hasPolicyServer()` · `initializePolicyVerification(request)` · `checkPolicySession(sessionId)` ·

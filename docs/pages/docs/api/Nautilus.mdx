@@ -128,8 +128,8 @@ There is no `encrypt` option: the pointer and the stored envelope are always nod
 
 ## Job ids
 
-Every compute method takes and returns the **bare** job id. Internally nautilus re-qualifies
-it to `<environmentHash>-<jobId>` for the result, logs and stop endpoints, because those
-address a job that way and a bare id resolves to an empty environment hash. You never have to
-do that yourself — and passing an already-qualified id is harmless, since the conversion is
-idempotent.
+A job id is `<environmentHash>-<jobId>`: the hash of the node's compute engine, which is
+also the first segment of the environment id, then the job's own id. `compute` and
+`freeCompute` return it, every job method takes it, and `getComputeStatus` reports the job
+under it. ocean-node addresses a job that way, and asked for the status of a bare id it
+lists every job of the consumer, so a bare id throws.

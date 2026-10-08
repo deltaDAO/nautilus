@@ -8,6 +8,8 @@ This is a call-by-call map. If something is not listed, it did not change.
 
 ## Upgrading from 2.0.0-beta.1
 
+### Policy-server sessions
+
 nautilus now opens the policy-server session itself, on every download and compute job that
 the node checks: whenever the node has a policy server (`isPSConfigured` in its status) and
 the asset or service has `credentials` (`{}` included). An asset gated by addresses only needs
@@ -72,6 +74,55 @@ has a policy server:
 ```ts
 assetBuilder.addCredentialAddresses(CredentialListTypes.ALLOW, ['0x…'])
 ```
+
+### Compute jobs
+
+**Job ids are `<environmentHash>-<jobId>`.** `compute()` and `freeCompute()` return the id
+the node gives a started job, and `getComputeStatus()`, `getComputeResult()`,
+`streamComputeResult()`, `getComputeLogs()` and `stopCompute()` take it. beta.1 shortened it
+to the bare `<jobId>`, and asked the node for that one; ocean-node then answers with every
+job of the consumer, and beta.1 took the first. A bare id now throws. To rebuild the full id
+from a bare one you stored, put the first segment of the job's environment id in front of it:
+
+```diff
+- await nautilus.getComputeStatus({ jobId: bareJobId })
++ await nautilus.getComputeStatus({
++   jobId: `${environment.id.split('-')[0]}-${bareJobId}`
++ })
+```
+
+`getComputeStatus()` returns `undefined` for a job the node does not know, and reports the
+job under the id you passed. It is typed `NodeComputeJob`, which adds the node's
+`environment`, `resources` and `payment` fields to `ComputeJob`. The same applies to
+`OceanNodeClient`'s `computeStatus()`, `getComputeJob()`, `computeStop()`,
+`getComputeResultUrl()`, `getComputeResult()` and `getComputeLogs()`.
+
+**`streamComputeResult()` streams the job's `output`** (`outputs.tar`), as
+`getComputeResult()` does, rather than the result at index 0 (the image log). Pass
+`resultIndex` for another result. It now also throws for a job that has not finished.
+
+**`getComputeLogs()` returns a `ComputeResultStream`** (`AsyncIterable<Uint8Array>`), not
+`unknown`. Once the job has finished (status `70` or above), it streams the job's
+`algorithmLog` result, since the node serves live logs only while the algorithm runs:
+
+```diff
+- const logs = await nautilus.getComputeLogs({ jobId })
++ for await (const chunk of await nautilus.getComputeLogs({ jobId }))
++   process.stdout.write(chunk)
+```
+
+**Default resources are at least 1 CPU, 1 GB of RAM and 1 GB of disk.** A resource left out
+of `resources` defaulted to the environment's minimum, which ocean-node 4.2 environments
+usually set to `0`, and a `0` means no CPU or memory limit for the job. `cpu`, `ram` and
+`disk` now default to at least `1` within the resource's maximum, other resources (GPUs) to
+their minimum. Resources you list are sent as they are, and the ones you leave out are
+filled in. A paid job's escrow quote rises with the larger request; pass `resources` to
+choose.
+
+**Algorithm services carry no `compute` block.** nautilus publishes and edits an asset of
+type `algorithm` without the dataset-side compute settings (`allowRawAlgorithm`,
+`allowNetworkAccess`, `publisherTrustedAlgorithms`, `publisherTrustedAlgorithmPublishers`)
+on its services. ocean-node reads them from the dataset's service only.
 
 ## Upgrading from 2.0.0-beta.0
 
@@ -632,6 +683,11 @@ Compute changed the most, because C2D v2 is a different model.
 
 `stopCompute` and `getComputeStatus` no longer need a `providerUri`; they default to the
 node the instance is configured with.
+
+A job is addressed by the `jobId` `compute()` and `freeCompute()` return,
+`<environmentHash>-<jobId>`. `getComputeResult()` and `streamComputeResult()` read the job's
+`output` result, `outputs.tar`, a tar archive of what the algorithm wrote to its outputs
+folder.
 
 ## 10. Credential-gated assets
 

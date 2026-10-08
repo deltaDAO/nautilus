@@ -38,4 +38,8 @@ No `orders` or `initializeResults`, because nothing was ordered or quoted.
 - Type: `FreeComputeConfig`
 
 The same as [`ComputeConfig`](/docs/api/nautilus/compute) minus `paymentToken` and
-`maxJobDuration`. Resources default to the environment's `free.resources`.
+`maxJobDuration`. Resources default from the environment's `free.resources`: each one's
+minimum, raised to `1` for `cpu`, `ram` and `disk` within its maximum (see
+[`resources`](/docs/api/nautilus/compute#resources-optional)).
+
+Each job's `jobId` is `<environmentHash>-<jobId>`, the id every job method takes.

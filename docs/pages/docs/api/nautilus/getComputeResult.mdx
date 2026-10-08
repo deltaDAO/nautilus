@@ -1,6 +1,6 @@
 # getComputeResult
 
-Get a download URL for a finished job's result.
+Get a download URL for a finished job's result: by default its `output`, `outputs.tar`.
 
 ## Usage
 
@@ -28,6 +28,10 @@ Both `70` (`JobFinished`) and `71` (`JobSettle`) count as terminal: by the time 
 reaches `71` the algorithm has run and its outputs are listed, and only the
 payment-claim cron is outstanding. There is no need to wait through `71`.
 
+The `output` result is `outputs.tar`, a **tar archive** of what the algorithm wrote to its
+outputs folder. It is listed only when the results stay on the node, not when the job was
+started with `output` storage or an `outputBucketId`.
+
 To stream a large result instead of downloading it through a URL, use
 [`streamComputeResult`](/docs/api/nautilus/streamComputeResult).
 
@@ -43,12 +47,16 @@ To stream a large result instead of downloading it through a URL, use
 
 - Type: `string`
 
+`<environmentHash>-<jobId>`, as [`compute`](/docs/api/nautilus/compute) returns it.
+
 ##### resultIndex (optional)
 
 - Type: `number`
 
-Which result to fetch. Defaults to the first result of type `output`. A job also produces
-`algorithmLog`, `configrationLog` and `publishLog` entries.
+The `index` of the result to fetch, from the job's `results`. Defaults to its `output`
+result. On ocean-node 4.2 a finished job lists `imageLog` (`image.log`),
+`configurationLog` (`configuration.log`), `algorithmLog` (`algorithm.log`) and `output`
+(`outputs.tar`), in that order, and `publishLog` (`publish.log`) when the node wrote one.
 
 ##### nodeUri (optional)
 

@@ -21,9 +21,11 @@ pass `nodeUri` only for a job running on a different node.
 
 ## Returns
 
-- Type: `ComputeJob | undefined`
+- Type: `NodeComputeJob | undefined`
 
-`undefined` when the node does not know the job. Status `70` (`JobFinished`) and `71`
+The job, under the `jobId` you passed, with the node's `environment`, `resources` and
+`payment` beside the `ComputeJob` fields. `undefined` when the node does not know the job;
+it is never another job of yours. Status `70` (`JobFinished`) and `71`
 (`JobSettle`) both mean the results are ready — either is enough for
 [`getComputeResult`](/docs/api/nautilus/getComputeResult) to return a URL.
 
@@ -38,6 +40,12 @@ pass `nodeUri` only for a job running on a different node.
 ##### jobId
 
 - Type: `string`
+
+`<environmentHash>-<jobId>`, as [`compute`](/docs/api/nautilus/compute) and
+[`freeCompute`](/docs/api/nautilus/freeCompute) return it. A bare id throws: asked for one,
+ocean-node lists every job of the consumer instead of filtering. To rebuild the full id
+from a bare one, put the first segment of the job's environment id and a dash in front of
+it.
 
 ##### nodeUri (optional)
 

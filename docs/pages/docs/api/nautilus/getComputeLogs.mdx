@@ -1,8 +1,10 @@
 # getComputeLogs
 
-Read a job's streamable logs.
+Read the algorithm's logs.
 
-New in v2. Useful while a job is still running, when there is no result to fetch yet.
+New in v2. While the job runs, the logs stream live from the container. Once it has finished
+(status `70` or above), the node no longer serves them live, so this streams the job's
+`algorithmLog` result (`algorithm.log`) instead.
 
 ## Usage
 
@@ -12,14 +14,16 @@ import { Wallet } from 'ethers'
 const nautilus = await Nautilus.create(new Wallet('0x1234'))
 // ---cut---
 const logs = await nautilus.getComputeLogs({ jobId: 'a-job-id' }) // [!code focus]
+
+for await (const chunk of logs) process.stdout.write(chunk)
 ```
 
 ## Returns
 
-- Type: `unknown`
+- Type: `ComputeResultStream`
 
-Whatever the node streams. The shape is not fixed by ocean.js, so nautilus passes it
-through rather than inventing a type for it.
+An `AsyncIterable<Uint8Array>` of the log text. Throws when the node does not know the job,
+or a finished job has no `algorithmLog` result.
 
 ## Parameters
 

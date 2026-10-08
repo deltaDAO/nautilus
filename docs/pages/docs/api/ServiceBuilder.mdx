@@ -131,6 +131,9 @@ const service = new ServiceBuilder<ServiceTypes.COMPUTE, FileTypes.URL>({
   .build()
 ```
 
+These settings belong to datasets: on an asset of type `algorithm`, nautilus publishes the
+service without them.
+
 Trusted algorithms are staged here and resolved to container and file checksums at publish
 time, so a publisher cannot swap the container afterwards. DDO v5 requires a `serviceId` per
 trusted algorithm, so `serviceIds` is finally honoured — see
