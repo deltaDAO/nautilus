@@ -142,6 +142,9 @@ function policyNode(
     forEndpoint() {
       return client
     },
+    policySessionAddress(address: string) {
+      return address
+    },
     async hasPolicyServer() {
       calls.push('hasPolicyServer')
       return 'policyServer' in options ? options.policyServer : true
@@ -154,7 +157,7 @@ function policyNode(
     async checkPolicySession(sessionId: string) {
       calls.push('checkSessionId')
       checkedSessions.push(sessionId)
-      return options.check ?? { verified: true, result: {} }
+      return options.check ?? { verified: true, policyResults: [] }
     },
     async resolve(did: string) {
       calls.push('resolve')
@@ -259,16 +262,6 @@ describe('OceanNodeClient policy server', () => {
     return fetch
   }
 
-  it('returns null without asking when the node status says it has no policy server', async () => {
-    status(false)
-    const fetch = answer(200, initiated())
-
-    expect(
-      await client('a-session-token').initializePolicyVerification(request)
-    ).to.equal(null)
-    expect(fetch).not.toHaveBeenCalled()
-  })
-
   it('reads the node status once per client', async () => {
     const getNodeStatus = status(true)
     const node = client('a-session-token')
@@ -278,13 +271,17 @@ describe('OceanNodeClient policy server', () => {
     expect(getNodeStatus).toHaveBeenCalledOnce()
   })
 
-  it('returns null on a 404 with no body, how a node with no policy server answers', async () => {
-    status(undefined)
+  it('leaves the policy-server question to the resolver: a 404 with no body throws with its status', async () => {
+    const getNodeStatus = status(false)
     answer(404, '')
 
-    expect(
-      await client('a-session-token').initializePolicyVerification(request)
-    ).to.equal(null)
+    const thrown = await client('a-session-token')
+      .initializePolicyVerification(request)
+      .catch((caught) => caught)
+
+    expect(thrown).to.be.instanceOf(OceanNodeError)
+    expect(thrown.message).to.match(/404/)
+    expect(getNodeStatus).not.toHaveBeenCalled()
   })
 
   it("returns the policy server's answer", async () => {
@@ -323,17 +320,138 @@ describe('OceanNodeClient policy server', () => {
     expect(thrown.message).to.match(/Nothing was ordered or paid/)
   })
 
-  it('throws a PolicyDeniedError on a 401 from the node, even when the status is unknown', async () => {
-    status(undefined)
-    answer(401, 'Invalid nonce or signature')
+  it("throws an OceanNodeError with the status for the node's own 401, 404 and 400, never a PolicyDeniedError", async () => {
+    for (const [httpStatus, body] of [
+      [401, 'Auth not configured'],
+      [401, 'Invalid signature'],
+      [404, 'Not found'],
+      [400, 'fetch failed'],
+      [403, 'Too many active connections']
+    ] as const) {
+      answer(httpStatus, body)
+
+      const thrown = await client('a-session-token')
+        .initializePolicyVerification(request)
+        .catch((caught) => caught)
+
+      expect(thrown).to.be.instanceOf(OceanNodeError)
+      expect(thrown).not.to.be.instanceOf(PolicyDeniedError)
+      expect(thrown.message).to.include(String(httpStatus))
+      expect(thrown.message).to.include(body)
+    }
+  })
+
+  it("throws an OceanNodeError for the policy server's own 5xx, which is not a refusal", async () => {
+    answer(500, { success: false, httpStatus: 500, message: 'verifier down' })
+
+    const thrown = await client('a-session-token')
+      .initializePolicyVerification(request)
+      .catch((caught) => caught)
+
+    expect(thrown).to.be.instanceOf(OceanNodeError)
+    expect(thrown.message).to.match(/500/)
+  })
+
+  it('bounds the reason and strips its control characters', async () => {
+    answer(403, {
+      success: false,
+      httpStatus: 403,
+      message: { error: `denied\u001b[31m\nforged line ${'x'.repeat(5000)}` }
+    })
 
     const thrown = await client('a-session-token')
       .initializePolicyVerification(request)
       .catch((caught) => caught)
 
     expect(thrown).to.be.instanceOf(PolicyDeniedError)
-    expect(thrown.code).to.equal(401)
-    expect(thrown.reason).to.equal('Invalid nonce or signature')
+    expect(thrown.reason.length).to.be.at.most(201)
+    expect(thrown.reason).to.match(/^denied \[31m forged line x+…$/)
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting they are gone
+    expect(thrown.message).not.to.match(/[\u0000-\u001f]/)
+  })
+
+  it('retries once when the node rejects the nonce, with a Signer', async () => {
+    const wallet = Wallet.createRandom()
+    const getNonce = vi
+      .spyOn(ProviderInstance, 'getNonce')
+      .mockResolvedValueOnce(1)
+      .mockResolvedValueOnce(2)
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response('nonce: 2 is not a valid nonce', { status: 401 })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(initiated()), { status: 200 })
+      )
+    vi.stubGlobal('fetch', fetch)
+
+    expect(
+      await client(wallet).initializePolicyVerification({
+        ...request,
+        consumerAddress: wallet.address
+      })
+    ).to.deep.equal(initiated())
+    expect(getNonce).toHaveBeenCalledTimes(2)
+    expect(
+      fetch.mock.calls.map(([, init]) => JSON.parse(init.body).nonce)
+    ).to.deep.equal(['2', '3'])
+  })
+
+  it('does not retry a rejected nonce with a JWT, which carries none', async () => {
+    const fetch = answer(401, 'nonce: 2 is not a valid nonce')
+
+    await expectThrowsAsync(
+      () => client('a-session-token').initializePolicyVerification(request),
+      /not a valid nonce/
+    )
+    expect(fetch).toHaveBeenCalledOnce()
+  })
+
+  it("over P2P, reads the policy server's refusal behind ocean.js's prefix, and the node's own errors as OceanNodeErrors", async () => {
+    const p2p = new OceanNodeClient({
+      nodeUri: '16Uiu2HAmPeer',
+      chainId: CHAIN_ID,
+      auth: 'a-session-token'
+    })
+    const refusal = JSON.stringify({
+      success: false,
+      httpStatus: 403,
+      message: { error: 'Access denied: Address not allowed at asset level.' }
+    })
+    const initiate = vi
+      .spyOn(ProviderInstance, 'initializePSVerification')
+      .mockRejectedValueOnce(
+        new Error(`P2P command error: ${refusal}`, {
+          cause: new Error(refusal)
+        })
+      )
+      .mockRejectedValueOnce(
+        new Error('P2P command error: Not found', {
+          cause: new Error('Not found')
+        })
+      )
+      .mockResolvedValueOnce(initiated() as never)
+
+    const denied = await p2p
+      .initializePolicyVerification(request)
+      .catch((caught) => caught)
+    expect(denied).to.be.instanceOf(PolicyDeniedError)
+    expect(denied).to.include({
+      code: 403,
+      reason: 'Access denied: Address not allowed at asset level.'
+    })
+
+    const notFound = await p2p
+      .initializePolicyVerification(request)
+      .catch((caught) => caught)
+    expect(notFound).to.be.instanceOf(OceanNodeError)
+    expect(notFound.message).to.match(/Not found/)
+
+    expect(await p2p.initializePolicyVerification(request)).to.deep.equal(
+      initiated()
+    )
+    expect(initiate).toHaveBeenCalledTimes(3)
   })
 
   it('throws an OceanNodeError on a 5xx, a rate limit or a network error', async () => {
@@ -443,45 +561,199 @@ describe('OceanNodeClient policy server', () => {
     )
   })
 
-  it('reports a verified session', async () => {
-    vi.spyOn(ProviderInstance, 'PolicyServerPassthrough').mockResolvedValue({
+  /** A walt.id verifier session record, with the presentation in it. */
+  function sessionRecord(verificationResult: boolean) {
+    return {
+      id: SESSION,
+      verificationResult,
+      tokenResponse: { vp_token: 'eyJ.the-presentation.sig' },
+      policyResults: {
+        results: [
+          {
+            credential: 'VerifiableId',
+            policyResults: [
+              {
+                policy: 'signature',
+                is_success: true,
+                result: { vc: { credentialSubject: { name: 'Alice' } } }
+              },
+              {
+                policy: 'revoked-status-list',
+                is_success: verificationResult,
+                ...(verificationResult
+                  ? { result: {} }
+                  : {
+                      error:
+                        'credential is revoked\n\tat id.walt.policies.Revocation'
+                    })
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+
+  it('reports a verified session with its per-policy results only', async () => {
+    const fetch = answer(200, {
       success: true,
-      message: { verificationResult: true }
+      httpStatus: 200,
+      message: sessionRecord(true)
     })
 
-    expect(
-      await client('a-session-token').checkPolicySession(SESSION)
-    ).to.deep.equal({ verified: true, result: { verificationResult: true } })
-  })
+    const check = await client('a-session-token').checkPolicySession(SESSION)
 
-  it('reports an unverified session, which the policy server answers with an error status', async () => {
-    // ocean.js throws the body of a failed answer as the error message.
-    const record = { verificationResult: false, policyResults: {} }
-    const passthrough = vi
-      .spyOn(ProviderInstance, 'PolicyServerPassthrough')
-      .mockRejectedValue(
-        new Error(
-          JSON.stringify({ success: false, httpStatus: 500, message: record })
-        )
-      )
+    expect(check).to.deep.equal({
+      verified: true,
+      policyResults: [
+        { credential: 'VerifiableId', policy: 'signature', success: true },
+        {
+          credential: 'VerifiableId',
+          policy: 'revoked-status-list',
+          success: true
+        }
+      ]
+    })
+    expect(JSON.stringify(check)).not.to.match(
+      /vp_token|the-presentation|Alice/
+    )
 
-    expect(
-      await client('a-session-token').checkPolicySession(SESSION)
-    ).to.deep.equal({ verified: false, result: record })
-    expect(passthrough.mock.calls[0][1]).to.deep.equal({
+    const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).to.equal(`${NODE}/api/services/PolicyServerPassthrough`)
+    expect(JSON.parse(String(init.body))).to.deep.equal({
       policyServerPassthrough: { action: 'checkSessionId', sessionId: SESSION }
     })
   })
 
-  it('throws an OceanNodeError when the session cannot be checked at all', async () => {
-    vi.spyOn(ProviderInstance, 'PolicyServerPassthrough').mockRejectedValue(
-      new Error('PolicyServerPassthrough failed: fetch failed.')
-    )
+  it('reports an unverified session, which the policy server answers with an error status', async () => {
+    answer(500, {
+      success: false,
+      httpStatus: 500,
+      message: sessionRecord(false)
+    })
 
+    const check = await client('a-session-token').checkPolicySession(SESSION)
+
+    expect(check.verified).to.equal(false)
+    expect(check.policyResults[1]).to.deep.equal({
+      credential: 'VerifiableId',
+      policy: 'revoked-status-list',
+      success: false,
+      error: 'credential is revoked'
+    })
+    expect(JSON.stringify(check)).not.to.match(/vp_token|the-presentation/)
+  })
+
+  it('throws an OceanNodeError when the session cannot be checked at all', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('fetch failed')
+      })
+    )
     await expectThrowsAsync(
       () => client('a-session-token').checkPolicySession(SESSION),
       /fetch failed/
     )
+
+    answer(404, 'Not found')
+    await expectThrowsAsync(
+      () => client('a-session-token').checkPolicySession(SESSION),
+      /404/
+    )
+  })
+
+  it('refuses an answer larger than a policy-server reply can be', async () => {
+    answer(200, 'x'.repeat(300 * 1024))
+
+    await expectThrowsAsync(
+      () => client('a-session-token').checkPolicySession(SESSION),
+      /larger than/
+    )
+  })
+})
+
+describe('OceanNodeClient.forEndpoint', () => {
+  const OTHER = 'https://other.test.invalid'
+
+  function root(
+    auth: ConstructorParameters<typeof OceanNodeClient>[0]['auth']
+  ) {
+    return new OceanNodeClient({ nodeUri: NODE, chainId: CHAIN_ID, auth })
+  }
+
+  it('hands out one client per normalised node URI, and itself for its own', () => {
+    const node = root('a-session-token')
+    const other = node.forEndpoint(`${OTHER}/`)
+
+    expect(node.forEndpoint(`${NODE}/`)).to.equal(node)
+    expect(node.forEndpoint('HTTPS://Other.Test.Invalid:443')).to.equal(other)
+    expect(other.forEndpoint(NODE)).to.equal(node)
+    expect(other.forEndpoint(OTHER)).to.equal(other)
+  })
+
+  it('shares the hasPolicyServer answer between the calls for one node', async () => {
+    const getNodeStatus = vi
+      .spyOn(ProviderInstance, 'getNodeStatus')
+      .mockResolvedValue({ isPSConfigured: true } as never)
+    const node = root('a-session-token')
+
+    await node.forEndpoint(OTHER).hasPolicyServer()
+    await node.forEndpoint(OTHER).hasPolicyServer()
+
+    expect(getNodeStatus).toHaveBeenCalledOnce()
+  })
+
+  it('replaces a client whose auth no longer matches', () => {
+    const node = root('a-session-token')
+    const before = node.forEndpoint(OTHER)
+
+    node.setAuth('another-token')
+
+    const after = node.forEndpoint(OTHER)
+    expect(after).not.to.equal(before)
+    expect(after.getAuth()).to.equal('another-token')
+  })
+
+  it('signs parallel initiates to one node with distinct nonces', async () => {
+    const wallet = Wallet.createRandom()
+    let stored = 0
+    vi.spyOn(ProviderInstance, 'getNonce').mockImplementation(
+      async () => stored
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        // The node: a nonce is accepted once, and only above the stored one.
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        const nonce = Number(JSON.parse(String(init.body)).nonce)
+        if (nonce <= stored)
+          return new Response(`nonce: ${nonce} is not a valid nonce`, {
+            status: 401
+          })
+        stored = nonce
+        return new Response(JSON.stringify(initiated()), { status: 200 })
+      })
+    )
+    const node = root(wallet)
+    const initiate = () =>
+      node.forEndpoint(OTHER).initializePolicyVerification({
+        documentId: ASSET_DID,
+        serviceId: SERVICE_ID,
+        consumerAddress: wallet.address,
+        policyServer: {
+          sessionId: '',
+          successRedirectUri: '',
+          errorRedirectUri: '',
+          responseRedirectUri: '',
+          presentationDefinitionUri: ''
+        }
+      })
+
+    const replies = await Promise.all([initiate(), initiate(), initiate()])
+
+    expect(replies).to.deep.equal([initiated(), initiated(), initiated()])
+    expect(stored).to.equal(3)
   })
 })
 
@@ -528,20 +800,17 @@ describe('PolicySessionResolver', () => {
     }
   })
 
-  it('falls back to the redirect: sessionId=, then id=, then state=', async () => {
-    for (const [redirectUri, expected] of [
-      [
-        'https://m.test.invalid/ok?id=from-id&sessionId=from-session',
-        'from-session'
-      ],
-      ['https://m.test.invalid/ok?id=from-id', 'from-id'],
-      ['openid4vp://authorize?state=from-state&client_id=x', 'from-state']
+  it('reads no session id from the redirect: sessionId=, id= and state= are not message.sessionId', async () => {
+    for (const redirectUri of [
+      'https://m.test.invalid/ok?sessionId=from-session',
+      'https://m.test.invalid/ok?id=from-id',
+      'openid4vp://authorize?state=from-state&client_id=x'
     ]) {
       const { client } = policyNode({
         initiate: async () => initiated(null, redirectUri)
       })
 
-      expect((await resolve(client))?.sessionId).to.equal(expected)
+      await expectThrowsAsync(() => resolve(client), /opened no session/)
     }
   })
 
@@ -582,13 +851,77 @@ describe('PolicySessionResolver', () => {
     expect(calls).not.to.include('initiate')
   })
 
-  it('returns null when initiate finds no policy server (404)', async () => {
-    const { client } = policyNode({
-      policyServer: undefined,
-      initiate: async () => null
-    })
+  it('opens the session when the node status does not say whether it has a policy server', async () => {
+    const { client, calls } = policyNode({ policyServer: undefined })
 
-    expect(await resolve(client)).to.equal(null)
+    expect((await resolve(client))?.sessionId).to.equal(SESSION)
+    expect(calls).to.deep.equal(['hasPolicyServer', 'initiate'])
+  })
+
+  it("opens and caches a JWT client's session for the token's address, the one the node forwards", async () => {
+    vi.spyOn(ProviderInstance, 'getNodeStatus').mockResolvedValue({
+      isPSConfigured: true
+    } as never)
+    const fetch = vi.fn(
+      async () => new Response(JSON.stringify(initiated()), { status: 200 })
+    )
+    vi.stubGlobal('fetch', fetch)
+    const tokenAddress = CONSUMER.toLowerCase()
+    const payload = btoa(JSON.stringify({ address: tokenAddress }))
+      .replace(/=+$/, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+    const node = new OceanNodeClient({
+      nodeUri: NODE,
+      chainId: CHAIN_ID,
+      auth: `eyJhbGciOiJIUzI1NiJ9.${payload}.signature`
+    })
+    const store = new MemorySessionStore()
+
+    await resolve(node, new PolicySessionResolver({ sessionStore: store }))
+
+    const init = (fetch.mock.calls[0] as unknown as [string, RequestInit])[1]
+    expect(JSON.parse(String(init.body)).consumerAddress).to.equal(tokenAddress)
+    expect(
+      store.get({
+        nodeUri: NODE,
+        did: ASSET_DID,
+        serviceId: SERVICE_ID,
+        consumerAddress: tokenAddress
+      })?.sessionId
+    ).to.equal(SESSION)
+  })
+
+  it('keeps presented sessions out of a custom store unless persistPresentedSessions', async () => {
+    const key: SessionKey = {
+      nodeUri: NODE,
+      did: ASSET_DID,
+      serviceId: SERVICE_ID,
+      consumerAddress: CONSUMER
+    }
+
+    for (const persistPresentedSessions of [false, true]) {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const { client, calls } = policyNode({
+        initiate: async () => initiatedWithPresentation()
+      })
+      const store = new MemorySessionStore()
+      const resolver = new PolicySessionResolver({
+        credentials: recordingProvider().provider,
+        sessionStore: store,
+        persistPresentedSessions
+      })
+
+      await resolve(client, resolver, ssiAsset())
+      await resolve(client, resolver, ssiAsset())
+
+      expect(store.get(key)?.sessionId).to.equal(
+        persistPresentedSessions ? SESSION : undefined
+      )
+      // Reused from memory either way.
+      expect(calls.filter((call) => call === 'initiate')).to.have.length(1)
+      warn.mockRestore()
+    }
   })
 
   it('caches neither a refusal nor an unverified presentation', async () => {
@@ -614,7 +947,7 @@ describe('PolicySessionResolver', () => {
 
     const unverified = policyNode({
       initiate: async () => initiatedWithPresentation(),
-      check: { verified: false, result: {} }
+      check: { verified: false, policyResults: [] }
     })
     const withProvider = new PolicySessionResolver({
       credentials: recordingProvider().provider
@@ -667,23 +1000,15 @@ describe('PolicySessionResolver', () => {
       initiate: async () => initiatedWithPresentation(),
       check: {
         verified: false,
-        result: {
-          verificationResult: false,
-          policyResults: {
-            results: [
-              {
-                policyResults: [
-                  { is_success: true, policy: 'signature' },
-                  {
-                    is_success: false,
-                    policy: 'revoked-status-list',
-                    description: 'credential is revoked'
-                  }
-                ]
-              }
-            ]
+        policyResults: [
+          { credential: 'VerifiableId', policy: 'signature', success: true },
+          {
+            credential: 'VerifiableId',
+            policy: 'revoked-status-list',
+            success: false,
+            error: 'credential is revoked'
           }
-        }
+        ]
       }
     })
 
@@ -697,6 +1022,8 @@ describe('PolicySessionResolver', () => {
     expect(thrown.reason).to.match(
       /did not accept the presentation \(revoked-status-list: credential is revoked\)/
     )
+    expect(thrown.policyResults).to.have.length(2)
+    expect(thrown).not.to.have.property('details')
   })
 
   it('caches a session per account and per node, and sends the address as it is', async () => {
@@ -913,7 +1240,7 @@ describe('PolicySessionResolver', () => {
 
       await resolve(client, resolver, ssiAsset())
 
-      check.mockResolvedValueOnce({ verified: false, result: {} })
+      check.mockResolvedValueOnce({ verified: false, policyResults: [] })
 
       expect((await resolve(client, resolver, ssiAsset()))?.sessionId).to.equal(
         'session-2'
@@ -1009,7 +1336,7 @@ describe('access() with a policy server', () => {
     const { client, calls } = policyNode({
       asset: ssiAsset(),
       initiate: async () => initiatedWithPresentation(),
-      check: { verified: false, result: {} }
+      check: { verified: false, policyResults: [] }
     })
 
     const thrown = await download(
@@ -1059,6 +1386,9 @@ describe('compute() with a policy server', () => {
       nodeUri: NODE,
       async resolve(did: string) {
         return assets[did]
+      },
+      policySessionAddress(address: string) {
+        return address
       },
       async hasPolicyServer() {
         return true

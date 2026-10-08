@@ -15,18 +15,46 @@
  *     `true` or `false`. `select`: a string that is one of the option keys. A `select`
  *     without a single usable option is a broken declaration, and any value for it is
  *     refused.
- *   - Any other declared type is only checked for presence.
+ *   - Any other declared type: a string, a finite number or a boolean. An object or an
+ *     array would reach a download URL as `[object Object]`.
  *
  * Keys the asset does not declare are refused when it declares at least one parameter, so a
- * typo does not reach the endpoint unnoticed. An asset that declares none takes the values
- * as they are: there is nothing to check them against.
+ * typo does not reach the endpoint unnoticed. An asset that declares none takes any keys,
+ * each with a string, a finite number or a boolean.
+ *
+ * Messages never repeat a value, only its type and length, so a secret typed into the wrong
+ * field does not end up in a log. Parameter names and option keys are the publisher's text:
+ * they are shown without control characters, cut to a bounded length, and lists of them are
+ * capped.
  *
  * What is forwarded is the values without their absent entries: a key set to `undefined`
  * or `null` is dropped, so it never reaches the node as `null` (or as `?key=null` in a
  * download URL).
  */
 import { getMetadata } from '../ddo/read.js'
-import type { ConsumerParameterV5 } from '../ddo/types.js'
+
+/** Longest parameter name or option key a message shows. */
+const MAX_NAME_LENGTH = 40
+/** Longest DID or service id a message shows: a hash-based one is 64 to 72 characters. */
+const MAX_ID_LENGTH = 100
+/** Most names, options or issues a message lists. */
+const MAX_LISTED = 10
+
+/** What a value of any other type has to be: it may end up in a URL. */
+const SCALAR = 'a string, a finite number or a boolean'
+
+/**
+ * A consumer parameter as an asset declares it. Only `name`, `type`, `required` and
+ * `options` are read, so every shape fits: nautilus's `ConsumerParameterV5`, the v5
+ * `consumerParameters` of a `ServiceV5` or an `AlgorithmV5`, and ddo-js's v4
+ * `ConsumerParameter`, whose `options` are a JSON string.
+ */
+export interface DeclaredConsumerParameter {
+  name: string
+  type: string
+  required?: boolean
+  options?: unknown
+}
 
 /** Why a consumer-parameter value was refused. */
 export type ConsumerParameterRefusal =
@@ -34,7 +62,10 @@ export type ConsumerParameterRefusal =
   | 'not-object'
   /** A required parameter has no value. */
   | 'missing'
-  /** The value does not have the declared type. */
+  /**
+   * The value does not have the declared type, or, for a parameter of another type or a key
+   * of an asset that declares none, is not a string, a finite number or a boolean.
+   */
   | 'wrong-type'
   /** A `select` value is not one of its options. */
   | 'not-an-option'
@@ -48,7 +79,7 @@ export type ConsumerParameterRefusal =
 
 /** One refused value. */
 export interface ConsumerParameterIssue {
-  /** The parameter, or the undeclared key. Empty for `'not-object'`. */
+  /** The parameter, or the undeclared key, as given. Empty for `'not-object'`. */
   parameter: string
   reason: ConsumerParameterRefusal
   message: string
@@ -76,12 +107,14 @@ export class ConsumerParameterError extends Error {
     target: ConsumerParameterTarget,
     issues: ConsumerParameterIssue[]
   ) {
+    const listed = issues.slice(0, MAX_LISTED).map((issue) => issue.message)
+    if (issues.length > MAX_LISTED)
+      listed.push(`${issues.length - MAX_LISTED} more in error.issues`)
+
     super(
-      `Refusing ${target.field} for service ${target.serviceId} of ${target.did}: ${issues
-        .map((issue) => issue.message)
-        .join(
-          '; '
-        )}. Nothing was sent: consumer parameters are checked before the node is asked for a fee or any order is placed.`
+      `Refusing ${target.field} for service ${clean(target.serviceId, MAX_ID_LENGTH)} of ${clean(target.did, MAX_ID_LENGTH)}: ${listed.join(
+        '; '
+      )}. Nothing was sent: consumer parameters are checked before the node is asked for a fee or any order is placed.`
     )
     this.name = 'ConsumerParameterError'
     this.did = target.did
@@ -95,13 +128,16 @@ export class ConsumerParameterError extends Error {
  * Checks `values` against the declared consumer parameters and returns every problem, or
  * an empty array when they fit. Useful to validate a form before calling `access()` or
  * `compute()`, which run the same check and throw a `ConsumerParameterError`.
+ *
+ * `declared` is a service's `consumerParameters` for `userdata`, or
+ * `getAlgorithmConsumerParameters(algorithm)` for an algorithm's `algocustomdata`.
  */
 export function checkConsumerParameters(
-  declared: readonly ConsumerParameterV5[] | undefined,
+  declared: readonly DeclaredConsumerParameter[] | undefined,
   values: unknown
 ): ConsumerParameterIssue[] {
   const parameters = (Array.isArray(declared) ? declared : []).filter(
-    (parameter): parameter is ConsumerParameterV5 =>
+    (parameter): parameter is DeclaredConsumerParameter =>
       typeof parameter?.name === 'string' && parameter.name !== ''
   )
 
@@ -127,7 +163,7 @@ export function checkConsumerParameters(
         issues.push({
           parameter: parameter.name,
           reason: 'missing',
-          message: `'${parameter.name}' is required`
+          message: `${quote(parameter.name)} is required`
         })
       continue
     }
@@ -136,16 +172,20 @@ export function checkConsumerParameters(
     if (issue) issues.push(issue)
   }
 
-  if (parameters.length) {
-    const names = parameters.map((parameter) => parameter.name)
+  const names = parameters.map((parameter) => parameter.name)
+  const declaredNames = new Set(names)
 
-    for (const key of Object.keys(given))
-      if (!names.includes(key))
-        issues.push({
-          parameter: key,
-          reason: 'unknown',
-          message: `'${key}' is not a declared parameter (declared: ${quoteAll(names)})`
-        })
+  for (const [key, value] of Object.entries(given)) {
+    if (declaredNames.has(key)) continue
+
+    if (names.length)
+      issues.push({
+        parameter: key,
+        reason: 'unknown',
+        message: `${quote(key)} is not a declared parameter (declared: ${quoteAll(names)})`
+      })
+    else if (value !== undefined && value !== null && !isScalar(value))
+      issues.push(wrongTypeIssue(key, value, SCALAR))
   }
 
   return issues
@@ -154,10 +194,10 @@ export function checkConsumerParameters(
 /**
  * Throws a `ConsumerParameterError` listing every problem `checkConsumerParameters` finds.
  * Otherwise returns the values to forward: a copy without the keys set to `undefined` or
- * `null`, or `undefined` when no values were given.
+ * `null`, or `undefined` when nothing is left.
  */
 export function assertConsumerParameters(
-  declared: readonly ConsumerParameterV5[] | undefined,
+  declared: readonly DeclaredConsumerParameter[] | undefined,
   values: unknown,
   target: ConsumerParameterTarget
 ): Record<string, unknown> | undefined {
@@ -166,42 +206,40 @@ export function assertConsumerParameters(
   if (issues.length) throw new ConsumerParameterError(target, issues)
   if (values === undefined || values === null) return undefined
 
-  return Object.fromEntries(
-    Object.entries(values as Record<string, unknown>).filter(
-      ([, value]) => value !== undefined && value !== null
-    )
+  const present = Object.entries(values as Record<string, unknown>).filter(
+    ([, value]) => value !== undefined && value !== null
   )
+
+  return present.length ? Object.fromEntries(present) : undefined
 }
 
 /**
  * The parameters an algorithm declares for `algocustomdata`: `algorithm.consumerParameters`,
- * else the nested `algorithm.container.consumerParameters` some DDOs carry.
+ * else, when that is absent or empty, the nested `algorithm.container.consumerParameters`
+ * some DDOs carry.
  */
 export function getAlgorithmConsumerParameters(
   ddo: unknown
-): ConsumerParameterV5[] | undefined {
+): DeclaredConsumerParameter[] | undefined {
   const algorithm = getMetadata(ddo)?.algorithm as
     | {
-        consumerParameters?: ConsumerParameterV5[]
-        container?: { consumerParameters?: ConsumerParameterV5[] }
+        consumerParameters?: DeclaredConsumerParameter[]
+        container?: { consumerParameters?: DeclaredConsumerParameter[] }
       }
     | undefined
 
-  return (
-    algorithm?.consumerParameters ?? algorithm?.container?.consumerParameters
-  )
+  return [
+    algorithm?.consumerParameters,
+    algorithm?.container?.consumerParameters
+  ].find((parameters) => Array.isArray(parameters) && parameters.length > 0)
 }
 
 function checkValue(
-  parameter: ConsumerParameterV5,
+  parameter: DeclaredConsumerParameter,
   value: unknown
 ): ConsumerParameterIssue | undefined {
   const { name, type } = parameter
-  const wrongType = (expected: string): ConsumerParameterIssue => ({
-    parameter: name,
-    reason: 'wrong-type',
-    message: `'${name}' must be ${expected}, got ${describe(value)}`
-  })
+  const wrongType = (expected: string) => wrongTypeIssue(name, value, expected)
 
   switch (type) {
     case 'text':
@@ -221,7 +259,7 @@ function checkValue(
         return {
           parameter: name,
           reason: 'invalid-declaration',
-          message: `'${name}' is declared as a select without any usable options, so no value can be accepted until the asset's declaration is fixed`
+          message: `${quote(name)} is declared as a select without any usable options, so no value can be accepted until the asset's declaration is fixed`
         }
 
       if (typeof value !== 'string')
@@ -231,17 +269,42 @@ function checkValue(
         return {
           parameter: name,
           reason: 'not-an-option',
-          message: `'${name}' must be one of ${quoteAll(options)}, got ${describe(value)}`
+          message: `${quote(name)} must be one of ${quoteAll(options)}, got ${describe(value)}`
         }
 
       return undefined
     }
     default:
-      return undefined
+      return isScalar(value) ? undefined : wrongType(SCALAR)
   }
 }
 
-/** The keys of a `select` parameter's options; v4 DDOs stored them as a JSON string. */
+function wrongTypeIssue(
+  parameter: string,
+  value: unknown,
+  expected: string
+): ConsumerParameterIssue {
+  return {
+    parameter,
+    reason: 'wrong-type',
+    message: `${quote(parameter)} must be ${expected}, got ${describe(value)}`
+  }
+}
+
+/** What every parameter value has to be, whatever its type: it may end up in a URL. */
+function isScalar(value: unknown): value is string | number | boolean {
+  return (
+    typeof value === 'string' ||
+    typeof value === 'boolean' ||
+    (typeof value === 'number' && Number.isFinite(value))
+  )
+}
+
+/**
+ * The keys of a `select` parameter's options; v4 DDOs stored them as a JSON string. Each
+ * option is `{ key: label }`, and only its first key counts, as the node and the market
+ * read it.
+ */
 function optionKeys(options: unknown): string[] {
   let list = options
 
@@ -253,9 +316,10 @@ function optionKeys(options: unknown): string[] {
     }
 
   return Array.isArray(list)
-    ? list.flatMap((option) =>
-        isPlainObject(option) ? Object.keys(option) : []
-      )
+    ? list.flatMap((option) => {
+        const key = isPlainObject(option) ? Object.keys(option)[0] : undefined
+        return key === undefined ? [] : [key]
+      })
     : []
 }
 
@@ -267,21 +331,44 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null
 }
 
-function quoteAll(names: string[]): string {
-  return names.map((name) => `'${name}'`).join(', ')
+/**
+ * Publisher or caller text made safe for a message: without control or format characters
+ * (line breaks, ANSI escapes, bidirectional overrides), and cut to `max` characters.
+ */
+function clean(text: string, max: number): string {
+  const stripped = text.replace(/[\p{Cc}\p{Cf}]/gu, '')
+  if (stripped.length <= max) return stripped
+
+  // Do not leave half of a surrogate pair at the cut.
+  return `${stripped.slice(0, max).replace(/[\uD800-\uDBFF]$/, '')}…`
 }
 
+function quote(name: string): string {
+  return `'${clean(name, MAX_NAME_LENGTH)}'`
+}
+
+function quoteAll(names: readonly string[]): string {
+  const listed = names.slice(0, MAX_LISTED).map(quote)
+  if (names.length > MAX_LISTED)
+    listed.push(`and ${names.length - MAX_LISTED} more`)
+
+  return listed.join(', ')
+}
+
+/** The type of a refused value, and a string's length: never the value itself. */
 function describe(value: unknown): string {
   if (typeof value === 'string')
-    return `the string ${JSON.stringify(value.length > 40 ? `${value.slice(0, 40)}…` : value)}`
-  if (typeof value === 'number' || typeof value === 'boolean')
-    return `${typeof value} ${String(value)}`
+    return `a string of ${value.length} character${value.length === 1 ? '' : 's'}`
+  if (typeof value === 'number')
+    return Number.isFinite(value) ? 'a number' : 'a non-finite number'
+  if (typeof value === 'boolean') return 'a boolean'
   if (Array.isArray(value)) return 'an array'
   if (value === null) return 'null'
   if (typeof value === 'object') {
     const name = Object.getPrototypeOf(value)?.constructor?.name
-    if (typeof name === 'string' && name !== '' && name !== 'Object')
-      return `an instance of ${name}`
+    return typeof name === 'string' && name !== '' && name !== 'Object'
+      ? `an instance of ${clean(name, MAX_NAME_LENGTH)}`
+      : 'an object'
   }
 
   return `a value of type ${typeof value}`

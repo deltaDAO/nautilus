@@ -110,7 +110,8 @@ The values are checked against the service's declaration before anything is sent
 missing required parameter, a value of the wrong type, a `select` value outside its options
 (or for a `select` that declares none) or an undeclared key throws a
 `ConsumerParameterError`. Keys set to `undefined` or `null` are left out of the download
-URL. See
+URL, and the rest is encoded as one query parameter, so values holding `&`, `#`, `+` or `=`
+reach the node intact. See
 [validation](/docs/api/UserCustomParameters#validation), and the
 [ConsumerParameterBuilder](/docs/api/ConsumerParameterBuilder) for the publishing side.
 

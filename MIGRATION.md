@@ -8,6 +8,34 @@ This is a call-by-call map. If something is not listed, it did not change.
 
 ## Upgrading from 2.0.0-beta.1
 
+### VP policies
+
+**Write VP policies as objects.** `VpPolicy` is now `{ policy: string; args?: string }`:
+`setVpPolicies()` and the `vpPolicies` of `addRequestCredentials()` no longer take bare
+names, and `args` is a string. The policy server JSON-parses it, so pass structured arguments
+through `JSON.stringify`. ocean-node 4.2.x did not index an asset whose `vp_policies` mixed a
+name with an object, so publish such an asset again.
+
+```diff
+ builder.setVpPolicies(CredentialListTypes.ALLOW, [
+-  'holder-binding',
+-  { policy: 'minimum-credentials', args: 1 }
++  { policy: 'holder-binding' },
++  { policy: 'minimum-credentials', args: '1' }
+ ])
+```
+
+**Stored request credentials hold JSON strings.** `SsiPolicyValue.request_credentials` is
+now `StoredRequestCredential[]`, whose `policies` are JSON-encoded (`'signature'` is stored
+as `'"signature"'`). Code that reads `credentials` from a DDO should `JSON.parse` each
+policy. `RequestCredential`, which the builders take, is unchanged.
+
+**Editing reads stored policies strictly.** Loading an asset for an edit throws on a VP
+policy, request credential or per-credential policy it cannot read, rather than dropping it
+and leaving the asset open under the remaining policies. Removing the last address from an
+allow list now keeps the entry as `values: []`, which denies everyone, as the node and the
+policy server read it.
+
 ### Policy-server sessions
 
 nautilus now opens the policy-server session itself, on every download and compute job that
@@ -38,11 +66,14 @@ nautilus, since the policy server binds it to (consumer, asset, service) and che
 same node. `skipCredentials` is gone from `access()`, `compute()` and `freeCompute()`: a node
 without a policy server is detected from its status.
 
-**Catch `PolicyDeniedError`.** A refusal by the policy server (`initiate` answering 4xx, or a
-presentation the verifier did not accept) throws a `PolicyDeniedError` with `did`,
-`serviceId`, `consumerAddress`, `code` (the HTTP status; `undefined` for a presentation) and
-`reason` (the policy server's message). It is not an `OceanNodeError`; a network error, a
-timeout or a 5xx still is.
+**Catch `PolicyDeniedError`.** A refusal by the policy server (`initiate` answering with its
+own reply, `success: false` and a 4xx, or a presentation the verifier did not accept) throws
+a `PolicyDeniedError` with `did`, `serviceId`, `consumerAddress`, `code` (the policy server's
+status; `undefined` for a presentation), `reason` (its message, bounded) and, for a
+presentation, `policyResults` (each policy's name, outcome and error; never the presentation).
+It is not an `OceanNodeError`. Everything the node says itself still is, with the status: a
+rejected nonce or signature (401), an asset it has not indexed (404), a policy server it
+cannot reach (400), as are a network error, a timeout and a 5xx.
 
 ```ts
 import { PolicyDeniedError } from '@deltadao/nautilus'
@@ -57,16 +88,42 @@ try {
 
 **Move the session cache to `Nautilus.create`.** `WaltIdCredentialProvider` no longer takes
 `sessionStore` and no longer has `clearSessions()` or `explainFailure()`: pass `sessionStore`
-to `Nautilus.create`, and read the failed policies from `PolicyDeniedError.reason`, or from
-`nautilus.getNodeClient().checkPolicySession(sessionId)`. A `SessionStore` of your own now
-stores a `SessionEntry` of `{ sessionId, createdAt, presented }` and must key on the consumer
-address exactly as given (`sessionKeyString(key)` does), not lower-cased. A cached session is
-reused for at most `sessionTtlMs` (new `Nautilus.create` option, 2 minutes by default).
+to `Nautilus.create`, and read the failed policies from `PolicyDeniedError.policyResults`, or
+ask the node that opened the session. For a download that is the node in the service's
+`serviceEndpoint`, not the configured one:
 
-**`OceanNodeClient.initializePolicyVerification` throws instead of returning `null` on a
-refusal.** It returns `null` only when the node has no policy server, throws a
-`PolicyDeniedError` on a 4xx and an `OceanNodeError` otherwise. `hasPolicyServer()` and
-`checkPolicySession(sessionId)` are new.
+```ts
+const service = asset.credentialSubject.services[0]
+const { verified, policyResults } = await nautilus
+  .getNodeClient()
+  .forEndpoint(service.serviceEndpoint) // the node that opened the session
+  .checkPolicySession(sessionId)
+```
+
+A `SessionStore` of your own now stores a `SessionEntry` of
+`{ sessionId, createdAt, presented }` and must key on the consumer address exactly as given
+(`sessionKeyString(key)` does), not lower-cased. It gets only sessions opened without a
+presentation: a presented session's id lets anyone read the presentation (`vp_token`)
+through the node, so it stays in memory unless you set `persistPresentedSessions: true` for
+a store no one else can read. Session ids are credentials; keep them out of logs. A cached
+session is reused for at most `sessionTtlMs` (new `Nautilus.create` option, 2 minutes by
+default).
+
+**`OceanNodeClient.initializePolicyVerification` returns the reply or throws.** It never
+returns `null`: ask `hasPolicyServer()` first, as `PolicySessionResolver` does. It throws a
+`PolicyDeniedError` for the policy server's refusal and an `OceanNodeError` with the status
+otherwise. Pass it `policySessionAddress(consumerAddress)`, the address the node forwards
+(for a JWT, the token's). `hasPolicyServer()`, `policySessionAddress()` and
+`checkPolicySession(sessionId)` (`{ verified, policyResults }`) are new. `PolicyServerAction`
+moved to the node client and has only `GET_PD` and `CHECK_SESSION_ID`.
+
+**`WaltIdCredentialProvider` checks what the node sends.** It refuses a presentation request
+that is not `openid4vp://`, whose `request_uri`, `response_uri` or
+`presentation_definition_uri` is not `https://` (or `http://` on a loopback host; set
+`allowInsecureTransport: true` for a private network), or whose presentation definition asks
+for a credential type the asset does not request, and it presents only credentials of the
+requested types. Its `signer` must be the consumer. `setCredentialProvider(undefined)` now
+removes the provider.
 
 **Give a gated asset an address allow list.** On a node with a policy server, the policy
 server checks the consumer's address against the asset-level `allow` list before anything
@@ -85,7 +142,10 @@ the node gives a started job, and `getComputeStatus()`, `getComputeResult()`,
 `streamComputeResult()`, `getComputeLogs()` and `stopCompute()` take it. beta.1 shortened it
 to the bare `<jobId>`, and asked the node for that one; ocean-node then answers with every
 job of the consumer, and beta.1 took the first. A bare id now throws. To rebuild the full id
-from a bare one you stored, put the first segment of the job's environment id in front of it:
+from a bare one you stored, put the first segment of the job's environment id in front of it.
+The id must be exactly what ocean-node builds, `0x` and 64 hex digits, a dash, then 64 hex
+digits; anything else throws before a request, with the id's length rather than the id in the
+message:
 
 ```diff
 - await nautilus.getComputeStatus({ jobId: bareJobId })
@@ -99,15 +159,41 @@ job under the id you passed. It is typed `NodeComputeJob`, which adds the node's
 `environment`, `resources` and `payment` fields to `ComputeJob`. `OceanNodeClient`'s
 `computeStatus()` and `getComputeJob()` return `NodeComputeJob` too, and `getComputeJob()`
 returns `undefined` for an unknown job. `getComputeLogs()` now returns a
-`ComputeResultStream` (it returned `unknown`). `computeStop()`, `getComputeResultUrl()` and
-`getComputeResult()` keep their return types. Every job method requires the qualified job id.
+`ComputeResultStream` (it returned `unknown`). Every job method requires the qualified job
+id, and `getComputeResultUrl()` and `getComputeResult()` throw a `RangeError` for an `index`
+that is not a non-negative safe integer.
+
+**Started and stopped jobs are `NodeComputeJob`s.** `compute()` and `freeCompute()` return
+`jobs: NodeComputeJob[]`, and `stopCompute()` returns `NodeComputeJob[]`, as do
+`OceanNodeClient`'s `computeStart()`, `freeComputeStart()` and `computeStop()`. They were
+typed `ComputeJob[]` but carried the node's `environment`; code that names the type changes:
+
+```diff
+- const jobs: ComputeJob[] = await nautilus.stopCompute({ jobId })
++ const jobs: NodeComputeJob[] = await nautilus.stopCompute({ jobId })
+```
+
+**A job has finished once its `dateFinished` is set**, whatever its status. A failed job ends
+below `70` (`41` when the algorithm failed, `11` when its image could not be pulled, …), so
+waiting for `70` or `71` never ends for it. Poll on `dateFinished` and read the status for
+how the job ended:
+
+```diff
+- if ([70, 71].includes(job.status)) done(job)
++ if (job.dateFinished) done(job)
+```
+
+`getComputeResult()`, `streamComputeResult()` and `getComputeLogs()` decide the same way, so
+they read a failed job's results and `algorithmLog`. A job at `71` (`JobSettle`) that lists no
+`output` yet counts as not ready rather than as having no output, since the node sets `71`
+before it writes `outputs.tar`.
 
 **`streamComputeResult()` streams the job's `output`** (`outputs.tar`), as
 `getComputeResult()` does, rather than the result at index 0 (the image log). Pass
 `resultIndex` for another result. It now also throws for a job that has not finished.
 
 **`getComputeLogs()` returns a `ComputeResultStream`** (`AsyncIterable<Uint8Array>`), not
-`unknown`. Once the job has finished (status `70` or above), it streams the job's
+`unknown`. Once the job has finished (its `dateFinished` is set), it streams the job's
 `algorithmLog` result, since the node serves live logs only while the algorithm runs:
 
 ```diff
@@ -116,13 +202,13 @@ returns `undefined` for an unknown job. `getComputeLogs()` now returns a
 +   process.stdout.write(chunk)
 ```
 
-**Default resources are at least 1 CPU, 1 GB of RAM and 1 GB of disk.** A resource left out
-of `resources` defaulted to the environment's minimum, which ocean-node 4.2 environments
-usually set to `0`, and a `0` means no CPU or memory limit for the job. `cpu`, `ram` and
-`disk` now default to at least `1` within the resource's maximum, other resources (GPUs) to
-their minimum. Resources you list are sent as they are, and the ones you leave out are
-filled in. A paid job's escrow quote rises with the larger request; pass `resources` to
-choose.
+**Default resources are at least 1 CPU, 1 GB of RAM and 1 GB of disk.** Without
+`resources` (or with an empty list), each resource defaulted to the environment's minimum, which ocean-node 4.2
+environments usually set to `0`, and a `0` means no CPU or memory limit for the job. `cpu`,
+`ram` and `disk` now default to at least `1` within the resource's maximum, other resources
+(GPUs) to their minimum. A non-empty `resources` list is sent exactly as given, with nothing
+added: the node gives each resource it leaves out that resource's minimum. A paid job's escrow
+quote rises with the larger default request; pass `resources` to choose.
 
 **Algorithm services carry no `compute` block.** nautilus publishes and edits an asset of
 type `algorithm` without the dataset-side compute settings (`allowRawAlgorithm`,
@@ -663,14 +749,17 @@ Two refusals come before any node call other than resolving the asset:
 - **`access()` downloads from `access` services only.** A `serviceId` naming a `compute`
   service throws, pointing to `compute()` / `freeCompute()`, instead of reaching the node's
   `initialize`.
-- **`userdata` must fit the service's consumer parameters**: every `required` parameter
-  present, `text` a string, `number` a finite number (`'5'` is refused), `boolean` a
-  boolean, `select` one of its option keys (a `select` without usable options takes no
-  value), and no undeclared keys when the service declares any. Otherwise a
+- **`userdata` must fit the service's consumer parameters**: a plain object, every
+  `required` parameter present, `text` a string, `number` a finite number (`'5'` is
+  refused), `boolean` a boolean, `select` the first key of one of its options (a `select`
+  without usable options takes no value), any other type a string, a finite number or a
+  boolean, and no undeclared keys when the service declares any. A service that declares
+  none takes any keys, each with a string, a finite number or a boolean: an object or an
+  array, which reached the file's URL as `[object Object]`, is refused. Otherwise a
   `ConsumerParameterError` (`issues`, `did`, `serviceId`, `field`) is thrown. v1 and
   2.0.0-beta.1 sent whatever was passed. Fix the values, or check them first with
   `checkConsumerParameters(service.consumerParameters, userdata)`. Keys set to `undefined`
-  or `null` are no longer sent.
+  or `null` are no longer sent, nor is an object they leave empty.
 
 ## 9. Compute
 
@@ -710,8 +799,11 @@ folder.
 
 Each input's `userdata` and the algorithm's `algocustomdata` are checked like a download's
 `userdata` (see §8): against the service's consumer parameters and the algorithm
-metadata's, respectively. A mismatch throws a `ConsumerParameterError` before the
-environment is read or anything is sent.
+metadata's, respectively (`metadata.algorithm.consumerParameters`, else, when absent or
+empty, `metadata.algorithm.container.consumerParameters`). A mismatch throws a
+`ConsumerParameterError` before the environment is read or anything is sent. Check
+`algocustomdata` first with
+`checkConsumerParameters(getAlgorithmConsumerParameters(algorithm), algocustomdata)`.
 
 ## 10. Credential-gated assets
 

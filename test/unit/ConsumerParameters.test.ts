@@ -4,13 +4,16 @@
  * error, and the values it returns to forward.
  */
 
+import type { ConsumerParameter } from '@oceanprotocol/ddo-js'
 import { describe, expect, it } from 'vitest'
 import type { ConsumerParameterV5 } from '../../src/ddo/types.js'
+import * as nautilus from '../../src/index.js'
 import {
   assertConsumerParameters,
   ConsumerParameterError,
   checkConsumerParameters
 } from '../../src/utils/consumerParameters.js'
+import { getAlgorithmAssetFixture } from '../fixtures/Asset.js'
 import { getConsumerParameters } from '../fixtures/ConsumerParameters.js'
 
 // surname: text, required; age: number; consent: boolean; region: select (eu, us).
@@ -82,7 +85,7 @@ describe('checkConsumerParameters', () => {
 
     expect(issue.reason).to.equal('not-an-option')
     expect(issue.message).to.equal(
-      `'region' must be one of 'eu', 'us', got the string "asia"`
+      `'region' must be one of 'eu', 'us', got a string of 4 characters`
     )
   })
 
@@ -139,6 +142,18 @@ describe('checkConsumerParameters', () => {
     expect(reasons({ region: null }, parameters)).to.deep.equal([])
   })
 
+  it('reads only the first key of each select option, as the node and the market do', () => {
+    const parameters = [
+      { ...declared[3], options: [{ eu: 'Europe', label: 'x' }, { us: 'US' }] }
+    ] as unknown as ConsumerParameterV5[]
+
+    expect(reasons({ region: 'eu' }, parameters)).to.deep.equal([])
+    expect(reasons({ region: 'us' }, parameters)).to.deep.equal([])
+    expect(reasons({ region: 'label' }, parameters)).to.deep.equal([
+      'region:not-an-option'
+    ])
+  })
+
   it('reads select options stored as a JSON string', () => {
     const parameters = [
       { ...declared[3], options: JSON.stringify([{ eu: 'Europe' }]) }
@@ -170,13 +185,36 @@ describe('checkConsumerParameters', () => {
     ).to.deep.equal([])
   })
 
-  it('only checks presence for a type it does not know', () => {
+  it('takes a string, a finite number or a boolean for a type it does not know', () => {
     const parameters = [
       { ...declared[0], type: 'date' }
     ] as unknown as ConsumerParameterV5[]
 
-    expect(reasons({ surname: 20260101 }, parameters)).to.deep.equal([])
+    for (const surname of ['2026-01-01', 20260101, true])
+      expect(reasons({ surname }, parameters)).to.deep.equal([])
     expect(reasons({}, parameters)).to.deep.equal(['surname:missing'])
+  })
+
+  it('refuses an object, an array or a non-finite number for a type it does not know', () => {
+    const parameters = [
+      { ...declared[0], type: 'date' }
+    ] as unknown as ConsumerParameterV5[]
+
+    for (const surname of [{ day: 1 }, [2026], Number.NaN, 1n])
+      expect(reasons({ surname }, parameters)).to.deep.equal([
+        'surname:wrong-type'
+      ])
+    expect(
+      checkConsumerParameters(parameters, { surname: { day: 1 } })[0].message
+    ).to.equal(
+      "'surname' must be a string, a finite number or a boolean, got an object"
+    )
+  })
+
+  it('refuses an object or an array under any key when the asset declares no parameters', () => {
+    expect(
+      reasons({ nested: { a: 1 }, list: [1], ok: 'yes', none: null }, [])
+    ).to.deep.equal(['nested:wrong-type', 'list:wrong-type'])
   })
 
   it('refuses values that are not an object', () => {
@@ -239,6 +277,128 @@ describe('checkConsumerParameters', () => {
   })
 })
 
+describe('the public consumer-parameter API', () => {
+  it("takes ddo-js's v4 ConsumerParameter, with options as a JSON string", () => {
+    const v4: ConsumerParameter[] = [
+      {
+        name: 'region',
+        type: 'select',
+        label: 'Region',
+        required: true,
+        description: 'Pick a region',
+        default: 'eu',
+        options: JSON.stringify([{ eu: 'Europe' }])
+      }
+    ]
+
+    expect(
+      nautilus.checkConsumerParameters(v4, { region: 'eu' })
+    ).to.deep.equal([])
+    expect(
+      nautilus.checkConsumerParameters(v4, { region: 'us' })[0].reason
+    ).to.equal('not-an-option')
+  })
+
+  it("checks algocustomdata against an algorithm's metadata parameters", () => {
+    const algorithm = getAlgorithmAssetFixture()
+    Object.assign(algorithm.credentialSubject.metadata.algorithm as object, {
+      consumerParameters: [declared[1]]
+    })
+
+    const parameters = nautilus.getAlgorithmConsumerParameters(algorithm)
+
+    expect(parameters).to.deep.equal([declared[1]])
+    expect(
+      nautilus.checkConsumerParameters(parameters, { age: 'x' })
+    ).to.deep.equal([
+      {
+        parameter: 'age',
+        reason: 'wrong-type',
+        message: "'age' must be a finite number, got a string of 1 character"
+      }
+    ])
+  })
+})
+
+describe('consumer-parameter messages', () => {
+  const secret = 'sk-live-0123456789abcdef0123456789abcdef'
+
+  it('never repeat a refused value, only its type and length', () => {
+    const messages = [
+      ...checkConsumerParameters(declared, {
+        surname: 'Doe',
+        age: secret,
+        region: secret
+      }),
+      ...checkConsumerParameters(
+        [{ ...declared[0], type: 'date' }] as unknown as ConsumerParameterV5[],
+        { surname: { key: secret } }
+      )
+    ].map((issue) => issue.message)
+
+    expect(messages).to.deep.equal([
+      `'age' must be a finite number, got a string of ${secret.length} characters`,
+      `'region' must be one of 'eu', 'us', got a string of ${secret.length} characters`,
+      `'surname' must be a string, a finite number or a boolean, got an object`
+    ])
+    for (const message of messages) expect(message).not.to.include('sk-live')
+  })
+
+  it('strip control characters from parameter names and option keys, and cut long ones', () => {
+    const name = `region\u001b[31m\r\n\u202eforged${'x'.repeat(100)}`
+    const parameters = [
+      { ...declared[3], name, options: [{ 'e\nu': 'Europe' }] }
+    ] as unknown as ConsumerParameterV5[]
+
+    const [issue] = checkConsumerParameters(parameters, { [name]: 'us' })
+
+    expect(issue.parameter).to.equal(name)
+    expect(issue.message).to.equal(
+      // 40 characters, then the ellipsis.
+      `'region[31mforged${'x'.repeat(24)}…' must be one of 'eu', got a string of 2 characters`
+    )
+  })
+
+  it('cap the names they list', () => {
+    const parameters = Array.from({ length: 25 }, (_, index) => ({
+      ...declared[1],
+      name: `p${index}`
+    })) as unknown as ConsumerParameterV5[]
+
+    const [issue] = checkConsumerParameters(parameters, { other: 1 })
+
+    expect(issue.message).to.equal(
+      "'other' is not a declared parameter (declared: 'p0', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8', 'p9', and 15 more)"
+    )
+  })
+
+  it('cap the issues an error message lists, keeping all in error.issues', () => {
+    const values = Object.fromEntries(
+      Array.from({ length: 30 }, (_, index) => [`k${index}`, 1])
+    )
+
+    let thrown: ConsumerParameterError | undefined
+    try {
+      assertConsumerParameters(declared.slice(1), values, {
+        did: 'did:ope:1',
+        serviceId: 'svc\u0000\n',
+        field: 'userdata'
+      })
+    } catch (error) {
+      thrown = error as ConsumerParameterError
+    }
+
+    expect(thrown?.issues).to.have.length(30)
+    expect(thrown?.message).to.match(
+      /^Refusing userdata for service svc of did:ope:1: /
+    )
+    expect(
+      thrown?.message.match(/is not a declared parameter/g)
+    ).to.have.length(10)
+    expect(thrown?.message).to.include('; 20 more in error.issues. Nothing')
+  })
+})
+
 describe('assertConsumerParameters', () => {
   const target = {
     did: 'did:ope:1',
@@ -265,7 +425,7 @@ describe('assertConsumerParameters', () => {
     })
     expect(error.issues).to.have.length(1)
     expect(error.message).to.equal(
-      `Refusing userdata for service svc of did:ope:1: 'age' must be a finite number, got the string "x". Nothing was sent: consumer parameters are checked before the node is asked for a fee or any order is placed.`
+      `Refusing userdata for service svc of did:ope:1: 'age' must be a finite number, got a string of 1 character. Nothing was sent: consumer parameters are checked before the node is asked for a fee or any order is placed.`
     )
   })
 
@@ -309,5 +469,12 @@ describe('assertConsumerParameters', () => {
   it('returns undefined when no values are given', () => {
     expect(assertConsumerParameters([], undefined, target)).to.equal(undefined)
     expect(assertConsumerParameters([], null, target)).to.equal(undefined)
+  })
+
+  it('returns undefined when no value is left after dropping the absent ones', () => {
+    expect(assertConsumerParameters([], {}, target)).to.equal(undefined)
+    expect(
+      assertConsumerParameters(declared.slice(1), { age: null }, target)
+    ).to.equal(undefined)
   })
 })

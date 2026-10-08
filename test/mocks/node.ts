@@ -196,6 +196,9 @@ export function createNodeMock(options: NodeMockOptions = {}): NodeMock {
       return client
     },
 
+    policySessionAddress(address: string) {
+      return address
+    },
     async hasPolicyServer() {
       calls.hasPolicyServer.push(client.nodeUri)
       return options.policyServer
