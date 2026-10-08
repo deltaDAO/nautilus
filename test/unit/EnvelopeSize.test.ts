@@ -146,20 +146,30 @@ describe('assertDdoFitsDecryptLimit', () => {
   })
 
   it('counts the credential claims, header and signature, not just the DDO', async () => {
-    // The largest description whose signed JWS still fits, and one more character.
-    let length = 17_600
-    while ((await signedLength(ddoOf(length + 1))) <= maxDecryptableJwsLength())
-      length++
-    expect(await signedLength(ddoOf(length))).to.be.at.most(
-      maxDecryptableJwsLength()
-    )
+    // The largest description whose signed JWS still fits, and one more character. The
+    // signed length only grows with the description, so a binary search finds it in a
+    // dozen real signatures; a linear walk needs over a hundred, each hashing ~24 KB, and
+    // took longer than the test timeout on CI with coverage on.
+    const limit = maxDecryptableJwsLength()
+    let low = 17_600
+    let high = 20_000
+    expect(await signedLength(ddoOf(low))).to.be.at.most(limit)
+    expect(await signedLength(ddoOf(high))).to.be.above(limit)
+    while (high - low > 1) {
+      const mid = Math.floor((low + high) / 2)
+      if ((await signedLength(ddoOf(mid))) <= limit) low = mid
+      else high = mid
+    }
+    const length = low
+    expect(await signedLength(ddoOf(length))).to.be.at.most(limit)
+    expect(await signedLength(ddoOf(length + 1))).to.be.above(limit)
     const tooLarge = ddoOf(length + 1)
 
     // The DDO's own JSON in base64url fits: a check of that alone passes this DDO, and
     // the signed envelope would then be refused only after the mint.
     const bareJws =
       Buffer.from(JSON.stringify(tooLarge)).toString('base64url').length + 2
-    expect(bareJws).to.be.at.most(maxDecryptableJwsLength())
+    expect(bareJws).to.be.at.most(limit)
     await expect(
       buildEnvelope(
         createNodeMock().client,
