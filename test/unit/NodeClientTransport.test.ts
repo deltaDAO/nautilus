@@ -163,6 +163,86 @@ describe('OceanNodeClient transport rule', () => {
     })
   })
 
+  describe('the read-only GETs (asset lookup, indexing state, address, nonce)', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals()
+    })
+
+    const ADDRESS = '0x00000000000000000000000000000000000000ab'
+    const DID = `did:ope:${'ab'.repeat(32)}`
+
+    /** A node behind a proxy that answers every GET from `finalOrigin`. */
+    function stubRedirectingNode(finalOrigin: string) {
+      const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+        const path = new URL(url).pathname
+        const body =
+          path === '/'
+            ? { providerAddress: ADDRESS }
+            : path.includes('/nonce')
+              ? { nonce: '3' }
+              : path.includes('/state/ddo')
+                ? { valid: true, error: ' ' }
+                : { id: DID }
+        const response = new Response(JSON.stringify(body), { status: 200 })
+        Object.defineProperty(response, 'url', {
+          value: `${finalOrigin}${new URL(url).pathname}`
+        })
+        return response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      return fetchMock
+    }
+
+    const readAll = async (client: OceanNodeClient) => {
+      await client.waitForIndexer(DID, undefined, { maxConsecutiveFailures: 1 })
+      await client.getIndexingState({ did: DID })
+      await client.getNodeAddress()
+      await client.getIndexerNonceState()
+    }
+
+    it('follow redirects and carry no credentials', async () => {
+      const fetchMock = stubRedirectingNode('https://proxy.example')
+
+      await readAll(create('https://ocean-node.example.com'))
+
+      expect(fetchMock.mock.calls.length).to.equal(5)
+      for (const [url, init] of fetchMock.mock.calls) {
+        expect(init?.method, url).to.equal('GET')
+        expect(init?.redirect, url).to.equal('follow')
+        expect(init?.body, url).to.equal(undefined)
+        expect(Object.keys(init?.headers ?? {}), url).to.deep.equal(['Accept'])
+      }
+    })
+
+    it('refuse a redirect to plain http on a non-loopback host', async () => {
+      stubRedirectingNode('http://proxy.example')
+      const client = create('https://ocean-node.example.com')
+
+      const lookup = await client
+        .waitForIndexer(DID, undefined, { maxConsecutiveFailures: 1 })
+        .catch((thrown: unknown) => thrown)
+      const address = await client
+        .getNodeAddress()
+        .catch((thrown: unknown) => thrown)
+      const state = await client
+        .getIndexingState({ did: DID })
+        .catch((thrown: unknown) => thrown)
+
+      for (const error of [lookup, address, state]) {
+        expect(error).to.be.instanceOf(OceanNodeError)
+        expect((error as Error).message).to.match(
+          /https:\/\/ocean-node\.example\.com redirected to plain http:\/\/ \(http:\/\/proxy\.example\)/
+        )
+      }
+    })
+
+    it('accept plain http when the node URI is plain http already (allowInsecureTransport)', async () => {
+      stubRedirectingNode('http://proxy.example')
+
+      await readAll(create('http://ocean-node.example.com', true))
+    })
+  })
+
   describe('forEndpoint', () => {
     it('applies the rule to the other node', () => {
       const client = create('https://ocean-node.example.com')

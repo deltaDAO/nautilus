@@ -13,6 +13,7 @@
  *   - failure after it is known: under `did:ope:`, with `nft` and the real `txId`;
  *   - a DDO dropped at the database write (SHACL): `valid: true` plus an error.
  */
+import { Aquarius } from '@oceanprotocol/lib'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   IndexingError,
@@ -717,6 +718,34 @@ describe('waitForIndexer', () => {
       await waiting
     })
 
+    it('backs off by seconds on a 403 rate limit even with intervalMs: 0', async () => {
+      // The 403 carries no Retry-After, so the backoff alone spaces the lookups out.
+      const fetch = stubNode({
+        lookups: [
+          {
+            status: 403,
+            body: 'Too many active connections (121/120) in the last minute.'
+          }
+        ]
+      })
+
+      const waiting = client()
+        .waitForIndexer(ASSET_DID, TX, {
+          intervalMs: 0,
+          timeoutMs: 30_000,
+          maxConsecutiveFailures: 2
+        })
+        .catch((caught) => caught)
+
+      await vi.advanceTimersByTimeAsync(1_900)
+      expect(fetch.mock.calls.length).to.equal(1)
+
+      await vi.advanceTimersByTimeAsync(29_100)
+      // As with intervalMs: 1000: waits of 2, 4, 8 and 16 s.
+      expect(fetch.mock.calls.length).to.equal(5)
+      expect((await waiting).message).to.match(/not indexed within 30s/)
+    })
+
     it('still counts a 403 that is not the rate limiter as a failure', async () => {
       stubNode({ lookups: [{ status: 403, body: 'Unauthorized request' }] })
 
@@ -750,6 +779,90 @@ describe('waitForIndexer', () => {
 
       expect(await waiting).to.equal(reason)
       expect(vi.getTimerCount()).to.equal(0)
+    })
+
+    describe('over P2P', () => {
+      const PEER = '16Uiu2HAmPeerIdOnly'
+
+      /** ocean.js's P2P lookup, never settling and ignoring its signal. */
+      const hangingP2p = () =>
+        vi
+          .spyOn(Aquarius.prototype, 'waitForIndexer')
+          .mockImplementation(() => new Promise(() => undefined))
+
+      it('passes a signal and returns the asset ocean.js finds', async () => {
+        const lookup = vi
+          .spyOn(Aquarius.prototype, 'waitForIndexer')
+          .mockResolvedValue(indexedAsset() as never)
+
+        expect(await client(PEER).waitForIndexer(ASSET_DID, TX)).to.deep.equal(
+          indexedAsset()
+        )
+        expect(lookup.mock.calls[0].slice(0, 2)).to.deep.equal([ASSET_DID, TX])
+        expect(lookup.mock.calls[0][2]).to.be.instanceOf(AbortSignal)
+        expect(lookup.mock.calls[0].slice(3, 5)).to.deep.equal([0, 1])
+        expect(vi.getTimerCount()).to.equal(0)
+      })
+
+      it('bounds a lookup that never settles by requestTimeoutMs, and counts it as failed', async () => {
+        const lookup = hangingP2p()
+
+        const waiting = client(PEER)
+          .waitForIndexer(ASSET_DID, TX, {
+            intervalMs: 100,
+            timeoutMs: 600_000,
+            requestTimeoutMs: 1_000,
+            maxConsecutiveFailures: 2
+          })
+          .catch((caught) => caught)
+        await vi.advanceTimersByTimeAsync(2_200)
+
+        const thrown = await waiting
+        expect(thrown).to.be.instanceOf(OceanNodeError)
+        expect(thrown.message).to.match(
+          /2 lookups .* in a row failed.*timed out after 1000 ms/
+        )
+        // ocean.js was told to stop, too.
+        expect((lookup.mock.calls[0][2] as AbortSignal).aborted).to.equal(true)
+        expect(vi.getTimerCount()).to.equal(0)
+      })
+
+      it('throws at the deadline although the lookup never settles', async () => {
+        hangingP2p()
+
+        let thrown: Error | undefined
+        const waiting = client(PEER)
+          .waitForIndexer(ASSET_DID, TX, { timeoutMs: 3_000 })
+          .catch((caught) => {
+            thrown = caught
+          })
+
+        await vi.advanceTimersByTimeAsync(2_900)
+        expect(thrown).to.equal(undefined)
+
+        await vi.advanceTimersByTimeAsync(200)
+        await waiting
+        expect(thrown?.message).to.match(
+          /not indexed within 3s.*timed out after 3000 ms/
+        )
+        expect(vi.getTimerCount()).to.equal(0)
+      })
+
+      it('rejects with the abort reason during a lookup that never settles', async () => {
+        hangingP2p()
+        const controller = new AbortController()
+        const reason = new Error('caller gave up')
+
+        const waiting = client(PEER)
+          .waitForIndexer(ASSET_DID, TX, { signal: controller.signal })
+          .catch((caught) => caught)
+
+        await vi.advanceTimersByTimeAsync(10)
+        controller.abort(reason)
+
+        expect(await waiting).to.equal(reason)
+        expect(vi.getTimerCount()).to.equal(0)
+      })
     })
 
     it('rejects with the abort reason during a request', async () => {
