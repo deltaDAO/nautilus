@@ -57,7 +57,11 @@ What happens in order:
    throws a `ProviderFeeNotAllowedError`, again before any chain read, approval, purchase or
    order. The order is then allowed to pay exactly the fee that was allowed.
 5. An existing order is reused where possible — extended if a new fee period is due, or
-   used as-is if not. Otherwise a datatoken is bought and a new order placed. Everything the
+   used as-is if not. The node's access `initialize` reports no `validOrder`, so your
+   newest order for the service is read from the datatoken's events, and kept only if the
+   node would accept it: yours, for this service, inside the service's timeout
+   ([details](/docs/guides/pricing#downloads-the-order-on-chain)). Otherwise a datatoken is
+   bought and a new order placed. Everything the
    order pulls from you (the purchase, the publish-market fee and the provider fee) is
    approved with one allowance per token and spender, after every check has passed.
 6. The download URL is built, carrying the policy-server session if there is one.
@@ -96,7 +100,9 @@ The order authorising this download.
 
 - Type: `boolean`
 
-`true` when an existing order was reused rather than a new one paid for.
+`true` when an existing order was reused rather than a new one paid for. `transferTxId` is
+then the previous order or reuse used as it stands, or the `reuseOrder` transaction that
+extended it.
 
 ## Parameters
 

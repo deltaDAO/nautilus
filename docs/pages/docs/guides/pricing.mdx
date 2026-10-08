@@ -112,9 +112,8 @@ quoting a fee nothing will collect.
 
 ## Do you already hold an order?
 
-`hasReusableOrder` answers from what the node reports, rather than reconstructing it from
-events — the node returns `validOrder` when a previous order is still inside the service's
-timeout.
+`hasReusableOrder` answers from what the node reports in `initialize`: `validOrder`, when
+the node found a previous order still inside the service's timeout.
 
 ```ts twoslash
 import { hasReusableOrder } from '@deltadao/nautilus'
@@ -134,13 +133,33 @@ returns depends on the endpoint:
 | --- | --- | --- |
 | 3.0 – 4.2 | `{ providerFee, datatoken, nonce, computeAddress }`, with no `validOrder` | `validOrder` per input, when the request carries a `transferTxId` that is still valid |
 
+### Downloads: the order on chain
+
+The access `initialize` reports no `validOrder`, so [`access`](/docs/api/nautilus/access)
+looks your previous order up in the datatoken's `OrderStarted` / `OrderReused` /
+`ProviderFee` events. It keeps your newest order for the service only where the node would
+accept it at download:
+
+- you are the order's consumer or payer;
+- it is for the same service (the service index);
+- it is inside the service's `timeout`, counted from the `OrderStarted` block (a reuse does
+  not restart it; `0` never expires), with at least 60 s to go, since the URL is
+  downloaded afterwards;
+- the order, or a reuse of it, carries a provider fee signed by the service's node for this
+  service that has not expired.
+
+With all four, the download uses that transaction and nothing is sent. With the first three
+only, the order is extended with `reuseOrder` and the fee the node quotes now. Otherwise a
+new order is placed. Either way `reusedOrder` and `transferTxId` say which.
+
+The events are read newest first, 10 000 blocks per `eth_getLogs` call, no further back
+than the service's timeout and at most 100 000 blocks. A lookup the RPC refuses places a
+new order, as before.
+
 :::warning
-With these versions, `hasReusableOrder` is `false` for an access `initialize`, so each
-[`access`](/docs/api/nautilus/access) call places a new order, also within the service's
-timeout. [`compute`](/docs/api/nautilus/compute) does not send a `transferTxId` with its
-inputs, so it orders each of them too. On a paid asset, keep the download URL rather than
-calling `access` again. A node that reports `validOrder` is followed with no change on your
-side.
+[`compute`](/docs/api/nautilus/compute) does not send a `transferTxId` with its inputs, so
+it orders each of them on every job. A node that reports `validOrder` is followed with no
+change on your side.
 :::
 
 ## What the node charges on top

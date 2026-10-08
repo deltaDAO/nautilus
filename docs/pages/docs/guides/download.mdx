@@ -53,7 +53,9 @@ const { url, transferTxId, reusedOrder, serviceId } = await nautilus.access({
 
 `reusedOrder` is worth checking: `true` means no datatoken was bought, because an order from
 a previous access was still inside the service's timeout. That is the difference between a
-free download and a paid one.
+free download and a paid one. The node does not report that order, so nautilus finds it in
+the datatoken's events; see
+[the order on chain](/docs/guides/pricing#downloads-the-order-on-chain).
 
 :::warning
 v1 returned a bare URL string here. The object form exists so the order backing the download
