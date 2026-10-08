@@ -63,7 +63,8 @@ and builds a client; it sends no transaction. The remote store needs no bootstra
 | `remoteStore` | `RemoteStore` | Where the encrypted DDO envelope is stored. **Required to publish** — nautilus writes an encrypted `{remote}` pointer on chain, not the document. Use `IpfsRemoteStore` or `S3RemoteStore`; `NodePersistentRemoteStore` is rejected. See [remote stores](/docs/guides/remote-stores). |
 | `ddoSigner` | `DdoSigner` | Signs the DDO as a verifiable credential. Defaults to the Ethereum key (`ETH-EIP191`). See [signing](/docs/guides/signing). |
 | `credentials` | `CredentialProvider` | Answers the presentation request of an asset whose `SSIpolicy` asks for credentials. Not needed for address-only gates. See [credential-gated assets](/docs/guides/identity). |
-| `sessionStore` | `SessionStore` | Where policy-server sessions are cached. Defaults to a `MemorySessionStore`. |
+| `sessionStore` | `SessionStore` | Where policy-server sessions are cached. Defaults to a `MemorySessionStore`. Gets only sessions opened without a presentation, unless `persistPresentedSessions`. |
+| `persistPresentedSessions` | `boolean` | Also keep presented sessions in `sessionStore`. Default `false`: their ids give read access to the presentation. |
 | `sessionTtlMs` | `number` | How long a cached policy-server session is reused, in ms. Defaults to 2 minutes; `0` caches nothing. |
 | `allowInsecureTransport` | `boolean` | Accept a plain `http://` `oceanNodeUri` on a host other than `localhost`, `127.0.0.0/8`, `::1` or `*.localhost`. Default `false`. See [`create`](/docs/api/nautilus/create#allowinsecuretransport). |
 

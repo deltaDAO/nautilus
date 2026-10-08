@@ -36,11 +36,14 @@ nautilus, since the policy server binds it to (consumer, asset, service) and che
 same node. `skipCredentials` is gone from `access()`, `compute()` and `freeCompute()`: a node
 without a policy server is detected from its status.
 
-**Catch `PolicyDeniedError`.** A refusal by the policy server (`initiate` answering 4xx, or a
-presentation the verifier did not accept) throws a `PolicyDeniedError` with `did`,
-`serviceId`, `consumerAddress`, `code` (the HTTP status; `undefined` for a presentation) and
-`reason` (the policy server's message). It is not an `OceanNodeError`; a network error, a
-timeout or a 5xx still is.
+**Catch `PolicyDeniedError`.** A refusal by the policy server (`initiate` answering with its
+own reply, `success: false` and a 4xx, or a presentation the verifier did not accept) throws
+a `PolicyDeniedError` with `did`, `serviceId`, `consumerAddress`, `code` (the policy server's
+status; `undefined` for a presentation), `reason` (its message, bounded) and, for a
+presentation, `policyResults` (each policy's name, outcome and error; never the presentation).
+It is not an `OceanNodeError`. Everything the node says itself still is, with the status: a
+rejected nonce or signature (401), an asset it has not indexed (404), a policy server it
+cannot reach (400), as are a network error, a timeout and a 5xx.
 
 ```ts
 import { PolicyDeniedError } from '@deltadao/nautilus'
@@ -55,16 +58,42 @@ try {
 
 **Move the session cache to `Nautilus.create`.** `WaltIdCredentialProvider` no longer takes
 `sessionStore` and no longer has `clearSessions()` or `explainFailure()`: pass `sessionStore`
-to `Nautilus.create`, and read the failed policies from `PolicyDeniedError.reason`, or from
-`nautilus.getNodeClient().checkPolicySession(sessionId)`. A `SessionStore` of your own now
-stores a `SessionEntry` of `{ sessionId, createdAt, presented }` and must key on the consumer
-address exactly as given (`sessionKeyString(key)` does), not lower-cased. A cached session is
-reused for at most `sessionTtlMs` (new `Nautilus.create` option, 2 minutes by default).
+to `Nautilus.create`, and read the failed policies from `PolicyDeniedError.policyResults`, or
+ask the node that opened the session. For a download that is the node in the service's
+`serviceEndpoint`, not the configured one:
 
-**`OceanNodeClient.initializePolicyVerification` throws instead of returning `null` on a
-refusal.** It returns `null` only when the node has no policy server, throws a
-`PolicyDeniedError` on a 4xx and an `OceanNodeError` otherwise. `hasPolicyServer()` and
-`checkPolicySession(sessionId)` are new.
+```ts
+const service = asset.credentialSubject.services[0]
+const { verified, policyResults } = await nautilus
+  .getNodeClient()
+  .forEndpoint(service.serviceEndpoint) // the node that opened the session
+  .checkPolicySession(sessionId)
+```
+
+A `SessionStore` of your own now stores a `SessionEntry` of
+`{ sessionId, createdAt, presented }` and must key on the consumer address exactly as given
+(`sessionKeyString(key)` does), not lower-cased. It gets only sessions opened without a
+presentation: a presented session's id lets anyone read the presentation (`vp_token`)
+through the node, so it stays in memory unless you set `persistPresentedSessions: true` for
+a store no one else can read. Session ids are credentials; keep them out of logs. A cached
+session is reused for at most `sessionTtlMs` (new `Nautilus.create` option, 2 minutes by
+default).
+
+**`OceanNodeClient.initializePolicyVerification` returns the reply or throws.** It never
+returns `null`: ask `hasPolicyServer()` first, as `PolicySessionResolver` does. It throws a
+`PolicyDeniedError` for the policy server's refusal and an `OceanNodeError` with the status
+otherwise. Pass it `policySessionAddress(consumerAddress)`, the address the node forwards
+(for a JWT, the token's). `hasPolicyServer()`, `policySessionAddress()` and
+`checkPolicySession(sessionId)` (`{ verified, policyResults }`) are new. `PolicyServerAction`
+moved to the node client and has only `GET_PD` and `CHECK_SESSION_ID`.
+
+**`WaltIdCredentialProvider` checks what the node sends.** It refuses a presentation request
+that is not `openid4vp://`, whose `request_uri`, `response_uri` or
+`presentation_definition_uri` is not `https://` (or `http://` on a loopback host; set
+`allowInsecureTransport: true` for a private network), or whose presentation definition asks
+for a credential type the asset does not request, and it presents only credentials of the
+requested types. Its `signer` must be the consumer. `setCredentialProvider(undefined)` now
+removes the provider.
 
 **Give a gated asset an address allow list.** On a node with a policy server, the policy
 server checks the consumer's address against the asset-level `allow` list before anything

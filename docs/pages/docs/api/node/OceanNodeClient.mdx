@@ -195,16 +195,26 @@ its own bucket storage.
 
 ### Identity
 
-`hasPolicyServer()` · `initializePolicyVerification(request)` · `checkPolicySession(sessionId)` ·
+`hasPolicyServer()` · `policySessionAddress(consumerAddress)` ·
+`initializePolicyVerification(request)` · `checkPolicySession(sessionId)` ·
 `policyServerPassthrough(action)`
 
 `hasPolicyServer()` reads `isPSConfigured` from the node's status, once per client
-(`undefined` when the status does not say). `initializePolicyVerification` returns `null` only
-when the node has no policy server (that status, or a 404 with an empty body), throws a
-`PolicyDeniedError` on any other 4xx, and an `OceanNodeError` on a network error, a timeout,
-a rate limit or a 5xx. Over HTTP it signs and sends the command itself, as ocean.js signs it,
-so that the status of a refusal is kept. `checkPolicySession` reports
-`{ verified, result }` from the policy server's `checkSessionId`.
+(`undefined` when the status does not say). `policySessionAddress` is the address a session
+is bound to: the one the node forwards to the policy server, which for a JWT is the token's
+own. `initializePolicyVerification` returns the policy server's reply; it throws a
+`PolicyDeniedError` only for the policy server's refusal (a reply with `success: false` and a
+4xx), and an `OceanNodeError` with the status for everything else: the node's own 401
+(retried once for a rejected nonce, with a Signer), 404 and 400, a network error, a timeout,
+a rate limit or a 5xx. Over HTTP it signs and sends the command itself, as ocean.js signs it:
+ocean.js keeps a failed answer only when its body is JSON, and the node answers its own
+errors in plain text. `checkPolicySession` reports `{ verified, policyResults }` from the
+policy server's `checkSessionId`: per-policy names, outcomes and errors, never the
+presentation. Policy-server answers are read up to 256 KiB.
+
+`forEndpoint(uri)` returns one client per node (the URI normalised), shared by every client
+derived from the same one, so parallel calls to a node share its signing queue and do not
+sign the same nonce.
 
 ### Diagnostics
 
