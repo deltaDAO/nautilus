@@ -198,8 +198,10 @@ is rejected as the DDO store. See [remote stores](https://nautilus.delta-dao.com
 
 ### 5. Credential-gated assets
 
-If an asset requires a verifiable credential, configure a credential provider once and
-nautilus drives the whole presentation exchange — nothing changes at the call site.
+nautilus opens the policy-server session itself, before anything is ordered, so an asset
+gated by addresses needs no setup. If an asset requires a verifiable credential, configure a
+credential provider once to answer the presentation request from your wallet — nothing
+changes at the call site.
 
 ```ts twoslash
 import { JsonRpcProvider, Wallet } from 'ethers'

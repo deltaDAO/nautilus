@@ -32,9 +32,13 @@ or per call here.
 
 What happens in order:
 
-1. If the service is credential-gated, the configured
-   [credential provider](/docs/guides/identity) satisfies the policy. This happens
-   **before** any spend, so a failed presentation costs nothing.
+1. If the service's node has a policy server and the asset or service has `credentials`
+   (`{}` included), nautilus opens a policy-server session for this consumer (see
+   [credential-gated assets](/docs/guides/identity)). An asset gated by addresses only needs
+   no wallet; one whose `SSIpolicy` asks for credentials needs a
+   [credential provider](/docs/api/identity/CredentialProvider), and nautilus checks that the
+   verifier accepted the presentation. This happens **before** any spend, so a refusal
+   costs nothing.
 2. The node is asked for provider fees and whether a previous order can be reused. Before
    ordering, nautilus checks that the provider fee signature recovers to
    `providerFeeAddress` the way the datatoken contract verifies it, since an order with any
@@ -51,7 +55,7 @@ What happens in order:
    used as-is if not. Otherwise a datatoken is bought and a new order placed. Everything the
    order pulls from you (the purchase, the publish-market fee and the provider fee) is
    approved with one allowance per token and spender, after every check has passed.
-5. The download URL is built, carrying the verifier session if there was one.
+5. The download URL is built, carrying the policy-server session if there is one.
 
 ## Returns
 
@@ -122,13 +126,6 @@ Which file of the service to download. Defaults to `0`.
 Values for the service's consumer parameters. See the
 [ConsumerParameterBuilder](/docs/api/ConsumerParameterBuilder).
 
-##### skipCredentials (optional)
-
-- Type: `boolean`
-
-Skip the credential presentation even for a gated service. Only useful when you already
-hold a valid verifier session and supplied it as a `StaticCredentialProvider`.
-
 ##### maxProviderFee (optional)
 
 - Type: `TokenAmount | TokenAmount[]`, where `TokenAmount` is
@@ -159,10 +156,17 @@ clears the default callback.
 
 ## Throws
 
+- `PolicyDeniedError`: the policy server refused this consumer (`error.code` is the HTTP
+  status, `error.reason` its message, e.g. `Access denied: Address not allowed at asset
+  level.`), or the verifier did not accept the presentation (`error.code` is `undefined`,
+  `error.reason` names the failed policies). Also carries `did`, `serviceId` and
+  `consumerAddress`.
+- An `Error` when the service asks for a verifiable presentation and no credential provider
+  is set.
 - `ProviderFeeSignatureError`: the node's fee is missing, incomplete, or its signature would
   fail the datatoken's check.
 - `ProviderFeeNotAllowedError`: the fee is not zero and neither `maxProviderFee` nor
   `confirmProviderFees` allows it. `error.fees` lists the fees, `error.reason` is
   `'no-limit'`, `'over-limit'` or `'declined'`.
 
-Both are thrown before any approval, purchase or order.
+All of them are thrown before any approval, purchase or order.

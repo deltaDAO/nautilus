@@ -43,8 +43,11 @@ payment runs through an escrow contract, and all datasets travel in one array. S
 What happens in order:
 
 1. Every input is resolved and its compute service selected.
-2. Credentials are satisfied for **all** inputs. A failure here aborts the whole job with
-   nothing spent — the reason this comes first.
+2. On a node with a policy server, a policy-server session is opened for **every** input
+   with `credentials`, datasets and algorithm alike, each for its own asset and service (see
+   [credential-gated assets](/docs/guides/identity)). A refusal aborts the whole job with
+   nothing spent — the reason this comes first. The same sessions go to `initializeCompute`
+   and `computeStart`.
 3. `initializeCompute` quotes the job: provider fees, reusable orders and the escrow amount.
    The provider fee of every input that will be ordered is checked locally, as for
    [`access`](/docs/api/nautilus/access): a fee that is missing, lacks a field, or that the
@@ -221,10 +224,6 @@ Extra addresses allowed to read the results.
 
 Seconds to wait in the queue when resources are unavailable.
 
-##### skipCredentials (optional)
-
-- Type: `boolean`
-
 ##### maxProviderFee (optional)
 
 - Type: `TokenAmount | TokenAmount[]`, where `TokenAmount` is
@@ -320,8 +319,9 @@ lock as `context.escrowLock`.
 
 ## Throws
 
-- `ProviderFeeSignatureError` and `ProviderFeeNotAllowedError`, as for
-  [`access`](/docs/api/nautilus/access#throws).
+- `PolicyDeniedError`, `ProviderFeeSignatureError` and `ProviderFeeNotAllowedError`, as
+  for [`access`](/docs/api/nautilus/access#throws), and an `Error` when an input asks for a
+  verifiable presentation and no credential provider is set.
 - `EscrowPaymentNotAllowedError`, with `error.reason`:
   - `'unknown-escrow'`: no escrow contract is pinned for the chain: no `config.escrow`, and
     no `EnterpriseEscrow` or `Escrow` in Ocean's address data. Set the chain's

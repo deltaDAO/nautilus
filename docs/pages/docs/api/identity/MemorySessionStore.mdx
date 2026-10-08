@@ -1,25 +1,27 @@
 # MemorySessionStore
 
-The default cache for verifier sessions, held in process.
+The default cache for policy-server sessions, held in process.
 
 ## Usage
 
 ```ts twoslash
-import { MemorySessionStore, WaltIdCredentialProvider } from '@deltadao/nautilus'
-import type { OceanNodeClient } from '@deltadao/nautilus'
-
-declare const node: OceanNodeClient
+import { MemorySessionStore, Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const signer = new Wallet('0x1234')
 // ---cut---
-const credentials = new WaltIdCredentialProvider(node, {
-  walletApi: 'https://wallet.example.org',
+const nautilus = await Nautilus.create(signer, {
+  config: { oceanNodeUri: 'https://node.example.org' },
   sessionStore: new MemorySessionStore() // [!code focus]
 })
 ```
 
-Sessions are keyed by `{ nodeUri, did, serviceId, consumerAddress }`, so re-accessing the
-same gated service does not repeat the exchange — while switching accounts, or reaching a
-service hosted on another node, does. A session id means nothing to a policy server that
-did not mint it.
+Sessions are keyed by `{ nodeUri, did, serviceId, consumerAddress }` (the address
+lower-cased for the key only), so re-accessing the same gated service does not repeat the
+exchange — while switching accounts, or reaching a service hosted on another node, does. A
+session id means nothing to a policy server that did not open it.
+
+Only sessions the policy server opened, and the verifier accepted where a presentation was
+asked for, are stored. A refusal is never cached: the next call asks again.
 
 :::info
 Implement `SessionStore` yourself — `get`, `set`, `delete`, `clear` — to share sessions across

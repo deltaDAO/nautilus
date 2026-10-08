@@ -130,7 +130,10 @@ Pass a `WaltIdVcSigner` to issue from a real DID instead — see the
 
 - Type: `CredentialProvider`
 
-Satisfies credential-gated access. Omit it and nautilus skips SSI entirely.
+Answers the verifiable-presentation request of a service whose `SSIpolicy` asks for
+credentials. nautilus opens the policy-server session itself, so a service gated by
+addresses only needs no provider. Without one, a service that asks for a presentation is
+refused before anything is spent. See [credential-gated assets](/docs/guides/identity).
 
 ```ts twoslash
 import { JsonRpcProvider, Wallet } from 'ethers'
@@ -146,6 +149,15 @@ const nautilus = await Nautilus.create(signer, {
   }) // [!code focus]
 })
 ```
+
+##### sessionStore
+
+- Type: `SessionStore`
+- Default: a [`MemorySessionStore`](/docs/api/identity/MemorySessionStore)
+
+Where this instance caches its policy-server sessions, one per (node, asset, service,
+consumer). Only sessions the policy server opened and, where a presentation was asked for,
+the verifier accepted are stored.
 
 ##### allowInsecureTransport
 

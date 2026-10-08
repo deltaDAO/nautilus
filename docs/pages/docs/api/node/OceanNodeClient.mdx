@@ -195,7 +195,16 @@ its own bucket storage.
 
 ### Identity
 
-`initializePolicyVerification(request)` · `policyServerPassthrough(action)`
+`hasPolicyServer()` · `initializePolicyVerification(request)` · `checkPolicySession(sessionId)` ·
+`policyServerPassthrough(action)`
+
+`hasPolicyServer()` reads `isPSConfigured` from the node's status, once per client
+(`undefined` when the status does not say). `initializePolicyVerification` returns `null` only
+when the node has no policy server (that status, or a 404 with an empty body), throws a
+`PolicyDeniedError` on any other 4xx, and an `OceanNodeError` on a network error, a timeout,
+a rate limit or a 5xx. Over HTTP it signs and sends the command itself, as ocean.js signs it,
+so that the status of a refusal is kept. `checkPolicySession` reports
+`{ verified, result }` from the policy server's `checkSessionId`.
 
 ### Diagnostics
 
@@ -222,5 +231,9 @@ try {
 
 `IndexingError` is the `OceanNodeError` that `waitForIndexer` throws when the node has
 recorded a failure. It carries `did`, `txId` and the node's record on `state`.
+
+`PolicyDeniedError` is not an `OceanNodeError`: the node and its policy server answered, and
+refused. It carries `did`, `serviceId`, `consumerAddress`, `code` (the HTTP status) and
+`reason` (the policy server's message).
 
 See [the Ocean Node client guide](/docs/guides/ocean-node).

@@ -11,6 +11,73 @@ New to nautilus rather than upgrading? Start with
 [Getting Started](/docs/getting-started) instead — this page assumes you know v1.
 :::
 
+## Upgrading from 2.0.0-beta.1
+
+nautilus now opens the policy-server session itself, on every download and compute job that
+the node checks: whenever the node has a policy server (`isPSConfigured` in its status) and
+the asset or service has `credentials` (`{}` included). An asset gated by addresses only needs
+no wallet any more, and a refusal is reported before anything is ordered.
+
+**A custom `CredentialProvider` implements `present()` instead of `resolve()`.** nautilus
+opens the session, reads its id and checks the result (`checkSessionId`); the provider only
+answers the openid4vp request, and is only called for a service whose `SSIpolicy` asks for
+credentials. Ask `challenge.node` for anything about the session.
+
+```diff
+  class MyProvider implements CredentialProvider {
+-   readonly interactive = true
+-   async resolve(challenge: CredentialChallenge): Promise<PolicyServerPayload | null> {
+-     // initiate, present, return the session
+-   }
++   async present(challenge: CredentialChallenge): Promise<void> {
++     // answer challenge.redirectUri for challenge.sessionId from the wallet
++   }
+  }
+```
+
+**Drop `StaticCredentialProvider`, `NoopCredentialProvider` and `skipCredentials`.** No
+provider is the default and works for address-only gates; a session is always opened by
+nautilus, since the policy server binds it to (consumer, asset, service) and checks it on the
+same node. `skipCredentials` is gone from `access()`, `compute()` and `freeCompute()`: a node
+without a policy server is detected from its status.
+
+**Catch `PolicyDeniedError`.** A refusal by the policy server (`initiate` answering 4xx, or a
+presentation the verifier did not accept) throws a `PolicyDeniedError` with `did`,
+`serviceId`, `consumerAddress`, `code` (the HTTP status; `undefined` for a presentation) and
+`reason` (the policy server's message). It is not an `OceanNodeError`; a network error, a
+timeout or a 5xx still is.
+
+```ts
+import { PolicyDeniedError } from '@deltadao/nautilus'
+
+try {
+  await nautilus.access({ assetDid })
+} catch (error) {
+  if (error instanceof PolicyDeniedError) console.log(error.code, error.reason)
+  else throw error
+}
+```
+
+**Move the session cache to `Nautilus.create`.** `WaltIdCredentialProvider` no longer takes
+`sessionStore` and no longer has `clearSessions()` or `explainFailure()`: pass `sessionStore`
+to `Nautilus.create`, and read the failed policies from `PolicyDeniedError.reason`, or from
+`nautilus.getNodeClient().checkPolicySession(sessionId)`.
+
+**`OceanNodeClient.initializePolicyVerification` throws instead of returning `null` on a
+refusal.** It returns `null` only when the node has no policy server, throws a
+`PolicyDeniedError` on a 4xx and an `OceanNodeError` otherwise. `hasPolicyServer()` and
+`checkPolicySession(sessionId)` are new.
+
+**Give a gated asset an address allow list.** On a node with a policy server, the policy
+server checks the consumer's address against the asset-level `allow` list before anything
+else, so an asset with `credentials: {}`, or an allow list without an `address` entry, is
+refused to everyone. `publish()` and `edit()` log a warning for such an asset when the node
+has a policy server:
+
+```ts
+assetBuilder.addCredentialAddresses(CredentialListTypes.ALLOW, ['0x…'])
+```
+
 ## Upgrading from 2.0.0-beta.0
 
 2.0.0-beta.1 makes published and edited assets indexable by an unmodified
@@ -534,8 +601,8 @@ const url: string = await nautilus.access({ assetDid }) // [!code --]
 const { url, transferTxId, reusedOrder } = await nautilus.access({ assetDid }) // [!code ++]
 ```
 
-If the service is credential-gated, nautilus resolves the policy before placing any order —
-so a failed presentation costs nothing. See §10.
+If the node has a policy server and the asset or service has `credentials`, nautilus opens
+the policy-server session before placing any order — so a refusal costs nothing. See §10.
 
 A non-zero provider fee is paid only within `maxProviderFee` or with `confirmProviderFees`;
 v1 paid whatever the node quoted. See
@@ -574,9 +641,11 @@ node the instance is configured with.
 
 ## 10. Credential-gated assets
 
-New in v2. Configure a credential provider and nautilus handles the whole presentation
-exchange — initiate, fetch the presentation definition, authenticate to the wallet, match
-credentials, present, and carry the resulting session into the download or compute call.
+New in v2. nautilus opens the policy-server session itself and carries it into the download
+or compute call. An asset gated by addresses only needs nothing more. For an asset whose
+`SSIpolicy` asks for credentials, configure a credential provider: it answers the
+presentation request from your wallet (fetch the presentation definition, authenticate,
+match credentials, present), and nautilus checks that the verifier accepted it.
 
 ```ts
 import { Nautilus, WaltIdCredentialProvider } from '@deltadao/nautilus'
@@ -596,11 +665,14 @@ const nautilus = await Nautilus.create(signer, {
 const { url } = await nautilus.access({ assetDid: 'did:ope:…' })
 ```
 
-:::warning[Two deployment behaviours to know about]
-- ocean-node **fails open** when its `POLICY_SERVER_URL` is unset, so an unconfigured node
-  allows everything. `initializePSVerification` returning `null` is the clean signal.
-- Publish-time policy enforcement does not exist yet: the policy server's `newDDO`,
-  `updateDDO`, `validateDDO`, `encrypt` and `decrypt` actions are stubs that always allow.
+:::warning[Deployment behaviours to know about]
+- ocean-node checks credentials with a policy server only when it has one
+  (`POLICY_SERVER_URL`, `isPSConfigured` in its status); without one it checks address and
+  access lists itself. nautilus reads the status and opens no session there.
+- On a node with a policy server, an asset needs an address allow list: the policy server
+  refuses every address that is not on it. It checks consume time (`initiate`, `download`,
+  `startCompute`); its publish-time actions (`newDDO`, `updateDDO`, `validateDDO`,
+  `encrypt`, `decrypt`) allow every request.
 :::
 
 See [credential-gated assets](/docs/guides/identity) for the full picture.

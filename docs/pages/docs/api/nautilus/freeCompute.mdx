@@ -22,7 +22,8 @@ const { jobs } = await nautilus.freeCompute({ // [!code focus]
 New in v2. The environment must expose a `free` configuration, and its access list may
 still restrict who can use it — an environment without one throws, naming it.
 
-Credentials are still satisfied: free of charge is not the same as ungated.
+Policy-server sessions are still opened for every input, as for
+[`compute`](/docs/api/nautilus/compute): free of charge is not the same as ungated.
 
 ## Returns
 
