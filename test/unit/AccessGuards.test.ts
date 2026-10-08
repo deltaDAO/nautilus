@@ -519,7 +519,7 @@ describe('access() download URL', () => {
       auth: { consumerAddress: CONSUMER, nonce: '7', signature: '0x5167' }
     })
     vi.spyOn(node, 'resolve').mockResolvedValue(asset)
-    vi.spyOn(ProviderInstance, 'initialize').mockResolvedValue({
+    vi.spyOn(node, 'initialize').mockResolvedValue({
       datatoken: asset.credentialSubject.services[0].datatokenAddress,
       validOrder: '0xexisting',
       providerFee: { providerFeeAmount: '0' }

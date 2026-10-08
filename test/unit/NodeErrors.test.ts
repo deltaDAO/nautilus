@@ -36,7 +36,7 @@ const NODE = 'https://node.test.invalid'
 const PEER = '16Uiu2HAmPeerIdOnly'
 const DID_OP = ASSET_DID.replace('did:ope:', 'did:op:')
 const TX = `0x${'12'.repeat(32)}`
-const JOB = `${'ab'.repeat(32)}-job-1`
+const JOB = `0x${'ab'.repeat(32)}-${'cd'.repeat(32)}`
 
 const ACCESS_DENIED = `Error: Access to asset ${DID_OP} was denied`
 

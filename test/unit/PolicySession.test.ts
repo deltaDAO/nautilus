@@ -365,7 +365,8 @@ describe('OceanNodeClient policy server', () => {
 
     expect(thrown).to.be.instanceOf(PolicyDeniedError)
     expect(thrown.reason.length).to.be.at.most(201)
-    expect(thrown.reason).to.match(/^denied \[31m forged line x+…$/)
+    // The ANSI escape goes whole, the line break becomes a space.
+    expect(thrown.reason).to.match(/^denied forged line x+…$/)
     // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting they are gone
     expect(thrown.message).not.to.match(/[\u0000-\u001f]/)
   })
