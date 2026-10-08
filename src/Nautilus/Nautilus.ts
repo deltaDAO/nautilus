@@ -256,8 +256,18 @@ export interface NautilusOptions
   /**
    * Where the policy-server sessions of this instance are cached. Defaults to an in-memory
    * store. A session is bound to one (node, asset, service, consumer).
+   *
+   * A store of your own gets only sessions opened without a presentation; presented ones
+   * stay in memory unless `persistPresentedSessions`. Session ids are credentials: keep the
+   * store private.
    */
   sessionStore?: SessionStore
+  /**
+   * Also keep presented sessions in `sessionStore`. Default `false`. The id of a presented
+   * session lets anyone read the presentation (`vp_token`) through the node until the
+   * verifier forgets it, so opt in only for a store no one else can read.
+   */
+  persistPresentedSessions?: boolean
   /**
    * How long, in milliseconds from its opening, a cached policy-server session is reused
    * before it is opened again. `0` turns the cache off. Default: `DEFAULT_SESSION_TTL_MS`
@@ -406,6 +416,7 @@ export class Nautilus {
     this.policySessions = new PolicySessionResolver({
       credentials: options.credentials,
       sessionStore: options.sessionStore,
+      persistPresentedSessions: options.persistPresentedSessions,
       sessionTtlMs: options.sessionTtlMs
     })
   }
@@ -535,9 +546,11 @@ export class Nautilus {
     return this.signer
   }
 
-  /** Swaps in a credential provider after construction. Cached sessions stay. */
-  setCredentialProvider(credentials: CredentialProvider): void {
-    this.options.credentials = credentials
+  /**
+   * Swaps in a credential provider after construction, or removes it with `undefined`.
+   * Cached sessions stay.
+   */
+  setCredentialProvider(credentials: CredentialProvider | undefined): void {
     this.policySessions.setCredentialProvider(credentials)
   }
 

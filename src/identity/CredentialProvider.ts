@@ -11,16 +11,6 @@ import type { AssetV5 } from '@oceanprotocol/ddo-js'
 import type { PolicyServerPayload } from '../ddo/types.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
 
-/** Actions the policy server accepts through the node's passthrough endpoint. */
-export enum PolicyServerAction {
-  INITIATE = 'initiate',
-  GET_PD = 'getPD',
-  CHECK_SESSION_ID = 'checkSessionId',
-  PRESENTATION_REQUEST = 'presentationRequest',
-  DOWNLOAD = 'download',
-  PASSTHROUGH = 'passthrough'
-}
-
 /** One presentation the policy server asked for. */
 export interface CredentialChallenge {
   /** The asset whose service is gated. */
