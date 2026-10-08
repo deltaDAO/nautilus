@@ -76,7 +76,6 @@ import {
 import { assertSecureTransport, parseHttpUrl } from '../utils/transport.js'
 import { warnOnce } from '../utils/warn.js'
 import {
-  addressFromAuthToken,
   authTokenAddress,
   isAuthToken,
   isCompleteSignature,
@@ -1093,7 +1092,7 @@ export class OceanNodeClient {
       return {
         consumerAddress:
           consumerAddress ||
-          addressFromAuthToken(auth) ||
+          authTokenAddress(auth) ||
           (await this.getConsumerAddress()),
         authorization: auth
       }
@@ -2446,8 +2445,9 @@ export class OceanNodeClient {
    * forwards the address it authenticated (ocean-node `Auth`): for a Signer, the request's,
    * so `consumerAddress` as given; for a JWT, the address stored with the token, whatever
    * the request says, and ocean.js sends that one with the download too; for a pre-computed
-   * signature, its own `consumerAddress`. A JWT whose payload does not decode leaves
-   * `consumerAddress` as given.
+   * signature, its own `consumerAddress`. A JWT whose payload does not decode, or whose
+   * `address` claim is not an address, leaves `consumerAddress` as given (`authTokenAddress`,
+   * which `signCommand` reads the token's address with too).
    */
   policySessionAddress(consumerAddress: string): string {
     const auth = this.auth

@@ -40,30 +40,10 @@ export function isSigner(auth: NodeAuth): auth is Signer {
 }
 
 /**
- * The `address` in a node JWT's payload, or `undefined` when the token does not decode.
- * Read, not verified: the node verifies the token, and attributes a request made with it
- * to this address.
- */
-export function authTokenAddress(token: string): string | undefined {
-  const payload = token.split('.')[1]
-  if (!payload) return undefined
-
-  try {
-    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/')
-    const json = atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, '='))
-    const address = (JSON.parse(json) as { address?: unknown } | null)?.address
-
-    return typeof address === 'string' && address ? address : undefined
-  } catch {
-    return undefined
-  }
-}
-
-/**
  * The address the node will attribute the request to.
  *
  * For a JWT it is `fallback` when given, else the token's `address` claim (see
- * `addressFromAuthToken`).
+ * `authTokenAddress`).
  */
 export async function resolveConsumerAddress(
   auth: NodeAuth,
@@ -72,7 +52,7 @@ export async function resolveConsumerAddress(
   if (isCompleteSignature(auth)) return auth.consumerAddress
   if (isSigner(auth)) return auth.getAddress()
 
-  const address = fallback || addressFromAuthToken(auth)
+  const address = fallback || authTokenAddress(auth)
   if (address) return address
 
   throw new Error(
@@ -83,10 +63,10 @@ export async function resolveConsumerAddress(
 /**
  * The `address` claim of a node auth token, read the way ocean.js reads it
  * (`decodeJwt(token).address`): the payload is decoded, not verified, which is all it takes
- * to name the address the node checks the token against. `undefined` for a token that is
- * not a JWT or whose claim is not an address.
+ * to name the address the node checks the token against and attributes a request made with
+ * it to. `undefined` for a token that is not a JWT or whose claim is not an address.
  */
-export function addressFromAuthToken(token: string): string | undefined {
+export function authTokenAddress(token: string): string | undefined {
   const payload = token.split('.')[1]
   if (!payload) return undefined
 
