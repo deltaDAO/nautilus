@@ -1114,6 +1114,33 @@ export class OceanNodeClient {
     return { consumerAddress: address, nonce, signature }
   }
 
+  /**
+   * Runs `send`, one signed command, and once more when the node rejected its nonce: an
+   * `OceanNodeError` whose message says so (`NONCE_REJECTED`). A fresh nonce is read on
+   * every call, so one retry gets past a nonce another request for this address used in
+   * between. Only a Signer's command is retried, and not once `signal` aborted: a
+   * pre-computed signature carries a fixed nonce and a JWT none, so a retry would fail the
+   * same way. `initializePolicyVerification` and `getComputeLogs` use it.
+   */
+  private async withNonceRetry<T>(
+    signal: AbortSignal,
+    send: () => Promise<T>
+  ): Promise<T> {
+    try {
+      return await send()
+    } catch (error) {
+      if (
+        !isSigner(this.auth) ||
+        signal.aborted ||
+        !(error instanceof OceanNodeError) ||
+        !NONCE_REJECTED.test(error.message)
+      )
+        throw error
+
+      return send()
+    }
+  }
+
   // #region metadata
 
   /**
@@ -2332,48 +2359,40 @@ export class OceanNodeClient {
       return logs
     }
 
-    const answer = await this.serializeSigned(
+    const response = await this.serializeSigned(
       operation,
       signal,
       async (callSignal) => {
-        const first = await this.requestComputeLogs(jobId, signal, callSignal)
-        const answer =
-          first.ok ||
-          !isSigner(this.auth) ||
-          callSignal.aborted ||
-          !NONCE_REJECTED.test(first.body)
-            ? first
-            : await this.requestComputeLogs(jobId, signal, callSignal)
+        const response = await this.withNonceRetry(callSignal, () =>
+          this.requestComputeLogs(jobId, signal, callSignal)
+        )
 
         // Timed out meanwhile: nobody reads this stream.
-        if (callSignal.aborted && answer.ok)
-          await answer.response.body?.cancel().catch(() => undefined)
+        if (callSignal.aborted)
+          await response.body?.cancel().catch(() => undefined)
 
-        return answer
+        return response
       }
     )
 
-    if (!answer.ok)
-      throw new OceanNodeError(
-        operation,
-        describeAnswer(answer),
-        undefined,
-        answer.status
-      )
-
-    return responseBodyToAsyncIterable(answer.response.body)
+    return responseBodyToAsyncIterable(response.body)
   }
 
   /**
-   * One signed `GET /api/services/computeStreamableLogs`. `callSignal` bounds the signing;
-   * the request gets the caller's `signal` and `requestTimeoutMs` up to its headers, so the
-   * stream is not cut off when `callSignal`'s timeout fires.
+   * One signed `GET /api/services/computeStreamableLogs`, resolving with the response whose
+   * body is the stream. A non-2xx answer throws an `OceanNodeError` with the node's status
+   * and text. `callSignal` bounds the signing; the request gets the caller's `signal` and
+   * `requestTimeoutMs` up to its headers, so the stream is not cut off when `callSignal`'s
+   * timeout fires.
    */
   private async requestComputeLogs(
     jobId: string,
     signal: AbortSignal | undefined,
     callSignal: AbortSignal
-  ): Promise<FetchedResponse> {
+  ): Promise<Response> {
+    const operation = 'computeStreamableLogs'
+
+    let answer: FetchedResponse
     try {
       const { consumerAddress, nonce, signature, authorization } =
         await this.signCommand(
@@ -2384,7 +2403,7 @@ export class OceanNodeClient {
       if (signature) query.set('signature', signature)
       if (nonce) query.set('nonce', nonce)
 
-      return await fetchResponse(
+      answer = await fetchResponse(
         fetch,
         `${this.baseUrl()}/api/services/computeStreamableLogs?${query}`,
         {
@@ -2395,8 +2414,18 @@ export class OceanNodeClient {
       )
     } catch (error) {
       if (signal?.aborted) throw signal.reason
-      throw OceanNodeError.from('computeStreamableLogs', error)
+      throw OceanNodeError.from(operation, error)
     }
+
+    if (!answer.ok)
+      throw new OceanNodeError(
+        operation,
+        describeAnswer(answer),
+        undefined,
+        answer.status
+      )
+
+    return answer.response
   }
 
   // #endregion
@@ -2491,24 +2520,10 @@ export class OceanNodeClient {
     return this.serializeSigned(
       'initializePolicyVerification',
       signal,
-      async (callSignal) => {
-        try {
-          return await this.initiateOnce(request, callSignal)
-        } catch (error) {
-          // A fresh nonce is read on every call, so one retry gets past a nonce another
-          // request for this address used in between. A pre-computed signature carries a
-          // fixed nonce and a JWT none: retrying either would fail the same way.
-          if (
-            !isSigner(this.auth) ||
-            callSignal.aborted ||
-            !(error instanceof OceanNodeError) ||
-            !NONCE_REJECTED.test(error.message)
-          )
-            throw error
-
-          return this.initiateOnce(request, callSignal)
-        }
-      }
+      (callSignal) =>
+        this.withNonceRetry(callSignal, () =>
+          this.initiateOnce(request, callSignal)
+        )
     )
   }
 
