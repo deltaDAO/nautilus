@@ -45,7 +45,12 @@ vi.mock('../../src/utils/order.js', async (importOriginal) => ({
 // The fresh-order path reads pricing from chain before ordering; stub both reads.
 vi.mock('../../src/utils/pricing.js', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  getPricingInfo: vi.fn(async () => ({ schema: 'free' })),
+  getPricingInfo: vi.fn(async (_signer: unknown, datatokenAddress: string) => ({
+    schema: 'free',
+    templateId: 1,
+    datatokenAddress,
+    publishMarketFee: {}
+  })),
   getOrderPrice: vi.fn(async () => ({ total: '0', consumeMarketFee: '0' }))
 }))
 
@@ -53,7 +58,12 @@ const CONSUMER = '0x0000000000000000000000000000000000c05e5a'
 const FEE_TOKEN = '0xfee0000000000000000000000000000000000000'
 
 const signer = { getAddress: async () => CONSUMER } as unknown as Signer
-const chainConfig = { chainId: 32456 } as unknown as Config
+// `settleOrder` checks the fresh order before sending it, as `order()` does: a free asset
+// needs the dispenser.
+const chainConfig = {
+  chainId: 32456,
+  dispenserAddress: '0x0000000000000000000000000000000000d15e45'
+} as unknown as Config
 
 function settleParams(initialized: {
   validOrder?: string
@@ -65,7 +75,9 @@ function settleParams(initialized: {
     datatokenAddress: DATATOKEN_ADDRESS,
     serviceIndex: 0,
     initialized,
-    consumer: CONSUMER
+    consumer: CONSUMER,
+    // The consent itself is pinned in PaymentLimits.test.ts.
+    maxProviderFee: { token: FEE_TOKEN, amount: 10n ** 30n }
   }
 }
 

@@ -2,7 +2,7 @@
  * Regression tests for `compute()` input resolution and order bookkeeping.
  *
  * Everything below the nautilus surface is stubbed: the node client is a plain object and
- * `settleOrder` is mocked, so these tests exercise exactly the logic that broke —
+ * the order plans and sends are mocked, so these tests exercise exactly the logic that broke —
  * which service an input resolves to, and which order id ends up on which input.
  */
 
@@ -17,7 +17,7 @@ import {
 import type { Signer } from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComputeConfig } from '../../src/@types/Compute.js'
-import { settleOrder } from '../../src/access/index.js'
+import { sendSettlement } from '../../src/access/settlement.js'
 import { compute } from '../../src/compute/index.js'
 import type { AssetV5 } from '../../src/ddo/index.js'
 import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
@@ -37,8 +37,14 @@ import { expectThrowsAsync } from '../helpers.js'
 
 // Ordering runs against the chain; stub it so each order returns a tx id derived from the
 // datatoken, which lets the tests tell apart orders for different services of one asset.
-vi.mock('../../src/access/index.js', () => ({
-  settleOrder: vi.fn(
+vi.mock('../../src/access/settlement.js', () => ({
+  planSettlement: vi.fn(
+    async ({ datatokenAddress }: { datatokenAddress: string }) => ({
+      kind: 'order',
+      datatokenAddress
+    })
+  ),
+  sendSettlement: vi.fn(
     async ({ datatokenAddress }: { datatokenAddress: string }) => ({
       transferTxId: `tx-${datatokenAddress}`
     })
@@ -382,7 +388,7 @@ describe('compute() provider-fee signature pre-check', () => {
     expect(thrown.attempts).to.equal(1)
     expect(calls.initializeCompute).to.equal(1)
     expectNoEscrow()
-    expect(vi.mocked(settleOrder)).not.toHaveBeenCalled()
+    expect(vi.mocked(sendSettlement)).not.toHaveBeenCalled()
     expect(calls.computeStart).to.have.length(0)
   })
 
@@ -405,7 +411,7 @@ describe('compute() provider-fee signature pre-check', () => {
     expect(thrown.message).to.match(/there is no provider fee/)
     expect(calls.initializeCompute).to.equal(1)
     expectNoEscrow()
-    expect(vi.mocked(settleOrder)).not.toHaveBeenCalled()
+    expect(vi.mocked(sendSettlement)).not.toHaveBeenCalled()
   })
 
   it('refuses a dataset the answer has no result for, before escrow', async () => {
@@ -445,7 +451,7 @@ describe('compute() provider-fee signature pre-check', () => {
     expect(calls.initializeCompute).to.equal(1)
     expect(escrow.getUserFunds).toHaveBeenCalledOnce()
     expect(vi.mocked(sendTx)).toHaveBeenCalledOnce()
-    expect(vi.mocked(settleOrder)).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(sendSettlement)).toHaveBeenCalledTimes(2)
     expect(calls.computeStart).to.have.length(1)
   })
 })

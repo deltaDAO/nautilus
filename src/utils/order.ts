@@ -174,21 +174,7 @@ export async function order(request: OrderRequest): Promise<OrderResult> {
   // 1. Everything that can be checked without spending, first: a fee the datatoken would
   //    reject, a fee the caller did not allow, or pricing that cannot be ordered,
   //    otherwise surfaces after the buy.
-  assertProviderFeeSignature(providerFees)
-
-  await assertProviderFeesAllowed(
-    [
-      quoteProviderFee(providerFees, {
-        datatoken: pricing.datatokenAddress
-      })
-    ],
-    request
-  )
-
-  const route = routeOf(request)
-  const allowances = allowancesFor(request, route)
-
-  const payer = await payingAccount(signer, request.payer)
+  const { route, allowances, payer } = await checkOrder(request)
 
   const datatoken = new Datatoken(signer, config.chainId, config)
 
@@ -214,6 +200,36 @@ export async function order(request: OrderRequest): Promise<OrderResult> {
   return route.schema === 'fixed'
     ? orderFixed({ ...request, route, datatoken, orderParams })
     : orderFree({ ...request, route, payer, datatoken, orderParams })
+}
+
+/**
+ * Every check `order()` runs before its first approval, without sending anything: the
+ * provider fee's signature, the caller's consent to it (`maxProviderFee` /
+ * `confirmProviderFees`, which may ask the callback), pricing that can be ordered, and the
+ * payer. Throws what `order()` would throw for the same request. Reads no chain.
+ *
+ * `compute()` runs it for every input before it funds escrow, so an input that cannot be
+ * ordered is refused before anything is spent. Not exported from the package.
+ */
+export async function checkOrder(
+  request: OrderRequest
+): Promise<{ route: OrderRoute; allowances: Allowance[]; payer: string }> {
+  assertProviderFeeSignature(request.providerFees)
+
+  await assertProviderFeesAllowed(
+    [
+      quoteProviderFee(request.providerFees, {
+        datatoken: request.pricing.datatokenAddress
+      })
+    ],
+    request
+  )
+
+  const route = routeOf(request)
+  const allowances = allowancesFor(request, route)
+  const payer = await payingAccount(request.signer, request.payer)
+
+  return { route, allowances, payer }
 }
 
 /**

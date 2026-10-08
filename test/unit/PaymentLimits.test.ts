@@ -11,7 +11,7 @@
  * approved, funded and authorised for exact amounts.
  *
  * Everything on chain is stubbed: the escrow contract, ocean.js's `sendTx`, approvals and
- * the token balance read. `settleOrder` is stubbed for `compute()`, and `order()` /
+ * the token balance read. `sendSettlement` is stubbed for `compute()`, and `order()` /
  * `reuseOrder()` for `access()`.
  */
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -30,6 +30,7 @@ import { getAddress, type Signer } from 'ethers'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComputeConfig } from '../../src/@types/Compute.js'
 import { access, settleOrder } from '../../src/access/index.js'
+import { planSettlement, sendSettlement } from '../../src/access/settlement.js'
 import { resolveEscrowPin } from '../../src/compute/escrow.js'
 import { type ComputeContext, compute } from '../../src/compute/index.js'
 import type { AssetV5 } from '../../src/ddo/index.js'
@@ -90,16 +91,23 @@ vi.mock('ethers', async (importOriginal) => ({
   })
 }))
 
-// `compute()` orders through `settleOrder`; `access()` keeps its own, which then calls
-// `order()` / `reuseOrder()`.
-vi.mock('../../src/access/index.js', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  settleOrder: vi.fn(
-    async ({ datatokenAddress }: { datatokenAddress: string }) => ({
-      transferTxId: `tx-${datatokenAddress}`
-    })
-  )
-}))
+// `compute()` plans every order with the real `planSettlement` (its checks and pricing
+// reads), then sends them through `sendSettlement`, stubbed here. `access()` settles
+// through the real module, which then calls `order()` / `reuseOrder()`, stubbed below.
+vi.mock('../../src/access/settlement.js', async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import('../../src/access/settlement.js')>()
+
+  return {
+    ...original,
+    planSettlement: vi.fn(original.planSettlement),
+    sendSettlement: vi.fn(
+      async ({ datatokenAddress }: { datatokenAddress: string }) => ({
+        transferTxId: `tx-${datatokenAddress}`
+      })
+    )
+  }
+})
 
 vi.mock('../../src/utils/order.js', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -109,7 +117,12 @@ vi.mock('../../src/utils/order.js', async (importOriginal) => ({
 
 vi.mock('../../src/utils/pricing.js', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  getPricingInfo: vi.fn(async () => ({ schema: 'free' })),
+  getPricingInfo: vi.fn(async (_signer: unknown, datatokenAddress: string) => ({
+    schema: 'free',
+    templateId: 1,
+    datatokenAddress,
+    publishMarketFee: {}
+  })),
   getOrderPrice: vi.fn(async () => ({ total: '0', consumeMarketFee: '0' }))
 }))
 
@@ -151,7 +164,8 @@ const signer = { getAddress: async () => CONSUMER } as unknown as Signer
 /** No `escrow`: the pin comes from `compute()`'s context, never from the chain config. */
 const chainConfig = {
   chainId: CHAIN_ID,
-  gasFeeMultiplier: 1
+  gasFeeMultiplier: 1,
+  dispenserAddress: '0x0000000000000000000000000000000000d15e45'
 } as unknown as Config
 
 function accessOnlyAlgorithm(): AssetV5 {
@@ -256,7 +270,7 @@ function escrowTransactions() {
 function expectNothingSent() {
   expect(vi.mocked(approveWei)).not.toHaveBeenCalled()
   expect(vi.mocked(sendTx)).not.toHaveBeenCalled()
-  expect(vi.mocked(settleOrder)).not.toHaveBeenCalled()
+  expect(vi.mocked(sendSettlement)).not.toHaveBeenCalled()
 }
 
 // #endregion
@@ -315,7 +329,7 @@ describe('compute() provider fees', () => {
 
     await runCompute(quote, { maxProviderFee: { token: TOKEN, amount: 70n } })
       .running
-    expect(vi.mocked(settleOrder)).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(sendSettlement)).toHaveBeenCalledTimes(2)
   })
 
   it('needs a ceiling for every token the fees are in', async () => {
@@ -335,7 +349,7 @@ describe('compute() provider fees', () => {
         { token: OTHER_TOKEN, amount: 40n }
       ]
     }).running
-    expect(vi.mocked(settleOrder)).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(sendSettlement)).toHaveBeenCalledTimes(2)
   })
 
   it('asks confirmProviderFees once with every fee, and lets each order pay exactly its own', async () => {
@@ -354,7 +368,7 @@ describe('compute() provider fees', () => {
     ).to.deep.equal([30n, 40n])
 
     const ceilings = vi
-      .mocked(settleOrder)
+      .mocked(planSettlement)
       .mock.calls.map((call) => call[0].maxProviderFee)
     expect(ceilings).to.deep.equal([
       [{ token: TOKEN, amount: 30n }],
@@ -387,7 +401,7 @@ describe('compute() provider fees', () => {
 
     expect(computeStart).toHaveBeenCalledOnce()
     expect(
-      vi.mocked(settleOrder).mock.calls.map((call) => call[0].maxProviderFee)
+      vi.mocked(planSettlement).mock.calls.map((call) => call[0].maxProviderFee)
     ).to.deep.equal([[], []])
   })
 })
@@ -978,7 +992,7 @@ describe('compute() escrow funding, in exact amounts', () => {
     ])
 
     // The approval, the deposit and the authorisation all come before the first order.
-    const firstOrder = vi.mocked(settleOrder).mock.invocationCallOrder[0]
+    const firstOrder = vi.mocked(sendSettlement).mock.invocationCallOrder[0]
     expect(vi.mocked(approveWei).mock.invocationCallOrder[0]).to.be.lessThan(
       vi.mocked(sendTx).mock.invocationCallOrder[0]
     )
@@ -1031,7 +1045,7 @@ describe('compute() escrow funding, in exact amounts', () => {
     await runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running
 
     expect(vi.mocked(sendTx)).not.toHaveBeenCalled()
-    expect(vi.mocked(settleOrder)).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(sendSettlement)).toHaveBeenCalledTimes(2)
   })
 
   it('raises only what falls short of a standing authorisation', async () => {
@@ -1071,7 +1085,137 @@ describe('compute() escrow funding, in exact amounts', () => {
       () => runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running,
       /escrow deposit failed/
     )
-    expect(vi.mocked(settleOrder)).not.toHaveBeenCalled()
+    expect(vi.mocked(sendSettlement)).not.toHaveBeenCalled()
+  })
+})
+
+describe('compute() checks every order before funding escrow', () => {
+  const goodFees = { dataset: feeOf(0n), algorithm: feeOf(0n) }
+
+  /** Pricing as read from chain: `schema` for the algorithm's datatoken, free otherwise. */
+  function algorithmPricing(schema: 'none' | 'free') {
+    vi.mocked(getPricingInfo).mockImplementation(
+      async (_signer, datatokenAddress) =>
+        ({
+          schema: datatokenAddress === ALGO_DATATOKEN ? schema : 'free',
+          templateId: 1,
+          datatokenAddress,
+          publishMarketFee: {}
+        }) as never
+    )
+  }
+
+  afterEach(() => {
+    algorithmPricing('free')
+  })
+
+  it('refuses an input whose pricing cannot be ordered before any escrow read or transaction', async () => {
+    algorithmPricing('none')
+
+    const { running, computeStart } = runCompute(
+      quoteWith(goodFees, PAYMENT),
+      ALLOW_ALL
+    )
+    const thrown = await running.catch((caught) => caught)
+
+    expect(thrown.message).to.match(
+      /neither a fixed-rate exchange nor a dispenser/
+    )
+    // Both inputs were planned; the dataset's order was not sent either.
+    expect(vi.mocked(planSettlement)).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(EscrowContract)).not.toHaveBeenCalled()
+    expect(escrow.getUserFunds).not.toHaveBeenCalled()
+    expectNothingSent()
+    expect(computeStart).not.toHaveBeenCalled()
+  })
+
+  it('refuses a free input the chain config cannot order before funding escrow', async () => {
+    const { dispenserAddress: _dispenser, ...noDispenser } =
+      chainConfig as Config & { dispenserAddress: string }
+
+    const thrown = await runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL, {
+      chainConfig: noDispenser as Config
+    }).running.catch((caught) => caught)
+
+    expect(thrown.message).to.match(/no dispenserAddress/)
+    expect(vi.mocked(EscrowContract)).not.toHaveBeenCalled()
+    expectNothingSent()
+  })
+
+  it('reads every input’s pricing before the first escrow read, and funds before ordering', async () => {
+    await runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running
+
+    const lastPricing = Math.max(
+      ...vi.mocked(getPricingInfo).mock.invocationCallOrder
+    )
+    expect(vi.mocked(getPricingInfo)).toHaveBeenCalledTimes(2)
+    expect(lastPricing).to.be.lessThan(
+      escrow.getUserFunds.mock.invocationCallOrder[0]
+    )
+    expect(
+      Math.max(...vi.mocked(sendTx).mock.invocationCallOrder)
+    ).to.be.lessThan(vi.mocked(sendSettlement).mock.invocationCallOrder[0])
+    // Each planned order is sent as planned, allowed exactly its (zero) fee.
+    expect(
+      vi.mocked(sendSettlement).mock.calls.map((call) => call[0].kind)
+    ).to.deep.equal(['order', 'order'])
+  })
+})
+
+describe('settleOrder() plans, then sends', () => {
+  function settle(providerFee: unknown, limits: object, validOrder?: string) {
+    return settleOrder({
+      signer,
+      chainConfig,
+      datatokenAddress: DATATOKEN_ADDRESS,
+      serviceIndex: 0,
+      initialized: { providerFee, validOrder },
+      consumer: CONSUMER,
+      ...limits
+    })
+  }
+
+  it('asks confirmProviderFees once, then lets the order pay exactly the fee', async () => {
+    const confirm = vi.fn(() => true)
+
+    await settle(feeOf(30n), { confirmProviderFees: confirm })
+
+    expect(confirm).toHaveBeenCalledOnce()
+    const [request] = vi.mocked(order).mock.calls[0]
+    expect(request.confirmProviderFees).to.equal(undefined)
+    expect(request.maxProviderFee).to.deep.equal([
+      { token: TOKEN, amount: 30n }
+    ])
+  })
+
+  it('refuses a declined fee on the extend path before reuseOrder()', async () => {
+    const thrown = await settle(
+      feeOf(30n),
+      { confirmProviderFees: () => false },
+      '0xexisting'
+    ).catch((caught) => caught)
+
+    expect(thrown).to.be.instanceOf(ProviderFeeNotAllowedError)
+    expect(vi.mocked(reuseOrder)).not.toHaveBeenCalled()
+    expect(vi.mocked(getPricingInfo)).not.toHaveBeenCalled()
+  })
+
+  it('refuses unorderable pricing at the plan, before order()', async () => {
+    vi.mocked(getPricingInfo).mockImplementationOnce(
+      async (_signer, datatokenAddress) =>
+        ({
+          schema: 'none',
+          templateId: 1,
+          datatokenAddress,
+          publishMarketFee: {}
+        }) as never
+    )
+
+    await expectThrowsAsync(
+      () => settle(feeOf(30n), ALLOW_ALL),
+      /neither a fixed-rate exchange nor a dispenser/
+    )
+    expect(vi.mocked(order)).not.toHaveBeenCalled()
   })
 })
 

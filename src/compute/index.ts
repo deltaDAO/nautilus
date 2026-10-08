@@ -34,7 +34,11 @@ import type {
   ComputeResult,
   FreeComputeConfig
 } from '../@types/Compute.js'
-import { settleOrder } from '../access/index.js'
+import {
+  planSettlement,
+  type SettlementPlan,
+  sendSettlement
+} from '../access/settlement.js'
 import {
   getCredentials,
   getDatatokenForService,
@@ -58,6 +62,7 @@ import {
   assertProviderFeesAllowed,
   ceilingFor,
   checkEscrowQuote,
+  type EscrowPaymentQuote,
   type ProviderFeeQuote,
   quoteProviderFee
 } from '../utils/paymentLimits.js'
@@ -67,7 +72,6 @@ import {
 } from '../utils/providerFee.js'
 import {
   type EscrowPin,
-  type EscrowPlan,
   fundEscrow,
   planEscrow,
   resolveEscrowPin
@@ -211,8 +215,7 @@ export async function compute(
 
   await assertProviderFeesAllowed(fees, config)
 
-  const escrowPlan = await prepareEscrow({
-    signer,
+  const escrowQuote = await checkEscrowPayment({
     chainConfig,
     escrowPin,
     environment,
@@ -221,12 +224,10 @@ export async function compute(
     config
   })
 
-  // 4. Fund and authorise escrow for exactly the amount the node quoted.
-  if (escrowPlan) await fundEscrow(signer, chainConfig, escrowPlan)
-
-  // 5. Order every input that needs one, each allowed to pay exactly its fee approved
-  //    above, and record the transfer ids.
-  const orders = await placeOrders({
+  // 4. Plan every order: read each input's pricing and refuse one that cannot be ordered,
+  //    still before anything is sent. Each is allowed to pay exactly its fee approved
+  //    above.
+  const settlements = await planOrders({
     inputs,
     fees,
     initializeResults,
@@ -235,30 +236,48 @@ export async function compute(
     consumer: environment.consumerAddress
   })
 
-  for (const dataset of datasets)
-    dataset.transferTxId =
-      orders[orderKey(dataset.documentId, dataset.serviceId)] ||
-      dataset.transferTxId
-  if (algorithm.documentId && algorithm.serviceId)
-    algorithm.transferTxId =
-      orders[orderKey(algorithm.documentId, algorithm.serviceId)] ||
-      algorithm.transferTxId
+  // 5-7. Fund escrow, order, start.
+  const run = async () => {
+    // 5. Fund and authorise escrow for exactly the amount the node quoted.
+    if (escrowQuote)
+      await fundEscrow(
+        signer,
+        chainConfig,
+        await planEscrow(signer, chainConfig, escrowQuote)
+      )
 
-  // 6. Start the job.
-  const jobs = await node.computeStart({
-    computeEnv: environment.id,
-    datasets,
-    algorithm,
-    maxJobDuration,
-    paymentToken,
-    resources,
-    metadata: config.metadata,
-    additionalViewers: config.additionalViewers,
-    output: config.output,
-    policyServer,
-    queueMaxWaitTime: config.queueMaxWaitTime,
-    outputBucketId: config.outputBucketId
-  })
+    // 6. Send every order, and record the transfer ids.
+    const orders = await sendOrders(settlements)
+
+    for (const dataset of datasets)
+      dataset.transferTxId =
+        orders[orderKey(dataset.documentId, dataset.serviceId)] ||
+        dataset.transferTxId
+    if (algorithm.documentId && algorithm.serviceId)
+      algorithm.transferTxId =
+        orders[orderKey(algorithm.documentId, algorithm.serviceId)] ||
+        algorithm.transferTxId
+
+    // 7. Start the job. The node locks the job's payment in escrow before it answers.
+    const jobs = await node.computeStart({
+      computeEnv: environment.id,
+      datasets,
+      algorithm,
+      maxJobDuration,
+      paymentToken,
+      resources,
+      metadata: config.metadata,
+      additionalViewers: config.additionalViewers,
+      output: config.output,
+      policyServer,
+      queueMaxWaitTime: config.queueMaxWaitTime,
+      outputBucketId: config.outputBucketId
+    })
+
+    return { orders, jobs }
+  }
+
+  const { orders, jobs } = await run()
 
   LoggerInstance.debug(
     '[compute] started',
@@ -585,25 +604,24 @@ async function resolvePolicies(
 // #region payment
 
 /**
- * Checks the node's escrow quote and decides what to deposit and authorise, without
- * sending anything. `undefined` when the node quoted no payment, or a payment of zero.
+ * Checks the node's escrow quote and the caller's consent to it, without reading the chain
+ * or sending anything. `undefined` when the node quoted no payment, or a payment of zero.
  *
  * The escrow contract must be the pinned one (`resolveEscrowPin`: the caller's explicit
  * choice, else the chain's `EnterpriseEscrow` in Ocean's address data, else its `Escrow`),
  * and the chain, token and payee the job's own; the amount must be within
- * `maxEscrowPayment` or confirmed by `confirmEscrowPayment`. Each refusal is an `EscrowPaymentNotAllowedError`.
+ * `maxEscrowPayment` or confirmed by `confirmEscrowPayment`. Each refusal is an
+ * `EscrowPaymentNotAllowedError`.
  */
-async function prepareEscrow(params: {
-  signer: Signer
+async function checkEscrowPayment(params: {
   chainConfig: Config
   escrowPin: EscrowPin
   environment: ComputeEnvironment
   initializeResults: ProviderComputeInitializeResults
   paymentToken: string
   config: ComputeConfig
-}): Promise<EscrowPlan | undefined> {
-  const { signer, chainConfig, escrowPin, environment, paymentToken, config } =
-    params
+}): Promise<EscrowPaymentQuote | undefined> {
+  const { chainConfig, escrowPin, environment, paymentToken, config } = params
   const payment = params.initializeResults.payment
 
   if (!payment) {
@@ -627,16 +645,18 @@ async function prepareEscrow(params: {
 
   await assertEscrowPaymentAllowed(quote, config, payment)
 
-  return planEscrow(signer, chainConfig, quote)
+  return quote
 }
 
 /**
- * Orders every input that needs one.
+ * Plans the order of every input that needs one, without sending anything: each input's
+ * pricing is read and checked, so one that cannot be ordered is refused before escrow is
+ * funded or any order is sent.
  *
  * The consumer is the compute environment's address, not the caller's: the environment is
  * what actually reads the data.
  */
-async function placeOrders(params: {
+async function planOrders(params: {
   inputs: ResolvedInput[]
   /** Each input's approved provider fee, by position; `undefined` for none. */
   fees: (ProviderFeeQuote | undefined)[]
@@ -644,10 +664,10 @@ async function placeOrders(params: {
   signer: Signer
   chainConfig: Config
   consumer: string
-}): Promise<Record<string, string>> {
+}): Promise<{ key: string; plan: SettlementPlan }[]> {
   const { inputs, fees, initializeResults, signer, chainConfig, consumer } =
     params
-  const orders: Record<string, string> = {}
+  const settlements: { key: string; plan: SettlementPlan }[] = []
 
   for (const [index, input] of inputs.entries()) {
     const datatokenAddress = datatokenFor(input)
@@ -658,7 +678,7 @@ async function placeOrders(params: {
       datatokenAddress
     )
 
-    const { transferTxId } = await settleOrder({
+    const plan = await planSettlement({
       signer,
       chainConfig,
       datatokenAddress,
@@ -668,11 +688,26 @@ async function placeOrders(params: {
       maxProviderFee: ceilingFor([fees[index]])
     })
 
+    settlements.push({ key: orderKey(input.asset.id, input.serviceId), plan })
+  }
+
+  return settlements
+}
+
+/** Sends the planned orders, one after the other, and returns the transfer ids. */
+async function sendOrders(
+  settlements: { key: string; plan: SettlementPlan }[]
+): Promise<Record<string, string>> {
+  const orders: Record<string, string> = {}
+
+  for (const { key, plan } of settlements) {
+    const { transferTxId } = await sendSettlement(plan)
+
     // Keyed by DID *and* service: one asset can back two inputs (the algorithm doubling
     // as a dataset, or a DID listed twice with different services), and a DID-only key
     // made the last order overwrite the first — computeStart then failed on a mismatched
     // transferTxId even though both orders were paid.
-    orders[orderKey(input.asset.id, input.serviceId)] = transferTxId
+    orders[key] = transferTxId
   }
 
   return orders
