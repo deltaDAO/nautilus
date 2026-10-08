@@ -53,17 +53,20 @@ What happens in order:
    same on every request. A fee that is missing or lacks a field is refused at once. In
    every case it throws a `ProviderFeeSignatureError` before any approval, purchase or
    order.
-4. A non-zero fee must be allowed by `maxProviderFee` or `confirmProviderFees`, or nautilus
-   throws a `ProviderFeeNotAllowedError`, again before any chain read, approval, purchase or
-   order. The order is then allowed to pay exactly the fee that was allowed.
-5. An existing order is reused where possible — extended if a new fee period is due, or
+4. An existing order is reused where possible — extended if a new fee period is due, or
    used as-is if not. The node's access `initialize` reports no `validOrder`, so your
    newest order for the service is read from the datatoken's events, and kept only if the
    node would accept it: yours, for this service, inside the service's timeout
    ([details](/docs/guides/pricing#downloads-the-order-on-chain)). Otherwise a datatoken is
-   bought and a new order placed. Everything the
-   order pulls from you (the purchase, the publish-market fee and the provider fee) is
-   approved with one allowance per token and spender, after every check has passed.
+   bought and a new order placed.
+5. Only then is your consent asked, and only for the fee that will be paid: none when an
+   order is used as it stands, whatever the node quoted; the fee the node quotes now when
+   an order is extended or a new one placed. A non-zero fee must be allowed by
+   `maxProviderFee` or `confirmProviderFees`, or nautilus throws a
+   `ProviderFeeNotAllowedError` before any approval, purchase or order. The order is then
+   allowed to pay exactly that fee. Everything it pulls from you (the purchase, the
+   publish-market fee and the provider fee) is approved with one allowance per token and
+   spender, after every check has passed.
 6. The download URL is built, carrying the policy-server session if there is one.
 
 ## Returns
@@ -161,8 +164,9 @@ throws before the node is asked for a fee.
 Asked when `maxProviderFee` does not cover the fee, for example to show it to a user. It
 receives each non-zero fee as `{ token, amount, collector, datatoken, did, serviceId }`
 (`amount` a `bigint` in the token's smallest unit, `collector` the `providerFeeAddress` that
-receives it). Return `true` to pay, `false` to refuse. It is not called for a zero fee or a
-fee within the ceiling, and an error it throws propagates before anything is spent.
+receives it). Return `true` to pay, `false` to refuse. It is not called for a zero fee, a
+fee within the ceiling, or a previous order used as it stands, which pays no fee. An error
+it throws propagates before anything is spent.
 
 `maxProviderFee` and `confirmProviderFees` replace the `Nautilus.create` defaults as a
 pair: set either one here, even to `undefined`, and neither default applies to this call.
@@ -186,8 +190,8 @@ clears the default callback.
   the service is not an `access` service.
 - `ProviderFeeSignatureError`: the node's fee is missing, incomplete, or its signature would
   fail the datatoken's check.
-- `ProviderFeeNotAllowedError`: the fee is not zero and neither `maxProviderFee` nor
-  `confirmProviderFees` allows it. `error.fees` lists the fees, `error.reason` is
+- `ProviderFeeNotAllowedError`: the fee this call would pay is not zero and neither
+  `maxProviderFee` nor `confirmProviderFees` allows it. `error.fees` lists the fees, `error.reason` is
   `'no-limit'`, `'over-limit'` or `'declined'`.
 
 All of these are thrown before any approval, purchase or order; `ConsumerParameterError` and

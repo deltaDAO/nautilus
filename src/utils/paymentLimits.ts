@@ -78,7 +78,8 @@ export interface ProviderFeeLimits {
   /**
    * Asked when `maxProviderFee` does not cover the call's fees, with every non-zero fee
    * the call would pay. Return `true` to pay them, `false` to refuse with a
-   * `ProviderFeeNotAllowedError`. Not called when the fees are zero or within the ceiling.
+   * `ProviderFeeNotAllowedError`. Not called when the fees are zero or within the ceiling,
+   * nor for a previous order used as it stands, which pays no fee.
    */
   confirmProviderFees?: (fees: ProviderFeeQuote[]) => boolean | Promise<boolean>
 }
