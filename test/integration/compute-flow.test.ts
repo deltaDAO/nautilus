@@ -172,6 +172,15 @@ describe('compute', () => {
         return
       }
 
+      // Escrow is funded only in the chain config's contract; without one the job is
+      // refused before anything is spent.
+      if (!nautilus.getOceanConfig().escrow) {
+        console.log(
+          `[compute] no escrow contract configured for chain ${chainId} (set ESCROW_ADDRESS); skipping`
+        )
+        return
+      }
+
       const result = await consumer.compute({
         dataset: { did: datasetDid },
         algorithm: { did: algorithmDid },

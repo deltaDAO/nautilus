@@ -2,10 +2,12 @@ import type { Signer } from 'ethers'
 import type { PublishResponse } from '../../src/@types/Publish.js'
 import {
   AssetBuilder,
+  type EscrowPaymentQuote,
   type FileTypes,
   IpfsRemoteStore,
   Nautilus,
   type NautilusAsset,
+  type ProviderFeeQuote,
   type RemoteStore,
   S3RemoteStore,
   ServiceBuilder,
@@ -97,6 +99,27 @@ function createS3Store(): S3RemoteStore {
   })
 }
 
+/**
+ * The suite runs against a node the tester operates, so it pays whatever provider fees and
+ * escrow payment that node quotes, and logs them. An application sets `maxProviderFee` and
+ * `maxEscrowPayment` instead; the refusals are covered by the unit suite.
+ */
+const payWhatTheTestNodeQuotes = {
+  confirmProviderFees(fees: ProviderFeeQuote[]) {
+    console.log(
+      '[integration] provider fees:',
+      fees.map((fee) => `${fee.amount} of ${fee.token}`).join(', ')
+    )
+    return true
+  },
+  confirmEscrowPayment(payment: EscrowPaymentQuote) {
+    console.log(
+      `[integration] escrow: ${payment.amount} of ${payment.token} in ${payment.escrowAddress}`
+    )
+    return true
+  }
+}
+
 /** A Nautilus instance wired with the test remote store, ready to publish. */
 export async function createPublisher(signer?: Signer): Promise<Nautilus> {
   const account = signer || getSigner(1)
@@ -104,7 +127,8 @@ export async function createPublisher(signer?: Signer): Promise<Nautilus> {
 
   return Nautilus.create(account, {
     config,
-    remoteStore: createTestRemoteStore()
+    remoteStore: createTestRemoteStore(),
+    ...payWhatTheTestNodeQuotes
   })
 }
 

@@ -7,7 +7,8 @@ import { getChainId } from '../../src/utils/index.js'
  *
  * `metadataCacheUri`, `providerUri` and `subgraphUri` no longer exist on ocean.js's
  * `Config` — one `oceanNodeUri` replaces the first two and the subgraph is gone — so this
- * only ever overrides the node URI.
+ * overrides the node URI, and the escrow contract (`ESCROW_ADDRESS`) on chains ocean.js
+ * ships none for: paid compute funds only the configured contract.
  */
 export async function getTestConfig(signer: Signer): Promise<Partial<Config>> {
   const chainId = await getChainId(signer)
@@ -16,7 +17,10 @@ export async function getTestConfig(signer: Signer): Promise<Partial<Config>> {
   return {
     ...(defaults || {}),
     chainId,
-    ...(process.env.NODE_URL ? { oceanNodeUri: process.env.NODE_URL } : {})
+    ...(process.env.NODE_URL ? { oceanNodeUri: process.env.NODE_URL } : {}),
+    ...(process.env.ESCROW_ADDRESS
+      ? { escrow: process.env.ESCROW_ADDRESS }
+      : {})
   }
 }
 
