@@ -13,6 +13,32 @@ New to nautilus rather than upgrading? Start with
 
 ## Upgrading from 2.0.0-beta.1
 
+**Write VP policies as objects.** `VpPolicy` is now `{ policy: string; args?: string }`:
+`setVpPolicies()` and the `vpPolicies` of `addRequestCredentials()` no longer take bare
+names, and `args` is a string. The policy server JSON-parses it, so pass structured arguments
+through `JSON.stringify`. ocean-node 4.2.x did not index an asset whose `vp_policies` mixed a
+name with an object, so publish such an asset again.
+
+```diff
+ builder.setVpPolicies(CredentialListTypes.ALLOW, [
+-  'holder-binding',
+-  { policy: 'minimum-credentials', args: 1 }
++  { policy: 'holder-binding' },
++  { policy: 'minimum-credentials', args: '1' }
+ ])
+```
+
+**Stored request credentials hold JSON strings.** `SsiPolicyValue.request_credentials` is
+now `StoredRequestCredential[]`, whose `policies` are JSON-encoded (`'signature'` is stored
+as `'"signature"'`). Code that reads `credentials` from a DDO should `JSON.parse` each
+policy. `RequestCredential`, which the builders take, is unchanged.
+
+**Editing reads stored policies strictly.** Loading an asset for an edit throws on a VP
+policy, request credential or per-credential policy it cannot read, rather than dropping it
+and leaving the asset open under the remaining policies. Removing the last address from an
+allow list now keeps the entry as `values: []`, which denies everyone, as the node and the
+policy server read it.
+
 nautilus now opens the policy-server session itself, on every download and compute job that
 the node checks: whenever the node has a policy server (`isPSConfigured` in its status) and
 the asset or service has `credentials` (`{}` included). An asset gated by addresses only needs
