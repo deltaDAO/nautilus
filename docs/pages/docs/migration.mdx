@@ -669,14 +669,17 @@ Two refusals come before any node call other than resolving the asset:
 - **`access()` downloads from `access` services only.** A `serviceId` naming a `compute`
   service throws, pointing to `compute()` / `freeCompute()`, instead of reaching the node's
   `initialize`.
-- **`userdata` must fit the service's consumer parameters**: every `required` parameter
-  present, `text` a string, `number` a finite number (`'5'` is refused), `boolean` a
-  boolean, `select` one of its option keys (a `select` without usable options takes no
-  value), and no undeclared keys when the service declares any. Otherwise a
+- **`userdata` must fit the service's consumer parameters**: a plain object, every
+  `required` parameter present, `text` a string, `number` a finite number (`'5'` is
+  refused), `boolean` a boolean, `select` the first key of one of its options (a `select`
+  without usable options takes no value), any other type a string, a finite number or a
+  boolean, and no undeclared keys when the service declares any. A service that declares
+  none takes any keys, each with a string, a finite number or a boolean: an object or an
+  array, which reached the file's URL as `[object Object]`, is refused. Otherwise a
   `ConsumerParameterError` (`issues`, `did`, `serviceId`, `field`) is thrown. v1 and
   2.0.0-beta.1 sent whatever was passed. Fix the values, or check them first with
   `checkConsumerParameters(service.consumerParameters, userdata)`. Keys set to `undefined`
-  or `null` are no longer sent.
+  or `null` are no longer sent, nor is an object they leave empty.
 
 ## 9. Compute
 
@@ -716,8 +719,11 @@ folder.
 
 Each input's `userdata` and the algorithm's `algocustomdata` are checked like a download's
 `userdata` (see §8): against the service's consumer parameters and the algorithm
-metadata's, respectively. A mismatch throws a `ConsumerParameterError` before the
-environment is read or anything is sent.
+metadata's, respectively (`metadata.algorithm.consumerParameters`, else, when absent or
+empty, `metadata.algorithm.container.consumerParameters`). A mismatch throws a
+`ConsumerParameterError` before the environment is read or anything is sent. Check
+`algocustomdata` first with
+`checkConsumerParameters(getAlgorithmConsumerParameters(algorithm), algocustomdata)`.
 
 ## 10. Credential-gated assets
 
