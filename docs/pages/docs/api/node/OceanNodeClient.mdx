@@ -194,9 +194,18 @@ its own bucket storage.
 `getComputeResult(jobId, index, offset?)` · `getComputeLogs(jobId)`
 
 Each `jobId` is `<environmentHash>-<jobId>`, as `computeStart` and `freeComputeStart`
-return it; a bare id throws before the request. Jobs come back under that id.
-`getComputeJob` returns `undefined` when the node does not know the job, and
-`getComputeLogs` streams only while the algorithm runs.
+return it: exactly `0x` and 64 hex digits, a dash, then 64 hex digits. Anything else throws
+before the request, as does an `index` that is not a non-negative safe integer. Jobs come
+back as `NodeComputeJob`s under that id, from `computeStart`, `freeComputeStart`,
+`computeStatus`, `getComputeJob` and `computeStop` alike. `getComputeJob` returns
+`undefined` when the node does not know the job, and `getComputeLogs` streams only while the
+algorithm runs.
+
+:::warning[Treat the job id as a secret]
+On ocean-node 4.2.2 the live-log endpoint checks that the request is signed, but not that
+the signer owns the job, so anyone who has the qualified job id can stream a running job's
+logs. Keep the id where you would keep other access details, and out of shared logs.
+:::
 
 ### Identity
 

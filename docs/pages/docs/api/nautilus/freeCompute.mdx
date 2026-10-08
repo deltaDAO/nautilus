@@ -27,7 +27,7 @@ Policy-server sessions are still opened for every input, as for
 
 ## Returns
 
-- Type: `{ jobs: ComputeJob[]; environment: ComputeEnvironment }`
+- Type: `{ jobs: NodeComputeJob[]; environment: ComputeEnvironment }`
 
 No `orders` or `initializeResults`, because nothing was ordered or quoted.
 
@@ -38,8 +38,9 @@ No `orders` or `initializeResults`, because nothing was ordered or quoted.
 - Type: `FreeComputeConfig`
 
 The same as [`ComputeConfig`](/docs/api/nautilus/compute) minus `paymentToken` and
-`maxJobDuration`. Resources default from the environment's `free.resources`: each one's
-minimum, raised to `1` for `cpu`, `ram` and `disk` within its maximum (see
+`maxJobDuration`. Without `resources`, they default from the environment's
+`free.resources`: each one's minimum, raised to `1` for `cpu`, `ram` and `disk` within its
+maximum; a `resources` list is sent exactly as given (see
 [`resources`](/docs/api/nautilus/compute#resources-optional)).
 
 Each job's `jobId` is `<environmentHash>-<jobId>`, the id every job method takes.

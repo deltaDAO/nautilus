@@ -85,7 +85,10 @@ the node gives a started job, and `getComputeStatus()`, `getComputeResult()`,
 `streamComputeResult()`, `getComputeLogs()` and `stopCompute()` take it. beta.1 shortened it
 to the bare `<jobId>`, and asked the node for that one; ocean-node then answers with every
 job of the consumer, and beta.1 took the first. A bare id now throws. To rebuild the full id
-from a bare one you stored, put the first segment of the job's environment id in front of it:
+from a bare one you stored, put the first segment of the job's environment id in front of it.
+The id must be exactly what ocean-node builds, `0x` and 64 hex digits, a dash, then 64 hex
+digits; anything else throws before a request, with the id's length rather than the id in the
+message:
 
 ```diff
 - await nautilus.getComputeStatus({ jobId: bareJobId })
@@ -99,15 +102,41 @@ job under the id you passed. It is typed `NodeComputeJob`, which adds the node's
 `environment`, `resources` and `payment` fields to `ComputeJob`. `OceanNodeClient`'s
 `computeStatus()` and `getComputeJob()` return `NodeComputeJob` too, and `getComputeJob()`
 returns `undefined` for an unknown job. `getComputeLogs()` now returns a
-`ComputeResultStream` (it returned `unknown`). `computeStop()`, `getComputeResultUrl()` and
-`getComputeResult()` keep their return types. Every job method requires the qualified job id.
+`ComputeResultStream` (it returned `unknown`). Every job method requires the qualified job
+id, and `getComputeResultUrl()` and `getComputeResult()` throw a `RangeError` for an `index`
+that is not a non-negative safe integer.
+
+**Started and stopped jobs are `NodeComputeJob`s.** `compute()` and `freeCompute()` return
+`jobs: NodeComputeJob[]`, and `stopCompute()` returns `NodeComputeJob[]`, as do
+`OceanNodeClient`'s `computeStart()`, `freeComputeStart()` and `computeStop()`. They were
+typed `ComputeJob[]` but carried the node's `environment`; code that names the type changes:
+
+```diff
+- const jobs: ComputeJob[] = await nautilus.stopCompute({ jobId })
++ const jobs: NodeComputeJob[] = await nautilus.stopCompute({ jobId })
+```
+
+**A job has finished once its `dateFinished` is set**, whatever its status. A failed job ends
+below `70` (`41` when the algorithm failed, `11` when its image could not be pulled, …), so
+waiting for `70` or `71` never ends for it. Poll on `dateFinished` and read the status for
+how the job ended:
+
+```diff
+- if ([70, 71].includes(job.status)) done(job)
++ if (job.dateFinished) done(job)
+```
+
+`getComputeResult()`, `streamComputeResult()` and `getComputeLogs()` decide the same way, so
+they read a failed job's results and `algorithmLog`. A job at `71` (`JobSettle`) that lists no
+`output` yet counts as not ready rather than as having no output, since the node sets `71`
+before it writes `outputs.tar`.
 
 **`streamComputeResult()` streams the job's `output`** (`outputs.tar`), as
 `getComputeResult()` does, rather than the result at index 0 (the image log). Pass
 `resultIndex` for another result. It now also throws for a job that has not finished.
 
 **`getComputeLogs()` returns a `ComputeResultStream`** (`AsyncIterable<Uint8Array>`), not
-`unknown`. Once the job has finished (status `70` or above), it streams the job's
+`unknown`. Once the job has finished (its `dateFinished` is set), it streams the job's
 `algorithmLog` result, since the node serves live logs only while the algorithm runs:
 
 ```diff
@@ -116,13 +145,13 @@ returns `undefined` for an unknown job. `getComputeLogs()` now returns a
 +   process.stdout.write(chunk)
 ```
 
-**Default resources are at least 1 CPU, 1 GB of RAM and 1 GB of disk.** A resource left out
-of `resources` defaulted to the environment's minimum, which ocean-node 4.2 environments
-usually set to `0`, and a `0` means no CPU or memory limit for the job. `cpu`, `ram` and
-`disk` now default to at least `1` within the resource's maximum, other resources (GPUs) to
-their minimum. Resources you list are sent as they are, and the ones you leave out are
-filled in. A paid job's escrow quote rises with the larger request; pass `resources` to
-choose.
+**Default resources are at least 1 CPU, 1 GB of RAM and 1 GB of disk.** Without
+`resources`, each resource defaulted to the environment's minimum, which ocean-node 4.2
+environments usually set to `0`, and a `0` means no CPU or memory limit for the job. `cpu`,
+`ram` and `disk` now default to at least `1` within the resource's maximum, other resources
+(GPUs) to their minimum. A `resources` list you pass is sent exactly as given, with nothing
+added: the node gives each resource it leaves out that resource's minimum. A paid job's escrow
+quote rises with the larger default request; pass `resources` to choose.
 
 **Algorithm services carry no `compute` block.** nautilus publishes and edits an asset of
 type `algorithm` without the dataset-side compute settings (`allowRawAlgorithm`,
