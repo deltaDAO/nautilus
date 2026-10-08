@@ -32,7 +32,6 @@
  * download URL).
  */
 import { getMetadata } from '../ddo/read.js'
-import type { ConsumerParameterV5 } from '../ddo/types.js'
 
 /** Longest parameter name or option key a message shows. */
 const MAX_NAME_LENGTH = 40
@@ -43,6 +42,19 @@ const MAX_LISTED = 10
 
 /** What a value of any other type has to be: it may end up in a URL. */
 const SCALAR = 'a string, a finite number or a boolean'
+
+/**
+ * A consumer parameter as an asset declares it. Only `name`, `type`, `required` and
+ * `options` are read, so every shape fits: nautilus's `ConsumerParameterV5`, the v5
+ * `consumerParameters` of a `ServiceV5` or an `AlgorithmV5`, and ddo-js's v4
+ * `ConsumerParameter`, whose `options` are a JSON string.
+ */
+export interface DeclaredConsumerParameter {
+  name: string
+  type: string
+  required?: boolean
+  options?: unknown
+}
 
 /** Why a consumer-parameter value was refused. */
 export type ConsumerParameterRefusal =
@@ -116,13 +128,16 @@ export class ConsumerParameterError extends Error {
  * Checks `values` against the declared consumer parameters and returns every problem, or
  * an empty array when they fit. Useful to validate a form before calling `access()` or
  * `compute()`, which run the same check and throw a `ConsumerParameterError`.
+ *
+ * `declared` is a service's `consumerParameters` for `userdata`, or
+ * `getAlgorithmConsumerParameters(algorithm)` for an algorithm's `algocustomdata`.
  */
 export function checkConsumerParameters(
-  declared: readonly ConsumerParameterV5[] | undefined,
+  declared: readonly DeclaredConsumerParameter[] | undefined,
   values: unknown
 ): ConsumerParameterIssue[] {
   const parameters = (Array.isArray(declared) ? declared : []).filter(
-    (parameter): parameter is ConsumerParameterV5 =>
+    (parameter): parameter is DeclaredConsumerParameter =>
       typeof parameter?.name === 'string' && parameter.name !== ''
   )
 
@@ -182,7 +197,7 @@ export function checkConsumerParameters(
  * `null`, or `undefined` when nothing is left.
  */
 export function assertConsumerParameters(
-  declared: readonly ConsumerParameterV5[] | undefined,
+  declared: readonly DeclaredConsumerParameter[] | undefined,
   values: unknown,
   target: ConsumerParameterTarget
 ): Record<string, unknown> | undefined {
@@ -205,11 +220,11 @@ export function assertConsumerParameters(
  */
 export function getAlgorithmConsumerParameters(
   ddo: unknown
-): ConsumerParameterV5[] | undefined {
+): DeclaredConsumerParameter[] | undefined {
   const algorithm = getMetadata(ddo)?.algorithm as
     | {
-        consumerParameters?: ConsumerParameterV5[]
-        container?: { consumerParameters?: ConsumerParameterV5[] }
+        consumerParameters?: DeclaredConsumerParameter[]
+        container?: { consumerParameters?: DeclaredConsumerParameter[] }
       }
     | undefined
 
@@ -220,7 +235,7 @@ export function getAlgorithmConsumerParameters(
 }
 
 function checkValue(
-  parameter: ConsumerParameterV5,
+  parameter: DeclaredConsumerParameter,
   value: unknown
 ): ConsumerParameterIssue | undefined {
   const { name, type } = parameter

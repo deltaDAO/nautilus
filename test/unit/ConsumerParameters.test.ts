@@ -4,13 +4,16 @@
  * error, and the values it returns to forward.
  */
 
+import type { ConsumerParameter } from '@oceanprotocol/ddo-js'
 import { describe, expect, it } from 'vitest'
 import type { ConsumerParameterV5 } from '../../src/ddo/types.js'
+import * as nautilus from '../../src/index.js'
 import {
   assertConsumerParameters,
   ConsumerParameterError,
   checkConsumerParameters
 } from '../../src/utils/consumerParameters.js'
+import { getAlgorithmAssetFixture } from '../fixtures/Asset.js'
 import { getConsumerParameters } from '../fixtures/ConsumerParameters.js'
 
 // surname: text, required; age: number; consent: boolean; region: select (eu, us).
@@ -270,6 +273,49 @@ describe('checkConsumerParameters', () => {
       'consent:wrong-type',
       'region:not-an-option',
       'extra:unknown'
+    ])
+  })
+})
+
+describe('the public consumer-parameter API', () => {
+  it("takes ddo-js's v4 ConsumerParameter, with options as a JSON string", () => {
+    const v4: ConsumerParameter[] = [
+      {
+        name: 'region',
+        type: 'select',
+        label: 'Region',
+        required: true,
+        description: 'Pick a region',
+        default: 'eu',
+        options: JSON.stringify([{ eu: 'Europe' }])
+      }
+    ]
+
+    expect(
+      nautilus.checkConsumerParameters(v4, { region: 'eu' })
+    ).to.deep.equal([])
+    expect(
+      nautilus.checkConsumerParameters(v4, { region: 'us' })[0].reason
+    ).to.equal('not-an-option')
+  })
+
+  it("checks algocustomdata against an algorithm's metadata parameters", () => {
+    const algorithm = getAlgorithmAssetFixture()
+    Object.assign(algorithm.credentialSubject.metadata.algorithm as object, {
+      consumerParameters: [declared[1]]
+    })
+
+    const parameters = nautilus.getAlgorithmConsumerParameters(algorithm)
+
+    expect(parameters).to.deep.equal([declared[1]])
+    expect(
+      nautilus.checkConsumerParameters(parameters, { age: 'x' })
+    ).to.deep.equal([
+      {
+        parameter: 'age',
+        reason: 'wrong-type',
+        message: "'age' must be a finite number, got a string of 1 character"
+      }
     ])
   })
 })
