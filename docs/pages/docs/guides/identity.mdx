@@ -188,6 +188,12 @@ server binds a session id to `sha256(consumerAddress:documentId:serviceId)` and 
 opened it, so a session for another account or node would be refused. Pass `sessionStore` to
 `Nautilus.create` to keep them somewhere else than in memory.
 
+A cached session is reused for at most `sessionTtlMs` (2 minutes by default) from when it was
+opened, and one that needed a presentation is checked with the policy server again before it
+is reused: walt.id's verifier forgets a session after 5 minutes, or when it restarts. A stale
+session is opened again before anything is ordered, so a store that outlives the policy
+server costs one more exchange, not a refused order.
+
 :::warning
 Never invent a session id. The policy server derives it from
 `sha256(consumerAddress:documentId:serviceId)` plus a random half, and rejects any session

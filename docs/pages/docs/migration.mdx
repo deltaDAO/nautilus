@@ -61,7 +61,10 @@ try {
 **Move the session cache to `Nautilus.create`.** `WaltIdCredentialProvider` no longer takes
 `sessionStore` and no longer has `clearSessions()` or `explainFailure()`: pass `sessionStore`
 to `Nautilus.create`, and read the failed policies from `PolicyDeniedError.reason`, or from
-`nautilus.getNodeClient().checkPolicySession(sessionId)`.
+`nautilus.getNodeClient().checkPolicySession(sessionId)`. A `SessionStore` of your own now
+stores a `SessionEntry` of `{ sessionId, createdAt, presented }` and must key on the consumer
+address exactly as given (`sessionKeyString(key)` does), not lower-cased. A cached session is
+reused for at most `sessionTtlMs` (new `Nautilus.create` option, 2 minutes by default).
 
 **`OceanNodeClient.initializePolicyVerification` throws instead of returning `null` on a
 refusal.** It returns `null` only when the node has no policy server, throws a
