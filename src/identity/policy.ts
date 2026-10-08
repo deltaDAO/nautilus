@@ -221,6 +221,30 @@ export function requiresPresentation(
 }
 
 /**
+ * The credential types a service asks for: the `type` of every `request_credentials` entry
+ * in the `SSIpolicy` entries of the asset's and the service's `allow` lists, which the
+ * policy server merges into the presentation request.
+ */
+export function requestedCredentialTypes(
+  assetCredentials: DdoCredentials | undefined,
+  serviceCredentials?: DdoCredentials
+): Set<string> {
+  const types = new Set<string>()
+
+  for (const entry of [
+    ...(assetCredentials?.allow || []),
+    ...(serviceCredentials?.allow || [])
+  ])
+    if (isSsiPolicyCredential(entry))
+      for (const value of entry.values || [])
+        for (const credential of value.request_credentials || [])
+          if (typeof credential?.type === 'string' && credential.type)
+            types.add(credential.type)
+
+  return types
+}
+
+/**
  * Refuses to open a policy session that cannot be completed: the service asks for a
  * verifiable presentation (`requiresPresentation`) and no `CredentialProvider` is set to
  * make one.

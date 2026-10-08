@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { emptyPolicyServerPayload } from '../../src/identity/CredentialProvider.js'
+import { addRequestCredentials } from '../../src/identity/policy.js'
 import { MemorySessionStore } from '../../src/identity/session.js'
 import {
   WaltIdCredentialProvider,
@@ -19,6 +20,51 @@ import { expectThrowsAsync } from '../helpers.js'
 
 const CONTEXT_HASH = 'a'.repeat(64)
 const SERVER_SESSION = `${CONTEXT_HASH}-${'b'.repeat(64)}`
+
+/** What walt.id's verifier builds from `request_credentials: [{ type: 'VerifiableId' }]`. */
+const VERIFIABLE_ID_DEFINITION = {
+  id: 'definition',
+  input_descriptors: [
+    {
+      id: 'VerifiableId',
+      format: { jwt_vc_json: { alg: ['EdDSA'] } },
+      constraints: {
+        fields: [
+          {
+            path: ['$.vc.type'],
+            filter: { type: 'string', pattern: 'VerifiableId' }
+          }
+        ]
+      }
+    }
+  ]
+}
+
+/** An openid4vp request as the policy server rewrites it, with its own proxy URIs. */
+function openid4vpRequest(
+  uris: { response?: string; definition?: string; request?: string } = {}
+): string {
+  const params = new URLSearchParams({
+    response_type: 'vp_token',
+    state: SERVER_SESSION,
+    response_mode: 'direct_post',
+    presentation_definition_uri:
+      uris.definition ?? `https://ps.test.invalid/pd/${SERVER_SESSION}`,
+    response_uri:
+      uris.response ?? `https://ps.test.invalid/verify/${SERVER_SESSION}`
+  })
+  if (uris.request) params.set('request_uri', uris.request)
+
+  return `openid4vp://authorize?${params}`
+}
+
+/** A wallet credential of the given types, as walt.id parses it. */
+function credential(id: string, ...types: string[]) {
+  return {
+    id,
+    parsedDocument: { type: ['VerifiableCredential', ...types] }
+  }
+}
 
 interface NodeStub {
   client: OceanNodeClient
@@ -45,7 +91,7 @@ function nodeStub(
 
       if (action.action === PolicyServerAction.GET_PD)
         return {
-          message: options.presentationDefinition ?? { input_descriptors: [] }
+          message: options.presentationDefinition ?? VERIFIABLE_ID_DEFINITION
         }
 
       return undefined
@@ -86,7 +132,10 @@ function walletStub(overrides: Partial<WaltIdWallet> = {}): WaltIdWallet {
       return 'jwt'
     },
     async matchCredentials() {
-      return [{ id: 'credential-1' }, { id: 'credential-2' }]
+      return [
+        credential('credential-1', 'VerifiableId'),
+        credential('credential-2', 'VerifiableId')
+      ]
     },
     async unmatchedCredentials() {
       return []
@@ -121,14 +170,24 @@ function provider(
  * A challenge for one node, as `PolicySessionResolver` hands it over: the session is open,
  * and the redirect is the openid4vp request to answer.
  */
-function challengeFor(client: OceanNodeClient) {
+function challengeFor(
+  client: OceanNodeClient,
+  redirectUri = openid4vpRequest()
+) {
+  const asset = getAssetFixture()
+  asset.credentialSubject.credentials = addRequestCredentials(
+    asset.credentialSubject.credentials as never,
+    'allow' as never,
+    [{ type: 'VerifiableId', format: 'jwt_vc_json' }]
+  ) as never
+
   return {
-    asset: getAssetFixture(),
+    asset,
     serviceId: SERVICE_ID,
     consumerAddress: OWNER_ADDRESS,
     node: client,
     sessionId: SERVER_SESSION,
-    redirectUri: 'openid4vp://authorize?state=x'
+    redirectUri
   }
 }
 
@@ -148,14 +207,12 @@ describe('WaltIdCredentialProvider', () => {
   it('walks the exchange: getPD for the session, match, resolve, present', async () => {
     const calls: string[] = []
     let resolvedRequest = ''
-    const { client, passthroughCalls } = nodeStub({
-      presentationDefinition: { input_descriptors: [{ id: 'VerifiableId' }] }
-    })
+    const { client, passthroughCalls } = nodeStub()
 
     const wallet = walletStub({
       async matchCredentials() {
         calls.push('match')
-        return [{ id: 'credential-1' }]
+        return [credential('credential-1', 'VerifiableId')]
       },
       async resolvePresentationRequest(_w, request) {
         calls.push('resolve')
@@ -174,7 +231,7 @@ describe('WaltIdCredentialProvider', () => {
       { action: PolicyServerAction.GET_PD, sessionId: SERVER_SESSION }
     ])
     expect(calls).to.deep.equal(['match', 'resolve', 'present'])
-    expect(resolvedRequest).to.equal('openid4vp://authorize?state=x')
+    expect(resolvedRequest).to.equal(openid4vpRequest())
   })
 
   it('asks the node in the challenge for the presentation definition, not its own', async () => {
@@ -268,7 +325,7 @@ describe('WaltIdCredentialProvider', () => {
 
     await expectThrowsAsync(
       () => provider(client, wallet).present(challengeFor(client)),
-      /no credential satisfying the requested presentation definition/
+      /holds no credential of the requested types \(VerifiableId\)/
     )
   })
 
@@ -314,6 +371,196 @@ describe('WaltIdCredentialProvider', () => {
       () => provider(client, walletStub()).present(challengeFor(client)),
       /returned no presentation definition/
     )
+  })
+
+  describe('trusts nothing the node sends', () => {
+    /** A wallet that records whether it was used at all. */
+    function watchedWallet() {
+      const used: string[] = []
+      const wallet = walletStub({
+        async authenticate() {
+          used.push('authenticate')
+          return { token: 'wallet-token' }
+        },
+        async usePresentationRequest(_w, _d, _r, selected) {
+          used.push(`present:${selected.join(',')}`)
+          return { redirectUri: 'ok' }
+        }
+      })
+
+      return { wallet, used }
+    }
+
+    it('refuses a request that is not openid4vp://', async () => {
+      const { client } = nodeStub()
+      const { wallet, used } = watchedWallet()
+
+      for (const redirectUri of [
+        'https://evil.test.invalid/authorize?state=x',
+        'javascript:alert(1)',
+        'not a url'
+      ])
+        await expectThrowsAsync(
+          () =>
+            provider(client, wallet).present(challengeFor(client, redirectUri)),
+          /openid4vp:\/\/ URL|not a URL/
+        )
+      expect(used).to.deep.equal([])
+    })
+
+    it('refuses request, response and definition URIs the wallet must not reach', async () => {
+      const { client, passthroughCalls } = nodeStub()
+      const { wallet, used } = watchedWallet()
+
+      for (const uris of [
+        { response: 'http://ps.test.invalid/verify' },
+        { response: 'file:///etc/passwd' },
+        { definition: 'javascript:alert(1)' },
+        { request: 'ftp://ps.test.invalid/request' },
+        { request: 'https://169.254.169.254/latest/meta-data' },
+        { response: 'https://169.254.10.1/verify' },
+        { definition: 'https://[fe80::1]/pd' },
+        { definition: 'https://metadata.google.internal/pd' },
+        { response: 'https://[fd00:ec2::254]/verify' },
+        { response: 'not a url' }
+      ])
+        await expectThrowsAsync(
+          () =>
+            provider(client, wallet).present(
+              challengeFor(client, openid4vpRequest(uris))
+            ),
+          /presentation request's (request_uri|response_uri|presentation_definition_uri)/
+        )
+
+      expect(used).to.deep.equal([])
+      expect(passthroughCalls).to.deep.equal([])
+    })
+
+    it('accepts plain http on a loopback host, and anywhere with allowInsecureTransport', async () => {
+      const { client } = nodeStub()
+
+      await provider(client, walletStub()).present(
+        challengeFor(
+          client,
+          openid4vpRequest({
+            response: 'http://localhost:8000/verify',
+            definition: 'http://127.0.0.1:8000/pd'
+          })
+        )
+      )
+      await provider(client, walletStub(), {
+        allowInsecureTransport: true
+      }).present(
+        challengeFor(
+          client,
+          openid4vpRequest({ response: 'http://ps.private:8100/verify' })
+        )
+      )
+
+      await expectThrowsAsync(
+        () =>
+          provider(client, walletStub(), {
+            allowInsecureTransport: true
+          }).present(
+            challengeFor(
+              client,
+              openid4vpRequest({ response: 'http://169.254.169.254/verify' })
+            )
+          ),
+        /link-local or metadata/
+      )
+    })
+
+    it('refuses a presentation definition asking for a type the service does not request', async () => {
+      const { wallet, used } = watchedWallet()
+
+      for (const descriptor of [
+        { id: 'UniversityDegree' },
+        {
+          id: 'VerifiableId',
+          constraints: {
+            fields: [{ path: ['$.vc.type'], filter: { pattern: '.*' } }]
+          }
+        },
+        {
+          id: 'VerifiableId',
+          constraints: {
+            fields: [
+              {
+                path: ['$.vc.type'],
+                filter: { type: 'array', contains: { const: 'EmailPass' } }
+              }
+            ]
+          }
+        }
+      ]) {
+        const { client } = nodeStub({
+          presentationDefinition: {
+            input_descriptors: [
+              VERIFIABLE_ID_DEFINITION.input_descriptors[0],
+              descriptor
+            ]
+          }
+        })
+
+        await expectThrowsAsync(
+          () => provider(client, wallet).present(challengeFor(client)),
+          /which the service does not request/
+        )
+      }
+
+      const { client } = nodeStub({ presentationDefinition: {} })
+      await expectThrowsAsync(
+        () => provider(client, wallet).present(challengeFor(client)),
+        /no input descriptors/
+      )
+      expect(used).to.deep.equal([])
+    })
+
+    it('presents only credentials of a requested type, whatever the wallet matched or the caller chose', async () => {
+      const { client } = nodeStub()
+      const { wallet, used } = watchedWallet()
+      wallet.matchCredentials = async () => [
+        credential('id-card', 'VerifiableId'),
+        credential('diploma', 'UniversityDegree'),
+        { id: 'unparsed' }
+      ]
+
+      await provider(client, wallet).present(challengeFor(client))
+      await provider(client, wallet, {
+        onSelectCredentials: async () => [
+          credential('diploma', 'UniversityDegree'),
+          credential('id-card', 'VerifiableId')
+        ]
+      }).present(challengeFor(client))
+
+      expect(used.filter((call) => call.startsWith('present'))).to.deep.equal([
+        'present:id-card',
+        'present:id-card'
+      ])
+    })
+
+    it("refuses a wallet whose account is not the session's consumer", async () => {
+      const { client, passthroughCalls } = nodeStub()
+      const { wallet, used } = watchedWallet()
+
+      await expectThrowsAsync(
+        () =>
+          provider(client, wallet).present({
+            ...challengeFor(client),
+            consumerAddress: '0x1111111111111111111111111111111111111111'
+          }),
+        /session is bound to 0x1111/
+      )
+      expect(used).to.deep.equal([])
+      expect(passthroughCalls).to.deep.equal([])
+
+      // The same account in another case is the same account.
+      await provider(client, wallet).present({
+        ...challengeFor(client),
+        consumerAddress: OWNER_ADDRESS.toLowerCase()
+      })
+    })
   })
 
   it('needs either a wallet implementation or a wallet API URL', () => {
