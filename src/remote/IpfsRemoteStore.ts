@@ -42,6 +42,7 @@ import type { StorageObject } from '@oceanprotocol/lib'
 import {
   errorMessage,
   fetchText,
+  MAX_TIMER_MS,
   RedirectError,
   RequestTimeoutError
 } from '../utils/http.js'
@@ -108,7 +109,10 @@ export interface IpfsRemoteStoreOptions {
     | { url: string; method?: string; headers?: Record<string, string> }
   /** Allow plain `http://` on a non-loopback host. Default `false`. */
   allowInsecureTransport?: boolean
-  /** Per-request timeout, body included. Default 60 s. */
+  /**
+   * Per-request timeout, body included. Default 60 s. A finite number of milliseconds, more
+   * than 0 (the constructor throws otherwise); above 2^31 − 1 ms it is clamped to that.
+   */
   requestTimeoutMs?: number
   fetchImpl?: typeof fetch
 }
@@ -140,6 +144,7 @@ function defaultExtractCid(response: unknown): string | undefined {
 export class IpfsRemoteStore implements RemoteStore {
   private readonly options: IpfsRemoteStoreOptions
   private readonly fetchImpl: typeof fetch
+  private readonly requestTimeoutMs: number
 
   constructor(options: IpfsRemoteStoreOptions) {
     if (!options?.uploadUrl?.trim())
@@ -195,6 +200,8 @@ export class IpfsRemoteStore implements RemoteStore {
         options.allowInsecureTransport
       )
     }
+
+    this.requestTimeoutMs = requestTimeout(options.requestTimeoutMs)
 
     this.options = options
     this.fetchImpl = options.fetchImpl || fetch
@@ -452,7 +459,7 @@ export class IpfsRemoteStore implements RemoteStore {
   ) {
     try {
       return await fetchText(this.fetchImpl, url, init, {
-        timeoutMs: this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+        timeoutMs: this.requestTimeoutMs,
         followRedirects
       })
     } catch (error) {
@@ -534,6 +541,22 @@ function assertUrlWithoutCredentials(url: string, what: string): void {
     throw new Error(
       `${what} carries credentials in the URL (user:password@host). Pass them in headers instead, e.g. headers: { Authorization: 'Basic <base64 of user:password>' }.`
     )
+}
+
+/**
+ * `requestTimeoutMs`, or the default: a positive, finite number of milliseconds, clamped to
+ * the longest delay `setTimeout` takes. Anything else throws here rather than fail every
+ * request with a `RangeError`.
+ */
+function requestTimeout(value: unknown): number {
+  if (value === undefined) return DEFAULT_REQUEST_TIMEOUT_MS
+
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0)
+    throw new Error(
+      `IpfsRemoteStore: requestTimeoutMs must be a finite number of milliseconds, more than 0; got ${String(value)}.`
+    )
+
+  return Math.min(value, MAX_TIMER_MS)
 }
 
 /** Throws for a `probe` that is neither `'upload'` nor `{ url, method?, headers? }`. */
