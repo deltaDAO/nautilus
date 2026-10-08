@@ -653,6 +653,18 @@ A non-zero provider fee is paid only within `maxProviderFee` or with `confirmPro
 v1 paid whatever the node quoted. See
 [Upgrading from 2.0.0-beta.0](#upgrading-from-200-beta0).
 
+Two refusals come before any node call other than resolving the asset:
+
+- **`access()` downloads from `access` services only.** A `serviceId` naming a `compute`
+  service throws, pointing to `compute()` / `freeCompute()`, instead of reaching the node's
+  `initialize`.
+- **`userdata` must fit the service's consumer parameters**: every `required` parameter
+  present, `text` a string, `number` a finite number (`'5'` is refused), `boolean` a
+  boolean, `select` one of its option keys, and no undeclared keys when the service
+  declares any. Otherwise a `ConsumerParameterError` (`issues`, `did`, `serviceId`,
+  `field`) is thrown. v1 and 2.0.0-beta.1 sent whatever was passed. Fix the values, or
+  check them first with `checkConsumerParameters(service.consumerParameters, userdata)`.
+
 ## 9. Compute
 
 Compute changed the most, because C2D v2 is a different model.
@@ -688,6 +700,11 @@ A job is addressed by the `jobId` `compute()` and `freeCompute()` return,
 `<environmentHash>-<jobId>`. `getComputeResult()` and `streamComputeResult()` read the job's
 `output` result, `outputs.tar`, a tar archive of what the algorithm wrote to its outputs
 folder.
+
+Each input's `userdata` and the algorithm's `algocustomdata` are checked like a download's
+`userdata` (see §8): against the service's consumer parameters and the algorithm
+metadata's, respectively. A mismatch throws a `ConsumerParameterError` before the
+environment is read or anything is sent.
 
 ## 10. Credential-gated assets
 

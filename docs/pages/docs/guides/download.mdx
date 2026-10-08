@@ -63,7 +63,9 @@ is visible to the caller.
 ## Choosing a service
 
 An asset can offer several services. By default nautilus takes the first `access` service;
-name one explicitly when there is more than one:
+name one explicitly when there is more than one. `access()` downloads from `access`
+services only and refuses a `compute` service before calling the node: run a job on it with
+[`compute()`](/docs/api/nautilus/compute) or [`freeCompute()`](/docs/api/nautilus/freeCompute).
 
 ```ts twoslash
 import { Nautilus, getServices } from '@deltadao/nautilus'
@@ -102,8 +104,11 @@ const { url } = await nautilus.access({
 })
 ```
 
-See the [ConsumerParameterBuilder](/docs/api/ConsumerParameterBuilder) for the publishing
-side.
+The values are checked against the service's declaration before anything is sent: a
+missing required parameter, a value of the wrong type, a `select` value outside its options
+or an undeclared key throws a `ConsumerParameterError`. See
+[validation](/docs/api/UserCustomParameters#validation), and the
+[ConsumerParameterBuilder](/docs/api/ConsumerParameterBuilder) for the publishing side.
 
 ## Selecting a file
 

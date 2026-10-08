@@ -42,7 +42,11 @@ payment runs through an escrow contract, and all datasets travel in one array. S
 
 What happens in order:
 
-1. Every input is resolved and its compute service selected.
+1. Every input is resolved and its compute service selected. Each input's `userdata` is
+   checked against its service's consumer parameters, and the algorithm's `algocustomdata`
+   against the parameters in its algorithm metadata, as for
+   [`access`](/docs/api/nautilus/access): a mismatch throws a `ConsumerParameterError`
+   before the environment is read or anything is sent.
 2. On a node with a policy server, a policy-server session is opened for **every** input
    with `credentials`, datasets and algorithm alike, each for its own asset and service (see
    [credential-gated assets](/docs/guides/identity)). A refusal aborts the whole job with
@@ -152,6 +156,8 @@ The order transaction backing each input, keyed by `did#serviceId` so two inputs
 - Type: `ComputeAssetRef`
 
 `{ did, serviceId?, userdata? }`. Defaults to the asset's first `compute` service.
+`userdata` must fit the service's
+[consumer parameters](/docs/api/UserCustomParameters#validation).
 
 :::info
 This type was renamed from `ComputeAsset` in v1, because ocean.js exports a different type
@@ -163,7 +169,8 @@ under that name. Having both in scope was a standing source of confusion.
 - Type: `ComputeAlgorithmRef`
 
 `ComputeAssetRef` plus `algocustomdata?` and `envs?` (environment variables for the
-container).
+container). `userdata` must fit the algorithm service's consumer parameters, and
+`algocustomdata` those of its algorithm metadata.
 
 ##### additionalDatasets (optional)
 
@@ -324,6 +331,9 @@ lock as `context.escrowLock`.
 
 ## Throws
 
+- `ConsumerParameterError`, as for [`access`](/docs/api/nautilus/access#throws): an input's
+  `userdata` or the algorithm's `algocustomdata` does not fit the declared consumer
+  parameters. `error.did`, `error.serviceId` and `error.field` name the input.
 - `PolicyDeniedError`, `ProviderFeeSignatureError` and `ProviderFeeNotAllowedError`, as
   for [`access`](/docs/api/nautilus/access#throws), and an `Error` when an input asks for a
   verifiable presentation and no credential provider is set.

@@ -111,3 +111,42 @@ const userdata = {
 } satisfies UserCustomParameters
 ```
 In the select case, you have to pass over one of the options defined in the metadata of the requested asset.
+
+## Validation
+
+`access()`, `compute()` and `freeCompute()` check the values against what the asset
+declares before anything is sent: a download's `userdata` and a compute input's `userdata`
+against the service's `consumerParameters`, and an algorithm's `algocustomdata` against the
+`consumerParameters` of its algorithm metadata.
+
+- A `required` parameter must have a value. `undefined` and `null` count as absent. An
+  absent optional parameter stays absent; nautilus does not fill in its `default`.
+- `text` takes a string, `number` a finite number (not a numeric string such as `'5'`),
+  `boolean` `true` or `false`, and `select` a string that is one of its option keys.
+- Keys the asset does not declare are refused, so a misspelt key does not travel to the
+  data source unnoticed: a download's `userdata` is appended to the file's URL as query
+  parameters. An asset that declares no parameters takes the values as they are.
+
+A mismatch throws a `ConsumerParameterError` before the node is asked for a fee and before
+any transaction. `error.issues` lists every refused value, and `error.did`,
+`error.serviceId` and `error.field` (`'userdata'` or `'algocustomdata'`) say where it was
+going.
+
+To validate a form before calling, use `checkConsumerParameters`, which returns the same
+issues instead of throwing:
+
+```ts twoslash
+import {
+  checkConsumerParameters,
+  getServiceByType,
+  Nautilus
+} from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const asset = await nautilus.getAsset('did:ope:1234...')
+const service = getServiceByType(asset, 'access')
+
+const issues = checkConsumerParameters(service?.consumerParameters, { rows: '5' }) // [!code focus]
+// [{ parameter: 'rows', reason: 'wrong-type', message: "'rows' must be a finite number, …" }]
+```

@@ -48,7 +48,8 @@ const dataset: ComputeAssetRef = {
 
 - Type: `Record<string, unknown>`
 
-Values for the service's consumer parameters.
+Values for the service's consumer parameters, checked against its declaration before
+anything is sent (see [validation](/docs/api/UserCustomParameters#validation)).
 
 ```ts twoslash
 import type { ComputeAssetRef } from '@deltadao/nautilus'
