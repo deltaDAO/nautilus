@@ -1,7 +1,6 @@
 import type { AssetV5 } from '@oceanprotocol/ddo-js'
 import {
   type ComputeEnvironment,
-  type ComputeJob,
   type ComputeResultStream,
   type Config,
   ConfigHelper,
@@ -34,7 +33,12 @@ import type {
 import type { AssetState } from '../@types/Nautilus.js'
 import { access } from '../access/index.js'
 import { compute, freeCompute, selectEnvironment } from '../compute/index.js'
-import { findResultIndex, isJobFinished } from '../compute/jobs.js'
+import {
+  assertResultIndex,
+  findResultIndex,
+  isJobFinished,
+  isOutputPending
+} from '../compute/jobs.js'
 import { getLifecycleState, getNftAddress } from '../ddo/read.js'
 import type { DdoCredentials } from '../ddo/types.js'
 import { assertValid } from '../ddo/validate.js'
@@ -252,8 +256,18 @@ export interface NautilusOptions
   /**
    * Where the policy-server sessions of this instance are cached. Defaults to an in-memory
    * store. A session is bound to one (node, asset, service, consumer).
+   *
+   * A store of your own gets only sessions opened without a presentation; presented ones
+   * stay in memory unless `persistPresentedSessions`. Session ids are credentials: keep the
+   * store private.
    */
   sessionStore?: SessionStore
+  /**
+   * Also keep presented sessions in `sessionStore`. Default `false`. The id of a presented
+   * session lets anyone read the presentation (`vp_token`) through the node until the
+   * verifier forgets it, so opt in only for a store no one else can read.
+   */
+  persistPresentedSessions?: boolean
   /**
    * How long, in milliseconds from its opening, a cached policy-server session is reused
    * before it is opened again. `0` turns the cache off. Default: `DEFAULT_SESSION_TTL_MS`
@@ -333,6 +347,21 @@ function hasAddressAllowList(credentials: DdoCredentials | undefined): boolean {
 }
 
 /**
+ * A node as errors and logs name it: `node <origin>` for an HTTP URI, which leaves out the
+ * user name, password, path and query that can carry credentials; `the node` otherwise.
+ */
+function nodeLabel(nodeUri: string): string {
+  try {
+    const { origin } = new URL(nodeUri)
+    if (origin !== 'null') return `node ${origin}`
+  } catch {
+    // Not a URL, e.g. a peer id.
+  }
+
+  return 'the node'
+}
+
+/**
  * The nautilus client.
  *
  * @example
@@ -387,6 +416,7 @@ export class Nautilus {
     this.policySessions = new PolicySessionResolver({
       credentials: options.credentials,
       sessionStore: options.sessionStore,
+      persistPresentedSessions: options.persistPresentedSessions,
       sessionTtlMs: options.sessionTtlMs
     })
   }
@@ -516,9 +546,11 @@ export class Nautilus {
     return this.signer
   }
 
-  /** Swaps in a credential provider after construction. Cached sessions stay. */
-  setCredentialProvider(credentials: CredentialProvider): void {
-    this.options.credentials = credentials
+  /**
+   * Swaps in a credential provider after construction, or removes it with `undefined`.
+   * Cached sessions stay.
+   */
+  setCredentialProvider(credentials: CredentialProvider | undefined): void {
     this.policySessions.setCredentialProvider(credentials)
   }
 
@@ -1690,7 +1722,8 @@ export class Nautilus {
    * unless `resultIndex` names another.
    *
    * `undefined`, with a log line saying why, when the node does not know the job, the job
-   * has not finished (status below `70`), or it has no such result.
+   * has not finished (no `dateFinished`) or has not listed its `output` yet, or it has no
+   * such result.
    */
   async getComputeResult(
     config: ComputeResultConfig
@@ -1698,13 +1731,9 @@ export class Nautilus {
     const node = this.nodeFor(config.nodeUri)
     const result = await this.findResult(node, config)
 
-    if ('pending' in result) {
-      LoggerInstance.log(`[compute] ${result.pending}`)
-      return undefined
-    }
-
-    if ('missing' in result) {
-      LoggerInstance.warn(`[compute] ${result.missing}`)
+    if ('reason' in result) {
+      if (result.retry) LoggerInstance.log(`[compute] ${result.reason}`)
+      else LoggerInstance.warn(`[compute] ${result.reason}`)
       return undefined
     }
 
@@ -1722,8 +1751,7 @@ export class Nautilus {
     const node = this.nodeFor(config.nodeUri)
     const result = await this.findResult(node, config)
 
-    if ('pending' in result) throw new Error(`[compute] ${result.pending}`)
-    if ('missing' in result) throw new Error(`[compute] ${result.missing}`)
+    if ('reason' in result) throw new Error(`[compute] ${result.reason}`)
 
     return node.getComputeResult(result.jobId, result.index)
   }
@@ -1732,6 +1760,10 @@ export class Nautilus {
    * A job's algorithm logs: streamed live while the algorithm runs, and read from the
    * job's `algorithmLog` result once it has finished, since the node streams logs only
    * while the algorithm runs.
+   *
+   * Treat the job id as a secret: ocean-node 4.2.2 checks the log request's signature but
+   * not that the signer owns the job, so anyone who has the id can stream a running job's
+   * logs.
    */
   async getComputeLogs(
     config: ComputeStatusConfig
@@ -1754,13 +1786,14 @@ export class Nautilus {
 
     if (index === undefined)
       throw new Error(
-        `[compute] job ${job.jobId} has finished and has no 'algorithmLog' result. Results: ${JSON.stringify(job.results)}`
+        `[compute] the job has finished (status ${job.status}: ${job.statusText}) and has no 'algorithmLog' result. Results: ${JSON.stringify(job.results)}`
       )
 
     return node.getComputeResult(job.jobId, index)
   }
 
-  async stopCompute(config: StopComputeConfig): Promise<ComputeJob[]> {
+  /** Asks the node to stop a job, and returns the jobs as they stand after the request. */
+  async stopCompute(config: StopComputeConfig): Promise<NodeComputeJob[]> {
     return this.nodeFor(config.nodeUri).computeStop(
       config.jobId,
       config.agreementId
@@ -1776,7 +1809,7 @@ export class Nautilus {
 
     if (!job)
       throw new Error(
-        `[compute] node ${node.nodeUri} does not know job ${jobId}`
+        `[compute] ${nodeLabel(node.nodeUri)} does not know the job`
       )
 
     return job
@@ -1784,35 +1817,45 @@ export class Nautilus {
 
   /**
    * Finds the result `getComputeResult` and `streamComputeResult` read: `resultIndex`, or
-   * the finished job's `output`. `pending` while the job runs, `missing` when the node does
-   * not know the job or it has no such result.
+   * the finished job's `output`. Otherwise a `reason`, with `retry` when the job may still
+   * get there: it has not finished, or it is at `71` (`JobSettle`) and has not listed its
+   * `output` yet.
    */
   private async findResult(
     node: OceanNodeClient,
     config: ComputeResultConfig
   ): Promise<
-    { jobId: string; index: number } | { pending: string } | { missing: string }
+    { jobId: string; index: number } | { reason: string; retry: boolean }
   > {
+    if (config.resultIndex !== undefined) assertResultIndex(config.resultIndex)
+
     const job = await node.getComputeJob(config.jobId)
 
     if (!job)
       return {
-        missing: `node ${node.nodeUri} does not know job ${config.jobId}`
+        reason: `${nodeLabel(node.nodeUri)} does not know the job`,
+        retry: false
       }
 
+    const status = `status ${job.status}: ${job.statusText}`
+
     if (!isJobFinished(job))
-      return {
-        pending: `job ${job.jobId} is not finished yet (status ${job.status}: ${job.statusText})`
-      }
+      return { reason: `the job is not finished yet (${status})`, retry: true }
 
     const index = config.resultIndex ?? findResultIndex(job, 'output')
 
-    if (index === undefined)
+    if (index !== undefined) return { jobId: job.jobId, index }
+
+    if (isOutputPending(job))
       return {
-        missing: `job ${job.jobId} has no 'output' result; pass resultIndex to read another. Results: ${JSON.stringify(job.results)}`
+        reason: `the job has not listed its 'output' result yet (${status})`,
+        retry: true
       }
 
-    return { jobId: job.jobId, index }
+    return {
+      reason: `the job has no 'output' result (${status}); pass resultIndex to read another. Results: ${JSON.stringify(job.results)}`,
+      retry: false
+    }
   }
 
   /** A client for another node, when a job runs somewhere other than the default. */

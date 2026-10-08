@@ -527,41 +527,37 @@ function resolvePaymentToken(
 const BASELINE_RESOURCES = ['cpu', 'ram', 'disk']
 
 /**
- * The resources a job requests: the caller's, and for every other resource the
- * environment lists (for a free job, its `free` list), a default.
+ * The resources a job requests: a non-empty `requested` exactly as given, or, when the
+ * caller passed none or an empty list, every resource the environment lists (for a free
+ * job, its `free` list).
  *
- * The default is the resource's minimum, raised to `1` for `cpu`, `ram` and `disk` within
- * its maximum: a node fills a resource left out with its minimum, which is often `0`, so a
- * job would otherwise run without a memory limit. Other resources, such as GPUs, default to
+ * Each defaults to its minimum, raised to `1` for `cpu`, `ram` and `disk` within its
+ * maximum: a node fills a resource left out with its minimum, which is often `0`, so a job
+ * would otherwise run without a memory limit. Other resources, such as GPUs, default to
  * their minimum.
  */
 function resolveResources(
   environment: ComputeEnvironment,
-  requested: ComputeResourceRequest[] = [],
+  requested: ComputeResourceRequest[] | undefined,
   free = false
 ): ComputeResourceRequest[] {
+  if (requested?.length) return requested
+
   const advertised = free
     ? (environment.free?.resources ?? [])
     : (environment.resources ?? [])
 
-  const defaults = advertised
-    .filter((resource) => !requested.some((entry) => entry.id === resource.id))
-    .map((resource) => {
-      // A free resource without its own bounds has the environment's.
-      const paid = environment.resources?.find(
-        (candidate) => candidate.id === resource.id
-      )
-      const min = resource.min ?? paid?.min ?? 0
-      const max = resource.max ?? paid?.max ?? min
-      const floor = BASELINE_RESOURCES.includes(resource.id) ? 1 : 0
+  return advertised.map((resource) => {
+    // A free resource without its own bounds has the environment's.
+    const paid = environment.resources?.find(
+      (candidate) => candidate.id === resource.id
+    )
+    const min = resource.min ?? paid?.min ?? 0
+    const max = resource.max ?? paid?.max ?? min
+    const floor = BASELINE_RESOURCES.includes(resource.id) ? 1 : 0
 
-      return {
-        id: resource.id,
-        amount: Math.max(min, Math.min(floor, max))
-      }
-    })
-
-  return [...requested, ...defaults]
+    return { id: resource.id, amount: Math.max(min, Math.min(floor, max)) }
+  })
 }
 
 function resolveMaxJobDuration(

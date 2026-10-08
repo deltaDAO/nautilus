@@ -144,13 +144,32 @@ try {
 }
 ```
 
-`code` is the HTTP status of the refusal, and `undefined` when the verifier did not accept a
-presentation; `reason` then names the failed policies
-(`revoked-status-list: credential is revoked`). A node or policy server that cannot answer (a
-network error, a timeout, a 5xx) is an `OceanNodeError` instead.
+`code` is the policy server's status for the refusal, and `undefined` when the verifier did
+not accept a presentation; `reason` then names the failed policies
+(`revoked-status-list: credential is revoked`), and `policyResults` lists each policy's name,
+outcome and error, never the presentation itself. Only the policy server's own refusal is a
+`PolicyDeniedError`. Everything else is an `OceanNodeError` with the status: the node
+rejecting the nonce or signature (401), not having indexed the asset (404), not reaching its
+policy server (400), a network error, a timeout or a 5xx.
 
 If the wallet holds nothing that matches, the provider's error carries the credentials you are
 *missing*, rather than just reporting no match.
+
+### What the wallet trusts
+
+For a download, the presentation request comes from the node in the service's
+`serviceEndpoint`, which the publisher chose. So `WaltIdCredentialProvider` checks it before
+the wallet sees it:
+
+- the request must be an `openid4vp://` URL, and its `request_uri`, `response_uri` and
+  `presentation_definition_uri` must be `https://`, or `http://` on a loopback host
+  (`allowInsecureTransport: true` accepts plain `http://` elsewhere, e.g. a private
+  network). Other schemes, link-local hosts and cloud metadata addresses are always refused;
+- every input descriptor of the presentation definition must ask for a credential type the
+  asset's or service's `request_credentials` name, and only wallet credentials of those types
+  are presented, whatever the wallet matched or `onSelectCredentials` returned;
+- the wallet signer must be the consumer: a provider built with another signer refuses to
+  present its credentials for a session bound to your address.
 
 ### Choosing credentials and DIDs
 
@@ -186,7 +205,16 @@ You can also pin a wallet and DID outright with `walletId` and `did`.
 nautilus caches each verified session per (node, asset, service, consumer): the policy
 server binds a session id to `sha256(consumerAddress:documentId:serviceId)` and the node that
 opened it, so a session for another account or node would be refused. Pass `sessionStore` to
-`Nautilus.create` to keep them somewhere else than in memory.
+`Nautilus.create` to keep address-only sessions somewhere else than in memory.
+
+:::warning
+Session ids are credentials. The node accepts one for the download or compute job, and the id
+of a presented session lets anyone read the verifier's record through the node's passthrough
+(`checkSessionId` is not signed), the presentation (`vp_token`) included, until the verifier
+forgets it. So presented sessions stay in memory even with a `sessionStore`, unless you set
+`persistPresentedSessions: true` for a store no one else can read. Keep session ids out of
+logs and shared URLs.
+:::
 
 A cached session is reused for at most `sessionTtlMs` (2 minutes by default) from when it was
 opened, and one that needed a presentation is checked with the policy server again before it
@@ -197,9 +225,11 @@ server costs one more exchange, not a refused order.
 :::warning
 Never invent a session id. The policy server derives it from
 `sha256(consumerAddress:documentId:serviceId)` plus a random half, and rejects any session
-whose context does not match the request. The address is hashed as it is sent, so nautilus
-sends the same string (`signer.getAddress()`) to `initiate` and to the download or compute
-call.
+whose context does not match the request. The address is hashed as the node forwards it: the
+address it authenticated, which for a Signer is the request's (nautilus sends
+`signer.getAddress()` to `initiate` and to the download or compute call) and for a JWT the
+address stored with the token, whatever the request says. nautilus keys its cache on that
+address (`OceanNodeClient.policySessionAddress`).
 :::
 
 ## Publishing a gated asset

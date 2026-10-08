@@ -40,6 +40,26 @@ export function isSigner(auth: NodeAuth): auth is Signer {
 }
 
 /**
+ * The `address` in a node JWT's payload, or `undefined` when the token does not decode.
+ * Read, not verified: the node verifies the token, and attributes a request made with it
+ * to this address.
+ */
+export function authTokenAddress(token: string): string | undefined {
+  const payload = token.split('.')[1]
+  if (!payload) return undefined
+
+  try {
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const json = atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, '='))
+    const address = (JSON.parse(json) as { address?: unknown } | null)?.address
+
+    return typeof address === 'string' && address ? address : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * The address the node will attribute the request to.
  *
  * For a JWT the address is embedded in the token, but ocean.js does not re-export its

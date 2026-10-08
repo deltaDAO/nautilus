@@ -13,6 +13,9 @@
  * A caller that opts into `followRedirects` still gets the transport rule on the final URL:
  * a redirect that ends on plain `http://` on a non-loopback host throws a `RedirectError`,
  * unless the request itself already went there in clear.
+ *
+ * The body is read up to `maxBodyBytes` (8 MiB by default), so a server cannot make
+ * nautilus buffer an answer of any size.
  */
 
 import { isLoopbackHost } from './transport.js'
@@ -42,7 +45,15 @@ export interface FetchTextOptions {
    * throws a `RedirectError`, unless the requested URL was such a URL already.
    */
   followRedirects?: boolean
+  /**
+   * The largest body read, in bytes. A larger answer throws a `ResponseTooLargeError`.
+   * Default: `DEFAULT_MAX_BODY_BYTES` (8 MiB).
+   */
+  maxBodyBytes?: number
 }
+
+/** The default of `FetchTextOptions.maxBodyBytes`: 8 MiB. */
+export const DEFAULT_MAX_BODY_BYTES = 8 * 1024 * 1024
 
 /** The longest delay `setTimeout` takes; anything longer fires after 1 ms. */
 export const MAX_TIMER_MS = 2 ** 31 - 1
@@ -52,6 +63,17 @@ export class RequestTimeoutError extends Error {
   constructor(timeoutMs: number) {
     super(`timed out after ${timeoutMs} ms`)
     this.name = 'RequestTimeoutError'
+  }
+}
+
+/** Thrown when an answer's body is larger than `FetchTextOptions.maxBodyBytes`. */
+export class ResponseTooLargeError extends Error {
+  readonly maxBodyBytes: number
+
+  constructor(maxBodyBytes: number) {
+    super(`the answer is larger than ${maxBodyBytes} bytes`)
+    this.name = 'ResponseTooLargeError'
+    this.maxBodyBytes = maxBodyBytes
   }
 }
 
@@ -125,7 +147,8 @@ function originOf(url: string, base: string): string | undefined {
  * Rejects with `signal.reason` when the caller's `signal` aborts, with a
  * `RequestTimeoutError` on timeout, with a `RedirectError` on a 3xx answer (unless
  * `followRedirects`) and on a followed redirect that ends on plain `http://` on a
- * non-loopback host (see `FetchTextOptions.followRedirects`), with a `RangeError` for a
+ * non-loopback host (see `FetchTextOptions.followRedirects`), with a
+ * `ResponseTooLargeError` for a body over `maxBodyBytes`, with a `RangeError` for a
  * `timeoutMs` that is negative or not finite, and with fetch's own error otherwise.
  * Timeouts above 2^31 − 1 ms are clamped to that.
  */
@@ -135,7 +158,12 @@ export async function fetchText(
   init: RequestInit,
   options: FetchTextOptions
 ): Promise<FetchedText> {
-  const { timeoutMs, signal, followRedirects = false } = options
+  const {
+    timeoutMs,
+    signal,
+    followRedirects = false,
+    maxBodyBytes = DEFAULT_MAX_BODY_BYTES
+  } = options
 
   if (!Number.isFinite(timeoutMs) || timeoutMs < 0)
     throw new RangeError(
@@ -187,7 +215,7 @@ export async function fetchText(
       throw new RedirectError(url, response.status, finalUrl, true)
     }
 
-    const body = await response.text()
+    const body = await readBody(response, maxBodyBytes)
     const retryAfter = response.headers?.get?.('retry-after') ?? undefined
 
     return {
@@ -207,6 +235,43 @@ export async function fetchText(
     clearTimeout(timer)
     signal?.removeEventListener('abort', onAbort)
   }
+}
+
+/** The body as text, refused once it is over `maxBytes`. */
+async function readBody(response: Response, maxBytes: number): Promise<string> {
+  const declared = Number(response.headers?.get?.('content-length'))
+  const reader = response.body?.getReader?.()
+
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await reader?.cancel().catch(() => undefined)
+    throw new ResponseTooLargeError(maxBytes)
+  }
+
+  if (!reader) {
+    const text = await response.text()
+    if (new TextEncoder().encode(text).byteLength > maxBytes)
+      throw new ResponseTooLargeError(maxBytes)
+    return text
+  }
+
+  const decoder = new TextDecoder()
+  let size = 0
+  let text = ''
+
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+
+    size += value.byteLength
+    if (size > maxBytes) {
+      await reader.cancel().catch(() => undefined)
+      throw new ResponseTooLargeError(maxBytes)
+    }
+
+    text += decoder.decode(value, { stream: true })
+  }
+
+  return text + decoder.decode()
 }
 
 /** The message of whatever was thrown. */

@@ -120,9 +120,9 @@ const { jobs } = await nautilus.compute({
 
 ##### jobs
 
-- Type: `ComputeJob[]`
+- Type: `NodeComputeJob[]`
 
-The started jobs. Poll them with [`getComputeStatus`](/docs/api/nautilus/getComputeStatus).
+The started jobs, with the node's `environment`. Poll them with [`getComputeStatus`](/docs/api/nautilus/getComputeStatus).
 Each `jobId` is `<environmentHash>-<jobId>`, as the node names a started job; every job
 method takes it in that form.
 
@@ -189,11 +189,12 @@ Environment id. Defaults to the node's first, which is logged when it happens.
 
 - Type: `ComputeResourceRequest[]`
 
-`[{ id: 'cpu', amount: 2 }]`. Ids come from `ComputeEnvironment.resources`. The amounts you
-list are sent as they are. Each resource you leave out gets its minimum, raised to `1` for
-`cpu`, `ram` and `disk` within the resource's maximum; other resources, such as GPUs, get
-their minimum. ocean-node fills in a resource missing from the request with its minimum,
-usually `0`, and `0` CPU or RAM means the job runs without that limit.
+`[{ id: 'cpu', amount: 2 }]`. Ids come from `ComputeEnvironment.resources`. A non-empty list is sent
+exactly as given: ocean-node gives each resource missing from it its minimum, usually `0`,
+and `0` CPU or RAM means the job runs without that limit, so list every resource you want
+bounded. Without `resources`, or with an empty list, every resource the environment lists is requested at its
+minimum, raised to `1` for `cpu`, `ram` and `disk` within the resource's maximum; other
+resources, such as GPUs, at their minimum.
 
 ##### paymentToken (optional)
 

@@ -238,7 +238,7 @@ describe('compute', () => {
        */
       const job = await consumer.getComputeStatus({ jobId })
 
-      if (job && [70, 71].includes(job.status)) {
+      if (job?.dateFinished) {
         console.log(
           `[compute] job already finished (status ${job.status}); nothing to stop`
         )

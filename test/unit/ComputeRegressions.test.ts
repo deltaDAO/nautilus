@@ -184,6 +184,9 @@ function createComputeNodeMock(
   const client = {
     nodeUri: 'https://node.test.invalid',
     // A node without a policy server: no session is opened.
+    policySessionAddress(address: string) {
+      return address
+    },
     async hasPolicyServer() {
       return false
     },
@@ -541,7 +544,26 @@ describe('default compute resources', () => {
     ])
   })
 
-  it('keeps the requested amounts and fills in the resources left out', async () => {
+  it('sends an explicit resources list exactly as given, without defaults', async () => {
+    const { client, calls } = createComputeNodeMock(
+      inputs(),
+      undefined,
+      environmentWith()
+    )
+    const resources = [
+      { id: 'ram', amount: 4 },
+      { id: 'gpu', amount: 1 }
+    ]
+
+    await computeAllowed(
+      { dataset: { did: ASSET_DID }, algorithm: { did: ALGO_DID }, resources },
+      computeContext(client)
+    )
+
+    expect(calls.computeStart[0].resources).to.deep.equal(resources)
+  })
+
+  it('treats an empty resources list as none, and applies the defaults', async () => {
     const { client, calls } = createComputeNodeMock(
       inputs(),
       undefined,
@@ -552,19 +574,16 @@ describe('default compute resources', () => {
       {
         dataset: { did: ASSET_DID },
         algorithm: { did: ALGO_DID },
-        resources: [
-          { id: 'ram', amount: 4 },
-          { id: 'gpu', amount: 1 }
-        ]
+        resources: []
       },
       computeContext(client)
     )
 
     expect(calls.computeStart[0].resources).to.deep.equal([
-      { id: 'ram', amount: 4 },
-      { id: 'gpu', amount: 1 },
       { id: 'cpu', amount: 1 },
-      { id: 'disk', amount: 1 }
+      { id: 'ram', amount: 1 },
+      { id: 'disk', amount: 1 },
+      { id: 'gpu', amount: 0 }
     ])
   })
 

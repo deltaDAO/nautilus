@@ -16,55 +16,84 @@
 import type { ComputeJob } from '@oceanprotocol/lib'
 
 /** A job as the node reports it: `environment` is present at runtime. */
-export interface JobWithEnvironment {
+interface JobWithEnvironment {
   jobId: string
   environment?: string
 }
 
 /**
- * The status from which a job's results are listed: `70` (`JobFinished`). `71`
- * (`JobSettle`) follows it while the node claims the escrow payment.
+ * `<environmentHash>-<jobId>` exactly as ocean-node 4.2 builds it: the engine hash is `0x`
+ * and a sha256 in lowercase hex (`create256Hash`), the job id a sha256 in lowercase hex
+ * (`generateUniqueID`). ocean.js puts the id into query strings unencoded, so nothing
+ * else may pass.
  */
-export const JOB_FINISHED = 70
+const QUALIFIED_JOB_ID = /^0x[0-9a-f]{64}-[0-9a-f]{64}$/
 
-/** Whether the job has finished running, so its results and final logs are readable. */
-export function isJobFinished(job: Pick<ComputeJob, 'status'>): boolean {
-  return job.status >= JOB_FINISHED
+/**
+ * `JobSettle`. The node sets it once the algorithm has stopped and then writes the job's
+ * `outputs.tar`; only its payment-claim cron moves the job on to `70` (`JobFinished`).
+ */
+const JOB_SETTLE = 71
+
+/**
+ * Whether the job has ended, successfully or not, so its results and final logs are
+ * readable: the node sets `dateFinished` whenever it ends a job, and reads it the same way.
+ * The status alone does not tell: failed jobs end at statuses below `70` (`2`, `11`, `13`,
+ * `21`, `22`, `31`, `41`, `42`, `61`, `62`, …), and the claim cron later moves some of them
+ * to `70` as well.
+ */
+export function isJobFinished(job: Pick<ComputeJob, 'dateFinished'>): boolean {
+  return Boolean(job.dateFinished)
 }
 
 /**
- * The job's `<environmentHash>-<jobId>` id. Idempotent: an id that already carries the
- * environment's hash is returned as it is, and so is one whose job names no environment.
+ * Whether a finished job may still list its `output`: it is at `71` (`JobSettle`), which the
+ * node sets before it writes `outputs.tar`, and lists none yet.
  */
-export function qualifiedJobId(job: JobWithEnvironment): string {
+export function isOutputPending(
+  job: Pick<ComputeJob, 'status' | 'results'>
+): boolean {
+  return (
+    job.status === JOB_SETTLE && findResultIndex(job, 'output') === undefined
+  )
+}
+
+/**
+ * The job with its id in the `<environmentHash>-<jobId>` form. Idempotent: an id that
+ * already carries the environment's hash is kept, and so is one whose job names no
+ * environment.
+ */
+export function withQualifiedJobId<T extends JobWithEnvironment>(job: T): T {
   const [environmentHash] = (job.environment ?? '').split('-')
 
   if (!environmentHash || job.jobId.startsWith(`${environmentHash}-`))
-    return job.jobId
+    return job
 
-  return `${environmentHash}-${job.jobId}`
-}
-
-/** The job with its id in the `<environmentHash>-<jobId>` form. */
-export function withQualifiedJobId<T extends JobWithEnvironment>(job: T): T {
-  const jobId = qualifiedJobId(job)
-
-  return jobId === job.jobId ? job : { ...job, jobId }
+  return { ...job, jobId: `${environmentHash}-${job.jobId}` }
 }
 
 /**
- * Refuses a job id without its environment hash. Given one, the node's status command
- * would list every job of the consumer rather than this one, and the other commands
- * cannot find the job's engine.
+ * Refuses a job id that is not `<environmentHash>-<jobId>` as the node builds it. Given a
+ * bare id, the node's status command would list every job of the consumer rather than this
+ * one, and the other commands cannot find the job's engine; anything else could add
+ * parameters to the signed request. The message gives the id's length, not the id.
  */
 export function assertQualifiedJobId(jobId: string): void {
-  const separator = jobId.indexOf('-')
+  if (typeof jobId === 'string' && QUALIFIED_JOB_ID.test(jobId)) return
 
-  if (separator > 0 && separator < jobId.length - 1) return
+  const length =
+    typeof jobId === 'string' ? `${jobId.length} characters` : typeof jobId
 
   throw new Error(
-    `Job id '${jobId}' is not in the form <environmentHash>-<jobId>. Pass the jobId that compute() or freeCompute() returned; to rebuild it from a bare id, put the first segment of the job's environment id and a dash in front of it.`
+    `Malformed job id (${length}): it is not in the form <environmentHash>-<jobId>, 0x and 64 hex digits, a dash, then 64 hex digits. Pass the jobId that compute() or freeCompute() returned; to rebuild it from a bare id, put the first segment of the job's environment id and a dash in front of it.`
   )
+}
+
+/** Refuses a result index that is not a non-negative safe integer. */
+export function assertResultIndex(index: number): void {
+  if (Number.isSafeInteger(index) && index >= 0) return
+
+  throw new RangeError('resultIndex must be a non-negative safe integer')
 }
 
 /**

@@ -24,6 +24,23 @@ credential-gated assets are indexed.
   `vc_policies` become names (deduplicated), and bare-string address `values` become
   `{ address }`, so `addCredentialAddresses()` no longer writes `{ address: undefined }`
   and `removeCredentialAddresses()` no longer throws on such an asset.
+- **Loading reads every stored shape the policy server accepts.** A single policy or request
+  credential stored without its array is wrapped in one, and list entries that are not
+  objects are skipped, so even a metadata-only edit of such an asset no longer throws.
+- **Unreadable policies fail closed.** An edit throws, naming the entry, on a VP policy,
+  request credential or per-credential policy it cannot read, rather than dropping it and
+  leaving the asset open under the remaining policies. `setVpPolicies()` refuses one too,
+  and writes a bare name from an untyped caller as `{ policy }`.
+- **A stored per-credential policy is not encoded twice** when passed back into
+  `addRequestCredentials()`.
+- **Edits keep every `SSIpolicy` value.** Only the first value of the entry was kept, so the
+  request credentials of the others were dropped. Values (and a second `SSIpolicy` entry in
+  the same list) are merged into one, as the policy server reads them, so `setVcPolicies()`
+  and `setVpPolicies()` replace the policies of all of them.
+- **Removing the last allowed address keeps the gate.** `removeCredentialAddresses()`
+  dropped the allow entry once it was empty, which lifted the address gate; the node and
+  the policy server read an empty allow list as "deny everyone". The entry is now kept as
+  `values: []`. An emptied deny entry is still dropped.
 
 **Breaking (beta API)**
 

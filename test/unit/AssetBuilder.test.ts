@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { LifecycleStates } from '../../src/@types/Nautilus.js'
 import type { AssetV5 } from '../../src/ddo/index.js'
 import { CredentialListTypes } from '../../src/ddo/types.js'
+import { addRequestCredentials } from '../../src/identity/policy.js'
 import { AssetBuilder } from '../../src/Nautilus/Asset/AssetBuilder.js'
 import {
   type FileTypes,
@@ -439,24 +440,75 @@ describe('AssetBuilder in edit mode', () => {
     ])
   })
 
-  it('writes an object vp policy next to a legacy string as objects only', () => {
-    const asset = new AssetBuilder(getLegacySsiAssetFixture())
-      .setVpPolicies(CredentialListTypes.ALLOW, [
-        { policy: 'holder-binding' },
-        { policy: 'minimum-credentials', args: '1' }
-      ])
-      .addRequestCredentials(CredentialListTypes.ALLOW, [
+  it('edits the metadata of an asset whose untouched service stores irregular policies', async () => {
+    // mergeServices normalises every untouched service, so a normaliser that threw on a
+    // shape the policy server accepts failed even a metadata-only edit.
+    const fixture = getAssetFixture()
+    ;(
+      fixture.credentialSubject as unknown as {
+        services: { credentials: unknown }[]
+      }
+    ).services[0].credentials = {
+      allow: [
+        null,
+        {
+          type: 'SSIpolicy',
+          values: [
+            {
+              request_credentials: { type: 'VerifiableId' },
+              vp_policies: 'holder-binding'
+            }
+          ]
+        }
+      ]
+    }
+
+    const { client } = createNodeMock()
+    const ddo = (await new AssetBuilder(fixture)
+      .setName('Renamed')
+      .build()
+      .ddo.getDDO(client, { create: false })) as unknown as AssetV5
+
+    const subject = ddo.credentialSubject as unknown as {
+      services: { credentials: { allow: unknown[] } }[]
+    }
+
+    expect(subject.services[0].credentials.allow).to.deep.equal([
+      null,
+      {
+        type: 'SSIpolicy',
+        values: [
+          {
+            request_credentials: [{ type: 'VerifiableId' }],
+            vp_policies: [{ policy: 'holder-binding' }]
+          }
+        ]
+      }
+    ])
+  })
+
+  it('adds an object vp policy next to a loaded legacy string as objects only', () => {
+    // Additive, unlike setVpPolicies: the loaded bare-string policy stays in the list next
+    // to the new object, which is the mix ocean-node 4.2.x did not index.
+    const loaded = new AssetBuilder(getLegacySsiAssetFixture()).build().ddo
+      .credentials
+
+    const credentials = addRequestCredentials(
+      loaded,
+      CredentialListTypes.ALLOW,
+      [
         {
           type: 'gx:LegalPerson',
           format: 'jwt_vc_json',
           policies: ['signature']
         }
-      ])
-      .build()
+      ],
+      { vpPolicies: [{ policy: 'minimum-credentials', args: '1' }] }
+    )
 
-    expect(mixedArrays(asset.ddo.credentials)).to.deep.equal([])
+    expect(mixedArrays(credentials)).to.deep.equal([])
     expect(
-      asset.ddo.credentials.allow?.find((entry) => entry.type === 'SSIpolicy')
+      credentials.allow?.find((entry) => entry.type === 'SSIpolicy')
     ).to.deep.equal({
       type: 'SSIpolicy',
       values: [
