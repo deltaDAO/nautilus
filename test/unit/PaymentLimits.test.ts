@@ -492,6 +492,78 @@ describe('compute() escrow contract and quote', () => {
     expect(vi.mocked(sendTx)).not.toHaveBeenCalled()
     expect(computeStart).toHaveBeenCalledOnce()
   })
+
+  it.each([
+    ['no escrow address', { amount: 0 }],
+    ['no escrow address, as a string', { amount: '0' }],
+    ['no escrow address, in hex', { amount: '0x0' }],
+    ['an empty escrow address', { escrowAddress: '', amount: 0 }],
+    [
+      'another escrow contract',
+      { ...PAYMENT, escrowAddress: ATTACKER, amount: 0 }
+    ]
+  ])(
+    'starts a zero payment with %s, funding nothing, even with no escrow pinned',
+    async (_name, payment) => {
+      const saved = process.env.ADDRESS_FILE
+      delete process.env.ADDRESS_FILE
+      try {
+        const confirm = vi.fn(() => false)
+
+        // A free environment: the node quotes a zero amount, and no escrow is pinned (the
+        // test chain's address data lists none, and none is set explicitly).
+        const { running, computeStart } = runCompute(
+          quoteWith(goodFees, payment),
+          { confirmEscrowPayment: confirm },
+          { escrow: undefined }
+        )
+        await running
+
+        expect(confirm).not.toHaveBeenCalled()
+        expect(vi.mocked(EscrowContract)).not.toHaveBeenCalled()
+        expect(vi.mocked(sendTx)).not.toHaveBeenCalled()
+        expect(vi.mocked(approveWei)).not.toHaveBeenCalled()
+        expect(computeStart).toHaveBeenCalledOnce()
+      } finally {
+        if (saved !== undefined) process.env.ADDRESS_FILE = saved
+      }
+    }
+  )
+
+  it.each([
+    ['a fractional amount', { amount: '1.5' }],
+    ['a negative amount', { amount: -1 }],
+    ['no amount', {}],
+    ['a non-numeric amount', { amount: 'zero' }]
+  ])(
+    'still refuses %s with no escrow address, before anything is sent',
+    async (_name, payment) => {
+      const thrown = await runCompute(
+        quoteWith(goodFees, payment),
+        ALLOW_ALL
+      ).running.catch((caught) => caught)
+
+      expect(thrown).to.be.instanceOf(EscrowPaymentNotAllowedError)
+      expect(thrown.reason).to.equal('mismatch')
+      expect(thrown.message).to.contain('is not an exact non-negative integer')
+      expectNothingSent()
+    }
+  )
+
+  it('checks the amount before the escrow address in checkEscrowQuote()', () => {
+    const expected = {
+      pin: { rule: 'none' as const },
+      chainId: CHAIN_ID,
+      token: TOKEN,
+      payee: PAYEE
+    }
+
+    expect(checkEscrowQuote({ amount: 0 }, expected)).to.equal(undefined)
+    expect(() => checkEscrowQuote({ amount: 1 }, expected)).to.throw(
+      EscrowPaymentNotAllowedError,
+      /no escrow contract is pinned/
+    )
+  })
 })
 
 describe('compute() escrow pin', () => {

@@ -350,10 +350,15 @@ export async function assertEscrowPaymentAllowed(
 
 /**
  * Checks the node's escrow quote against the job and the escrow pin, and returns it as a
- * quote, or `undefined` when it asks for nothing. Throws an `EscrowPaymentNotAllowedError`
- * when no contract is pinned, the quote names another contract than the pinned one, the
- * chain, token or payee differ from the job's, or a field is missing or not an exact
- * integer.
+ * quote, or `undefined` when it asks for nothing.
+ *
+ * The amount is read first: an amount that is not an exact non-negative integer is
+ * refused, and a zero amount returns `undefined` before anything else is looked at, so a
+ * free environment's quote (`{ amount: 0 }`, with or without an escrow address) funds
+ * nothing and is never refused. For any other amount, throws an
+ * `EscrowPaymentNotAllowedError` when no contract is pinned, the quote names another
+ * contract than the pinned one, the chain, token or payee differ from the job's, or
+ * `minLockSeconds` is not an exact integer.
  */
 export function checkEscrowQuote(
   payment: unknown,
@@ -369,6 +374,16 @@ export function checkEscrowQuote(
   const mismatch = (detail: string) =>
     new EscrowPaymentNotAllowedError(payment, 'mismatch', detail)
   const { pin, chainId } = expected
+
+  // The amount first: a zero payment funds nothing, so no contract, chain, token or payee
+  // needs checking, and a node may leave the escrow address out of a free job's quote.
+  const amount = toBaseUnits(quote.amount)
+  if (amount === undefined)
+    throw mismatch(
+      `the amount ${safeJson(quote.amount)} is not an exact non-negative integer in the token's smallest unit.`
+    )
+
+  if (amount === 0n) return undefined
 
   if (pin.rule === 'none' || !pin.address)
     throw new EscrowPaymentNotAllowedError(
@@ -414,19 +429,11 @@ export function checkEscrowQuote(
       `the quote names payee ${String(quote.payee)}, but the compute environment's account is ${getAddress(expected.payee)}.`
     )
 
-  const amount = toBaseUnits(quote.amount)
-  if (amount === undefined)
-    throw mismatch(
-      `the amount ${safeJson(quote.amount)} is not an exact non-negative integer in the token's smallest unit.`
-    )
-
   const minLockSeconds = toBaseUnits(quote.minLockSeconds ?? 0)
   if (minLockSeconds === undefined)
     throw mismatch(
       `minLockSeconds ${safeJson(quote.minLockSeconds)} is not a non-negative integer.`
     )
-
-  if (amount === 0n) return undefined
 
   return {
     escrowAddress: pin.address,
