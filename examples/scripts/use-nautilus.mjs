@@ -36,7 +36,9 @@ const spec = specIndex === -1 ? undefined : argv[specIndex + 1]
 const mode = argv.find((arg) => !arg.startsWith('--') && arg !== spec)
 
 if (specIndex !== -1 && !spec)
-  throw new Error('--spec needs a value, e.g. `--spec 2.0.0-beta.0`.')
+  throw new Error(
+    '--spec needs a value: `--spec <version>` or a dist-tag, e.g. `--spec beta`.'
+  )
 
 if (!mode) {
   console.log(`${PACKAGE} is currently: ${current}`)

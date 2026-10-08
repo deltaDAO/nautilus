@@ -86,6 +86,15 @@ export interface LedgerEntry {
   stored?: { pointer?: Record<string, unknown>; metadataHash?: string }
 }
 
+/** Where `PUBLISH_LOG` points (unset: `undefined`), and whether that file exists. */
+export function ledgerLocation(): { path?: string; exists: boolean } {
+  const path = process.env.PUBLISH_LOG?.trim()
+
+  return path
+    ? { path, exists: existsSync(resolve(path)) }
+    : { path: undefined, exists: false }
+}
+
 /** Every entry of `PUBLISH_LOG`, oldest first; none when it is unset or unreadable. */
 export function readLedger(): LedgerEntry[] {
   const path = process.env.PUBLISH_LOG?.trim()

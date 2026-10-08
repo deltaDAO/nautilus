@@ -28,7 +28,7 @@ import {
   getSigner,
   type Role
 } from './nautilus'
-import { publishAsset } from './publish'
+import { publishAsset, publishSession } from './publish'
 
 /**
  * Credential-gated publishing and consuming, with the walt.id identity stack.
@@ -266,6 +266,9 @@ export async function setupWithIdentity(
   const role = options.role ?? 'publisher'
   const { networkConfig, pricingConfig } = resolveNetwork()
   const signer = getSigner(networkConfig, role)
+
+  // These commands skip setup(), which is where runCommand() takes the chain from.
+  publishSession.chainId = networkConfig.chainId
   const owner = await signer.getAddress()
 
   console.log(`SSI ${role}: ${owner}`)
@@ -714,6 +717,11 @@ export async function runGatedPublishAndConsume(
 ) {
   const { nautilus, networkConfig, pricingConfig, owner } =
     await setupWithIdentity({ withRemoteStore: true })
+
+  // The publish half is ssi:publish-gated, and that is what publish:resume can re-run: name
+  // it in the resume hint and PUBLISH_LOG, not ssi:round-trip.
+  publishSession.command = 'ssi:publish-gated'
+  publishSession.args = [credentialType]
 
   const published = await publishGatedDataset(
     nautilus,

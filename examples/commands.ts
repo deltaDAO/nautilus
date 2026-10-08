@@ -103,10 +103,13 @@ export type Command = {
    *   - `'none'`: nothing from setup(); the command reads what it needs itself.
    */
   requires?: 'none' | 'node' | 'store'
-  /** `true` for commands that build their own instance with a DDO store (`requires: 'none'`). */
+  /** `true` for `requires: 'none'` commands that build their own DDO store. */
   usesStore?: boolean
-  /** Which account it acts as. Consumer commands use CONSUMER_PRIVATE_KEY when set. */
-  role?: 'publisher' | 'consumer'
+  /**
+   * Which account it acts as. Consumer commands use CONSUMER_PRIVATE_KEY when set;
+   * `'none'` commands read no key and send no transaction.
+   */
+  role?: 'publisher' | 'consumer' | 'none'
   /** `true` when the command builds its own Nautilus with an SSI wallet. */
   identity?: boolean
   run: (ctx: Context, ...args: string[]) => Promise<unknown>
@@ -136,6 +139,8 @@ export const COMMANDS: Record<string, Command> = {
     summary:
       "Run the DDO store's check() (what publish runs before minting); no key, no tx",
     requires: 'none',
+    usesStore: true,
+    role: 'none',
     run: () => checkRemoteStore()
   },
   'store:remove': {
@@ -143,6 +148,8 @@ export const COMMANDS: Record<string, Command> = {
       'Unpin a CID or delete an S3 object from the DDO store; never the creation or current envelope of a live asset (a reindex drops it); no key, no tx',
     args: ['cid|objectKey', 'force?'],
     requires: 'none',
+    usesStore: true,
+    role: 'none',
     run: (_ctx, reference, force) => removeStoredEnvelope(reference, force)
   },
 
@@ -209,8 +216,22 @@ export const COMMANDS: Record<string, Command> = {
 
       // The asset is rebuilt by the same command, and publishAsset() completes it on the
       // existing NFT instead of minting. So the command must build the same asset as the
-      // failed run: same command, same arguments, same .env.
+      // failed run: same command, same arguments, same .env. The hint the failed run
+      // printed carries all of them; check at least that the count fits the command.
+      const declared = target.args ?? []
+      const required = requiredArgs(target)
+      const hasRest = declared.some((a) => a.startsWith('...'))
+
+      if (
+        commandArgs.length < required.length ||
+        (!hasRest && commandArgs.length > declared.length)
+      )
+        throw new Error(
+          `Got ${commandArgs.length} argument(s) for ${publishCommand} after the datatokens, but its usage is: ${formatUsage(publishCommand, target)}. Resume with the arguments the failed publish ran with, as its hint printed them.`
+        )
+
       publishSession.command = publishCommand
+      publishSession.args = commandArgs
       publishSession.resume = { nftAddress, datatokens }
 
       return runCommand(publishCommand, target, commandArgs, {
@@ -587,12 +608,23 @@ export function formatCommandHelp(name: string, command: Command): string {
     command.requires === 'none' && command.usesStore
       ? 'store'
       : (command.requires ?? 'node')
-  const needs = {
-    none: 'nothing from setup(); reads its own variables',
-    node: 'NETWORK, PRIVATE_KEY, a reachable RPC and ocean-node',
-    store:
-      'NETWORK, PRIVATE_KEY, a reachable RPC and ocean-node, and a DDO store (DDO_STORE)'
-  }[requires]
+  const needs =
+    command.role === 'none'
+      ? command.usesStore
+        ? 'a DDO store (DDO_STORE); no key, no chain, no ocean-node'
+        : 'nothing from setup(); reads its own variables'
+      : {
+          none: 'nothing from setup(); reads its own variables',
+          node: 'NETWORK, PRIVATE_KEY, a reachable RPC and ocean-node',
+          store:
+            'NETWORK, PRIVATE_KEY, a reachable RPC and ocean-node, and a DDO store (DDO_STORE)'
+        }[requires]
+  const actsAs = {
+    consumer:
+      'the consumer (CONSUMER_PRIVATE_KEY, falling back to PRIVATE_KEY)',
+    publisher: 'the publisher (PRIVATE_KEY)',
+    none: 'no account; reads no key and sends no transaction'
+  }[command.role ?? 'publisher']
 
   return [
     `Usage: npm start -- ${formatUsage(name, command)}`,
@@ -600,11 +632,7 @@ export function formatCommandHelp(name: string, command: Command): string {
     `  ${command.summary}`,
     '',
     `  Needs:   ${needs}`,
-    `  Acts as: ${
-      command.role === 'consumer'
-        ? 'the consumer (CONSUMER_PRIVATE_KEY, falling back to PRIVATE_KEY)'
-        : 'the publisher (PRIVATE_KEY)'
-    }`,
+    `  Acts as: ${actsAs}`,
     ''
   ].join('\n')
 }
@@ -621,7 +649,12 @@ export async function runCommand(
 ): Promise<unknown> {
   const requires = command.requires ?? 'node'
 
-  publishSession.command ??= name
+  // The outermost command, for the resume hint and PUBLISH_LOG. `publish:resume` sets both
+  // to the publish command it re-runs before it calls this again.
+  if (publishSession.command === undefined) {
+    publishSession.command = name
+    publishSession.args = args
+  }
 
   if (requires === 'none') return command.run(NO_CONTEXT, ...args)
 

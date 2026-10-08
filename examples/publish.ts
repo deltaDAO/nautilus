@@ -65,17 +65,23 @@ const DESCRIPTION =
   '# Nautilus-Example Description \n\nThis asset has been published using the [nautilus examples](https://github.com/deltaDAO/nautilus/tree/main/examples).'
 
 /**
- * Set by index.ts for the running command: its name, for the resume hint, and — for
- * `publish:resume` — the NFT and datatokens of the publish to finish.
+ * Set by `runCommand()` for the running command: its name and arguments, for the resume
+ * hint and `PUBLISH_LOG`, and — for `publish:resume` — the NFT and datatokens of the
+ * publish to finish.
  */
 export const publishSession: {
   command?: string
+  /** The command's own arguments, e.g. the credential type of `ssi:publish-gated`. */
+  args?: string[]
   chainId?: number
   resume?: { nftAddress: string; datatokens: string[] }
 } = {}
 
-/** A publish result some nautilus errors carry, when the transaction was already mined. */
-function publishedResult(error: unknown): PublishResponse | undefined {
+/**
+ * A publish result some nautilus errors carry when the metadata transaction was already
+ * mined, e.g. a `MetadataConflictError` on `error.published`.
+ */
+export function publishedResult(error: unknown): PublishResponse | undefined {
   const published = (error as { published?: PublishResponse } | null)?.published
 
   return published?.ddo && published.setMetadataTxReceipt
@@ -94,7 +100,7 @@ export async function publishAsset(
   nautilus: Nautilus,
   asset: NautilusAsset
 ): Promise<PublishResponse> {
-  const { command, chainId, resume } = publishSession
+  const { command, args, chainId, resume } = publishSession
   const options = { waitForIndexer: indexerOptions() }
 
   let result: PublishResponse
@@ -132,7 +138,8 @@ export async function publishAsset(
         chainId
       })
 
-    if (!explainPublishIncomplete(error, command)) explainIndexingFailure(error)
+    if (!explainPublishIncomplete(error, command, args))
+      explainIndexingFailure(error)
 
     throw error
   }

@@ -66,12 +66,13 @@ export function explainIndexingFailure(error: unknown): boolean {
  *
  * `completePublish(nftAddress, asset)` wants the asset the failed `publish()` was given, so
  * it knows which datatokens already exist. A CLI run has ended by then, so the examples
- * rebuild the same asset with the same command and hand it the datatokens from the error:
- * that is what `publish:resume` does.
+ * rebuild the same asset with the same command and arguments, and hand it the datatokens
+ * from the error: that is what `publish:resume` does.
  */
 export function explainPublishIncomplete(
   error: unknown,
-  command?: string
+  command?: string,
+  args: string[] = []
 ): boolean {
   if (!(error instanceof PublishIncompleteError)) return false
 
@@ -120,9 +121,17 @@ export function explainPublishIncomplete(
     console.error('  instead of minting another one:')
   }
 
+  // The command's own arguments go last: they decide what the asset is (its credential
+  // gating, the algorithm it trusts), so the resumed run has to rebuild it with the same.
   if (command)
     console.error(
-      `\n    npm start -- publish:resume ${command} ${error.nftAddress} ${error.datatokens.join(' ')}`.trimEnd()
+      `\n    npm start -- ${[
+        'publish:resume',
+        command,
+        error.nftAddress,
+        ...error.datatokens,
+        ...args.map(shellQuote)
+      ].join(' ')}`
     )
 
   console.error(
@@ -133,6 +142,13 @@ export function explainPublishIncomplete(
   )
 
   return true
+}
+
+/** An argument as a POSIX shell would need it typed, so the printed hint can be pasted. */
+function shellQuote(value: string): string {
+  return /^[\w@%+=:,./-]+$/.test(value)
+    ? value
+    : `'${value.replace(/'/g, `'\\''`)}'`
 }
 
 /** `did:op:`/`did:ope:` DIDs, NFT addresses and transaction hashes, told apart by shape. */

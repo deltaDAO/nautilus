@@ -183,8 +183,8 @@ any change you make to the library shows up in the examples after a rebuild.
 so it tracks whatever this checkout is about to release. To pin something specific:
 
 ```sh
-npm run use:npm -- --spec 2.0.0-beta.0
-npm run use:npm -- --spec beta
+npm run use:npm -- --spec <version>   # an exact version, e.g. the release you are testing
+npm run use:npm -- --spec beta        # whatever the beta dist-tag points at
 ```
 
 Two things to know:
@@ -264,7 +264,7 @@ has no anonymous S3 read. Make it read-only and scoped to the prefix; rotating i
 re-indexing of the assets that point at it.
 
 nautilus requires `https://` for `OCEAN_NODE_URI`, `S3_ENDPOINT` and `IPFS_UPLOAD_URL`, except
-on `localhost`, `127.0.0.1`, `::1` and `*.localhost`; the examples have no switch to relax
+on `localhost`, `127.0.0.0/8`, `::1` and `*.localhost`; the examples have no switch to relax
 that. `S3_NODE_ENDPOINT` may stay `http://` (e.g. `http://minio:9000`), because only the node
 connects to it.
 
@@ -281,7 +281,9 @@ asset that should stay indexed. A node reindex replays each asset from its creat
 without that envelope the asset disappears from the index, even if its current version is
 still stored, and without the current one it rolls back to an older version. When
 `PUBLISH_LOG` lists the envelope as an asset's creation or latest one, `store:remove`
-refuses unless you add `force` (for an asset you have revoked for good).
+refuses unless you add `force` (for an asset you have revoked for good; the log does not
+record revokes, so the refusal stays after one). When `PUBLISH_LOG` is unset, missing or does
+not list the reference, `store:remove` has nothing to check against: it warns and removes.
 
 A publish or edit that fails before its metadata transaction is sent removes the envelope it
 stored itself; the error's `stored` says what happened.
@@ -294,10 +296,16 @@ print how to finish it on the **same** NFT instead of minting a second one:
 
 ```sh
 npm start -- publish:resume publish:access-dataset 0xNFT… 0xDatatoken…
+npm start -- publish:resume ssi:publish-gated 0xNFT… 0xDatatoken… VerifiableId
 ```
 
-That re-runs the publish command — so use the same command, arguments and `.env` — and calls
-`completePublish(nftAddress, asset)` with the datatokens the failed run created.
+That re-runs the publish command and calls `completePublish(nftAddress, asset)` with the
+datatokens the failed run created, so the command has to rebuild the same asset: the same
+command, the same `.env`, and the same arguments. The printed hint carries the command's own
+arguments after the datatokens (a credential type, an algorithm DID), because they decide
+what the asset is — its credential gating, the algorithms it trusts. `publish:resume` checks
+that their number fits the command, but not their values: an `ssi:publish-gated` resumed
+without its credential type falls back to `VerifiableId`, whatever the failed run used.
 `completePublish` checks that you own the NFT and that the configured factory created it, and
 reuses the datatokens already on it. In your own code, pass the same asset object (or one
 rebuilt the same way) to `completePublish()`.

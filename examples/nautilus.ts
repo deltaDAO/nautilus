@@ -10,7 +10,7 @@ import {
 } from '@deltadao/nautilus'
 import { isAddress, JsonRpcProvider, type Signer, Wallet } from 'ethers'
 import { type NetworkConfig, resolveNetwork } from './config'
-import { describeStoredEnvelope } from './ledger'
+import { describeStoredEnvelope, ledgerLocation } from './ledger'
 
 /**
  * Shared setup for every example.
@@ -296,15 +296,32 @@ export function getRemoteStore(): RemoteStore {
   throw new Error(`No DDO store configured.\n\n${STORE_HELP}`)
 }
 
+/**
+ * A URL as origin and path only. `user:pass@` (Infura-style IPFS URLs) and a query or
+ * fragment can carry credentials, and this is printed to the terminal.
+ */
+function originAndPath(raw: string | undefined): string {
+  const value = raw?.trim()
+  if (!value) return '(unset)'
+
+  try {
+    const url = new URL(value)
+
+    return `${url.protocol}//${url.host}${url.pathname === '/' ? '' : url.pathname}`
+  } catch {
+    return '(not a valid URL)'
+  }
+}
+
 /** One line on the configured store, without any secret. */
 export function describeRemoteStore(): string {
   const store = selectedStore()
 
   if (store === 'ipfs')
-    return `ipfs ${process.env.IPFS_UPLOAD_URL?.trim()}${process.env.IPFS_JWT ? ' (with IPFS_JWT)' : ''}`
+    return `ipfs ${originAndPath(process.env.IPFS_UPLOAD_URL)}${process.env.IPFS_JWT ? ' (with IPFS_JWT)' : ''}`
 
   if (store === 's3')
-    return `s3 ${process.env.S3_ENDPOINT?.trim()} bucket=${process.env.S3_BUCKET?.trim()} prefix=${process.env.S3_PREFIX?.trim() || '(none)'}`
+    return `s3 ${originAndPath(process.env.S3_ENDPOINT)} bucket=${process.env.S3_BUCKET?.trim()} prefix=${process.env.S3_PREFIX?.trim() || '(none)'}`
 
   return 'none'
 }
@@ -345,7 +362,7 @@ export async function checkRemoteStore(): Promise<void> {
  * of an asset that should stay indexed must stay: a node reindex replays the asset from its
  * creation event and drops it when that envelope is gone. The CIDs and object keys are in
  * `PUBLISH_LOG`; when the log shows the envelope is a creation or current one, this refuses
- * unless `force` is passed.
+ * unless `force` is passed, and when the log is missing or does not list it, this warns.
  */
 export async function removeStoredEnvelope(
   reference: string,
@@ -374,10 +391,25 @@ export async function removeStoredEnvelope(
       : 'the latest envelope logged'
     if (force !== 'force')
       throw new Error(
-        `PUBLISH_LOG lists ${value} as ${which} of ${known.did}. Removing it would drop the asset on the next node reindex${known.creation ? '' : ', or roll it back to an older version'}. Revoke the asset first (asset:revoke), or pass 'force' as a second argument if it is retired for good.`
+        `PUBLISH_LOG lists ${value} as ${which} of ${known.did}. Removing it would drop the asset on the next node reindex${known.creation ? '' : ', or roll it back to an older version'}. If the asset is retired for good (e.g. revoked with asset:revoke), pass 'force' as a second argument: PUBLISH_LOG does not record revokes, so this refusal stays after a revoke.`
       )
     console.log(
       `  ⚠ ${value} is ${which} of ${known.did}; removing it anyway (force).`
+    )
+  }
+
+  // Without a log entry nothing here can tell a superseded envelope from a live one.
+  if (!known) {
+    const ledger = ledgerLocation()
+
+    console.warn(
+      `  ⚠ ${
+        !ledger.path
+          ? 'PUBLISH_LOG is not set'
+          : !ledger.exists
+            ? `PUBLISH_LOG ${ledger.path} does not exist`
+            : `PUBLISH_LOG ${ledger.path} does not list ${value}`
+      }, so this cannot check that ${value} is not the creation or current envelope of a live asset. Removing it anyway.`
     )
   }
 
@@ -429,8 +461,9 @@ export interface Setup {
 }
 
 /**
- * `Nautilus.create` takes its chain id from the signer, then lets `config` override it. So
- * an RPC on the wrong chain would silently run with another chain's addresses. Check first.
+ * `Nautilus.create` takes its chain id from the signer and throws when `config.chainId`
+ * names another one. Checking here first gives the error in terms of this `.env`: which
+ * RPC, and which NETWORK expected which chain.
  */
 async function assertChain(signer: Signer, networkConfig: NetworkConfig) {
   const network = await signer.provider?.getNetwork()

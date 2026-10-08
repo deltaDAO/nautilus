@@ -30,7 +30,7 @@
 import * as dotenv from 'dotenv'
 import { COMMANDS, type Context } from '../commands'
 import { setup } from '../nautilus'
-import { publishSession } from '../publish'
+import { publishedResult, publishSession } from '../publish'
 
 dotenv.config()
 
@@ -103,8 +103,9 @@ async function run(
 
   process.stdout.write(`\n${CYAN}▸ ${label(command, args)}${RESET}\n`)
 
-  // For PUBLISH_LOG: which command published or edited what.
+  // For PUBLISH_LOG and the resume hint: which command published or edited what.
   publishSession.command = command
+  publishSession.args = args
 
   try {
     const result = await entry.run(ctx, ...args)
@@ -127,7 +128,10 @@ async function run(
       ms: Date.now() - started
     })
 
-    return undefined
+    // A publish that threw after its metadata transaction was mined (e.g. an IndexingError
+    // or an indexer timeout) still created an asset: hand it on, so the revoke at the end
+    // cleans it up.
+    return publishedResult(error)
   }
 }
 

@@ -17,7 +17,7 @@ import { EXAMPLE_DATASET_URL } from './assets'
 import { explainIndexingFailure } from './indexing'
 import { recordPublish } from './ledger'
 import { indexerOptions } from './nautilus'
-import { publishSession } from './publish'
+import { publishedResult, publishSession } from './publish'
 
 /**
  * Editing examples.
@@ -63,7 +63,19 @@ async function applyEdit(
   nautilus: Nautilus,
   asset: Parameters<Nautilus['edit']>[0]
 ) {
-  const result = await nautilus.edit(asset)
+  let result: Awaited<ReturnType<Nautilus['edit']>>
+
+  try {
+    result = await nautilus.edit(asset)
+  } catch (error) {
+    // Mined, then thrown (e.g. a `MetadataConflictError`): the chain now points at the new
+    // envelope, so log it, or `store:remove` cannot tell it is the current one.
+    const published = publishedResult(error)
+    if (published) recordPublish('edit', published, publishSession)
+
+    throw error
+  }
+
   const did = result.ddo.id as string
 
   recordPublish('edit', result, publishSession)
