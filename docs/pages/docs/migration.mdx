@@ -150,7 +150,27 @@ Code that matches on messages should check `error.status` instead.
 **`resolve()` and `getAsset()` throw an `AssetNotFoundError` for an asset the node does not
 serve** (an `OceanNodeError` with `status` 404 and `did`). It used to be `resolve: HTTP
 request failed`. When the node recorded an indexing failure for the DID, the message carries
-the node's error and `state` the record.
+the node's error and `state` the record. Over P2P, the node's `Not found` answer throws it
+too, without `state`.
+
+**The node's text is sanitized.** Control characters and ANSI escapes are removed, more
+credentials are redacted (`vp_token`, `id_token`, `request_uri`, `code`, `nonce`, passwords,
+API keys, bare JWTs and signatures), URLs keep their origin only, and an error body is read up
+to 64 KB. For an ocean.js error, `OceanNodeError.cause` is a sanitized copy (same `name`)
+instead of the ocean.js error itself. `IndexingError` messages are cut at 200 characters too.
+
+**Redirects.** `initialize` no longer follows redirects (its query carries the consumer's
+address and `userdata`); a redirect throws an `OceanNodeError`. The read-only node GETs
+(`resolve`, `waitForIndexer`, `getIndexingState`, `getNodeAddress`,
+`getIndexerNonceState`) refuse a redirect from a public node to a loopback, private or
+link-local host, unless the node is on one itself.
+
+**A JWT's address is read from the token.** With a JWT `auth`, `consumerAddress` is no
+longer required: the address is read from the token's `address` claim, as ocean.js reads it.
+`getComputeLogs` with a JWT and no `consumerAddress` used to throw.
+
+**`PolicyDeniedError.consumerAddress` is the address sent**, which for a `Signer` is its own
+address, not the one in the request.
 
 ## Upgrading from 2.0.0-beta.0
 

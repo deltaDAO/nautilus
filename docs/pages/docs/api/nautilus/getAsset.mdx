@@ -50,7 +50,7 @@ Available helpers: `getMetadata`, `getServices`, `getService`, `getServiceByType
 Unlike v1, which resolved to `undefined` for an unknown DID, this throws an
 `AssetNotFoundError` (an `OceanNodeError` with `status` 404) naming the DID. When the node
 recorded an indexing failure for the DID, the message carries the node's error and `state`
-the record. If the asset may not be indexed yet, use
+the record (over HTTP only: a P2P node's not-found carries no `state`). If the asset may not be indexed yet, use
 [`waitForIndexer`](/docs/api/nautilus/waitForIndexer) instead. Any other failure is an
 `OceanNodeError` with the node's status and text.
 

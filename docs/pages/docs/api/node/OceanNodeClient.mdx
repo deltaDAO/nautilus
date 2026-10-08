@@ -39,7 +39,7 @@ const node = new OceanNodeClient({
 | `nodeUri` | `string` | HTTP URL, or a peerId/multiaddr to use the libp2p transport. |
 | `chainId` | `number` | |
 | `auth` | `NodeAuth` | A `Signer`, a JWT auth token, or a pre-computed signature. |
-| `consumerAddress` | `string` | **Required when `auth` is a JWT**, which nautilus cannot decode. |
+| `consumerAddress` | `string` | For a JWT `auth`: the address to name when a call needs one. Optional: by default it is read from the token's `address` claim, as ocean.js reads it (decoded, not verified). Required for a token without that claim. |
 | `allowInsecureTransport` | `boolean` | Accept a plain `http://` `nodeUri` on a host other than `localhost`, `127.0.0.0/8`, `::1` or `*.localhost`. Default `false`: the constructor throws an `OceanNodeError`, the same rule as `Nautilus.create`. It also applies to the `nodeUri` argument of `encrypt` and `getFileInfo`. Carried over to `forEndpoint` clients. |
 | `requestTimeoutMs` | `number` | How long one `encrypt` call may run, its nonce retry included; over HTTP also an `initialize` request, and a `getComputeLogs` request until the stream starts. Default `120000` (2 minutes, room for a wallet's signature prompt). Must be a positive finite number. Carried over to `forEndpoint` clients. |
 
@@ -53,15 +53,21 @@ const node = new OceanNodeClient({
 
 The `GET`s behind `resolve`, `waitForIndexer`, `getIndexingState`, `getNodeAddress` and
 `getIndexerNonceState` carry no credentials and no body, so they follow redirects, for
-example from a reverse proxy in front of `/api/aquarius`. The transport rule still applies
-where a redirect ends: plain `http://` on a host other than loopback is refused (an
-`OceanNodeError`), unless the node URI is plain `http://` already
-(`allowInsecureTransport`).
+example from a reverse proxy in front of `/api/aquarius`. Two rules still apply where a
+redirect ends, and refuse it with an `OceanNodeError` before its answer is read: plain
+`http://` on a host other than loopback, unless the node URI is plain `http://` already
+(`allowInsecureTransport`); and a loopback, private or link-local host (`10.0.0.0/8`,
+`169.254.0.0/16`, `fc00::/7`, a single-label or `.internal` name, …), unless the node is on
+one itself. Only the final URL is checked; fetch does not show the hops in between.
+`initialize` does not follow redirects: its query carries the consumer's address and
+`userdata`.
 
 `resolve(did)` throws an `AssetNotFoundError` (`status` 404, `did`) when the node does not
-serve the asset. Only then does it read the node's indexing state for the DID, and when the
-node recorded an indexing failure the message says so (*"the node recorded an indexing
-error for tx …: …"*) and `state` holds the record.
+serve the asset. Only then does it read the node's indexing state for the DID (both DID
+forms, in parallel, within one 15 s timeout), and when the node recorded an indexing failure
+the message says so (*"the node recorded an indexing error for tx …: …"*) and `state` holds
+the record. Over P2P the node's `Not found` answer is an `AssetNotFoundError` too, without
+`state`: the indexing state is served over HTTP only.
 
 ### getIndexingState
 
@@ -201,7 +207,9 @@ its own bucket storage.
 Each `jobId` is `<environmentHash>-<jobId>`, as `computeStart` and `freeComputeStart`
 return it; a bare id throws before the request. Jobs come back under that id.
 `getComputeJob` returns `undefined` when the node does not know the job, and
-`getComputeLogs` streams only while the algorithm runs.
+`getComputeLogs` streams only while the algorithm runs. Over HTTP, `getComputeLogs` is
+serialized with the client's other signed commands (with a `Signer`, two calls in flight
+would sign the same nonce) and retried once when the node rejects the nonce.
 
 ### Identity
 
@@ -223,7 +231,9 @@ so that the status of a refusal is kept. `checkPolicySession` reports
 ## Errors
 
 Every call is wrapped, so failures arrive as `OceanNodeError` with the operation named and the
-original error on `cause`. For the requests nautilus sends itself (`resolve`, `initialize`,
+error behind it on `cause`. For an ocean.js error, which carries the node's answer in its
+message, `cause` is a copy with the same name and its message sanitized like the node's
+text (below), not the ocean.js error itself. For the requests nautilus sends itself (`resolve`, `initialize`,
 `getComputeLogs` and the indexing reads over HTTP), the message carries the node's status
 and text, unquoted, and `status` the HTTP status:
 
@@ -233,8 +243,14 @@ and text, unquoted, and `status` the HTTP status:
 
 For the calls that go through ocean.js, a JSON string or `{ error }` answer is unwrapped
 (`[ocean-node] freeComputeStart: Error: Access to asset … was denied`); ocean.js passes on
-no status, and nothing of a plain-text answer. Signatures and tokens in the node's text are
-redacted, and the text is cut at 200 characters.
+no status, and nothing of a plain-text answer.
+
+The node's text is sanitized before it goes into a message: ANSI escapes and control
+characters (CR and LF included) are removed; signatures, tokens (`vp_token`, `id_token`,
+JWTs, bearer credentials), `request_uri`, `code`, `nonce`, passwords and API keys are
+replaced by `<redacted>`, in a query, a JSON field or `key: value` prose; a URL keeps its
+origin only, so a policy server's redirect URI or an internal path is not relayed; and the
+text is cut at 200 characters. An error answer's body is read up to 64 KB.
 
 ```ts twoslash
 import { OceanNodeError } from '@deltadao/nautilus'
@@ -255,7 +271,8 @@ recorded a failure. It carries `did`, `txId` and the node's record on `state`.
 `AssetNotFoundError` is the one `resolve` throws for an asset the node does not serve.
 
 `PolicyDeniedError` is not an `OceanNodeError`: the node and its policy server answered, and
-refused. It carries `did`, `serviceId`, `consumerAddress`, `code` (the HTTP status) and
-`reason` (the policy server's message).
+refused. It carries `did`, `serviceId`, `consumerAddress` (the address the request was sent
+with: a `Signer`'s own, whatever the request named), `code` (the HTTP status) and `reason`
+(the policy server's message).
 
 See [the Ocean Node client guide](/docs/guides/ocean-node).

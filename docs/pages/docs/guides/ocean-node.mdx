@@ -62,7 +62,7 @@ The client accepts three forms of auth, expressed as `NodeAuth`:
 | Form | When |
 | --- | --- |
 | `Signer` | The default. Each call does a nonce-and-sign round trip. |
-| JWT auth token | Skips that round trip. **Requires `consumerAddress`**, because nautilus cannot decode the token. |
+| JWT auth token | Skips that round trip. The consumer address is read from the token's `address` claim, as ocean.js reads it; pass `consumerAddress` for a token without one. |
 | Pre-computed signature | You already hold `{ consumerAddress, signature, nonce }`. |
 
 Minting a token is worth it for anything doing many calls:
@@ -80,10 +80,10 @@ const token = await createAuthToken(signer, nodeUri) // [!code focus]
 await revokeAuthToken(signer, token, nodeUri) // [!code focus]
 ```
 
-:::warning
-`resolveConsumerAddress` throws for a JWT with no `consumerAddress` supplied — ocean.js does
-not re-export the `decodeJwt` helper that would let nautilus read it out of the token. Pass
-the address explicitly whenever you authenticate with a token.
+:::info
+With a token, the consumer address is read from its `address` claim, the way ocean.js reads
+it (decoded, not verified; the node checks the token). Pass `consumerAddress` only for a
+token without that claim.
 :::
 
 ## Calls nautilus does not wrap
@@ -190,7 +190,7 @@ const result = await node.validateRemote(ddo) // [!code focus]
 ## Errors
 
 Every call is wrapped, so failures arrive as `OceanNodeError` with the operation named and
-the original error kept on `cause`. For a request nautilus sends itself (see below), the
+the error behind it on `cause` (for an ocean.js error, a sanitized copy). For a request nautilus sends itself (see below), the
 message carries the node's HTTP status and text, unquoted, and `status` the status, e.g.
 `[ocean-node] computeStreamableLogs: HTTP 404: Job not found or not running`. Two subclasses
 carry more: `IndexingError`, thrown by `waitForIndexer` when the node recorded an indexing
@@ -217,6 +217,10 @@ error answer as JSON: a JSON answer's message is unwrapped, but for a plain-text
 ocean.js passes on neither the status nor the text, and the message says so. ocean.js also
 logs such a failed call to the console at its default level (`LogLevel.Error`), with the
 request payload; it redacts signatures and authorization headers.
+
+Whatever the node says is sanitized before it reaches a message: control characters and ANSI
+escapes are removed, credentials (signatures, tokens, JWTs, nonces, codes, passwords, API
+keys) are redacted, URLs keep their origin only, and the text is cut at 200 characters.
 
 ## Building one directly
 
