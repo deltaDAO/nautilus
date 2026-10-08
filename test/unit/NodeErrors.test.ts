@@ -295,18 +295,119 @@ describe('getComputeLogs', () => {
     )
   })
 
-  it('sends a JWT as Authorization, without a signature', async () => {
+  it("sends a JWT as Authorization, without a signature, naming the token's address", async () => {
+    const wallet = Wallet.createRandom()
+    const token = jwt({ address: wallet.address, nonce: '1', createdAt: 1 })
     const fetch = stubFetch({
       '/api/services/computeStreamableLogs': { status: 200, body: '' }
     })
 
-    await client(NODE, 'jwt-token').getComputeLogs(JOB)
+    // No consumerAddress: the address comes from the token, as ocean.js reads it.
+    await client(NODE, token, null).getComputeLogs(JOB)
 
     const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit]
-    expect(new URL(url).searchParams.has('signature')).to.equal(false)
+    const query = new URL(url).searchParams
+    expect(query.get('consumerAddress')).to.equal(wallet.address)
+    expect(query.has('signature')).to.equal(false)
+    expect(query.has('nonce')).to.equal(false)
     expect((init.headers as Record<string, string>).Authorization).to.equal(
-      'jwt-token'
+      token
     )
+  })
+
+  it('needs consumerAddress for a token without an address claim', async () => {
+    stubFetch({})
+
+    const error = await rejection(() =>
+      client(NODE, 'opaque-token', null).getComputeLogs(JOB)
+    )
+
+    expect(error.message).to.match(/no address claim/)
+  })
+
+  /**
+   * A node that checks nonces as ocean-node does: a signed command must carry the stored
+   * nonce + 1, which then becomes the stored nonce. `reject` rejects the next logs requests.
+   */
+  function nonceCheckingNode(reject = 0) {
+    let stored = 0
+    let inFlight = 0
+    let maxInFlight = 0
+    const answers: number[] = []
+
+    const fetch = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input))
+      if (url.pathname === '/api/services/nonce')
+        return new Response(JSON.stringify({ nonce: String(stored) }))
+
+      inFlight++
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      inFlight--
+
+      const nonce = Number(url.searchParams.get('nonce'))
+      if (reject > 0 || nonce !== stored + 1) {
+        reject--
+        answers.push(401)
+        return new Response(`nonce: ${nonce} is not a valid nonce`, {
+          status: 401
+        })
+      }
+      stored = nonce
+      answers.push(200)
+      return new Response(`logs ${nonce}`)
+    })
+    vi.stubGlobal('fetch', fetch)
+
+    return { answers, maxInFlight: () => maxInFlight }
+  }
+
+  it('serializes signed requests, so concurrent calls do not reuse a nonce', async () => {
+    const node = nonceCheckingNode()
+    const logs = client(NODE, Wallet.createRandom())
+
+    const streams = await Promise.all([
+      logs.getComputeLogs(JOB),
+      logs.getComputeLogs(JOB),
+      logs.getComputeLogs(JOB)
+    ])
+
+    expect(node.answers).to.deep.equal([200, 200, 200])
+    expect(node.maxInFlight()).to.equal(1)
+    expect(await Promise.all(streams.map(collect))).to.deep.equal([
+      'logs 1',
+      'logs 2',
+      'logs 3'
+    ])
+  })
+
+  it('retries once when the node rejects the nonce', async () => {
+    const node = nonceCheckingNode(1)
+
+    const stream = await client(NODE, Wallet.createRandom()).getComputeLogs(JOB)
+
+    expect(node.answers).to.deep.equal([401, 200])
+    expect(await collect(stream)).to.equal('logs 1')
+  })
+
+  it('gives up after the one retry', async () => {
+    const node = nonceCheckingNode(2)
+
+    const error = await rejection(() =>
+      client(NODE, Wallet.createRandom()).getComputeLogs(JOB)
+    )
+
+    expect(node.answers).to.deep.equal([401, 401])
+    expect(error.status).to.equal(401)
+    expect(error.message).to.match(/is not a valid nonce$/)
+  })
+
+  it('does not retry a pre-computed signature, whose nonce is fixed', async () => {
+    const node = nonceCheckingNode(1)
+
+    await rejection(() => client().getComputeLogs(JOB))
+
+    expect(node.answers).to.deep.equal([401])
   })
 })
 

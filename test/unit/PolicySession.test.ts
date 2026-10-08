@@ -336,6 +336,57 @@ describe('OceanNodeClient policy server', () => {
     expect(thrown.reason).to.equal('Invalid nonce or signature')
   })
 
+  it('names the address the request was sent with, which a Signer chooses', async () => {
+    status(true)
+    const wallet = Wallet.createRandom()
+    vi.spyOn(ProviderInstance, 'getNonce').mockResolvedValue(1)
+    const fetch = answer(403, {
+      success: false,
+      httpStatus: 403,
+      message: { error: 'Access denied: Address not allowed at asset level.' }
+    })
+
+    // The request names another address; ocean-node and ocean.js send the signer's.
+    const thrown = await client(wallet)
+      .initializePolicyVerification({ ...request, consumerAddress: CONSUMER })
+      .catch((caught) => caught)
+
+    const init = (fetch.mock.calls[0] as unknown as [string, RequestInit])[1]
+    expect(JSON.parse(String(init.body)).consumerAddress).to.equal(
+      wallet.address
+    )
+    expect(thrown).to.be.instanceOf(PolicyDeniedError)
+    expect(thrown.consumerAddress).to.equal(wallet.address)
+    expect(thrown.message).to.contain(`for ${wallet.address}`)
+    expect(thrown.message).not.to.contain(CONSUMER)
+  })
+
+  it('names the address ocean.js sent over P2P', async () => {
+    status(true)
+    const wallet = Wallet.createRandom()
+    vi.spyOn(ProviderInstance, 'initializePSVerification').mockRejectedValue(
+      new Error(
+        JSON.stringify({
+          success: false,
+          httpStatus: 403,
+          message: { error: 'Access denied' }
+        })
+      )
+    )
+
+    const thrown = await new OceanNodeClient({
+      nodeUri: '16Uiu2HAmPeerIdOnly',
+      chainId: CHAIN_ID,
+      auth: wallet,
+      consumerAddress: CONSUMER
+    })
+      .initializePolicyVerification({ ...request, consumerAddress: CONSUMER })
+      .catch((caught) => caught)
+
+    expect(thrown).to.be.instanceOf(PolicyDeniedError)
+    expect(thrown.consumerAddress).to.equal(wallet.address)
+  })
+
   it('throws an OceanNodeError on a 5xx, a rate limit or a network error', async () => {
     status(true)
 

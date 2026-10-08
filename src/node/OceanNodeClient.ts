@@ -73,6 +73,7 @@ import {
 import { assertSecureTransport, parseHttpUrl } from '../utils/transport.js'
 import { warnOnce } from '../utils/warn.js'
 import {
+  addressFromAuthToken,
   isAuthToken,
   isCompleteSignature,
   isSigner,
@@ -100,7 +101,10 @@ export interface OceanNodeClientOptions {
   chainId: number
   /** A Signer, a JWT auth token, or a pre-computed signature. */
   auth: NodeAuth
-  /** Required when `auth` is a JWT, which nautilus cannot decode. */
+  /**
+   * For a JWT `auth`: the consumer address to name. By default it is read from the token's
+   * `address` claim, as ocean.js reads it; required for a token without one.
+   */
   consumerAddress?: string
   /**
    * Accept a plain `http://` `nodeUri` on a host other than `localhost`, `127.0.0.0/8`,
@@ -922,7 +926,8 @@ export class OceanNodeClient {
    * `address + (stored nonce + 1) + command` with its own address (ocean.js's `getNonce`
    * and `signRequest`), a pre-computed signature is used as it is, and a JWT goes in
    * `Authorization` instead, with no nonce or signature. For a JWT the address is
-   * `consumerAddress` when given, else this client's (see `getConsumerAddress`).
+   * `consumerAddress` when given, else the token's `address` claim, which the node requires
+   * the request to name, else this client's (see `getConsumerAddress`).
    */
   private async signCommand(
     command: string,
@@ -938,7 +943,10 @@ export class OceanNodeClient {
 
     if (isAuthToken(auth))
       return {
-        consumerAddress: consumerAddress || (await this.getConsumerAddress()),
+        consumerAddress:
+          consumerAddress ||
+          addressFromAuthToken(auth) ||
+          (await this.getConsumerAddress()),
         authorization: auth
       }
     if (isCompleteSignature(auth))
@@ -2129,8 +2137,10 @@ export class OceanNodeClient {
    *
    * Over HTTP this sends the signed `GET /api/services/computeStreamableLogs` itself
    * (signed as ocean.js signs it), so a refusal throws an `OceanNodeError` with the node's
-   * status and text (`HTTP 404: Job not found or not running`). Over P2P it goes through
-   * ocean.js.
+   * status and text (`HTTP 404: Job not found or not running`). The request is serialized
+   * with this client's other signed commands and retried once when the node rejected the
+   * nonce, as `encrypt` is; `requestTimeoutMs` bounds it until the stream starts. Over P2P
+   * it goes through ocean.js.
    */
   async getComputeLogs(
     jobId: string,
@@ -2158,18 +2168,59 @@ export class OceanNodeClient {
       return logs
     }
 
-    let response: FetchedResponse
+    const answer = await this.serializeSigned(
+      operation,
+      signal,
+      async (callSignal) => {
+        const first = await this.requestComputeLogs(jobId, signal, callSignal)
+        const answer =
+          first.ok ||
+          !isSigner(this.auth) ||
+          callSignal.aborted ||
+          !NONCE_REJECTED.test(first.body)
+            ? first
+            : await this.requestComputeLogs(jobId, signal, callSignal)
+
+        // Timed out meanwhile: nobody reads this stream.
+        if (callSignal.aborted && answer.ok)
+          await answer.response.body?.cancel().catch(() => undefined)
+
+        return answer
+      }
+    )
+
+    if (!answer.ok)
+      throw new OceanNodeError(
+        operation,
+        describeAnswer(answer),
+        undefined,
+        answer.status
+      )
+
+    return responseBodyToAsyncIterable(answer.response.body)
+  }
+
+  /**
+   * One signed `GET /api/services/computeStreamableLogs`. `callSignal` bounds the signing;
+   * the request gets the caller's `signal` and `requestTimeoutMs` up to its headers, so the
+   * stream is not cut off when `callSignal`'s timeout fires.
+   */
+  private async requestComputeLogs(
+    jobId: string,
+    signal: AbortSignal | undefined,
+    callSignal: AbortSignal
+  ): Promise<FetchedResponse> {
     try {
       const { consumerAddress, nonce, signature, authorization } =
         await this.signCommand(
           PROTOCOL_COMMANDS.COMPUTE_GET_STREAMABLE_LOGS,
-          signal
+          callSignal
         )
       const query = new URLSearchParams({ jobId, consumerAddress })
       if (signature) query.set('signature', signature)
       if (nonce) query.set('nonce', nonce)
 
-      response = await fetchResponse(
+      return await fetchResponse(
         fetch,
         `${this.baseUrl()}/api/services/computeStreamableLogs?${query}`,
         {
@@ -2180,18 +2231,8 @@ export class OceanNodeClient {
       )
     } catch (error) {
       if (signal?.aborted) throw signal.reason
-      throw OceanNodeError.from(operation, error)
+      throw OceanNodeError.from('computeStreamableLogs', error)
     }
-
-    if (!response.ok)
-      throw new OceanNodeError(
-        operation,
-        describeAnswer(response),
-        undefined,
-        response.status
-      )
-
-    return responseBodyToAsyncIterable(response.response.body)
   }
 
   // #endregion
@@ -2256,12 +2297,18 @@ export class OceanNodeClient {
 
     const operation = 'initializePolicyVerification'
 
-    const deny = (code: number | undefined, body: unknown) =>
+    // `consumerAddress` is the address the request was sent with, which need not be
+    // `request.consumerAddress`: a Signer or a pre-computed signature sends its own.
+    const deny = (
+      code: number | undefined,
+      body: unknown,
+      consumerAddress: string
+    ) =>
       new PolicyDeniedError({
         nodeUri: this.nodeUri,
         did: request.documentId,
         serviceId: request.serviceId,
-        consumerAddress: request.consumerAddress,
+        consumerAddress,
         code,
         reason: policyServerReason(body),
         details: body
@@ -2281,13 +2328,21 @@ export class OceanNodeClient {
 
           const reply = parsePolicyServerReply(errorMessage(error))
           if (reply && isRefusalStatus(reply.httpStatus))
-            throw deny(reply.httpStatus, reply)
+            // ocean.js sends the credential's address, as `getConsumerAddress` reads it
+            // without this client's `consumerAddress`.
+            throw deny(
+              reply.httpStatus,
+              reply,
+              await resolveConsumerAddress(this.auth).catch(
+                () => request.consumerAddress
+              )
+            )
 
           throw OceanNodeError.from(operation, error)
         }
       })
 
-    const response = await this.serializeSigned(
+    const { response, consumerAddress } = await this.serializeSigned(
       operation,
       signal,
       async (callSignal) => {
@@ -2299,7 +2354,7 @@ export class OceanNodeClient {
               request.consumerAddress
             )
 
-          return await fetchText(
+          const response = await fetchText(
             fetch,
             `${this.baseUrl()}/api/services/initializePSVerification`,
             {
@@ -2317,6 +2372,8 @@ export class OceanNodeClient {
             },
             { timeoutMs: this.requestTimeoutMs, signal: callSignal }
           )
+
+          return { response, consumerAddress }
         } catch (error) {
           if (signal?.aborted) throw signal.reason
           throw new OceanNodeError(operation, errorMessage(error), error)
@@ -2345,7 +2402,8 @@ export class OceanNodeClient {
     if (isRefusalStatus(response.status) && !isRateLimited(response))
       throw deny(
         response.status,
-        parsePolicyServerReply(response.body) ?? response.body
+        parsePolicyServerReply(response.body) ?? response.body,
+        consumerAddress
       )
 
     throw new OceanNodeError(
