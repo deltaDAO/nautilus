@@ -139,6 +139,18 @@ describe('checkConsumerParameters', () => {
     expect(reasons({ region: null }, parameters)).to.deep.equal([])
   })
 
+  it('reads only the first key of each select option, as the node and the market do', () => {
+    const parameters = [
+      { ...declared[3], options: [{ eu: 'Europe', label: 'x' }, { us: 'US' }] }
+    ] as unknown as ConsumerParameterV5[]
+
+    expect(reasons({ region: 'eu' }, parameters)).to.deep.equal([])
+    expect(reasons({ region: 'us' }, parameters)).to.deep.equal([])
+    expect(reasons({ region: 'label' }, parameters)).to.deep.equal([
+      'region:not-an-option'
+    ])
+  })
+
   it('reads select options stored as a JSON string', () => {
     const parameters = [
       { ...declared[3], options: JSON.stringify([{ eu: 'Europe' }]) }
@@ -411,5 +423,12 @@ describe('assertConsumerParameters', () => {
   it('returns undefined when no values are given', () => {
     expect(assertConsumerParameters([], undefined, target)).to.equal(undefined)
     expect(assertConsumerParameters([], null, target)).to.equal(undefined)
+  })
+
+  it('returns undefined when no value is left after dropping the absent ones', () => {
+    expect(assertConsumerParameters([], {}, target)).to.equal(undefined)
+    expect(
+      assertConsumerParameters(declared.slice(1), { age: null }, target)
+    ).to.equal(undefined)
   })
 })

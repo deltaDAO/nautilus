@@ -179,7 +179,7 @@ export function checkConsumerParameters(
 /**
  * Throws a `ConsumerParameterError` listing every problem `checkConsumerParameters` finds.
  * Otherwise returns the values to forward: a copy without the keys set to `undefined` or
- * `null`, or `undefined` when no values were given.
+ * `null`, or `undefined` when nothing is left.
  */
 export function assertConsumerParameters(
   declared: readonly ConsumerParameterV5[] | undefined,
@@ -191,16 +191,17 @@ export function assertConsumerParameters(
   if (issues.length) throw new ConsumerParameterError(target, issues)
   if (values === undefined || values === null) return undefined
 
-  return Object.fromEntries(
-    Object.entries(values as Record<string, unknown>).filter(
-      ([, value]) => value !== undefined && value !== null
-    )
+  const present = Object.entries(values as Record<string, unknown>).filter(
+    ([, value]) => value !== undefined && value !== null
   )
+
+  return present.length ? Object.fromEntries(present) : undefined
 }
 
 /**
  * The parameters an algorithm declares for `algocustomdata`: `algorithm.consumerParameters`,
- * else the nested `algorithm.container.consumerParameters` some DDOs carry.
+ * else, when that is absent or empty, the nested `algorithm.container.consumerParameters`
+ * some DDOs carry.
  */
 export function getAlgorithmConsumerParameters(
   ddo: unknown
@@ -212,9 +213,10 @@ export function getAlgorithmConsumerParameters(
       }
     | undefined
 
-  return (
-    algorithm?.consumerParameters ?? algorithm?.container?.consumerParameters
-  )
+  return [
+    algorithm?.consumerParameters,
+    algorithm?.container?.consumerParameters
+  ].find((parameters) => Array.isArray(parameters) && parameters.length > 0)
 }
 
 function checkValue(
@@ -283,7 +285,11 @@ function isScalar(value: unknown): value is string | number | boolean {
   )
 }
 
-/** The keys of a `select` parameter's options; v4 DDOs stored them as a JSON string. */
+/**
+ * The keys of a `select` parameter's options; v4 DDOs stored them as a JSON string. Each
+ * option is `{ key: label }`, and only its first key counts, as the node and the market
+ * read it.
+ */
 function optionKeys(options: unknown): string[] {
   let list = options
 
@@ -295,9 +301,10 @@ function optionKeys(options: unknown): string[] {
     }
 
   return Array.isArray(list)
-    ? list.flatMap((option) =>
-        isPlainObject(option) ? Object.keys(option) : []
-      )
+    ? list.flatMap((option) => {
+        const key = isPlainObject(option) ? Object.keys(option)[0] : undefined
+        return key === undefined ? [] : [key]
+      })
     : []
 }
 

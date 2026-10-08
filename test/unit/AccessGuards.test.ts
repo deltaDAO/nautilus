@@ -355,22 +355,33 @@ describe('compute() consumer parameters', () => {
     expectNothingSent(calls)
   })
 
-  it('reads algorithm parameters nested under the container too', async () => {
-    const algorithm = algorithmAsset([])
-    Object.assign(
-      (algorithm.credentialSubject.metadata.algorithm as { container: object })
-        .container,
-      { consumerParameters: [{ ...numberParameter, required: true }] }
-    )
+  for (const [label, own] of [
+    ['absent', undefined],
+    ['empty', []]
+  ] as const)
+    it(`reads algorithm parameters nested under the container when its own are ${label}`, async () => {
+      const algorithm = algorithmAsset([])
+      const metadata = algorithm.credentialSubject.metadata.algorithm as {
+        consumerParameters?: unknown
+        container: object
+      }
+      if (own) metadata.consumerParameters = own
+      Object.assign(metadata.container, {
+        consumerParameters: [{ ...numberParameter, required: true }]
+      })
 
-    const { running, calls } = run(
-      { dataset: { did: ASSET_DID }, algorithm: { did: ALGO_DID } },
-      algorithm
-    )
+      const { running, calls } = run(
+        { dataset: { did: ASSET_DID }, algorithm: { did: ALGO_DID } },
+        algorithm
+      )
 
-    expect((await rejection(running)).message).to.match(/'age' is required/)
-    expectNothingSent(calls)
-  })
+      const error = await rejection(running)
+
+      expect((error as ConsumerParameterError).issues).to.deep.equal([
+        { parameter: 'age', reason: 'missing', message: "'age' is required" }
+      ])
+      expectNothingSent(calls)
+    })
 
   it("checks the algorithm's userdata against its service", async () => {
     const algorithm = algorithmAsset([])
@@ -454,9 +465,10 @@ describe('compute() consumer parameters', () => {
           algorithm: { userdata?: object; algocustomdata?: object }
         }
       ]
-      expect(request.datasets[0].userdata).to.deep.equal({})
+      // An object left empty is not sent at all.
+      expect(request.datasets[0]).not.to.have.property('userdata')
       expect(request.algorithm.userdata).to.deep.equal({ anything: 'goes' })
-      expect(request.algorithm.algocustomdata).to.deep.equal({})
+      expect(request.algorithm).not.to.have.property('algocustomdata')
     })
 })
 
