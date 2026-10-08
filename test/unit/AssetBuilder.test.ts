@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { LifecycleStates } from '../../src/@types/Nautilus.js'
+import type { AssetV5 } from '../../src/ddo/index.js'
 import { CredentialListTypes } from '../../src/ddo/types.js'
 import { AssetBuilder } from '../../src/Nautilus/Asset/AssetBuilder.js'
 import {
@@ -12,6 +13,72 @@ import {
   OWNER_ADDRESS,
   SERVICE_ID
 } from '../fixtures/Asset.js'
+import { createNodeMock } from '../mocks/node.js'
+
+/** Paths of every array in `value` that holds both strings and non-strings. */
+function mixedArrays(value: unknown, path = '$'): string[] {
+  if (Array.isArray(value)) {
+    const kinds = new Set(
+      value.map((item) => (typeof item === 'string' ? 'string' : 'other'))
+    )
+    return [
+      ...(kinds.size > 1 ? [path] : []),
+      ...value.flatMap((item, index) => mixedArrays(item, `${path}[${index}]`))
+    ]
+  }
+
+  if (value && typeof value === 'object')
+    return Object.entries(value).flatMap(([key, item]) =>
+      mixedArrays(item, `${path}.${key}`)
+    )
+
+  return []
+}
+
+/** An SSIpolicy block as assets published before VP policies became objects carry it. */
+const LEGACY_SSI_POLICY = {
+  type: 'SSIpolicy',
+  values: [
+    {
+      request_credentials: [
+        {
+          type: 'gx:LegalPerson',
+          format: 'jwt_vc_json',
+          policies: ['signature']
+        }
+      ],
+      vc_policies: ['signature'],
+      vp_policies: ['holder-binding']
+    }
+  ]
+}
+
+function getLegacySsiAssetFixture(): AssetV5 {
+  const asset = getAssetFixture()
+  const subject = asset.credentialSubject as unknown as {
+    credentials: { allow: unknown[] }
+    services: { credentials: unknown }[]
+  }
+
+  subject.credentials.allow.push(structuredClone(LEGACY_SSI_POLICY))
+  subject.services[0].credentials = {
+    allow: [structuredClone(LEGACY_SSI_POLICY)]
+  }
+
+  return asset
+}
+
+const NORMALIZED_SSI_VALUE = {
+  request_credentials: [
+    {
+      type: 'gx:LegalPerson',
+      format: 'jwt_vc_json',
+      policies: ['"signature"']
+    }
+  ],
+  vc_policies: ['signature'],
+  vp_policies: [{ policy: 'holder-binding' }]
+}
 
 function aService() {
   return new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
@@ -203,7 +270,7 @@ describe('AssetBuilder', () => {
         { type: 'VerifiableId', format: 'jwt_vc_json' }
       ])
       .setVcPolicies(CredentialListTypes.ALLOW, ['signature'])
-      .setVpPolicies(CredentialListTypes.ALLOW, ['holder-binding'])
+      .setVpPolicies(CredentialListTypes.ALLOW, [{ policy: 'holder-binding' }])
       .build()
 
     const entry = asset.ddo.credentials.allow?.find(
@@ -214,6 +281,38 @@ describe('AssetBuilder', () => {
     expect(JSON.stringify(entry)).to.contain('request_credentials')
     expect(JSON.stringify(entry)).to.contain('vc_policies')
     expect(JSON.stringify(entry)).to.contain('vp_policies')
+  })
+
+  it('writes the credentials of the identity guide with no mixed-type array', () => {
+    const asset = aBuilder()
+      .addRequestCredentials(CredentialListTypes.ALLOW, [
+        {
+          type: 'gx:LegalPerson',
+          format: 'jwt_vc_json',
+          policies: ['signature', { policy: 'allowed-issuer', args: 'did:x' }]
+        }
+      ])
+      .setVcPolicies(CredentialListTypes.ALLOW, [
+        'signature',
+        'not-before',
+        'revoked-status-list'
+      ])
+      .setVpPolicies(CredentialListTypes.ALLOW, [
+        { policy: 'holder-binding' },
+        { policy: 'minimum-credentials', args: '1' }
+      ])
+      .build()
+
+    const credentials = JSON.parse(JSON.stringify(asset.ddo.credentials))
+    const ssi = credentials.allow.find(
+      (entry: { type: string }) => entry.type === 'SSIpolicy'
+    )
+
+    expect(mixedArrays(credentials)).to.deep.equal([])
+    expect(ssi.values[0].vp_policies).to.deep.equal([
+      { policy: 'holder-binding' },
+      { policy: 'minimum-credentials', args: '1' }
+    ])
   })
 
   it('sets credential match rules', () => {
@@ -315,6 +414,92 @@ describe('AssetBuilder in edit mode', () => {
     expect(
       allow?.find((entry) => entry.type === 'address')?.values
     ).to.deep.equal([{ address: '*' }])
+  })
+
+  it('normalises legacy policies when an edit writes them back', async () => {
+    // The edit never touches the policies: the loaded asset- and service-level blocks are
+    // written back as they are, so they must be normalised on load.
+    const { client } = createNodeMock()
+    const ddo = (await new AssetBuilder(getLegacySsiAssetFixture())
+      .setName('Renamed')
+      .build()
+      .ddo.getDDO(client, { create: false })) as unknown as AssetV5
+
+    const subject = ddo.credentialSubject as unknown as {
+      credentials: { allow: { type: string; values: unknown[] }[] }
+      services: { credentials: { allow: { values: unknown[] }[] } }[]
+    }
+    const assetSsi = subject.credentials.allow.find(
+      (entry) => entry.type === 'SSIpolicy'
+    )
+
+    expect(assetSsi?.values).to.deep.equal([NORMALIZED_SSI_VALUE])
+    expect(subject.services[0].credentials.allow[0].values).to.deep.equal([
+      NORMALIZED_SSI_VALUE
+    ])
+  })
+
+  it('writes an object vp policy next to a legacy string as objects only', () => {
+    const asset = new AssetBuilder(getLegacySsiAssetFixture())
+      .setVpPolicies(CredentialListTypes.ALLOW, [
+        { policy: 'holder-binding' },
+        { policy: 'minimum-credentials', args: '1' }
+      ])
+      .addRequestCredentials(CredentialListTypes.ALLOW, [
+        {
+          type: 'gx:LegalPerson',
+          format: 'jwt_vc_json',
+          policies: ['signature']
+        }
+      ])
+      .build()
+
+    expect(mixedArrays(asset.ddo.credentials)).to.deep.equal([])
+    expect(
+      asset.ddo.credentials.allow?.find((entry) => entry.type === 'SSIpolicy')
+    ).to.deep.equal({
+      type: 'SSIpolicy',
+      values: [
+        {
+          ...NORMALIZED_SSI_VALUE,
+          vp_policies: [
+            { policy: 'holder-binding' },
+            { policy: 'minimum-credentials', args: '1' }
+          ]
+        }
+      ]
+    })
+  })
+
+  it('edits a loaded bare-string address list without corrupting it', () => {
+    const fixture = getAssetFixture()
+    ;(
+      fixture.credentialSubject as unknown as {
+        credentials: { allow: unknown[] }
+      }
+    ).credentials.allow = [{ type: 'address', values: ['0xAbC', '0x2'] }]
+
+    const asset = new AssetBuilder(fixture)
+      .removeCredentialAddresses(CredentialListTypes.ALLOW, ['0xabc'])
+      .addCredentialAddresses(CredentialListTypes.ALLOW, ['0x3'])
+      .build()
+
+    expect(asset.ddo.credentials.allow?.[0]).to.deep.equal({
+      type: 'address',
+      values: [{ address: '0x2' }, { address: '0x3' }]
+    })
+  })
+
+  it('normalises a loaded service the edit rebuilds', () => {
+    const service = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+      asset: getLegacySsiAssetFixture(),
+      serviceId: SERVICE_ID
+    }).build()
+
+    expect(service.credentials.allow?.[0]).to.deep.equal({
+      type: 'SSIpolicy',
+      values: [NORMALIZED_SSI_VALUE]
+    })
   })
 
   it('reset() returns to the loaded asset, not to an empty one', () => {

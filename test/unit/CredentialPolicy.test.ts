@@ -9,6 +9,7 @@ import {
   addCredentialAddresses,
   addRequestCredentials,
   DEFAULT_VC_POLICIES,
+  normalizeStoredCredentials,
   removeCredentialAddresses,
   requiresPresentation,
   setVcPolicies,
@@ -88,12 +89,12 @@ describe('SSI credential block', () => {
 
   it('always writes vp_policies as an array, keeping parameterised entries', () => {
     const credentials = setVpPolicies({}, ALLOW, [
-      'holder-binding',
+      { policy: 'holder-binding' },
       { policy: 'minimum-credentials', args: '1' }
     ])
 
     expect(ssiEntry(credentials)?.values[0].vp_policies).to.deep.equal([
-      'holder-binding',
+      { policy: 'holder-binding' },
       { policy: 'minimum-credentials', args: '1' }
     ])
   })
@@ -130,13 +131,15 @@ describe('SSI credential block', () => {
 
   it('replaces the vp policies too', () => {
     let credentials = setVpPolicies({}, ALLOW, [
-      'holder-binding',
+      { policy: 'holder-binding' },
       { policy: 'minimum-credentials', args: '1' }
     ])
-    credentials = setVpPolicies(credentials, ALLOW, ['holder-binding'])
+    credentials = setVpPolicies(credentials, ALLOW, [
+      { policy: 'holder-binding' }
+    ])
 
     expect(ssiEntry(credentials)?.values[0].vp_policies).to.deep.equal([
-      'holder-binding'
+      { policy: 'holder-binding' }
     ])
   })
 
@@ -165,6 +168,269 @@ describe('SSI credential block', () => {
     ])
 
     expect(ssiEntry(credentials)?.values[0].vp_policies).to.have.length(1)
+  })
+})
+
+describe('VP policies are stored as objects', () => {
+  // ocean-node 4.2.x did not index an asset whose `vp_policies` mixed a name with an
+  // object, so every entry is written as one.
+
+  it('drops an undefined args key rather than writing it', () => {
+    const credentials = setVpPolicies({}, ALLOW, [
+      { policy: 'holder-binding', args: undefined }
+    ])
+
+    expect(ssiEntry(credentials)?.values[0].vp_policies?.[0]).to.deep.equal({
+      policy: 'holder-binding'
+    })
+    expect(
+      Object.keys(ssiEntry(credentials)?.values[0].vp_policies?.[0] || {})
+    ).to.deep.equal(['policy'])
+  })
+
+  it('keeps entries that differ only in args apart', () => {
+    const credentials = setVpPolicies({}, ALLOW, [
+      { policy: 'minimum-credentials', args: '1' },
+      { policy: 'minimum-credentials', args: '2' },
+      { policy: 'minimum-credentials' }
+    ])
+
+    expect(ssiEntry(credentials)?.values[0].vp_policies).to.have.length(3)
+  })
+
+  it('merges and deduplicates through addRequestCredentials', () => {
+    let credentials = addRequestCredentials(
+      {},
+      ALLOW,
+      [{ type: 'gx:LegalPerson', format: 'jwt_vc_json' }],
+      { vpPolicies: [{ policy: 'holder-binding' }] }
+    )
+    credentials = addRequestCredentials(credentials, ALLOW, [], {
+      vpPolicies: [
+        { policy: 'holder-binding' },
+        { policy: 'minimum-credentials', args: '1' }
+      ]
+    })
+
+    expect(ssiEntry(credentials)?.values[0].vp_policies).to.deep.equal([
+      { policy: 'holder-binding' },
+      { policy: 'minimum-credentials', args: '1' }
+    ])
+  })
+})
+
+describe('per-credential policies are stored JSON-encoded', () => {
+  // The policy server JSON-parses each string and drops one that does not parse, so a bare
+  // name was never enforced. The enterprise market writes `JSON.stringify(policy)`.
+
+  it('encodes names and objects alike', () => {
+    const credentials = addRequestCredentials({}, ALLOW, [
+      {
+        type: 'gx:LegalPerson',
+        format: 'jwt_vc_json',
+        policies: ['signature', { policy: 'allowed-issuer', args: ['did:x'] }]
+      }
+    ])
+
+    expect(ssiEntry(credentials)?.values[0].request_credentials).to.deep.equal([
+      {
+        type: 'gx:LegalPerson',
+        format: 'jwt_vc_json',
+        policies: [
+          '"signature"',
+          '{"policy":"allowed-issuer","args":["did:x"]}'
+        ]
+      }
+    ])
+  })
+
+  it('deduplicates a credential added twice with the same policies', () => {
+    const request = {
+      type: 'gx:LegalPerson',
+      policies: ['signature']
+    }
+    let credentials = addRequestCredentials({}, ALLOW, [request])
+    credentials = addRequestCredentials(credentials, ALLOW, [request])
+
+    expect(ssiEntry(credentials)?.values[0].request_credentials).to.have.length(
+      1
+    )
+  })
+})
+
+describe('normalizeStoredCredentials', () => {
+  function legacy(value: Record<string, unknown>): DdoCredentials {
+    return {
+      allow: [{ type: 'SSIpolicy', values: [value] }]
+    } as unknown as DdoCredentials
+  }
+
+  function vpPolicies(credentials: DdoCredentials) {
+    return ssiEntry(credentials)?.values[0].vp_policies
+  }
+
+  it('turns a bare-string vp policy into an object', () => {
+    const normalized = normalizeStoredCredentials(
+      legacy({ request_credentials: [], vp_policies: ['holder-binding'] })
+    )
+
+    expect(vpPolicies(normalized)).to.deep.equal([{ policy: 'holder-binding' }])
+  })
+
+  it('keeps string args, and stringifies the rest as the policy server parses them', () => {
+    const normalized = normalizeStoredCredentials(
+      legacy({
+        request_credentials: [],
+        vp_policies: [
+          { policy: 'minimum-credentials', args: '1' },
+          { policy: 'maximum-credentials', args: 1 },
+          { policy: 'presentation-definition', args: { a: [1, 'b'] } }
+        ]
+      })
+    )
+
+    expect(vpPolicies(normalized)).to.deep.equal([
+      { policy: 'minimum-credentials', args: '1' },
+      { policy: 'maximum-credentials', args: '1' },
+      { policy: 'presentation-definition', args: '{"a":[1,"b"]}' }
+    ])
+  })
+
+  it("deduplicates 'x' and { policy: 'x' } as one policy", () => {
+    const normalized = normalizeStoredCredentials(
+      legacy({
+        request_credentials: [],
+        vp_policies: ['holder-binding', { policy: 'holder-binding' }]
+      })
+    )
+
+    expect(vpPolicies(normalized)).to.deep.equal([{ policy: 'holder-binding' }])
+  })
+
+  it('turns a mixed array into objects only, dropping unusable entries', () => {
+    const normalized = normalizeStoredCredentials(
+      legacy({
+        request_credentials: [],
+        vp_policies: [
+          'holder-binding',
+          { policy: 'minimum-credentials', args: 1 },
+          42,
+          { args: '1' }
+        ]
+      })
+    )
+
+    expect(vpPolicies(normalized)).to.deep.equal([
+      { policy: 'holder-binding' },
+      { policy: 'minimum-credentials', args: '1' }
+    ])
+  })
+
+  it('encodes raw per-credential policies and keeps encoded ones as they are', () => {
+    const normalized = normalizeStoredCredentials(
+      legacy({
+        request_credentials: [
+          {
+            type: 'gx:LegalPerson',
+            policies: [
+              'signature',
+              '"not-before"',
+              '{"policy":"allowed-issuer","args":"did:x"}',
+              { policy: 'expired' }
+            ]
+          }
+        ]
+      })
+    )
+
+    expect(
+      ssiEntry(normalized)?.values[0].request_credentials[0].policies
+    ).to.deep.equal([
+      '"signature"',
+      '"not-before"',
+      '{"policy":"allowed-issuer","args":"did:x"}',
+      '{"policy":"expired"}'
+    ])
+  })
+
+  it('returns a copy, leaving the input untouched', () => {
+    const input = legacy({
+      request_credentials: [],
+      vp_policies: ['holder-binding']
+    })
+    const before = structuredClone(input)
+
+    normalizeStoredCredentials(input)
+
+    expect(input).to.deep.equal(before)
+  })
+
+  it('turns object vc policies into names, deduplicated', () => {
+    const normalized = normalizeStoredCredentials(
+      legacy({
+        request_credentials: [],
+        vc_policies: [
+          'signature',
+          { policy: 'signature' },
+          { policy: 'not-before', args: 'x' },
+          { args: 'x' },
+          7
+        ]
+      })
+    )
+
+    expect(ssiEntry(normalized)?.values[0].vc_policies).to.deep.equal([
+      'signature',
+      'not-before'
+    ])
+  })
+
+  it('turns bare-string addresses into objects, keeping their case', () => {
+    const input = {
+      allow: [{ type: 'address', values: ['0xAbC', { address: '0x2' }, 5] }],
+      deny: [{ type: 'address', values: ['*'] }]
+    } as unknown as DdoCredentials
+
+    expect(normalizeStoredCredentials(input)).to.deep.equal({
+      allow: [
+        { type: 'address', values: [{ address: '0xAbC' }, { address: '0x2' }] }
+      ],
+      deny: [{ type: 'address', values: [{ address: '*' }] }]
+    })
+  })
+
+  it('lets the address helpers work on a loaded bare-string list', () => {
+    // Read raw, `addCredentialAddresses` wrote `{ address: undefined }` for each string
+    // and `removeCredentialAddresses` threw on `.toLowerCase()`.
+    const loaded = normalizeStoredCredentials({
+      allow: [{ type: 'address', values: ['0xAbC', '0x2'] }]
+    } as unknown as DdoCredentials)
+
+    const added = addCredentialAddresses(structuredClone(loaded), ALLOW, [
+      '0x3'
+    ])
+    expect(added.allow?.[0]).to.deep.equal({
+      type: 'address',
+      values: [{ address: '0xAbC' }, { address: '0x2' }, { address: '0x3' }]
+    })
+
+    const removed = removeCredentialAddresses(structuredClone(loaded), ALLOW, [
+      '0xabc'
+    ])
+    expect(removed.allow?.[0]).to.deep.equal({
+      type: 'address',
+      values: [{ address: '0x2' }]
+    })
+  })
+
+  it('leaves non-SSI entries and match rules alone', () => {
+    const input: DdoCredentials = {
+      allow: [{ type: 'address', values: [{ address: '*' }] }],
+      deny: [],
+      match_deny: 'any'
+    }
+
+    expect(normalizeStoredCredentials(input)).to.deep.equal(input)
   })
 })
 

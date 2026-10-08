@@ -261,8 +261,9 @@ describe('mergeServices', () => {
     }
     const [kept] = mergeServices([legacy], [])
 
+    // The array form becomes an object, and its bare-string addresses `{ address }`.
     expect(kept.credentials).to.deep.equal({
-      allow: [{ type: 'address', values: ['0x1'] }]
+      allow: [{ type: 'address', values: [{ address: '0x1' }] }]
     })
   })
 

@@ -10,6 +10,7 @@ import {
   type MetadataV5,
   type ServiceV5
 } from '@oceanprotocol/ddo-js'
+import { normalizeStoredCredentials } from '../identity/policy.js'
 import { type LanguageOptions, toLanguageValue } from './language.js'
 import { getServiceCredentials } from './read.js'
 import type {
@@ -233,7 +234,8 @@ export function stripDerivedFields(
  * A kept baseline service has its `credentials` normalized to the object form. The v5
  * shape (ddo-js 1.0.0) requires every service to carry a `credentials` object, and older
  * assets can have none, or the legacy array form, which would otherwise fail validation on
- * an edit that never touched that service.
+ * an edit that never touched that service. Its policies are normalized too (see
+ * `normalizeStoredCredentials`), so an edit writes no legacy policy form back.
  */
 export function mergeServices(
   baselineServices: ServiceV5[],
@@ -259,13 +261,10 @@ export function mergeServices(
 }
 
 function withCredentialsObject(service: ServiceV5): ServiceV5 {
-  const raw = service.credentials as unknown
-  if (raw && typeof raw === 'object' && !Array.isArray(raw)) return service
-
   return {
     ...service,
-    credentials: getServiceCredentials(
-      service
+    credentials: normalizeStoredCredentials(
+      getServiceCredentials(service)
     ) as unknown as ServiceV5['credentials']
   }
 }

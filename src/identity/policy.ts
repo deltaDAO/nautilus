@@ -13,6 +13,7 @@ import type {
   RequestCredential,
   SsiPolicyCredential,
   SsiPolicyValue,
+  StoredRequestCredential,
   VcPolicy,
   VpPolicy
 } from '../ddo/types.js'
@@ -42,6 +43,8 @@ export function isAddressCredential(
  *
  * Additive throughout: everything already on the entry is kept. Use `setVcPolicies` /
  * `setVpPolicies` to replace a policy list outright.
+ *
+ * Each per-credential policy is stored JSON-encoded (see `StoredRequestCredential`).
  */
 export function addRequestCredentials(
   credentials: DdoCredentials,
@@ -52,7 +55,7 @@ export function addRequestCredentials(
   return updateSsiPolicy(credentials, list, (value) => {
     value.request_credentials = dedupeRequestCredentials([
       ...(value.request_credentials || []),
-      ...requestCredentials
+      ...requestCredentials.map(encodeRequestCredential)
     ])
 
     // Always arrays: the policy server's scalar fallback reads a typo'd `v_cpolicies`, so a
@@ -267,20 +270,153 @@ function dedupe<T>(values: T[]): T[] {
   return Array.from(new Set(values))
 }
 
-function dedupeVpPolicies(policies: VpPolicy[]): VpPolicy[] {
-  const seen = new Set<string>()
+/**
+ * Normalises a credentials block read from a published DDO, so that writing it back
+ * produces the form nautilus writes itself. Returns a deep copy.
+ *
+ * Assets published before VP policies were stored as objects can carry bare-string
+ * `vp_policies` and raw (not JSON-encoded) per-credential policies. Left as they are, an
+ * edit that adds an object policy would write a mixed array, which the node does not
+ * index. Raw per-credential names were also dropped by the policy server, so encoding them
+ * makes them take effect.
+ *
+ * Other producers can also write `{ policy }` objects into `vc_policies` (the policy
+ * server reads only the name) and bare-string address `values`. Both are rewritten to the
+ * single form nautilus writes, so every array stays one type and the address helpers can
+ * read every entry.
+ */
+export function normalizeStoredCredentials(
+  credentials: DdoCredentials
+): DdoCredentials {
+  const copy = structuredClone(credentials)
 
-  return policies.filter((policy) => {
-    const key = JSON.stringify(policy)
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
+  for (const entry of [...(copy.allow || []), ...(copy.deny || [])]) {
+    if (isAddressCredential(entry)) {
+      if (Array.isArray(entry.values))
+        entry.values = (entry.values as unknown[]).flatMap(readAddress)
+      continue
+    }
+
+    if (!isSsiPolicyCredential(entry)) continue
+
+    for (const value of entry.values || []) {
+      if (value.vc_policies)
+        value.vc_policies = dedupe(
+          (value.vc_policies as unknown[]).flatMap(readVcPolicy)
+        )
+
+      if (value.vp_policies)
+        value.vp_policies = dedupeVpPolicies(
+          (value.vp_policies as unknown[]).flatMap(readVpPolicy)
+        )
+
+      if (value.request_credentials)
+        value.request_credentials = value.request_credentials.map(
+          (credential) =>
+            credential.policies
+              ? {
+                  ...credential,
+                  policies: (credential.policies as unknown[]).map(
+                    readCredentialPolicy
+                  )
+                }
+              : credential
+        )
+    }
+  }
+
+  return copy
+}
+
+/**
+ * A stored address value as `{ address }`. The case is kept, as `addCredentialAddresses`
+ * keeps it; removal compares case-insensitively.
+ */
+function readAddress(raw: unknown): { address: string }[] {
+  if (typeof raw === 'string') return [{ address: raw }]
+
+  const address = (raw as { address?: unknown } | null)?.address
+  if (typeof address === 'string') return [{ address }]
+
+  // Unusable: the policy server cannot match it either.
+  return []
+}
+
+/** A stored VC policy as its name: the policy server reads only `policy` from an object. */
+function readVcPolicy(raw: unknown): VcPolicy[] {
+  if (typeof raw === 'string') return [raw]
+
+  const policy = (raw as { policy?: unknown } | null)?.policy
+  return typeof policy === 'string' ? [policy] : []
+}
+
+/** A stored VP policy in any form the stack has written, as a `VpPolicy`. */
+function readVpPolicy(raw: unknown): VpPolicy[] {
+  if (typeof raw === 'string') return [{ policy: raw }]
+
+  if (
+    raw &&
+    typeof raw === 'object' &&
+    typeof (raw as { policy?: unknown }).policy === 'string'
+  ) {
+    const { policy, args } = raw as { policy: string; args?: unknown }
+    if (args === undefined) return [{ policy }]
+
+    return [
+      { policy, args: typeof args === 'string' ? args : JSON.stringify(args) }
+    ]
+  }
+
+  // Unusable: the policy server skips it too.
+  return []
+}
+
+/**
+ * A stored per-credential policy, JSON-encoded. A string that already parses to a name or
+ * an object is kept; anything else is a raw name or object and is encoded.
+ */
+function readCredentialPolicy(raw: unknown): string {
+  if (typeof raw === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      if (typeof parsed === 'string' || (parsed && typeof parsed === 'object'))
+        return raw
+    } catch {
+      // A raw policy name.
+    }
+  }
+
+  return JSON.stringify(raw)
+}
+
+function encodeRequestCredential(
+  credential: RequestCredential
+): StoredRequestCredential {
+  return {
+    type: credential.type,
+    ...(credential.format !== undefined && { format: credential.format }),
+    ...(credential.policies && {
+      policies: credential.policies.map((policy) => JSON.stringify(policy))
+    })
+  }
+}
+
+/** Deduplicates by value, writing each policy as a plain `{ policy, args? }` object. */
+function dedupeVpPolicies(policies: VpPolicy[]): VpPolicy[] {
+  const byKey = new Map<string, VpPolicy>()
+
+  for (const { policy, args } of policies) {
+    const key = JSON.stringify([policy, args ?? null])
+    if (!byKey.has(key))
+      byKey.set(key, args === undefined ? { policy } : { policy, args })
+  }
+
+  return [...byKey.values()]
 }
 
 function dedupeRequestCredentials(
-  requestCredentials: RequestCredential[]
-): RequestCredential[] {
+  requestCredentials: StoredRequestCredential[]
+): StoredRequestCredential[] {
   const seen = new Set<string>()
 
   return requestCredentials.filter((credential) => {

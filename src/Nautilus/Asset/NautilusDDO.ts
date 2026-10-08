@@ -11,6 +11,7 @@ import {
 } from '../../ddo/project.js'
 import { getCredentials, getMetadata, getServices } from '../../ddo/read.js'
 import type { DdoCredentials, RemoteObject } from '../../ddo/types.js'
+import { normalizeStoredCredentials } from '../../identity/policy.js'
 import type { OceanNodeClient } from '../../node/OceanNodeClient.js'
 import type {
   FileTypes,
@@ -74,10 +75,11 @@ export class NautilusDDO {
     ddo.issuer = asset.issuer
     ddo.chainId = asset.credentialSubject?.chainId
     ddo.nftAddress = asset.credentialSubject?.nftAddress
-    // Deep copy, not a reference: `getCredentials()` hands back the resolved asset's own
-    // object, and the policy helpers mutate entries in place — aliasing it would write
-    // builder changes back into the caller's asset, and reset() would replay them.
-    ddo.credentials = structuredClone(getCredentials(asset))
+    // A normalised deep copy, not a reference: `getCredentials()` hands back the resolved
+    // asset's own object, and the policy helpers mutate entries in place — aliasing it
+    // would write builder changes back into the caller's asset, and reset() would replay
+    // them. Normalising rewrites legacy policy forms the way nautilus writes them now.
+    ddo.credentials = normalizeStoredCredentials(getCredentials(asset))
     ddo.metadata = seedAdditiveMetadata(asset)
 
     return ddo

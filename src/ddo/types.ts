@@ -24,13 +24,26 @@ import type { RemoteObject } from '@oceanprotocol/ddo-js'
 
 // #region policies
 
-/** A VC verification policy: a bare name, or a name with an argument. */
+/** A VC verification policy, by name. */
 export type VcPolicy = string
 
-/** A VP verification policy. `args` is passed through to walt.id verbatim. */
-export type VpPolicy = string | { policy: string; args?: unknown }
+/**
+ * A VP verification policy. Always an object, as the enterprise market writes it: ocean-node
+ * 4.2.x did not index an asset whose `vp_policies` mixed a name with an object.
+ *
+ * `args` is a string, as the enterprise market writes it. The policy server JSON-parses it
+ * when it can (`'1'` reaches walt.id as `1`), so pass structured arguments through
+ * `JSON.stringify`.
+ */
+export interface VpPolicy {
+  policy: string
+  args?: string
+}
 
-/** A per-credential policy attached to a single `request_credentials` entry. */
+/**
+ * A per-credential policy attached to a single `request_credentials` entry: a walt.id
+ * policy name, or a name with arguments.
+ */
 export type CredentialPolicy = string | { policy: string; args?: unknown }
 
 /**
@@ -41,6 +54,17 @@ export interface RequestCredential {
   type: string
   format?: string
   policies?: CredentialPolicy[]
+}
+
+/**
+ * A `request_credentials` entry as stored in the DDO: each policy JSON-encoded, which is
+ * what the policy server parses (it drops a string that is not JSON) and what the
+ * enterprise market writes. It also keeps the array a single type for the node's index.
+ */
+export interface StoredRequestCredential {
+  type: string
+  format?: string
+  policies?: string[]
 }
 
 // #endregion
@@ -70,7 +94,7 @@ export interface SsiPolicyCredential {
 }
 
 export interface SsiPolicyValue {
-  request_credentials: RequestCredential[]
+  request_credentials: StoredRequestCredential[]
   vc_policies?: VcPolicy[]
   vp_policies?: VpPolicy[]
 }
