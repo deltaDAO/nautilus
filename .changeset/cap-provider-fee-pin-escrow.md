@@ -20,12 +20,14 @@ the token's decimals a second time.
   `reuseOrder()` and `settleOrder()` pay one only within `maxProviderFee` (per token, in
   the token's smallest unit; a compute job's fees are summed per token) or when
   `confirmProviderFees(fees)` returns `true`. Otherwise they throw a
-  `ProviderFeeNotAllowedError` (`fees`, `reason`) before any chain read, approval,
-  purchase, escrow or order. A zero fee needs nothing.
+  `ProviderFeeNotAllowedError` (`fees`, `reason`) before any approval, purchase, escrow
+  or order. A zero fee needs nothing.
 - **A paid compute job needs consent for its escrow payment**: within `maxEscrowPayment`
   or when `confirmEscrowPayment(payment)` returns `true`, or an
   `EscrowPaymentNotAllowedError` (`payment`, `reason`) is thrown before anything is sent.
-  A zero payment needs nothing.
+  A zero payment needs nothing: its amount is read first, and a zero amount funds nothing
+  and is not checked further, so it may name no escrow contract. A malformed amount is
+  still refused.
 - **Exactly one escrow contract is funded, `EnterpriseEscrow` first**:
   1. `config.escrow`, when the caller passes it to `Nautilus.create`: that contract, and no
      other;
@@ -48,6 +50,15 @@ the token's decimals a second time.
   account to lock the job's amount on top of its current locks, leaving a standing
   allowance or authorisation that already covers the job alone. A wallet that cannot cover
   the deposit is refused before any transaction.
+- **Every input is checked before escrow is funded.** `compute()` reads each input's
+  pricing and refuses one that cannot be ordered before the escrow approval, deposit or
+  authorisation, so every refusal comes before the first transaction.
+- **Paid jobs are serialised per payer within an instance.** A `Nautilus` instance runs
+  the escrow reads, deposit, authorisation, orders and `computeStart` of jobs that share a
+  chain, payer, payment token and environment account one at a time, so concurrent
+  `compute()` calls do not overwrite each other's escrow authorisation. Jobs from other
+  instances or processes are not covered. The standalone `compute(config, context)`
+  serialises when given a lock as `context.escrowLock`.
 
 **Migration**
 
@@ -61,10 +72,12 @@ const nautilus = await Nautilus.create(signer, {
 })
 ```
 
-A call's own option replaces the instance default of the same name. An app that asks its
-user can pass `confirmProviderFees` / `confirmEscrowPayment` instead, or as well: they are
-asked only for what the ceiling does not cover. `Nautilus.create` refuses a malformed
-ceiling.
+The instance defaults come in pairs, `maxProviderFee` with `confirmProviderFees` and
+`maxEscrowPayment` with `confirmEscrowPayment`: a call that sets either option of a pair,
+even to `undefined`, uses its own pair and neither default of it, so a tighter per-call
+ceiling never falls back to a permissive default callback. An app that asks its user can
+pass `confirmProviderFees` / `confirmEscrowPayment` instead, or as well: they are asked
+only for what the ceiling does not cover. `Nautilus.create` refuses a malformed ceiling.
 
 **New**
 

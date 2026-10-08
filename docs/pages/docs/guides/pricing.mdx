@@ -165,7 +165,13 @@ callback that returns `true`; an escrow payment needs `maxEscrowPayment` or
 (see [Escrow contract](/docs/api/nautilus/compute#escrow-contract)).
 Otherwise `access` and `compute` throw a `ProviderFeeNotAllowedError` or
 `EscrowPaymentNotAllowedError` before any approval, purchase, deposit or order. Zero fees
-need nothing.
+need nothing, and neither does a zero escrow payment, even one that names no escrow
+contract.
+
+Set in `Nautilus.create`, these options are defaults in pairs: a call that sets
+`maxProviderFee` or `confirmProviderFees` uses its own pair and neither default, and the
+same holds for `maxEscrowPayment` / `confirmEscrowPayment`. A tighter ceiling on one call
+therefore never falls back to a permissive default callback.
 
 ```ts twoslash
 import { Nautilus, ProviderFeeNotAllowedError } from '@deltadao/nautilus'

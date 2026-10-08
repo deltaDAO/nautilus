@@ -151,6 +151,12 @@ receives each non-zero fee as `{ token, amount, collector, datatoken, did, servi
 receives it). Return `true` to pay, `false` to refuse. It is not called for a zero fee or a
 fee within the ceiling, and an error it throws propagates before anything is spent.
 
+`maxProviderFee` and `confirmProviderFees` replace the `Nautilus.create` defaults as a
+pair: set either one here, even to `undefined`, and neither default applies to this call.
+So a tight `maxProviderFee` passed here never falls back to a permissive
+`confirmProviderFees` set in `Nautilus.create`, and `{ confirmProviderFees: undefined }`
+clears the default callback.
+
 ## Throws
 
 - `ProviderFeeSignatureError`: the node's fee is missing, incomplete, or its signature would

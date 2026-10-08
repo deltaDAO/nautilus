@@ -86,8 +86,11 @@ the node quoted. It now pays a non-zero provider fee only within `maxProviderFee
 data (ocean.js's bundled addresses, or `ADDRESS_FILE` when set), else its `Escrow`.
 Otherwise `access()` and `compute()` throw a `ProviderFeeNotAllowedError` or an
 `EscrowPaymentNotAllowedError` before any approval, purchase, deposit or order. Zero fees
-and zero escrow payments need nothing. Amounts are in the token's smallest unit. Set the
-ceilings once in `Nautilus.create`, or per call:
+and zero escrow payments need nothing (a zero escrow quote is not checked further, so it may
+name no contract). Amounts are in the token's smallest unit. Set the ceilings once in
+`Nautilus.create`, or per call. The defaults come in pairs, `maxProviderFee` with
+`confirmProviderFees` and `maxEscrowPayment` with `confirmEscrowPayment`: a call that sets
+either option of a pair, even to `undefined`, uses its own pair and neither default of it.
 
 ```ts
 const nautilus = await Nautilus.create(signer, { config }) // [!code --]
@@ -109,6 +112,14 @@ the address data (Pontus-X devnet among them), set the chain's EnterpriseEscrow 
 as `config: { escrow: '0x…' }`, or paid compute is refused. Direct callers of `order()`,
 `reuseOrder()` and `settleOrder()` pass `maxProviderFee` / `confirmProviderFees` the same
 way.
+
+**Paid compute checks every input before it funds escrow, and serialises jobs per payer.**
+`compute()` reads and checks every input's pricing before the escrow approval, deposit or
+authorisation, so an input that cannot be ordered is refused with nothing spent. Within one
+`Nautilus` instance, paid jobs that share a chain, payer, payment token and environment
+account fund escrow, order and start one at a time, so concurrent `compute()` calls no
+longer overwrite each other's escrow authorisation. Jobs started from another instance or
+process with the same wallet are not serialised: run those one after the other.
 
 **Also breaking:**
 

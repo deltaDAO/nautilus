@@ -176,8 +176,13 @@ a rejected nonce. Passed to the node clients `create` builds; see
   `{ token: string; amount: bigint | string }`
 
 The default ceiling on the provider fees of every [`access`](/docs/api/nautilus/access) and
-[`compute`](/docs/api/nautilus/compute) call, per token, in the token's smallest unit. A
-call's own `maxProviderFee` replaces it.
+[`compute`](/docs/api/nautilus/compute) call, per token, in the token's smallest unit.
+
+The four options are defaults in two pairs: `maxProviderFee` with `confirmProviderFees`, and
+`maxEscrowPayment` with `confirmEscrowPayment`. A call that sets either option of a pair,
+even to `undefined`, uses its own pair and neither default of it. So a call with a tighter
+`maxProviderFee` does not inherit a permissive `confirmProviderFees` from here, and a call
+can clear a default by passing the option as `undefined`.
 
 :::warning[Set a fee ceiling]
 The node chooses the provider fee: its token, its amount and who receives it. For a
@@ -207,14 +212,16 @@ const nautilus = await Nautilus.create(signer, {
 - Type: `(fees: ProviderFeeQuote[]) => boolean | Promise<boolean>`
 
 The default confirmation for provider fees `maxProviderFee` does not cover, for example to
-ask a user. See [`access`](/docs/api/nautilus/access#confirmproviderfees-optional).
+ask a user. A call that sets `maxProviderFee` or `confirmProviderFees` does not use it. See
+[`access`](/docs/api/nautilus/access#confirmproviderfees-optional).
 
 ##### maxEscrowPayment
 
 - Type: `TokenAmount | TokenAmount[]`
 
 The default ceiling on what one [`compute`](/docs/api/nautilus/compute) job may lock in
-escrow, per payment token, in the token's smallest unit.
+escrow, per payment token, in the token's smallest unit. A call that sets
+`maxEscrowPayment` or `confirmEscrowPayment` does not use it.
 
 nautilus funds exactly one escrow contract, whatever contract the node names:
 
@@ -232,8 +239,14 @@ contract as `config.escrow`, or paid compute is refused. See
 
 - Type: `(payment: EscrowPaymentQuote) => boolean | Promise<boolean>`
 
-The default confirmation for an escrow payment `maxEscrowPayment` does not cover. See
+The default confirmation for an escrow payment `maxEscrowPayment` does not cover. A call
+that sets `maxEscrowPayment` or `confirmEscrowPayment` does not use it. See
 [`compute`](/docs/api/nautilus/compute#confirmescrowpayment-optional).
+
+Paid compute jobs of one instance that share a chain, payer, payment token and environment
+account fund escrow and start one at a time, so concurrent jobs do not overwrite each
+other's escrow authorisation. Jobs from another instance or process are not covered; see
+[Concurrent jobs](/docs/api/nautilus/compute#concurrent-jobs).
 
 ## Throws
 
