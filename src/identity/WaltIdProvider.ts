@@ -15,11 +15,13 @@
  * drive a UI instead.
  */
 import type { Signer } from 'ethers'
-import type { OceanNodeClient } from '../node/OceanNodeClient.js'
 import {
-  type CredentialChallenge,
-  type CredentialProvider,
+  type OceanNodeClient,
   PolicyServerAction
+} from '../node/OceanNodeClient.js'
+import type {
+  CredentialChallenge,
+  CredentialProvider
 } from './CredentialProvider.js'
 import {
   type WaltIdCredential,

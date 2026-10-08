@@ -178,6 +178,9 @@ function createComputeNodeMock(
   const client = {
     nodeUri: 'https://node.test.invalid',
     // A node without a policy server: no session is opened.
+    policySessionAddress(address: string) {
+      return address
+    },
     async hasPolicyServer() {
       return false
     },

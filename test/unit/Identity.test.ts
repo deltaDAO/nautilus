@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import {
-  emptyPolicyServerPayload,
-  PolicyServerAction
-} from '../../src/identity/CredentialProvider.js'
+import { emptyPolicyServerPayload } from '../../src/identity/CredentialProvider.js'
 import { MemorySessionStore } from '../../src/identity/session.js'
 import {
   WaltIdCredentialProvider,
   type WaltIdCredentialProviderOptions
 } from '../../src/identity/WaltIdProvider.js'
 import type { WaltIdWallet } from '../../src/identity/waltid/client.js'
-import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
+import {
+  type OceanNodeClient,
+  PolicyServerAction
+} from '../../src/node/OceanNodeClient.js'
 import {
   getAssetFixture,
   OWNER_ADDRESS,

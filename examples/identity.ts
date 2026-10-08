@@ -671,38 +671,27 @@ function defaultResources(environment: ComputeEnvironment) {
  * Checks a policy-server session, and names the policies that failed.
  *
  * `access()` and `compute()` already do this after every presentation and throw a
- * `PolicyDeniedError` whose `reason` names the failed policies. This is the same check, for a
- * session id you have from elsewhere (an error's `details`, a browser flow).
+ * `PolicyDeniedError` whose `reason` and `policyResults` name the failed policies. This is the
+ * same check, for a session id you have from elsewhere (a browser flow).
+ *
+ * Only the node that opened a session knows it: for a download, the node in the service's
+ * `serviceEndpoint`; for a compute job, the configured node. Pass that node's URI. A session
+ * id is a credential (it reads the presentation back through the node), so do not log it.
  */
 export async function explainCredentialFailure(
   nautilus: Nautilus,
-  sessionId: string
+  sessionId: string,
+  nodeUri?: string
 ) {
-  const { verified, result } = await nautilus
-    .getNodeClient()
-    .checkPolicySession(sessionId)
+  const node = nautilus.getNodeClient()
+  const { verified, policyResults } = await (nodeUri
+    ? node.forEndpoint(nodeUri)
+    : node
+  ).checkPolicySession(sessionId)
 
-  const results =
-    (
-      result as {
-        policyResults?: {
-          results?: {
-            policyResults?: {
-              is_success?: boolean
-              policy?: string
-              description?: string
-            }[]
-          }[]
-        }
-      }
-    )?.policyResults?.results ?? []
-
-  const failed = results
-    .flatMap((entry) => entry.policyResults ?? [])
-    .filter((policy) => policy.is_success === false)
-    .map((policy) =>
-      [policy.policy, policy.description].filter(Boolean).join(': ')
-    )
+  const failed = policyResults
+    .filter((result) => !result.success)
+    .map((result) => [result.policy, result.error].filter(Boolean).join(': '))
 
   if (verified) console.log('The verifier accepted this presentation.')
   else
