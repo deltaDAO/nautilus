@@ -12,17 +12,13 @@ import type { AccessConfig, AccessResult } from '../@types/Access.js'
 import { getDatatokenForService, getServiceIndex } from '../ddo/read.js'
 import { PolicySessionResolver } from '../identity/PolicySessionResolver.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
-import {
-  assertProviderFeesAllowed,
-  ceilingFor,
-  quoteProviderFee
-} from '../utils/paymentLimits.js'
+import { assertValidLimits } from '../utils/paymentLimits.js'
 import {
   initializeWithValidProviderFee,
   providerFeeToSend
 } from '../utils/providerFee.js'
-import { selectAccessService } from './guards.js'
-import { settleOrder } from './settlement.js'
+import { checkAccessRequest } from './guards.js'
+import { planSettlement, sendSettlement } from './settlement.js'
 
 export { settleOrder } from './settlement.js'
 
@@ -49,14 +45,20 @@ export async function access(
   context: AccessContext
 ): Promise<AccessResult> {
   const { node, signer, chainConfig } = context
+
+  // A malformed `maxProviderFee` fails here, before any node call, even on a call that
+  // ends up paying no fee.
+  assertValidLimits(config)
+
   const policySessions = context.policySessions ?? new PolicySessionResolver()
   const consumerAddress = await signer.getAddress()
 
   const asset = await node.resolve(config.assetDid)
 
   // Before any other node call or transaction: the service exists, is an 'access' service,
-  // and `userdata` fits its consumer parameters.
-  const service = selectAccessService(asset, config)
+  // and `userdata` fits its consumer parameters. Only the checked `userdata`, without its
+  // absent entries, is sent from here on.
+  const { service, userdata } = checkAccessRequest(asset, config)
 
   // Everything that talks to a node talks to *this* one: the file object was encrypted
   // with a key local to the node in the service's own endpoint, so the quote, the policy
@@ -90,7 +92,7 @@ export async function access(
       serviceNode.initialize(asset.id, service.id, {
         fileIndex: config.fileIndex,
         consumerAddress,
-        userdata: config.userdata
+        userdata
       }),
     (result) => [providerFeeToSend(result)],
     Number(service.timeout) === 0 ? { attempts: 1 } : {}
@@ -104,30 +106,28 @@ export async function access(
       `Could not determine the datatoken for service ${service.id} of ${asset.id}.`
     )
 
-  // 3. The node chose the fee's token and amount, and in a download it is the
-  //    publisher's node: pay a non-zero fee only within what the caller allowed, before
-  //    any chain read or transaction.
-  const fee = quoteProviderFee(providerFeeToSend(initialized), {
-    datatoken: datatokenAddress,
-    did: asset.id,
-    serviceId: service.id
-  })
-
-  await assertProviderFeesAllowed([fee], config)
-
-  // 4. Reuse or place an order, allowed to pay exactly the fee approved above. The node's
-  //    download `initialize` reports no `validOrder`, so a previous order is looked up on
-  //    chain, within the service's timeout.
-  const { transferTxId, reused } = await settleOrder({
+  // 3. Decide how to settle, and run every check of that path before anything is sent.
+  //    The node's download `initialize` reports no `validOrder`, so a previous order is
+  //    looked up on chain, within the service's timeout. The node chose the fee's token
+  //    and amount, and in a download it is the publisher's node, so a non-zero fee is paid
+  //    only within what the caller allowed. Consent is asked for the fee this path pays
+  //    only: none for an order used as it stands, the quoted fee for an order extended or
+  //    placed.
+  const plan = await planSettlement({
     signer,
     chainConfig,
     datatokenAddress,
     serviceIndex: getServiceIndex(asset, service.id),
     initialized,
     consumer: consumerAddress,
+    did: asset.id,
     service: { id: service.id, timeout: Number(service.timeout) },
-    maxProviderFee: ceilingFor([fee])
+    maxProviderFee: config.maxProviderFee,
+    confirmProviderFees: config.confirmProviderFees
   })
+
+  // 4. Reuse or place the order, paying exactly the fee allowed above, if any.
+  const { transferTxId, reused } = await sendSettlement(plan)
 
   LoggerInstance.debug('[access] order settled', { transferTxId, reused })
 
@@ -140,7 +140,7 @@ export async function access(
     {
       fileIndex: config.fileIndex,
       policyServer,
-      userdata: config.userdata
+      userdata
     }
   )
 

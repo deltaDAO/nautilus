@@ -11,13 +11,15 @@ const USE_COMPUTE = 'Run a job on it with compute() or freeCompute() instead.'
 
 /**
  * Picks the service `access()` downloads from: `serviceId`, else the asset's first
- * `access` service. Throws when there is none, when it is not an `access` service, or with
- * a `ConsumerParameterError` when `userdata` does not fit its consumer parameters.
+ * `access` service, and returns it with the `userdata` to forward (without its `undefined`
+ * or `null` entries). Throws when there is no such service, when it is not an `access`
+ * service, or with a `ConsumerParameterError` when `userdata` does not fit its consumer
+ * parameters.
  */
-export function selectAccessService(
+export function checkAccessRequest(
   asset: unknown,
   config: Pick<AccessConfig, 'assetDid' | 'serviceId' | 'userdata'>
-): ServiceV5 {
+): { service: ServiceV5; userdata: AccessConfig['userdata'] } {
   const { assetDid, serviceId } = config
   const service = serviceId
     ? getService(asset, serviceId)
@@ -41,11 +43,11 @@ export function selectAccessService(
       }`
     )
 
-  assertConsumerParameters(service.consumerParameters, config.userdata, {
-    did: getDid(asset),
-    serviceId: service.id,
-    field: 'userdata'
-  })
+  const userdata = assertConsumerParameters(
+    service.consumerParameters,
+    config.userdata,
+    { did: getDid(asset), serviceId: service.id, field: 'userdata' }
+  )
 
-  return service
+  return { service, userdata }
 }

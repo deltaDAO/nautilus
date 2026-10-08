@@ -119,18 +119,36 @@ declares before anything is sent: a download's `userdata` and a compute input's 
 against the service's `consumerParameters`, and an algorithm's `algocustomdata` against the
 `consumerParameters` of its algorithm metadata.
 
+- The values must be a plain object (an object literal): not an array, a string, a `Date`,
+  a `Map`, a `Set` or a class instance.
 - A `required` parameter must have a value. `undefined` and `null` count as absent. An
   absent optional parameter stays absent; nautilus does not fill in its `default`.
 - `text` takes a string, `number` a finite number (not a numeric string such as `'5'`),
   `boolean` `true` or `false`, and `select` a string that is one of its option keys.
+- A `select` whose options are missing, empty or malformed is a broken declaration: any
+  value for it is refused, since there is nothing to check it against. Leave it absent if
+  it is optional, or ask the publisher to fix the asset.
 - Keys the asset does not declare are refused, so a misspelt key does not travel to the
   data source unnoticed: a download's `userdata` is appended to the file's URL as query
   parameters. An asset that declares no parameters takes the values as they are.
 
+What is sent is a copy of the values without the keys set to `undefined` or `null`, whether
+or not the asset declares parameters: `{ surname: 'Doe', age: null }` reaches the node, the
+download URL or the job as `{ surname: 'Doe' }`, never as `age=null`.
+
 A mismatch throws a `ConsumerParameterError` before the node is asked for a fee and before
 any transaction. `error.issues` lists every refused value, and `error.did`,
 `error.serviceId` and `error.field` (`'userdata'` or `'algocustomdata'`) say where it was
-going.
+going. Each issue is `{ parameter, reason, message }`, `reason` one of:
+
+| `reason` | Meaning |
+| --- | --- |
+| `'missing'` | A `required` parameter is absent (`undefined` or `null`). |
+| `'wrong-type'` | The value does not have the declared type. |
+| `'not-an-option'` | A `select` value is not one of its option keys. |
+| `'invalid-declaration'` | A `select` declares no usable options, so no value fits. |
+| `'unknown'` | The key is not a declared parameter. |
+| `'not-object'` | The values are not a plain object. |
 
 To validate a form before calling, use `checkConsumerParameters`, which returns the same
 issues instead of throwing:

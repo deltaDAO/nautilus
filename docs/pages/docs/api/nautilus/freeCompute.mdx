@@ -46,4 +46,5 @@ Each job's `jobId` is `<environmentHash>-<jobId>`, the id every job method takes
 
 Consumer parameters are checked as in [`compute`](/docs/api/nautilus/compute): an input's
 `userdata` or the algorithm's `algocustomdata` that does not fit what the asset declares
-throws a `ConsumerParameterError` before the job is sent.
+throws a `ConsumerParameterError` before the job is sent, and keys set to `undefined` or
+`null` are dropped from what is sent.

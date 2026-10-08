@@ -255,6 +255,12 @@ export interface NautilusOptions
    */
   sessionStore?: SessionStore
   /**
+   * How long, in milliseconds from its opening, a cached policy-server session is reused
+   * before it is opened again. `0` turns the cache off. Default: `DEFAULT_SESSION_TTL_MS`
+   * (2 minutes), well within the 5 minutes walt.id's verifier keeps a session.
+   */
+  sessionTtlMs?: number
+  /**
    * Overrides for the chain config resolved from the signer's network.
    *
    * `config.escrow`, when set here, is the only escrow contract paid compute funds. Left
@@ -380,7 +386,8 @@ export class Nautilus {
     this.options = options
     this.policySessions = new PolicySessionResolver({
       credentials: options.credentials,
-      sessionStore: options.sessionStore
+      sessionStore: options.sessionStore,
+      sessionTtlMs: options.sessionTtlMs
     })
   }
 

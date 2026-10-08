@@ -21,10 +21,18 @@ checks a previous order), and nautilus reused an order only when the node report
   uses that transaction and nothing is sent. Otherwise the order is extended with
   `reuseOrder` and the fee the node quotes now. Either way the result has
   `reusedOrder: true`, and `transferTxId` is the transaction the download uses.
+- **Consent only for the fee that is paid.** `access()` decides on reuse before it asks
+  for consent, then asks `maxProviderFee` / `confirmProviderFees` once, for the fee it
+  will pay: none for an order used as it stands, even when the node quotes a fee; the fee
+  quoted now for an order extended or placed. Before, the quoted fee was authorised first,
+  so an order used as it stands asked the callback for nothing, or threw a
+  `ProviderFeeNotAllowedError` with no limit set. Every check still runs before the first
+  transaction, and the order may pay exactly the fee allowed.
 - **Bounded reads.** The events are read newest first, 10 000 blocks per `eth_getLogs`
   call, no further back than the service's timeout and at most 100 000 blocks. A lookup
   the RPC refuses falls back to a new order.
 
 A node that reports `validOrder` is followed as before, with no chain read.
 `settleOrder()` takes an optional `service: { id, timeout }` to look the order up;
-without it, only the node's `validOrder` is reused.
+without it, only the node's `validOrder` is reused. It also takes an optional `did`, named
+with the service in the fee passed to `confirmProviderFees`.

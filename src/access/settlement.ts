@@ -50,9 +50,17 @@ export type SettleOrderParams = {
    * `validOrder`. Without it only the node's `validOrder` is reused.
    */
   service?: { id: string; timeout: number }
+  /**
+   * The asset's DID, named with `service.id` in the fee passed to `confirmProviderFees`
+   * and in a `ProviderFeeNotAllowedError`.
+   */
+  did?: string
 } & ProviderFeeLimits
 
-/** What `sendSettlement` will do, decided and checked by `planSettlement`. */
+/**
+ * What `sendSettlement` will do, decided and checked by `planSettlement`. A request is
+ * allowed to pay exactly the provider fee the caller consented to, and no other.
+ */
 export type SettlementPlan =
   /** An order in force and no fee due: nothing to send. */
   | { kind: 'reused'; datatokenAddress: string; transferTxId: string }
@@ -68,26 +76,25 @@ export type SettlementPlan =
 /**
  * Decides how to settle the order and runs every check of that path, without sending
  * anything: the previous order to reuse (read from chain when the node reports none and
- * `service` is given), the provider fee's signature, the payer, the caller's consent to the fee
- * (which may ask `confirmProviderFees`), and, for a fresh order, the pricing read from
- * chain and whether it can be ordered. Throws what `settleOrder` would throw before its
- * first transaction.
+ * `service` is given), the provider fee's signature, the payer, the caller's consent to the
+ * fee, and, for a fresh order, the pricing read from chain and whether it can be ordered.
+ * Throws what `settleOrder` would throw before its first transaction.
+ *
+ * Consent (`maxProviderFee`, else `confirmProviderFees`) is asked once, for the fee this
+ * path pays: none for an order used as it stands, the fee the node quotes now for an order
+ * extended or placed. The plan then allows exactly that fee.
  */
 export async function planSettlement(
   params: SettleOrderParams
 ): Promise<SettlementPlan> {
   const { signer, chainConfig, datatokenAddress, serviceIndex, initialized } =
     params
-  const limits: ProviderFeeLimits = {
-    maxProviderFee: params.maxProviderFee,
-    confirmProviderFees: params.confirmProviderFees
-  }
 
   const providerFee = initialized.providerFee as ProviderFeeLike | undefined
   const previous = await reusableOrder(params)
 
   // An order in force and no new fee needed: reuse the transaction as it stands. Nothing
-  // is sent, so no fee is needed.
+  // is sent, so no fee is checked or asked for, whatever the node quoted.
   if (previous && !previous.feeDue)
     return {
       kind: 'reused',
@@ -106,13 +113,27 @@ export async function planSettlement(
   // The signer pays on both paths; `order()` checks again for its direct callers.
   await payingAccount(signer, params.payer)
 
-  // An order in force but a new fee period: extend it rather than buying again.
-  if (previous) {
-    await assertProviderFeesAllowed(
-      [quoteProviderFee(providerFees, { datatoken: datatokenAddress })],
-      limits
-    )
+  // The node chose this fee: pay it only within what the caller allowed, asked here once.
+  const fee = quoteProviderFee(providerFees, {
+    datatoken: datatokenAddress,
+    did: params.did,
+    serviceId: params.service?.id
+  })
 
+  await assertProviderFeesAllowed([fee], {
+    maxProviderFee: params.maxProviderFee,
+    confirmProviderFees: params.confirmProviderFees
+  })
+
+  // From here on exactly that fee may be paid, and `confirmProviderFees` is not asked
+  // again: `order()` and `reuseOrder()` refuse any other.
+  const allowed: ProviderFeeLimits = {
+    maxProviderFee: ceilingFor([fee]),
+    confirmProviderFees: undefined
+  }
+
+  // An order in force but a new fee period: extend it rather than buying again.
+  if (previous)
     return {
       kind: 'reuse',
       datatokenAddress,
@@ -122,10 +143,9 @@ export async function planSettlement(
         datatokenAddress,
         validOrderTx: previous.transferTxId,
         providerFees,
-        ...limits
+        ...allowed
       }
     }
-  }
 
   const pricing = await getPricingInfo(signer, datatokenAddress, chainConfig)
   const price = await getOrderPrice(signer, pricing, chainConfig)
@@ -139,10 +159,10 @@ export async function planSettlement(
     providerFees,
     consumer: params.consumer,
     payer: params.payer,
-    ...limits
+    ...allowed
   }
 
-  // Pricing that cannot be ordered, or a fee the caller does not allow, is refused here.
+  // Pricing that cannot be ordered is refused here.
   await checkOrder(request)
 
   return { kind: 'order', datatokenAddress, request }
@@ -202,8 +222,9 @@ async function reusableOrder(
 }
 
 /**
- * Sends what `planSettlement` decided. The fee was allowed when the plan was made, so the
- * order may pay exactly that fee and `confirmProviderFees` is not asked a second time.
+ * Sends what `planSettlement` decided. Each request allows exactly the fee the caller
+ * consented to when the plan was made, so `confirmProviderFees` is not asked a second time
+ * and no other fee can be paid.
  */
 export async function sendSettlement(
   plan: SettlementPlan
@@ -211,18 +232,9 @@ export async function sendSettlement(
   if (plan.kind === 'reused')
     return { transferTxId: plan.transferTxId, reused: true }
 
-  const exactly = {
-    maxProviderFee: ceilingFor([
-      quoteProviderFee(plan.request.providerFees, {
-        datatoken: plan.datatokenAddress
-      })
-    ]),
-    confirmProviderFees: undefined
-  }
+  if (plan.kind === 'reuse') return reuseOrder(plan.request)
 
-  if (plan.kind === 'reuse') return reuseOrder({ ...plan.request, ...exactly })
-
-  return order({ ...plan.request, ...exactly })
+  return order(plan.request)
 }
 
 /**
@@ -235,7 +247,8 @@ export async function sendSettlement(
  * missing, incomplete, or carries a signature the datatoken would reject. Those paths also
  * throw for a `payer` other than the signer (see `OrderRequest.payer`), and refuse a
  * non-zero fee `maxProviderFee` / `confirmProviderFees` do not allow with a
- * `ProviderFeeNotAllowedError`, before their first approval.
+ * `ProviderFeeNotAllowedError`, before their first approval. An order used as it stands
+ * pays no fee, so neither is consulted.
  */
 export async function settleOrder(
   params: SettleOrderParams
