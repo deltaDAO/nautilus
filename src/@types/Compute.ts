@@ -118,7 +118,7 @@ export interface StopComputeConfig extends ComputeStatusConfig {
 
 /** What `compute()` returns: the jobs plus what it had to pay to start them. */
 export interface ComputeResult {
-  jobs: ComputeJob[]
+  jobs: NodeComputeJob[]
   environment: ComputeEnvironment
   initializeResults: ProviderComputeInitializeResults
   /**

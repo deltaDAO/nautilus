@@ -56,7 +56,11 @@ import {
   type Signer,
   toUtf8Bytes
 } from 'ethers'
-import { assertQualifiedJobId, withQualifiedJobId } from '../compute/jobs.js'
+import {
+  assertQualifiedJobId,
+  assertResultIndex,
+  withQualifiedJobId
+} from '../compute/jobs.js'
 import type { PolicyServerPayload } from '../ddo/types.js'
 import { PolicyServerAction } from '../identity/CredentialProvider.js'
 import {
@@ -1758,7 +1762,7 @@ export class OceanNodeClient {
     queueMaxWaitTime?: number
     outputBucketId?: string
     signal?: AbortSignal
-  }): Promise<ComputeJob[]> {
+  }): Promise<NodeComputeJob[]> {
     const jobs = await attempt('computeStart', () =>
       ProviderInstance.computeStart(
         this.nodeUri,
@@ -1797,7 +1801,7 @@ export class OceanNodeClient {
     queueMaxWaitTime?: number
     outputBucketId?: string
     signal?: AbortSignal
-  }): Promise<ComputeJob[]> {
+  }): Promise<NodeComputeJob[]> {
     const jobs = await attempt('freeComputeStart', () =>
       ProviderInstance.freeComputeStart(
         this.nodeUri,
@@ -1866,7 +1870,7 @@ export class OceanNodeClient {
     jobId: string,
     agreementId?: string,
     signal?: AbortSignal
-  ): Promise<ComputeJob[]> {
+  ): Promise<NodeComputeJob[]> {
     assertQualifiedJobId(jobId)
 
     const jobs = await attempt('computeStop', () =>
@@ -1884,6 +1888,7 @@ export class OceanNodeClient {
 
   async getComputeResultUrl(jobId: string, index: number): Promise<string> {
     assertQualifiedJobId(jobId)
+    assertResultIndex(index)
 
     const url = await attempt('getComputeResultUrl', () =>
       ProviderInstance.getComputeResultUrl(
@@ -1910,6 +1915,7 @@ export class OceanNodeClient {
     offset = 0
   ): Promise<ComputeResultStream> {
     assertQualifiedJobId(jobId)
+    assertResultIndex(index)
 
     return attempt('getComputeResult', () =>
       ProviderInstance.getComputeResult(
@@ -1925,6 +1931,9 @@ export class OceanNodeClient {
   /**
    * Streams a running job's algorithm output. The node serves these logs only while the
    * algorithm runs; a finished job's are in its `algorithmLog` result.
+   *
+   * Treat the job id as a secret: ocean-node 4.2.2 checks the request's signature but not
+   * that the signer owns the job, so anyone who has the id can stream a running job's logs.
    */
   async getComputeLogs(
     jobId: string,
@@ -1946,7 +1955,7 @@ export class OceanNodeClient {
     if (!logs)
       throw new OceanNodeError(
         'computeStreamableLogs',
-        `the node returned no logs for job ${jobId}`
+        'the node returned no logs for the job'
       )
 
     return logs
@@ -2269,7 +2278,7 @@ export class OceanNodeClient {
 function toJobArray(
   operation: string,
   jobs: ComputeJob | ComputeJob[]
-): ComputeJob[] {
+): NodeComputeJob[] {
   if (!jobs)
     throw new OceanNodeError(operation, 'the node returned no compute job')
 
