@@ -165,6 +165,11 @@ console.log(pricing.schema, price.total)
 `pricing.schema` is `'fixed'`, `'free'`, or `'none'` when the datatoken has neither a
 fixed-rate exchange nor a dispenser and so cannot be ordered at all.
 
+On top of the price, the order pays the **provider fee** the service's node asks for. That
+node is the service's `serviceEndpoint`, which the publisher chooses, so nautilus pays a
+non-zero fee only within the `maxProviderFee` you set, or with your `confirmProviderFees`
+callback. See [what the node charges on top](/docs/guides/pricing#what-the-node-charges-on-top).
+
 ## Try it
 
 Runnable versions of everything on this page live in [`examples/`](/docs/examples):

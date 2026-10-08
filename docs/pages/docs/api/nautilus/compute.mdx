@@ -6,16 +6,32 @@ Start a paid Compute-to-Data job.
 
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'
-import { Wallet } from 'ethers'
+import { parseUnits, Wallet } from 'ethers'
 const nautilus = await Nautilus.create(new Wallet('0x1234'))
+const paymentToken = '0x...'
 // ---cut---
 const { jobs } = await nautilus.compute({ // [!code focus]
   dataset: { did: 'did:ope:1234abcd...' }, // [!code focus]
-  algorithm: { did: 'did:ope:5678wxyz...' } // [!code focus]
+  algorithm: { did: 'did:ope:5678wxyz...' }, // [!code focus]
+  // the most the job may lock in escrow, and pay in provider fees // [!code focus]
+  maxEscrowPayment: { token: paymentToken, amount: parseUnits('5', 18) }, // [!code focus]
+  maxProviderFee: { token: paymentToken, amount: parseUnits('0.5', 18) } // [!code focus]
 }) // [!code focus]
 
 const jobId = jobs[0].jobId
 ```
+
+:::warning[Set a ceiling for fees and escrow]
+The compute node chooses the provider fee of every input (token, amount and recipient) and
+the amount the job locks in escrow. nautilus pays a non-zero provider fee only within
+[`maxProviderFee`](#maxproviderfee-optional) or with
+[`confirmProviderFees`](#confirmproviderfees-optional), and funds escrow only within
+[`maxEscrowPayment`](#maxescrowpayment-optional) or with
+[`confirmEscrowPayment`](#confirmescrowpayment-optional). It funds only the chain config's
+`escrow` contract, whatever contract the node names. Each refusal is thrown before any
+approval, deposit or order. Set the ceilings once with
+[`Nautilus.create`](/docs/api/nautilus/create#maxproviderfee), or per call here.
+:::
 
 :::warning
 C2D v2 changed the compute model substantially. Resources are now requested explicitly,
@@ -35,9 +51,23 @@ What happens in order:
    A compute fee is the same on every request, so `initializeCompute` is called once and a
    bad fee is refused at once, not requested again; contact the node operator if this
    happens.
-4. Escrow is funded and the environment authorised to draw the quoted amount.
-5. Each input is ordered — reusing an existing order where the node says one is valid.
-6. The job starts.
+4. Everything the quote would spend is checked against what you allowed, before the first
+   transaction:
+   - the inputs' non-zero provider fees, summed per token, against `maxProviderFee`, or
+     `confirmProviderFees` asked once with all of them (`ProviderFeeNotAllowedError`);
+   - the escrow quote: its contract must be the chain config's `escrow`, and its chain,
+     token and payee the job's own (`EscrowPaymentNotAllowedError`, which no callback
+     overrides); its amount must be within `maxEscrowPayment`, or `confirmEscrowPayment`
+     must return `true` (`EscrowPaymentNotAllowedError` again);
+   - the wallet must hold what has to be deposited.
+5. Escrow is funded in exact amounts: nautilus approves the escrow contract for the
+   shortfall only (what the job needs less what is already available in escrow), deposits
+   it, and authorises the environment's account to lock the job's amount on top of its
+   current locks. A standing allowance or authorisation that already covers the job is left
+   as it is. Nothing is approved for more than is deposited.
+6. Each input is ordered — reusing an existing order where the node says one is valid —
+   allowed to pay exactly the provider fee approved in step 4.
+7. The job starts.
 
 ### Choosing an environment
 
@@ -183,3 +213,53 @@ Seconds to wait in the queue when resources are unavailable.
 ##### skipCredentials (optional)
 
 - Type: `boolean`
+
+##### maxProviderFee (optional)
+
+- Type: `TokenAmount | TokenAmount[]`, where `TokenAmount` is
+  `{ token: string; amount: bigint | string }`
+- Default: the [`Nautilus.create`](/docs/api/nautilus/create#maxproviderfee) option, else none
+
+The most the job may pay in provider fees, per token, in the token's smallest unit: the sum
+of every input's fee in that token. See [`access`](/docs/api/nautilus/access#maxproviderfee-optional).
+
+##### confirmProviderFees (optional)
+
+- Type: `(fees: ProviderFeeQuote[]) => boolean | Promise<boolean>`
+
+Asked once, with every input's non-zero fee, when `maxProviderFee` does not cover them.
+Return `true` to pay them all.
+
+##### maxEscrowPayment (optional)
+
+- Type: `TokenAmount | TokenAmount[]`
+- Default: the [`Nautilus.create`](/docs/api/nautilus/create#maxescrowpayment) option, else none
+
+The most the job may lock in escrow, per payment token, in the token's smallest unit (the
+node quotes `payment.amount` in those units). Without it or `confirmEscrowPayment`, a paid
+job is refused with an `EscrowPaymentNotAllowedError` before anything is spent; a quote of
+zero needs neither.
+
+##### confirmEscrowPayment (optional)
+
+- Type: `(payment: EscrowPaymentQuote) => boolean | Promise<boolean>`
+
+Asked when `maxEscrowPayment` does not cover the quote, with
+`{ escrowAddress, token, amount, payee, minLockSeconds, chainId }` (`amount` a `bigint`).
+Return `true` to fund it. It is asked only after the escrow contract, chain, token and payee
+passed their checks.
+
+## Throws
+
+- `ProviderFeeSignatureError` and `ProviderFeeNotAllowedError`, as for
+  [`access`](/docs/api/nautilus/access#throws).
+- `EscrowPaymentNotAllowedError`, with `error.reason`:
+  - `'unknown-escrow'`: the chain config has no `escrow` address. ocean.js ships it for some
+    chains; pass `config: { escrow: '0x…' }` to `Nautilus.create` for the others;
+  - `'escrow-address'`: the node named another escrow contract;
+  - `'mismatch'`: the quote is for another chain, token or payee, or its amount is not an
+    exact integer;
+  - `'no-limit'`, `'over-limit'` or `'declined'`: the amount was not allowed.
+- An `Error` when the wallet cannot cover the deposit.
+
+All of these are thrown before any approval, deposit or order.

@@ -143,6 +143,59 @@ calling `access` again. A node that reports `validOrder` is followed with no cha
 side.
 :::
 
+## What the node charges on top
+
+The price above is read from chain. Two more amounts are not: the node chooses them.
+
+- **The provider fee**, which every order carries: the node's `initialize` (or
+  `initializeCompute`) answer names its token, its amount and who receives it
+  (`providerFeeAddress`), and signs them. For a download, that node is the one in the
+  service's `serviceEndpoint`, which the publisher chooses. The signature check nautilus
+  runs only proves the node signed the fee, so that the order does not revert. It says
+  nothing about whether the amount is reasonable.
+- **The escrow payment** of a paid compute job: `initializeCompute` names the escrow
+  contract and the amount to lock.
+
+So nautilus pays neither without your consent. A non-zero provider fee needs
+`maxProviderFee` (per token, in the token's smallest unit) or a `confirmProviderFees`
+callback that returns `true`; an escrow payment needs `maxEscrowPayment` or
+`confirmEscrowPayment`, and is only ever paid into the chain config's `escrow` contract.
+Otherwise `access` and `compute` throw a `ProviderFeeNotAllowedError` or
+`EscrowPaymentNotAllowedError` before any approval, purchase, deposit or order. Zero fees
+need nothing.
+
+```ts twoslash
+import { Nautilus, ProviderFeeNotAllowedError } from '@deltadao/nautilus'
+import { parseUnits, Wallet } from 'ethers'
+const signer = new Wallet('0x1234')
+const feeToken = '0x...'
+// ---cut---
+const nautilus = await Nautilus.create(signer, {
+  maxProviderFee: { token: feeToken, amount: parseUnits('0.5', 18) }, // [!code focus]
+  // asked only for fees above the ceiling, or in another token // [!code focus]
+  confirmProviderFees: async (fees) => // [!code focus]
+    fees.every((fee) => fee.amount <= parseUnits('1', 18)) // [!code focus]
+})
+
+try {
+  await nautilus.access({ assetDid: 'did:ope:1234abcd...' })
+} catch (error) {
+  if (error instanceof ProviderFeeNotAllowedError)
+    console.log('the node asked for', error.fees) // nothing was spent
+  else throw error
+}
+```
+
+:::warning[Security]
+Set a ceiling for every app that downloads or computes on assets other people publish. It
+is the only bound on what a node can ask for: with a confirmation callback that always
+returns `true`, a node can ask for your whole balance in any token you hold.
+:::
+
+The approvals nautilus sends are exact: the provider fee is approved to the datatoken for
+the fee amount (together with the purchase and the publish-market fee where they share a
+token and spender), and the escrow contract only for what is deposited.
+
 ## Coming from v1
 
 | v1 | v2 |

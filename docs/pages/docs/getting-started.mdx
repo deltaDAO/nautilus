@@ -88,6 +88,12 @@ const data = await fetch(url) // [!code focus]
 nautilus orders the service if you do not already hold a valid order, and reuses your
 existing one if you do.
 
+:::warning
+The node sets the provider fee of the order, so nautilus pays a non-zero one only within a
+ceiling you set (`maxProviderFee`, per call or in `Nautilus.create`) and throws otherwise,
+before anything is spent. See [`access`](/docs/api/nautilus/access).
+:::
+
 :::info
 In v1 `access` returned a bare URL string. It now returns an object, so the order backing the
 download is visible — see [`access`](/docs/api/nautilus/access).
