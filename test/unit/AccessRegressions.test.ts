@@ -15,6 +15,7 @@ import { access, settleOrder } from '../../src/access/index.js'
 import type { AssetV5 } from '../../src/ddo/index.js'
 import { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
 import { order, reuseOrder } from '../../src/utils/order.js'
+import { getPricingInfo } from '../../src/utils/pricing.js'
 import { ProviderFeeSignatureError } from '../../src/utils/providerFee.js'
 import {
   ASSET_DID,
@@ -74,71 +75,37 @@ beforeEach(() => {
 })
 
 describe('settleOrder provider fee', () => {
-  it('approves the datatoken for a non-zero fee before ordering', async () => {
-    // `ERC20Template._checkProviderFee` pulls the fee with `transferFrom`, and neither
-    // `startOrder` nor `reuseOrder` in ocean.js approves anything — so without an explicit
-    // approval, any order carrying a non-zero provider fee reverts.
-    await settle({
-      providerFee: signedProviderFee({
-        providerFeeAmount: '30',
-        providerFeeToken: FEE_TOKEN
-      })
+  // The approvals themselves are pinned against the real `order()`/`reuseOrder()` in
+  // OrderAllowances.test.ts: they approve the provider fee together with whatever else the
+  // order pulls, so `settleOrder` approves nothing of its own.
+  it('hands the fee to order() for a fresh order, approving nothing itself', async () => {
+    const providerFee = signedProviderFee({
+      providerFeeAmount: '30',
+      providerFeeToken: FEE_TOKEN
     })
 
-    expect(vi.mocked(approveWei)).toHaveBeenCalledWith(
-      signer,
-      chainConfig,
-      CONSUMER,
-      FEE_TOKEN,
-      DATATOKEN_ADDRESS,
-      // The node quotes the fee in raw wei; `approve` would scale it by the token's
-      // decimals a second time.
-      '30',
-      true
-    )
+    const result = await settle({ providerFee })
 
-    // The approval must land before the order that spends it.
-    expect(vi.mocked(approveWei).mock.invocationCallOrder[0]).to.be.lessThan(
-      vi.mocked(order).mock.invocationCallOrder[0]
-    )
-  })
-
-  it('skips the approval when the fee is zero', async () => {
-    await settle({
-      providerFee: signedProviderFee({
-        providerFeeAmount: '0',
-        providerFeeToken: FEE_TOKEN
-      })
-    })
-
-    expect(vi.mocked(approveWei)).not.toHaveBeenCalled()
-    expect(vi.mocked(order)).toHaveBeenCalled()
-  })
-
-  it('skips the transaction when the standing allowance already covers the fee', async () => {
-    vi.mocked(allowanceWei).mockResolvedValue('30')
-
-    await settle({
-      providerFee: signedProviderFee({
-        providerFeeAmount: '30',
-        providerFeeToken: FEE_TOKEN
-      })
-    })
-
+    expect(result.transferTxId).to.equal('0xfresh')
+    expect(vi.mocked(order)).toHaveBeenCalledOnce()
+    expect(vi.mocked(order).mock.calls[0][0].providerFees).to.equal(providerFee)
     expect(vi.mocked(approveWei)).not.toHaveBeenCalled()
   })
 
-  it('approves the new fee before extending a reusable order', async () => {
-    const result = await settle({
-      validOrder: '0xexisting',
-      providerFee: signedProviderFee({
-        providerFeeAmount: '30',
-        providerFeeToken: FEE_TOKEN
-      })
+  it('hands the new fee to reuseOrder() to extend a reusable order', async () => {
+    const providerFee = signedProviderFee({
+      providerFeeAmount: '30',
+      providerFeeToken: FEE_TOKEN
     })
 
-    expect(vi.mocked(approveWei)).toHaveBeenCalledOnce()
+    const result = await settle({ validOrder: '0xexisting', providerFee })
+
     expect(vi.mocked(reuseOrder)).toHaveBeenCalledOnce()
+    expect(vi.mocked(reuseOrder).mock.calls[0][0]).to.include({
+      validOrderTx: '0xexisting',
+      providerFees: providerFee
+    })
+    expect(vi.mocked(order)).not.toHaveBeenCalled()
     expect(result.transferTxId).to.equal('0xreused')
   })
 
@@ -157,23 +124,67 @@ describe('settleOrder provider fee', () => {
     expect(vi.mocked(reuseOrder)).not.toHaveBeenCalled()
   })
 
-  it('surfaces an approval ocean.js swallowed', async () => {
-    // `approveWei` catches a failed send, logs it and returns null — left alone, the
-    // failure would only surface as the order reverting on a missing allowance.
-    vi.mocked(approveWei).mockResolvedValue(
-      null as unknown as Awaited<ReturnType<typeof approveWei>>
-    )
+  it('reuses an order as it stands when the node sends no fee at all', async () => {
+    // Nothing is sent on this path, so there is no fee to require.
+    const result = await settle({ validOrder: '0xexisting' })
+
+    expect(result).to.deep.equal({ transferTxId: '0xexisting', reused: true })
+    expect(vi.mocked(order)).not.toHaveBeenCalled()
+  })
+
+  it('reads a zero amount as a number, so 0x0 is not a fee due', async () => {
+    const result = await settle({
+      validOrder: '0xexisting',
+      providerFee: { providerFeeAmount: '0x0' }
+    })
+
+    expect(result).to.deep.equal({ transferTxId: '0xexisting', reused: true })
+  })
+})
+
+describe('settleOrder without a complete provider fee', () => {
+  // A fresh order and an extension both send the fee to the datatoken, which takes every
+  // field of it. Without one, ocean.js fails while encoding the order, after the approvals
+  // and (on template 1) the purchase were already sent.
+  it('refuses a fresh order with no fee, before any chain read or order', async () => {
+    const thrown = await settle({}).catch((caught) => caught)
+
+    expect(thrown).to.be.instanceOf(ProviderFeeSignatureError)
+    expect(thrown.message).to.match(/there is no provider fee/)
+    expect(vi.mocked(getPricingInfo)).not.toHaveBeenCalled()
+    expect(vi.mocked(order)).not.toHaveBeenCalled()
+    expect(vi.mocked(approveWei)).not.toHaveBeenCalled()
+  })
+
+  it('refuses a fee missing its amount or validUntil, rather than reading them as 0', async () => {
+    const {
+      providerFeeAmount: _amount,
+      validUntil: _until,
+      ...partial
+    } = signedProviderFee({ providerFeeAmount: '0', validUntil: 0 })
 
     await expectThrowsAsync(
-      () =>
-        settle({
-          providerFee: signedProviderFee({
-            providerFeeAmount: '30',
-            providerFeeToken: FEE_TOKEN
-          })
-        }),
-      /could not approve the provider fee/i
+      () => settle({ providerFee: partial }),
+      /missing providerFeeAmount, validUntil/
     )
+
+    expect(vi.mocked(order)).not.toHaveBeenCalled()
+  })
+
+  it('refuses an extension whose fee is due but incomplete, before reuseOrder', async () => {
+    const { v: _v, ...partial } = signedProviderFee({
+      providerFeeAmount: '30',
+      providerFeeToken: FEE_TOKEN
+    })
+
+    const thrown = await settle({
+      validOrder: '0xexisting',
+      providerFee: partial
+    }).catch((caught) => caught)
+
+    expect(thrown).to.be.instanceOf(ProviderFeeSignatureError)
+    expect(thrown.message).to.match(/missing v\b/)
+    expect(vi.mocked(reuseOrder)).not.toHaveBeenCalled()
   })
 })
 
@@ -345,6 +356,7 @@ describe('provider-fee signature pre-check', () => {
     )
 
     expect(vi.mocked(approveWei)).not.toHaveBeenCalled()
+    expect(vi.mocked(getPricingInfo)).not.toHaveBeenCalled()
     expect(vi.mocked(order)).not.toHaveBeenCalled()
   })
 
@@ -368,7 +380,7 @@ describe('provider-fee signature pre-check', () => {
   })
 
   describe('access()', () => {
-    function nodeAnswering(fees: unknown[]) {
+    function nodeAnswering(fees: unknown[], asset = getAssetFixture()) {
       const initialize = vi.fn(async () => ({
         datatoken: DATATOKEN_ADDRESS,
         providerFee: fees.length > 1 ? fees.shift() : fees[0]
@@ -380,7 +392,7 @@ describe('provider-fee signature pre-check', () => {
           return client
         },
         async resolve() {
-          return getAssetFixture()
+          return asset
         },
         initialize,
         async getDownloadUrl() {
@@ -431,6 +443,85 @@ describe('provider-fee signature pre-check', () => {
 
         expect(await accessing).to.be.instanceOf(ProviderFeeSignatureError)
         expect(initialize).toHaveBeenCalledTimes(2)
+        expect(vi.mocked(order)).not.toHaveBeenCalled()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('asks 3 times in total, 1.1 s apart, while each fee is new and rejected', async () => {
+      vi.useFakeTimers()
+      try {
+        // Three different fees, each one the datatoken rejects.
+        const { client, initialize } = nodeAnswering([
+          poisonedProviderFee({ providerFeeAmount: '0' }),
+          poisonedProviderFee({ providerFeeAmount: '0', providerData: '0x01' }),
+          poisonedProviderFee({ providerFeeAmount: '0', providerData: '0x02' })
+        ])
+
+        const accessing = access(
+          { assetDid: ASSET_DID },
+          { node: client, signer, chainConfig }
+        ).catch((caught) => caught)
+
+        await vi.advanceTimersByTimeAsync(1_099)
+        expect(initialize).toHaveBeenCalledTimes(1)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(initialize).toHaveBeenCalledTimes(2)
+        await vi.advanceTimersByTimeAsync(5_000)
+
+        const thrown = await accessing
+        expect(thrown).to.be.instanceOf(ProviderFeeSignatureError)
+        expect(thrown.attempts).to.equal(3)
+        expect(initialize).toHaveBeenCalledTimes(3)
+        expect(vi.mocked(order)).not.toHaveBeenCalled()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('does not ask again for a service with timeout 0, whose fee never changes', async () => {
+      vi.useFakeTimers()
+      try {
+        const asset = getAssetFixture()
+        asset.credentialSubject.services[0].timeout = 0
+
+        const { client, initialize } = nodeAnswering(
+          [poisonedProviderFee({ providerFeeAmount: '0' })],
+          asset
+        )
+
+        const accessing = access(
+          { assetDid: ASSET_DID },
+          { node: client, signer, chainConfig }
+        ).catch((caught) => caught)
+        await vi.advanceTimersByTimeAsync(5_000)
+
+        const thrown = await accessing
+        expect(thrown).to.be.instanceOf(ProviderFeeSignatureError)
+        expect(thrown.message).to.match(/not asked again/)
+        expect(initialize).toHaveBeenCalledTimes(1)
+        expect(vi.mocked(order)).not.toHaveBeenCalled()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('refuses an answer with no fee at once, and orders nothing', async () => {
+      vi.useFakeTimers()
+      try {
+        const { client, initialize } = nodeAnswering([undefined])
+
+        const accessing = access(
+          { assetDid: ASSET_DID },
+          { node: client, signer, chainConfig }
+        ).catch((caught) => caught)
+        await vi.advanceTimersByTimeAsync(5_000)
+
+        const thrown = await accessing
+        expect(thrown).to.be.instanceOf(ProviderFeeSignatureError)
+        expect(thrown.message).to.match(/there is no provider fee/)
+        expect(initialize).toHaveBeenCalledTimes(1)
         expect(vi.mocked(order)).not.toHaveBeenCalled()
       } finally {
         vi.useRealTimers()

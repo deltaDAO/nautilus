@@ -24,9 +24,20 @@ import {
   ZERO_ADDRESS
 } from '@oceanprotocol/lib'
 import { Decimal } from 'decimal.js'
-import type { Signer, TransactionReceipt, TransactionResponse } from 'ethers'
+import {
+  formatUnits,
+  type Signer,
+  type TransactionReceipt,
+  type TransactionResponse
+} from 'ethers'
 import type { ConsumeMarketFee, OrderPrice, PricingInfo } from './pricing.js'
-import { assertProviderFeeSignature } from './providerFee.js'
+import {
+  assertProviderFeeSignature,
+  chargedProviderFee
+} from './providerFee.js'
+
+/** Enough precision for any uint256 amount at any decimals, so no amount is rounded. */
+const UnitsDecimal = Decimal.clone({ precision: 160 })
 
 /** Templates that settle the purchase and the order in a single transaction. */
 const ATOMIC_ORDER_TEMPLATES = new Set([2, 4])
@@ -70,8 +81,9 @@ export interface OrderResult {
  * Much cheaper than a fresh order: no datatoken is bought, the previous order is simply
  * extended for another provider-fee period.
  *
- * Throws a `ProviderFeeSignatureError`, before sending anything, for a fee whose signature
- * the datatoken would reject.
+ * Approves the datatoken to pull the provider fee, unless a standing allowance covers it.
+ * Throws a `ProviderFeeSignatureError`, before sending anything, for a missing or
+ * incomplete fee, or one whose signature the datatoken would reject.
  */
 export async function reuseOrder(params: {
   signer: Signer
@@ -81,8 +93,22 @@ export async function reuseOrder(params: {
   providerFees: ProviderFees
 }): Promise<OrderResult> {
   // The datatoken checks the fee's signature on chain; a fee it would reject is refused
-  // here, before the transaction.
+  // here, before the approval and the transaction.
   assertProviderFeeSignature(params.providerFees)
+
+  // `_checkProviderFee` pulls the fee with `transferFrom`, and ocean.js's `reuseOrder`
+  // approves nothing, so without this any non-zero provider fee reverts.
+  const providerFee = chargedProviderFee(params.providerFees)
+
+  if (providerFee)
+    await approveFeeWei({
+      signer: params.signer,
+      config: params.config,
+      token: providerFee.token,
+      spender: params.datatokenAddress,
+      amount: providerFee.amount.toString(),
+      what: 'provider fee'
+    })
 
   const datatoken = new Datatoken(
     params.signer,
@@ -104,15 +130,23 @@ export async function reuseOrder(params: {
 /**
  * Buys one datatoken and starts an order for the given service.
  *
- * Throws a `ProviderFeeSignatureError`, before any approval or purchase, for a fee whose
- * signature the datatoken would reject.
+ * Approves everything the order pulls from the payer (the purchase, the publish-market fee
+ * and the provider fee) with one allowance per token and spender, skipping any a standing
+ * allowance already covers.
+ *
+ * Throws before any approval or purchase for a missing or incomplete provider fee, one
+ * whose signature the datatoken would reject (a `ProviderFeeSignatureError`), or pricing
+ * that cannot be ordered.
  */
 export async function order(request: OrderRequest): Promise<OrderResult> {
   const { signer, config, pricing, price, providerFees, serviceIndex } = request
 
-  // Before any approval or purchase: a fee the datatoken would reject makes the order
-  // revert after the buy.
+  // 1. Everything that can be checked without spending, first: a fee the datatoken would
+  //    reject, or pricing that cannot be ordered, otherwise surfaces after the buy.
   assertProviderFeeSignature(providerFees)
+
+  const route = routeOf(request)
+  const allowances = allowancesFor(request, route)
 
   const payer = request.payer || (await signer.getAddress())
 
@@ -132,11 +166,75 @@ export async function order(request: OrderRequest): Promise<OrderResult> {
     total: price.total
   })
 
+  // 2. One approval per (token, spender), covering every amount it pulls.
+  for (const allowance of allowances)
+    await approveAllowance({ signer, config, payer, pricing, price, allowance })
+
+  // 3. The purchase and the order.
+  return route.schema === 'fixed'
+    ? orderFixed({ ...request, route, datatoken, orderParams })
+    : orderFree({ ...request, route, payer, datatoken, orderParams })
+}
+
+/** How an order is placed, once its pricing has been checked. */
+type OrderRoute =
+  | {
+      schema: 'fixed'
+      /** Templates 2 and 4: buy and order in one call, the datatoken pulling the funds. */
+      atomic: boolean
+      exchangeAddress: string
+      exchangeId: string
+      baseTokenAddress: string
+      consumeMarket: ConsumeMarketFee
+    }
+  | { schema: 'free'; atomic: boolean; dispenserAddress: string }
+
+/** Checks that the pricing can be ordered at all, before anything is approved. */
+function routeOf(request: OrderRequest): OrderRoute {
+  const { config, pricing, price } = request
+  const atomic = ATOMIC_ORDER_TEMPLATES.has(pricing.templateId)
+
   switch (pricing.schema) {
-    case 'fixed':
-      return orderFixed({ ...request, payer, datatoken, orderParams })
+    case 'fixed': {
+      if (!pricing.exchangeId)
+        throw new Error(
+          `Datatoken ${pricing.datatokenAddress} advertises fixed-rate pricing but no exchange id could be read from chain.`
+        )
+
+      if (!pricing.baseTokenAddress)
+        throw new Error(
+          `Could not read the base token of fixed-rate exchange ${pricing.exchangeId}.`
+        )
+
+      if (!config.fixedRateExchangeAddress)
+        throw new Error(
+          'The chain config has no fixedRateExchangeAddress, so fixed-rate assets cannot be ordered.'
+        )
+
+      return {
+        schema: 'fixed',
+        atomic,
+        exchangeAddress: config.fixedRateExchangeAddress,
+        exchangeId: pricing.exchangeId,
+        baseTokenAddress: pricing.baseTokenAddress,
+        // The exchange pays its swap fee to whichever address the order names. That
+        // address must be the *consume* market's collector — this used to pass the
+        // publish market's, which quietly redirected the caller's own cut to the publisher
+        // (or, with no publish market, to the zero address).
+        consumeMarket: requireConsumeMarketCollector(price)
+      }
+    }
     case 'free':
-      return orderFree({ ...request, payer, datatoken, orderParams })
+      if (!config.dispenserAddress)
+        throw new Error(
+          'The chain config has no dispenserAddress, so free assets cannot be ordered.'
+        )
+
+      return {
+        schema: 'free',
+        atomic,
+        dispenserAddress: config.dispenserAddress
+      }
     default:
       throw new Error(
         `Datatoken ${pricing.datatokenAddress} has neither a fixed-rate exchange nor a dispenser, so it cannot be ordered.`
@@ -144,86 +242,164 @@ export async function order(request: OrderRequest): Promise<OrderResult> {
   }
 }
 
+/** One amount the order pulls from the payer. */
+interface Spend {
+  token: string
+  spender: string
+  /** In the token's own units. */
+  amount: bigint
+  /** Named in a failed approval's error. */
+  what: string
+  /** The purchase itself, quoted in human units as `price.total`. */
+  swap?: boolean
+}
+
+/** The allowance one (token, spender) pair needs: the sum of what it pulls. */
+interface Allowance {
+  token: string
+  spender: string
+  amount: bigint
+  spends: Spend[]
+}
+
+/**
+ * Every allowance the order needs, one per (token, spender).
+ *
+ * An ERC20 approval replaces the previous one rather than adding to it, so two amounts
+ * pulled by the same spender in the same token need one allowance for their sum. Approved
+ * one after the other, only the last would be left, and the order would revert on the
+ * shortfall (after the purchase, on template 1). The pairs:
+ *
+ *   - the purchase, in the base token: to the exchange on template 1 (it buys, then orders
+ *     separately), to the datatoken on templates 2 and 4 (it pulls the funds during the
+ *     combined call);
+ *   - the publish-market fee, in its own token, to the datatoken;
+ *   - the provider fee, in its own token, to the datatoken.
+ */
+function allowancesFor(request: OrderRequest, route: OrderRoute): Allowance[] {
+  const { config, pricing, price, providerFees } = request
+  const spends: Spend[] = []
+
+  if (route.schema === 'fixed')
+    spends.push({
+      token: route.baseTokenAddress,
+      spender: route.atomic
+        ? pricing.datatokenAddress
+        : (config.fixedRateExchangeAddress as string),
+      amount: toUnits(price.total, pricing.baseTokenDecimals ?? 18),
+      what: 'purchase',
+      swap: true
+    })
+
+  // Free is not free of fees: the datatoken charges its publish-market fee on a dispenser
+  // order exactly as on a paid one.
+  const publishMarketFee = publishMarketFeeOf(pricing)
+
+  if (publishMarketFee)
+    spends.push({
+      token: publishMarketFee.token,
+      spender: pricing.datatokenAddress,
+      amount: BigInt(publishMarketFee.amount),
+      what: 'publish-market fee'
+    })
+
+  // `_checkProviderFee` pulls the fee with `transferFrom` during the order, and ocean.js's
+  // order calls approve nothing.
+  const providerFee = chargedProviderFee(providerFees)
+
+  if (providerFee)
+    spends.push({
+      token: providerFee.token,
+      spender: pricing.datatokenAddress,
+      amount: providerFee.amount,
+      what: 'provider fee'
+    })
+
+  const byPair = new Map<string, Allowance>()
+
+  for (const spend of spends) {
+    if (spend.amount <= 0n) continue
+
+    const key = `${spend.token.toLowerCase()} ${spend.spender.toLowerCase()}`
+    const allowance = byPair.get(key)
+
+    if (allowance) {
+      allowance.amount += spend.amount
+      allowance.spends.push(spend)
+    } else
+      byPair.set(key, {
+        token: spend.token,
+        spender: spend.spender,
+        amount: spend.amount,
+        spends: [spend]
+      })
+  }
+
+  return [...byPair.values()]
+}
+
+/**
+ * Approves one allowance, unless a standing allowance already covers it.
+ *
+ * The pair that carries the purchase goes through ocean.js's `approve`, in human units, as
+ * the purchase always has; a pair that carries fees alone goes through `approveWei`.
+ */
+async function approveAllowance(params: {
+  signer: Signer
+  config: Config
+  payer: string
+  pricing: PricingInfo
+  price: OrderPrice
+  allowance: Allowance
+}): Promise<void> {
+  const { signer, config, payer, pricing, price, allowance } = params
+  const swap = allowance.spends.find((spend) => spend.swap)
+
+  if (swap)
+    return approveSpend({
+      signer,
+      config,
+      account: payer,
+      token: allowance.token,
+      spender: allowance.spender,
+      // The quote as it came, when nothing rides on it.
+      amount:
+        allowance.spends.length === 1
+          ? price.total
+          : fromUnits(allowance.amount, pricing.baseTokenDecimals ?? 18),
+      decimals: pricing.baseTokenDecimals
+    })
+
+  return approveFeeWei({
+    signer,
+    config,
+    token: allowance.token,
+    spender: allowance.spender,
+    amount: allowance.amount.toString(),
+    what: allowance.spends.map((spend) => spend.what).join(' and ')
+  })
+}
+
 async function orderFixed(
   request: OrderRequest & {
-    payer: string
+    route: Extract<OrderRoute, { schema: 'fixed' }>
     datatoken: Datatoken
     orderParams: OrderParams
   }
 ): Promise<OrderResult> {
-  const { signer, config, pricing, price, payer, datatoken, orderParams } =
-    request
+  const { signer, pricing, price, route, datatoken, orderParams } = request
 
-  if (!pricing.exchangeId)
-    throw new Error(
-      `Datatoken ${pricing.datatokenAddress} advertises fixed-rate pricing but no exchange id could be read from chain.`
-    )
-
-  if (!pricing.baseTokenAddress)
-    throw new Error(
-      `Could not read the base token of fixed-rate exchange ${pricing.exchangeId}.`
-    )
-
-  const atomic = ATOMIC_ORDER_TEMPLATES.has(pricing.templateId)
-
-  // The exchange pays its swap fee to whichever address the order names. That address must
-  // be the *consume* market's collector — this used to pass the publish market's, which
-  // quietly redirected the caller's own cut to the publisher (or, with no publish market,
-  // to the zero address).
-  const consumeMarket = requireConsumeMarketCollector(price)
-
-  // Template 1 approves the exchange (it buys, then orders separately). Templates 2 and 4
-  // approve the datatoken itself, which pulls the funds during the combined call.
-  const spender = atomic
-    ? pricing.datatokenAddress
-    : (config.fixedRateExchangeAddress as string)
-
-  const publishMarketFee = publishMarketFeeOf(pricing)
-
-  // An ERC20 approval replaces the previous one rather than adding to it, so where the
-  // publish-market fee is charged in the base token *and* pulled by the same contract that
-  // takes the swap — the atomic templates, where the datatoken is both — one allowance has
-  // to cover both amounts. Approving them separately would leave whichever came second.
-  const mergedWithSwap =
-    atomic &&
-    publishMarketFee &&
-    sameAddress(publishMarketFee.token, pricing.baseTokenAddress)
-
-  await approveSpend({
-    signer,
-    config,
-    account: payer,
-    token: pricing.baseTokenAddress,
-    spender,
-    amount: mergedWithSwap
-      ? addAmounts(price.total, price.publishMarketFee)
-      : price.total,
-    decimals: pricing.baseTokenDecimals
-  })
-
-  // Otherwise it is an allowance of its own: a different token, or the same token pulled by
-  // the datatoken while the swap is approved to the exchange (template 1).
-  if (publishMarketFee && !mergedWithSwap)
-    await approveFeeWei({
-      signer,
-      config,
-      token: publishMarketFee.token,
-      spender: pricing.datatokenAddress,
-      amount: publishMarketFee.amount,
-      what: 'publish-market fee'
-    })
-
-  if (atomic) {
+  if (route.atomic) {
     const freParams: FreOrderParams = {
-      exchangeContract: config.fixedRateExchangeAddress as string,
-      exchangeId: pricing.exchangeId,
+      exchangeContract: route.exchangeAddress,
+      exchangeId: route.exchangeId,
       maxBaseTokenAmount: price.total,
-      baseTokenAddress: pricing.baseTokenAddress,
+      baseTokenAddress: route.baseTokenAddress,
       // `??`, not `||`: a 0-decimal base token is unusual but legal, and `|| 18` turned it
       // straight back into 18 — scaling every amount in the order by 1e18.
       baseTokenDecimals: pricing.baseTokenDecimals ?? 18,
-      swapMarketFee: consumeMarket.fee,
-      marketFeeAddress: consumeMarket.address
+      swapMarketFee: route.consumeMarket.fee,
+      marketFeeAddress: route.consumeMarket.address
     }
 
     const receipt = await confirm(
@@ -238,19 +414,16 @@ async function orderFixed(
     return { transferTxId: receipt.hash, reused: false }
   }
 
-  const exchange = new FixedRateExchange(
-    config.fixedRateExchangeAddress as string,
-    signer
-  )
+  const exchange = new FixedRateExchange(route.exchangeAddress, signer)
 
   await confirm(
     'buyDatatokens',
     await exchange.buyDatatokens(
-      pricing.exchangeId,
+      route.exchangeId,
       '1',
       price.total,
-      consumeMarket.address,
-      consumeMarket.fee
+      route.consumeMarket.address,
+      route.consumeMarket.fee
     )
   )
 
@@ -259,46 +432,28 @@ async function orderFixed(
 
 async function orderFree(
   request: OrderRequest & {
+    route: Extract<OrderRoute, { schema: 'free' }>
     payer: string
     datatoken: Datatoken
     orderParams: OrderParams
   }
 ): Promise<OrderResult> {
-  const { signer, config, pricing, payer, datatoken, orderParams } = request
+  const { signer, pricing, route, payer, datatoken, orderParams } = request
 
-  if (!config.dispenserAddress)
-    throw new Error(
-      'The chain config has no dispenserAddress, so free assets cannot be ordered.'
-    )
-
-  // Free is not free of fees: the datatoken charges its publish-market fee on a dispenser
-  // order exactly as on a paid one, and there is no swap approval here to carry it.
-  const publishMarketFee = publishMarketFeeOf(pricing)
-
-  if (publishMarketFee)
-    await approveFeeWei({
-      signer,
-      config,
-      token: publishMarketFee.token,
-      spender: pricing.datatokenAddress,
-      amount: publishMarketFee.amount,
-      what: 'publish-market fee'
-    })
-
-  if (ATOMIC_ORDER_TEMPLATES.has(pricing.templateId)) {
+  if (route.atomic) {
     const receipt = await confirm(
       'buyFromDispenserAndOrder',
       await datatoken.buyFromDispenserAndOrder(
         pricing.datatokenAddress,
         orderParams,
-        config.dispenserAddress
+        route.dispenserAddress
       )
     )
 
     return { transferTxId: receipt.hash, reused: false }
   }
 
-  const dispenser = new Dispenser(config.dispenserAddress, signer)
+  const dispenser = new Dispenser(route.dispenserAddress, signer)
 
   await confirm(
     'dispense',
@@ -351,9 +506,10 @@ async function startOrder(
  * Approves a fee whose amount is already in the token's own units.
  *
  * `approveWei` rather than `approve`: the latter expects human units and would scale the
- * amount by the token's decimals a second time. Shared by the provider fee and the
+ * amount by the token's decimals a second time. Used for the provider fee and the
  * publish-market fee, which are pulled the same way — `transferFrom(payer)` inside the
- * order, by the datatoken — and so need the same allowance.
+ * order, by the datatoken. Where both are in one token, `order()` passes their sum: an
+ * approval replaces the previous one.
  */
 export async function approveFeeWei(params: {
   signer: Signer
@@ -426,13 +582,28 @@ function publishMarketFeeOf(
   }
 }
 
-function sameAddress(a?: string, b?: string): boolean {
-  return Boolean(a && b && a.toLowerCase() === b.toLowerCase())
+/** A human-unit amount in the token's own units, rounded up to the token's precision. */
+function toUnits(amount: string, decimals: number): bigint {
+  if (!amount) return 0n
+
+  let parsed: Decimal | undefined
+  try {
+    parsed = new UnitsDecimal(amount)
+  } catch {
+    parsed = undefined
+  }
+
+  if (!parsed?.isFinite())
+    throw new Error(`The order's total '${amount}' is not a number.`)
+
+  return BigInt(
+    parsed.mul(new UnitsDecimal(10).pow(decimals)).ceil().toFixed(0)
+  )
 }
 
-/** Adds two human-unit decimal strings without going through `Number`. */
-function addAmounts(a: string, b: string): string {
-  return new Decimal(a || 0).add(new Decimal(b || 0)).toString()
+/** The token's own units as a human-unit decimal string, exactly. */
+function fromUnits(amount: bigint, decimals: number): string {
+  return formatUnits(amount, decimals).replace(/\.0$/, '')
 }
 
 /** Approves a spend, skipping the call when the amount is zero. */

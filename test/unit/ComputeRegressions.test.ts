@@ -6,11 +6,12 @@
  * which service an input resolves to, and which order id ends up on which input.
  */
 
-import type {
-  ComputeAlgorithm,
-  ComputeAsset,
-  ComputeEnvironment,
-  Config
+import {
+  type ComputeAlgorithm,
+  type ComputeAsset,
+  type ComputeEnvironment,
+  type Config,
+  EscrowContract
 } from '@oceanprotocol/lib'
 import type { Signer } from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -42,6 +43,39 @@ vi.mock('../../src/access/index.js', () => ({
     })
   )
 }))
+
+// Escrow runs against the chain too; stub the contract so a test can see whether it was
+// funded or authorised at all.
+const escrow = {
+  verifyFundsForEscrowPayment: vi.fn(async () => ({ isValid: true })),
+  deposit: vi.fn(),
+  authorize: vi.fn()
+}
+
+vi.mock('@oceanprotocol/lib', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  EscrowContract: vi.fn(function (this: void) {
+    return escrow
+  }),
+  unitsToAmount: vi.fn(async () => '1')
+}))
+
+/** An escrow quote, as `initializeCompute` returns it for a paid job. */
+const PAYMENT = {
+  escrowAddress: '0x00000000000000000000000000000000000e5c40',
+  payee: '0x00000000000000000000000000000000000000c0',
+  chainId: CHAIN_ID,
+  minLockSeconds: 3600,
+  token: '0xfee0000000000000000000000000000000000000',
+  amount: '1000000000000000000'
+}
+
+function expectNoEscrow() {
+  expect(vi.mocked(EscrowContract)).not.toHaveBeenCalled()
+  expect(escrow.verifyFundsForEscrowPayment).not.toHaveBeenCalled()
+  expect(escrow.deposit).not.toHaveBeenCalled()
+  expect(escrow.authorize).not.toHaveBeenCalled()
+}
 
 const ALGO_DID = 'did:ope:algorithm'
 const ALGO_SERVICE_ID = 'algorithm-access-service'
@@ -83,9 +117,27 @@ interface ComputeStartCall {
   algorithm: ComputeAlgorithm
 }
 
+/**
+ * An `initializeCompute` answer with a good provider fee for every service of every asset,
+ * and for the algorithm: each input that is ordered needs one.
+ */
+function goodFeesFor(assets: Record<string, AssetV5>) {
+  const providerFee = signedProviderFee()
+
+  return {
+    datasets: Object.values(assets).flatMap((asset) =>
+      asset.credentialSubject.services.map((service) => ({
+        datatoken: service.datatokenAddress,
+        providerFee
+      }))
+    ),
+    algorithm: { providerFee }
+  }
+}
+
 function createComputeNodeMock(
   assets: Record<string, AssetV5>,
-  initializeAnswers: unknown[] = [{ datasets: [], algorithm: {} }]
+  initializeAnswers: unknown[] = [goodFeesFor(assets)]
 ) {
   const calls: { computeStart: ComputeStartCall[]; initializeCompute: number } =
     { computeStart: [], initializeCompute: 0 }
@@ -103,8 +155,8 @@ function createComputeNodeMock(
       return [environmentFixture()]
     },
 
-    // No `payment` in the quote, so `ensureEscrow` skips funding — escrow is not what
-    // these tests are about.
+    // Without a `payment` in the quote `ensureEscrow` skips funding; the fee tests below
+    // add one, to see that escrow is not touched.
     async initializeCompute() {
       calls.initializeCompute++
       return initializeAnswers.length > 1
@@ -263,52 +315,106 @@ describe('compute() provider-fee signature pre-check', () => {
     [ASSET_DID]: getComputeAssetFixture(),
     [ALGO_DID]: accessOnlyAlgorithm()
   })
+  const datasetDatatoken = () =>
+    getComputeAssetFixture().credentialSubject.services[0].datatokenAddress
 
-  it('refuses before escrow and orders when the node returns the same fee again', async () => {
-    // A compute fee's validUntil is the service timeout, so asking again returns the same
-    // hash: the error is thrown at once, and nothing may be spent.
+  /** Runs `compute()` to completion under fake timers, returning what it threw. */
+  async function run(client: OceanNodeClient) {
     vi.useFakeTimers()
     try {
-      const { client, calls } = createComputeNodeMock(assets(), [
-        { datasets: [], algorithm: { providerFee: poisonedProviderFee() } }
-      ])
-
       const running = compute(config, computeContext(client)).catch(
         (caught) => caught
       )
       await vi.advanceTimersByTimeAsync(5_000)
-
-      const thrown = await running
-      expect(thrown).to.be.instanceOf(ProviderFeeSignatureError)
-      expect(thrown.message).to.match(/same fee again/)
-      expect(calls.initializeCompute).to.equal(2)
-      expect(vi.mocked(settleOrder)).not.toHaveBeenCalled()
-      expect(calls.computeStart).to.have.length(0)
+      return await running
     } finally {
       vi.useRealTimers()
     }
+  }
+
+  it('refuses a bad fee at once, before escrow and orders, without asking again', async () => {
+    // A compute fee's validUntil does not change between requests, so asking again would
+    // return the same fee: the node is asked once, and nothing may be spent.
+    const { client, calls } = createComputeNodeMock(assets(), [
+      {
+        datasets: [
+          { datatoken: datasetDatatoken(), providerFee: signedProviderFee() }
+        ],
+        algorithm: { providerFee: poisonedProviderFee() },
+        payment: PAYMENT
+      }
+    ])
+
+    const thrown = await run(client)
+
+    expect(thrown).to.be.instanceOf(ProviderFeeSignatureError)
+    expect(thrown.message).to.match(/signature check.*not asked again/s)
+    expect(thrown.attempts).to.equal(1)
+    expect(calls.initializeCompute).to.equal(1)
+    expectNoEscrow()
+    expect(vi.mocked(settleOrder)).not.toHaveBeenCalled()
+    expect(calls.computeStart).to.have.length(0)
   })
 
-  it('goes on with a fresh answer whose fees are all good', async () => {
-    vi.useFakeTimers()
-    try {
-      const good = signedProviderFee()
-      const { client, calls } = createComputeNodeMock(assets(), [
-        {
-          datasets: [{ providerFee: poisonedProviderFee() }],
-          algorithm: { providerFee: good }
-        },
-        { datasets: [{ providerFee: good }], algorithm: { providerFee: good } }
-      ])
+  it('refuses an input the node sent no fee for, before escrow', async () => {
+    // The algorithm will be ordered, and an order needs a fee: without one the escrow
+    // deposit would be made and the order would then fail.
+    const { client, calls } = createComputeNodeMock(assets(), [
+      {
+        datasets: [
+          { datatoken: datasetDatatoken(), providerFee: signedProviderFee() }
+        ],
+        algorithm: {},
+        payment: PAYMENT
+      }
+    ])
 
-      const running = compute(config, computeContext(client))
-      await vi.advanceTimersByTimeAsync(5_000)
-      await running
+    const thrown = await run(client)
 
-      expect(calls.initializeCompute).to.equal(2)
-      expect(calls.computeStart).to.have.length(1)
-    } finally {
-      vi.useRealTimers()
-    }
+    expect(thrown).to.be.instanceOf(ProviderFeeSignatureError)
+    expect(thrown.message).to.match(/there is no provider fee/)
+    expect(calls.initializeCompute).to.equal(1)
+    expectNoEscrow()
+    expect(vi.mocked(settleOrder)).not.toHaveBeenCalled()
+  })
+
+  it('refuses a dataset the answer has no result for, before escrow', async () => {
+    const { client } = createComputeNodeMock(assets(), [
+      {
+        datasets: [],
+        algorithm: { providerFee: signedProviderFee() },
+        payment: PAYMENT
+      }
+    ])
+
+    expect(await run(client)).to.be.instanceOf(ProviderFeeSignatureError)
+    expectNoEscrow()
+  })
+
+  it('needs no fee for an order the node reports reusable as it stands', async () => {
+    const { client, calls } = createComputeNodeMock(assets(), [
+      {
+        datasets: [
+          { datatoken: datasetDatatoken(), providerFee: signedProviderFee() }
+        ],
+        algorithm: { validOrder: '0xexisting' }
+      }
+    ])
+
+    expect(await run(client)).not.to.be.instanceOf(Error)
+    expect(calls.computeStart).to.have.length(1)
+  })
+
+  it('funds escrow and orders when every fee is good', async () => {
+    // The positive control for the refusals above: the stubbed escrow does see a quote.
+    const { client, calls } = createComputeNodeMock(assets(), [
+      { ...goodFeesFor(assets()), payment: PAYMENT }
+    ])
+
+    expect(await run(client)).not.to.be.instanceOf(Error)
+    expect(calls.initializeCompute).to.equal(1)
+    expect(escrow.verifyFundsForEscrowPayment).toHaveBeenCalledOnce()
+    expect(vi.mocked(settleOrder)).toHaveBeenCalledTimes(2)
+    expect(calls.computeStart).to.have.length(1)
   })
 })

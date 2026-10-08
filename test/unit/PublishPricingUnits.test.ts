@@ -109,7 +109,8 @@ describe('order approveSpend', () => {
       pricing,
       price,
       serviceIndex: 0,
-      providerFees: signedProviderFee(),
+      // No provider fee, so `approve` is the only approval.
+      providerFees: signedProviderFee({ providerFeeAmount: '0' }),
       consumer: '0x5555555555555555555555555555555555555555',
       payer: '0x6666666666666666666666666666666666666666'
     })

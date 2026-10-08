@@ -14,13 +14,19 @@ import {
   recoverAddress,
   toBeHex,
   toUtf8Bytes,
+  ZeroAddress,
+  ZeroHash,
   zeroPadValue
 } from 'ethers'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   assertProviderFeeSignature,
+  chargedProviderFee,
   initializeWithValidProviderFee,
+  isFeeDue,
   isProviderFeeSignatureValid,
+  missingProviderFeeFields,
+  PROVIDER_FEE_ATTEMPTS,
   PROVIDER_FEE_RETRY_DELAY_MS,
   ProviderFeeSignatureError,
   providerFeeMessageHash,
@@ -166,8 +172,157 @@ describe('assertProviderFeeSignature', () => {
     )
   })
 
-  it('passes when there is no fee to send', () => {
-    expect(() => assertProviderFeeSignature(undefined)).not.toThrow()
+  it('refuses no fee at all: every path that calls it sends one', () => {
+    const thrown = (() => {
+      try {
+        assertProviderFeeSignature(undefined)
+      } catch (caught) {
+        return caught as ProviderFeeSignatureError
+      }
+    })()
+
+    expect(thrown).to.be.instanceOf(ProviderFeeSignatureError)
+    expect(thrown?.message).to.match(/there is no provider fee/)
+    expect(thrown?.message).to.match(/Nothing was spent/)
+    expect(thrown?.providerFee).to.deep.equal({})
+  })
+
+  it('names the fields a partial fee is missing', () => {
+    const {
+      providerFeeAmount: _amount,
+      validUntil: _until,
+      ...partial
+    } = signedProviderFee()
+
+    expect(() => assertProviderFeeSignature(partial)).toThrow(
+      /missing providerFeeAmount, validUntil/
+    )
+  })
+
+  it('says what the refusal saves: the approval, purchase and escrow transactions', () => {
+    // ocean.js estimates gas before sending the order, so the order itself would not be
+    // mined; what the check saves is what is sent ahead of it.
+    expect(() => assertProviderFeeSignature(poisonedProviderFee())).toThrow(
+      /gas estimate.*approval, purchase and escrow transactions/s
+    )
+  })
+})
+
+describe('incomplete fees', () => {
+  // A fee signed with amount 0 and validUntil 0 hashes the same as one without those
+  // fields, if missing fields are read as 0. The contract has no such default: the fee is
+  // a struct argument, and an incomplete one cannot be encoded into the order call.
+  const zeroes = signedProviderFee({ providerFeeAmount: '0', validUntil: 0 })
+
+  it('accepts the complete fee', () => {
+    expect(isProviderFeeSignatureValid(zeroes)).to.equal(true)
+  })
+
+  it.each(missingProviderFeeFields(undefined))(
+    'rejects it without %s, rather than hashing a default',
+    (field) => {
+      const partial: Record<string, unknown> = { ...zeroes }
+      delete partial[field]
+
+      expect(isProviderFeeSignatureValid(partial)).to.equal(false)
+      expect(recoverProviderFeeSigner(partial)).to.equal(undefined)
+      expect(missingProviderFeeFields(partial)).to.deep.equal([field])
+    }
+  )
+
+  it('treats null and an empty string as missing', () => {
+    expect(
+      isProviderFeeSignatureValid({ ...zeroes, providerFeeAmount: '' })
+    ).to.equal(false)
+    expect(
+      isProviderFeeSignatureValid({
+        ...zeroes,
+        validUntil: null as unknown as string
+      })
+    ).to.equal(false)
+  })
+
+  it('does not hash a fee with a field missing', () => {
+    const { validUntil: _until, ...partial } = zeroes
+
+    expect(() => providerFeeMessageHash(partial)).toThrow(/no validUntil/)
+  })
+})
+
+describe('a fee with providerFeeAddress zero', () => {
+  // `_checkProviderFee` requires `ecrecover(...) == providerFeeAddress`, and `ecrecover`
+  // returns the zero address for a signature it cannot use, so the contract accepts such
+  // a fee (and charges nothing for it). The check mirrors that.
+  const unsigned = {
+    ...signedProviderFee({ providerFeeAmount: '0' }),
+    providerFeeAddress: ZeroAddress,
+    v: '27',
+    r: ZeroHash,
+    s: ZeroHash
+  }
+
+  it('is accepted when ecrecover gives the zero address too, as on chain', () => {
+    expect(recoverProviderFeeSigner(unsigned)).to.equal(ZeroAddress)
+    expect(isProviderFeeSignatureValid(unsigned)).to.equal(true)
+    expect(() => assertProviderFeeSignature(unsigned)).not.toThrow()
+  })
+
+  it('is refused when the signature recovers to a real address', () => {
+    const signed = { ...signedProviderFee(), providerFeeAddress: ZeroAddress }
+
+    expect(isProviderFeeSignatureValid(signed)).to.equal(false)
+  })
+
+  it('gives the zero address for every signature the precompile cannot use', () => {
+    const fee = signedProviderFee()
+
+    expect(recoverProviderFeeSigner({ ...fee, v: 26 })).to.equal(ZeroAddress)
+    expect(recoverProviderFeeSigner({ ...fee, r: ZeroHash })).to.equal(
+      ZeroAddress
+    )
+    expect(
+      recoverProviderFeeSigner({ ...fee, s: toBeHex(SECP256K1_N, 32) })
+    ).to.equal(ZeroAddress)
+  })
+
+  it('charges nothing, as the contract skips the transfer', () => {
+    expect(
+      chargedProviderFee({ ...unsigned, providerFeeAmount: '30' })
+    ).to.equal(undefined)
+  })
+})
+
+describe('isFeeDue', () => {
+  it('compares the amount as a number', () => {
+    for (const zero of ['0', '00', '0x0', 0, 0n])
+      expect(isFeeDue({ providerFeeAmount: zero }), String(zero)).to.equal(
+        false
+      )
+
+    expect(isFeeDue({ providerFeeAmount: '30' })).to.equal(true)
+    expect(isFeeDue({ providerFeeAmount: '0x1e' })).to.equal(true)
+  })
+
+  it('is false without an amount, and true for one that does not parse', () => {
+    expect(isFeeDue(undefined)).to.equal(false)
+    expect(isFeeDue({})).to.equal(false)
+    // Not a reason to reuse the order as it stands: the fee check then refuses it.
+    expect(isFeeDue({ providerFeeAmount: 'thirty' })).to.equal(true)
+  })
+})
+
+describe('chargedProviderFee', () => {
+  it('is what the datatoken pulls: a non-zero amount in a real token', () => {
+    expect(chargedProviderFee(signedProviderFee())).to.deep.equal({
+      token: '0xfEE0000000000000000000000000000000000000',
+      amount: 30n
+    })
+    expect(
+      chargedProviderFee(signedProviderFee({ providerFeeAmount: '0' }))
+    ).to.equal(undefined)
+    expect(
+      chargedProviderFee(signedProviderFee({ providerFeeToken: ZeroAddress }))
+    ).to.equal(undefined)
   })
 })
 
@@ -179,6 +334,18 @@ describe('providerFeeToSend', () => {
         providerFee: { providerFeeAmount: '0' }
       })
     ).to.equal(undefined)
+  })
+
+  it('is an empty fee, which the check refuses, when an order is due and the node sent none', () => {
+    expect(providerFeeToSend({})).to.deep.equal({})
+    expect(providerFeeToSend({ validOrder: '' })).to.deep.equal({})
+    expect(isProviderFeeSignatureValid(providerFeeToSend({}) ?? {})).to.equal(
+      false
+    )
+  })
+
+  it('is nothing for a reusable order the node sent no fee for', () => {
+    expect(providerFeeToSend({ validOrder: '0xorder' })).to.equal(undefined)
   })
 
   it('is the fee for a fresh order, or a reused one with a fee due', () => {
@@ -263,5 +430,72 @@ describe('initializeWithValidProviderFee', () => {
     expect(
       await initializeWithValidProviderFee(initialize, feesOf)
     ).to.deep.equal({ providerFee: undefined })
+  })
+
+  it('refuses an incomplete fee at once, without asking again', async () => {
+    const { validUntil: _until, ...partial } = signedProviderFee()
+    const initialize = vi.fn(async () => ({ providerFee: partial }))
+    const sleep = vi.fn(async () => undefined)
+
+    const thrown = await initializeWithValidProviderFee(initialize, feesOf, {
+      sleep
+    }).catch((caught) => caught)
+
+    expect(thrown).to.be.instanceOf(ProviderFeeSignatureError)
+    expect(thrown.message).to.match(/missing validUntil.*not asked again/s)
+    expect(initialize).toHaveBeenCalledTimes(1)
+    expect(sleep).not.toHaveBeenCalled()
+  })
+
+  it('asks only once with attempts: 1, for a fee that never changes', async () => {
+    const initialize = vi.fn(async () => ({
+      providerFee: poisonedProviderFee()
+    }))
+    const sleep = vi.fn(async () => undefined)
+
+    const thrown = await initializeWithValidProviderFee(initialize, feesOf, {
+      attempts: 1,
+      sleep
+    }).catch((caught) => caught)
+
+    expect(thrown).to.be.instanceOf(ProviderFeeSignatureError)
+    expect(thrown.message).to.match(/not asked again/)
+    expect(thrown.attempts).to.equal(1)
+    expect(initialize).toHaveBeenCalledTimes(1)
+    expect(sleep).not.toHaveBeenCalled()
+  })
+
+  describe('by default', () => {
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('calls initialize 3 times in total, 1.1 s apart, then gives up', async () => {
+      // What the access docs promise: 3 calls (2 retries), 1.1 s between them.
+      vi.useFakeTimers()
+
+      let start = 1_900_000_000
+      const calledAt: number[] = []
+      const initialize = vi.fn(async () => {
+        calledAt.push(Date.now())
+        const validUntil = poisonedValidUntil({}, start)
+        start = validUntil + 1
+        return { providerFee: signedProviderFee({ validUntil }, 'node') }
+      })
+
+      const running = initializeWithValidProviderFee(initialize, feesOf).catch(
+        (caught) => caught
+      )
+      await vi.advanceTimersByTimeAsync(10_000)
+      const thrown = await running
+
+      expect(PROVIDER_FEE_ATTEMPTS).to.equal(3)
+      expect(PROVIDER_FEE_RETRY_DELAY_MS).to.equal(1_100)
+      expect(thrown).to.be.instanceOf(ProviderFeeSignatureError)
+      expect(thrown.attempts).to.equal(3)
+      expect(initialize).toHaveBeenCalledTimes(3)
+      expect(calledAt[1] - calledAt[0]).to.equal(1_100)
+      expect(calledAt[2] - calledAt[1]).to.equal(1_100)
+    })
   })
 })

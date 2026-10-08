@@ -351,7 +351,8 @@ describe('order fee routing', () => {
       pricing,
       price: orderPrice,
       serviceIndex: 0,
-      providerFees: signedProviderFee(),
+      // No provider fee to approve: OrderAllowances.test.ts covers it.
+      providerFees: signedProviderFee({ providerFeeAmount: '0' }),
       consumer: CONSUMER
     })
   }
@@ -496,7 +497,7 @@ describe('publish-market fee approval', () => {
   const feeInBaseToken = {
     publishMarketFeeAddress: PUBLISH_MARKET,
     publishMarketFeeToken: BASE_TOKEN,
-    publishMarketFeeAmount: '1000000000000000000'
+    publishMarketFeeAmount: '1000000000000000001'
   }
 
   const feeInOwnToken = {
@@ -520,7 +521,8 @@ describe('publish-market fee approval', () => {
       pricing,
       price,
       serviceIndex: 0,
-      providerFees: signedProviderFee(),
+      // No provider fee to approve: OrderAllowances.test.ts covers it.
+      providerFees: signedProviderFee({ providerFeeAmount: '0' }),
       consumer: CONSUMER
     })
   }
@@ -559,7 +561,7 @@ describe('publish-market fee approval', () => {
 
     expect(token).to.equal(BASE_TOKEN)
     expect(spender).to.equal(DATATOKEN)
-    // Summed with Decimal: a double rounds this to 11.123456789012346.
+    // Summed exactly, in base units: a double rounds this to 11.123456789012346.
     expect(amount).to.equal('11.123456789012345679')
     expect(vi.mocked(approveWei)).not.toHaveBeenCalled()
   })
@@ -584,7 +586,7 @@ describe('publish-market fee approval', () => {
     // The datatoken, not the exchange: the datatoken is what pulls the fee.
     expect(feeSpender).to.equal(DATATOKEN)
     // In base units, as the contract reported it — `approveWei`, not `approve`.
-    expect(feeAmount).to.equal('1000000000000000000')
+    expect(feeAmount).to.equal('1000000000000000001')
   })
 
   it('approves the fee to the datatoken while the swap is approved to the exchange', async () => {
@@ -632,7 +634,7 @@ describe('publish-market fee approval', () => {
   })
 
   it('skips the approval when a standing allowance already covers the fee', async () => {
-    vi.mocked(allowanceWei).mockResolvedValue('1000000000000000000')
+    vi.mocked(allowanceWei).mockResolvedValue('1000000000000000001')
     mockAtomicDatatoken()
 
     await placeOrder(atomic(feeInOwnToken))
