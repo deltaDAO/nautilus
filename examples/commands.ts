@@ -408,7 +408,7 @@ export const COMMANDS: Record<string, Command> = {
   },
   'compute:status': {
     role: 'consumer',
-    summary: 'Job status (70 means finished)',
+    summary: 'Job status (finished once dateFinished is set)',
     args: ['jobId'],
     run: (ctx, jobId) => getComputeStatus(ctx.consumer, jobId)
   },
