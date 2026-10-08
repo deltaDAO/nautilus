@@ -53,7 +53,10 @@ function constructs<T>(mocked: { mockImplementation: unknown }, instance: T) {
   })
 }
 
-const signer = {} as Signer
+// The account that pays for an order: `order()` refuses a `payer` other than the signer.
+const signer = {
+  getAddress: async () => '0x6666666666666666666666666666666666666666'
+} as unknown as Signer
 
 const chainConfig = {
   chainId: 32456,

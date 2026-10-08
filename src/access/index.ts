@@ -24,7 +24,7 @@ import {
   shouldResolveCredentials
 } from '../identity/policy.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
-import { order, reuseOrder } from '../utils/order.js'
+import { order, payingAccount, reuseOrder } from '../utils/order.js'
 import {
   getOrderPrice,
   getPricingInfo,
@@ -107,7 +107,9 @@ export async function access(
   //    reused. The datatoken verifies each fee's signature, so it is checked locally first
   //    and a fee that would not pass is requested again: up to 3 calls in total, 1.1 s
   //    apart. A service with `timeout: 0` signs `validUntil = 0`, so its fee is the same on
-  //    every request and is not requested again.
+  //    every request and is not requested again. A service without `timeout` is left on
+  //    the default: DDO schemas require one, and without one the node's `validUntil` is
+  //    `now + undefined` (NaN), so `initialize` answers with an error rather than a fee.
   const initialized = await initializeWithValidProviderFee(
     () =>
       serviceNode.initialize(asset.id, service.id, {
@@ -167,7 +169,8 @@ export async function access(
  *
  * Every path but the first sends the node's provider fee to the datatoken, so it throws a
  * `ProviderFeeSignatureError` before any chain read or transaction when that fee is
- * missing, incomplete, or carries a signature the datatoken would reject.
+ * missing, incomplete, or carries a signature the datatoken would reject. Those paths also
+ * throw for a `payer` other than the signer (see `OrderRequest.payer`).
  */
 export async function settleOrder(params: {
   signer: Signer
@@ -195,6 +198,9 @@ export async function settleOrder(params: {
 
   // Checked above: every field is present.
   const providerFees = providerFee as unknown as ProviderFees
+
+  // The signer pays on both paths; `order()` checks again for its direct callers.
+  await payingAccount(signer, params.payer)
 
   // An order in force but a new fee period: extend it rather than buying again.
   if (hasReusableOrder(initialized))

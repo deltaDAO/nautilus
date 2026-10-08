@@ -55,18 +55,24 @@ const FEE_TOKEN = '0xfee0000000000000000000000000000000000000'
 const signer = { getAddress: async () => CONSUMER } as unknown as Signer
 const chainConfig = { chainId: 32456 } as unknown as Config
 
-function settle(initialized: {
+function settleParams(initialized: {
   validOrder?: string
   providerFee?: unknown
-}): ReturnType<typeof settleOrder> {
-  return settleOrder({
+}): Parameters<typeof settleOrder>[0] {
+  return {
     signer,
     chainConfig,
     datatokenAddress: DATATOKEN_ADDRESS,
     serviceIndex: 0,
     initialized,
     consumer: CONSUMER
-  })
+  }
+}
+
+function settle(
+  initialized: Parameters<typeof settleParams>[0]
+): ReturnType<typeof settleOrder> {
+  return settleOrder(settleParams(initialized))
 }
 
 beforeEach(() => {
@@ -130,6 +136,35 @@ describe('settleOrder provider fee', () => {
 
     expect(result).to.deep.equal({ transferTxId: '0xexisting', reused: true })
     expect(vi.mocked(order)).not.toHaveBeenCalled()
+  })
+
+  it('refuses a payer other than the signer before extending or ordering', async () => {
+    // The datatoken takes the fee from msg.sender: another payer would not pay it.
+    const OTHER_PAYER = '0x6666666666666666666666666666666666666666'
+    const providerFee = signedProviderFee({
+      providerFeeAmount: '30',
+      providerFeeToken: FEE_TOKEN
+    })
+
+    for (const initialized of [
+      { validOrder: '0xexisting', providerFee },
+      { providerFee }
+    ])
+      await expectThrowsAsync(
+        () => settleOrder({ ...settleParams(initialized), payer: OTHER_PAYER }),
+        /The payer 0x6{40} is not the signer/
+      )
+
+    expect(vi.mocked(reuseOrder)).not.toHaveBeenCalled()
+    expect(vi.mocked(getPricingInfo)).not.toHaveBeenCalled()
+    expect(vi.mocked(order)).not.toHaveBeenCalled()
+
+    // The signer's own address, in any case, is the default and passes.
+    await settleOrder({
+      ...settleParams({ validOrder: '0xexisting', providerFee }),
+      payer: CONSUMER.toUpperCase().replace('0X', '0x')
+    })
+    expect(vi.mocked(reuseOrder)).toHaveBeenCalledOnce()
   })
 
   it('reads a zero amount as a number, so 0x0 is not a fee due', async () => {

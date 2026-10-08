@@ -21,7 +21,7 @@ import {
   FixedRateExchange,
   ZERO_ADDRESS
 } from '@oceanprotocol/lib'
-import type { Signer } from 'ethers'
+import { getAddress, type Signer } from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { order, reuseOrder } from '../../src/utils/order.js'
 import type { OrderPrice, PricingInfo } from '../../src/utils/pricing.js'
@@ -510,6 +510,74 @@ describe('order() checks everything before the first approval', () => {
       /neither a fixed-rate exchange nor a dispenser/
     )
     expect(approvals()).to.deep.equal([])
+  })
+})
+
+describe('order() payer', () => {
+  // The datatoken and the exchange pull every amount from msg.sender, and the signer sends
+  // the approvals. An allowance held by another `payer` used to skip the merged purchase
+  // approval on templates 2 and 4, and buyFromFreAndOrder then reverted on the shortfall.
+  const OTHER_PAYER = '0x6666666666666666666666666666666666666666'
+
+  it('refuses a payer other than the signer before any allowance read or approval', async () => {
+    for (const pricing of [
+      fixed(1, publishFeeIn(FEE_TOKEN)),
+      fixed(2, publishFeeIn(BASE_TOKEN)),
+      fixed(4, NO_PUBLISH_FEE),
+      {
+        schema: 'free',
+        templateId: 1,
+        datatokenAddress: DATATOKEN,
+        publishMarketFee: NO_PUBLISH_FEE
+      } as PricingInfo
+    ]) {
+      mockChain()
+
+      await expectThrowsAsync(
+        () =>
+          order({
+            signer,
+            config: chainConfig,
+            pricing,
+            price,
+            serviceIndex: 0,
+            providerFees: providerFeeIn(BASE_TOKEN),
+            consumer: CONSUMER,
+            payer: OTHER_PAYER
+          }),
+        new RegExp(
+          `The payer ${OTHER_PAYER} is not the signer ${CONSUMER}.*signed by the account that pays`
+        )
+      )
+      expect(approvals()).to.deep.equal([])
+      expect(vi.mocked(allowanceWei)).not.toHaveBeenCalled()
+      expect(vi.mocked(Datatoken)).not.toHaveBeenCalled()
+    }
+  })
+
+  it("checks the signer's own allowance for the merged purchase, whatever the payer's spelling", async () => {
+    const checksummed = getAddress('0xabcdef00000000000000000000000000000000ab')
+    const mixedCaseSigner = {
+      getAddress: async () => checksummed
+    } as unknown as Signer
+    const { datatoken } = mockChain()
+
+    await order({
+      signer: mixedCaseSigner,
+      config: chainConfig,
+      pricing: fixed(2, publishFeeIn(BASE_TOKEN)),
+      price,
+      serviceIndex: 0,
+      providerFees: providerFeeIn(BASE_TOKEN),
+      consumer: CONSUMER,
+      payer: checksummed.toLowerCase()
+    })
+
+    // ocean.js's approve compares the allowance of this account before it approves.
+    expect(vi.mocked(approve).mock.calls.map((call) => call[2])).to.deep.equal([
+      checksummed
+    ])
+    expect(datatoken.buyFromFreAndOrder).toHaveBeenCalledOnce()
   })
 })
 
