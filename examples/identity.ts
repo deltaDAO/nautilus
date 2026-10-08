@@ -1,5 +1,6 @@
 import {
   AssetBuilder,
+  type ComputeEnvironment,
   CredentialListTypes,
   type CredentialProvider,
   type DdoSigner,
@@ -22,6 +23,7 @@ import type { Signer } from 'ethers'
 import { EXAMPLE_DATASET_URL } from './assets'
 import type { NetworkConfig } from './config'
 import { resolveNetwork } from './config'
+import { advertisedJobPrice, ceilingFromEnv, paymentLimits } from './limits'
 import {
   describeRemoteStore,
   getRemoteStore,
@@ -292,7 +294,9 @@ export async function setupWithIdentity(
     config: networkConfig,
     remoteStore,
     credentials,
-    ddoSigner
+    ddoSigner,
+    // Consumes too (ssi:consume, ssi:compute): the same ceilings as setup().
+    ...paymentLimits()
   })
 
   return { nautilus, signer, owner, networkConfig, pricingConfig }
@@ -636,12 +640,32 @@ export async function computeOnGatedDataset(
     : await nautilus.compute({
         dataset: { did: datasetDid },
         algorithm: { did: algorithmDid },
-        computeEnv: environment.id
+        computeEnv: environment.id,
+        // nautilus's defaults, spelled out so the escrow ceiling prices the same job:
+        // each resource at its minimum, for the environment's longest duration.
+        resources: defaultResources(environment),
+        maxJobDuration: environment.maxJobDuration || 3600,
+        maxEscrowPayment:
+          ceilingFromEnv('MAX_ESCROW_PAYMENT') ??
+          (await advertisedJobPrice(
+            nautilus,
+            environment,
+            defaultResources(environment),
+            environment.maxJobDuration || 3600
+          ))
       })
 
   console.log(`Job started: ${result.jobs[0].jobId}`)
 
   return result.jobs[0]
+}
+
+/** Every resource at its minimum (or 1), as `compute()` requests them by default. */
+function defaultResources(environment: ComputeEnvironment) {
+  return (environment.resources ?? []).map((resource) => ({
+    id: resource.id,
+    amount: resource.min ?? 1
+  }))
 }
 
 /**
@@ -665,7 +689,8 @@ export async function consumeWithExistingSession(
 
   const nautilus = await Nautilus.create(signer, {
     config: networkConfig,
-    credentials: new StaticCredentialProvider(sessionId)
+    credentials: new StaticCredentialProvider(sessionId),
+    ...paymentLimits()
   })
 
   const result = await nautilus.access({ assetDid })

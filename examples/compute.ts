@@ -1,4 +1,9 @@
-import type { ComputeEnvironment, Nautilus } from '@deltadao/nautilus'
+import type {
+  ComputeEnvironment,
+  ComputeResources,
+  Nautilus
+} from '@deltadao/nautilus'
+import { advertisedJobPrice, ceilingFromEnv } from './limits'
 
 /**
  * Compute-to-Data examples.
@@ -7,8 +12,11 @@ import type { ComputeEnvironment, Nautilus } from '@deltadao/nautilus'
  *
  *   - **Resources are requested explicitly** — `[{ id: 'cpu', amount: 2 }]` — instead of
  *     fixed CPU/GPU descriptors. Environments advertise what they have and what it costs.
- *   - **Payment runs through an escrow contract.** The node quotes an amount and nautilus
- *     locks it before the job starts.
+ *   - **Payment runs through an escrow contract.** The node quotes an amount, and nautilus
+ *     deposits and authorises it before the job starts — only in the chain's
+ *     `EnterpriseEscrow` contract from Ocean's address data (its `Escrow` where the data lists
+ *     no `EnterpriseEscrow`), or in `ESCROW_ADDRESS` alone when set, and only up to the
+ *     ceiling the caller allows (see `limits.ts`).
  *   - **All datasets travel in one array.** v1 had `dataset` plus `additionalDatasets`.
  *   - **Free compute exists**, with no order, no escrow and no payment token.
  *   - **`providerUri` is gone** from the status and result calls; they default to the node
@@ -99,6 +107,10 @@ export async function freeCompute(
  * `resources` and `paymentToken` default from the environment, so the minimal call is just
  * the dataset and the algorithm. They are shown here because choosing them deliberately is
  * usually what you want.
+ *
+ * The escrow ceiling is passed per call: `MAX_ESCROW_PAYMENT` when set, otherwise what the
+ * environment advertises for these resources and this duration. The provider fees of the
+ * two inputs are held to `MAX_PROVIDER_FEE`, set once in `Nautilus.create` (`setup()`).
  */
 export async function compute(
   nautilus: Nautilus,
@@ -108,7 +120,28 @@ export async function compute(
 ) {
   const environment = await nautilus.getComputeEnvironment(computeEnv)
 
+  const resources: ComputeResources = [
+    { id: 'cpu', amount: 1 },
+    { id: 'ram', amount: 1 }
+  ]
+  const maxJobDuration = 3600
+
+  // The most this job may lock in escrow. nautilus refuses, before anything is spent, a
+  // quote above it, or one naming another escrow contract than the chain's EnterpriseEscrow
+  // (or ESCROW_ADDRESS, when set).
+  const maxEscrowPayment =
+    ceilingFromEnv('MAX_ESCROW_PAYMENT') ??
+    (await advertisedJobPrice(nautilus, environment, resources, maxJobDuration))
+
   console.log(`Starting a paid job in ${environment.id}...`)
+  if (maxEscrowPayment)
+    console.log(
+      '  escrow ceiling:',
+      [maxEscrowPayment]
+        .flat()
+        .map(({ token, amount }) => `${amount} (smallest unit) of ${token}`)
+        .join(', ')
+    )
 
   const result = await nautilus.compute({
     dataset: {
@@ -121,11 +154,9 @@ export async function compute(
       // envs: { LOG_LEVEL: 'debug' } // container environment variables
     },
     computeEnv: environment.id,
-    resources: [
-      { id: 'cpu', amount: 1 },
-      { id: 'ram', amount: 1 }
-    ],
-    maxJobDuration: 3600
+    resources,
+    maxJobDuration,
+    maxEscrowPayment
   })
 
   const job = result.jobs[0]

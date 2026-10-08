@@ -160,6 +160,7 @@ npm start -- ssi:round-trip      # the credential-gated round trip
 | `assets.ts` | Where the example files are fetched from, and the algorithm container. |
 | `publish.ts` | Datasets, algorithms, SaaS offers, multi-service assets, local validation. |
 | `edit.ts` | Metadata, a service's general fields, files and allowlist, prices, trusted algorithms, lifecycle. |
+| `limits.ts` | The ceilings on what a node may charge: `MAX_PROVIDER_FEE`, `MAX_ESCROW_PAYMENT`, the advertised job price. |
 | `access.ts` | Downloading, service selection, consumer parameters, price checks. |
 | `compute.ts` | Environments, free and paid jobs, status, logs, results. |
 | `identity.ts` | Credential-gated publishing (access and compute) and consuming with walt.id. |
@@ -417,11 +418,35 @@ C2D v2 is a different model, and `compute.ts` shows it:
   `npm start -- compute:envs` to see what a node offers, what it costs per chain, and whether
   it allows free jobs.
 - **Paid jobs lock funds in an escrow contract.** nautilus funds and authorises it from what
-  the node quotes.
+  the node quotes, in exact amounts, but only in one escrow contract: the chain's
+  `EnterpriseEscrow` in Ocean's address data by default (its `Escrow` where the data lists
+  no `EnterpriseEscrow`), or `ESCROW_ADDRESS` alone when set. Set `ESCROW_ADDRESS` to the
+  chain's EnterpriseEscrow contract where the address data has no escrow (`PONTUSXDEV`).
+  It funds only up to a ceiling: `compute:paid` passes `MAX_ESCROW_PAYMENT`, or else what
+  the environment advertises for the job.
 - **Free jobs need no order, no escrow and no payment token** — but the environment has to
   expose them, and its access list may restrict who can use them.
 - **All datasets travel in one array**, so `additionalDatasets` is assembled for you.
 - `getComputeStatus` and `getComputeResult` no longer take a `providerUri`.
+
+## What a node may charge
+
+The node sets the provider fee of every download and compute input (its token, its amount
+and who receives it), and for a download that node is the service's `serviceEndpoint`,
+which the publisher chooses. nautilus pays a non-zero fee only within a ceiling the caller
+sets, and throws a `ProviderFeeNotAllowedError` before anything is spent otherwise. The same
+holds for the escrow payment of a paid compute job (`EscrowPaymentNotAllowedError`).
+
+`limits.ts` reads the ceilings from `.env` and passes them to `Nautilus.create`:
+
+```sh
+MAX_PROVIDER_FEE="0x<token>:1000000000000000000"    # per call, in the token's smallest unit
+MAX_ESCROW_PAYMENT="0x<token>:5000000000000000000"  # per compute job
+```
+
+Without `MAX_PROVIDER_FEE` only zero provider fees are paid, which is what most nodes
+charge for downloads. Without `MAX_ESCROW_PAYMENT`, `compute:paid` allows what the
+environment advertises for the resources and duration it asks for.
 
 ## Publisher and consumer
 

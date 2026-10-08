@@ -3,6 +3,7 @@ import {
   getOceanConfig,
   type PricingConfigWithoutOwner
 } from '@deltadao/nautilus'
+import { isAddress } from 'ethers'
 
 /**
  * Networks these examples can run against.
@@ -499,6 +500,19 @@ export function resolveNetwork(): {
       if (process.env.OCEAN_NODE_URI)
         networkConfig.oceanNodeUri = process.env.OCEAN_NODE_URI
       if (process.env.RPC_URL) networkConfig.nodeUri = process.env.RPC_URL
+  }
+
+  // Paid compute funds exactly one escrow contract, whatever the node names. By default the
+  // chain's EnterpriseEscrow in Ocean's address data (its Escrow where the data lists no
+  // EnterpriseEscrow; ocean.js ships the data for OP Sepolia, and reads ADDRESS_FILE when
+  // set). ESCROW_ADDRESS, the chain's EnterpriseEscrow contract, pins that one instead:
+  // set it where the address data has no escrow, Pontus-X devnet among them.
+  const escrow = process.env.ESCROW_ADDRESS?.trim()
+
+  if (escrow) {
+    if (!isAddress(escrow))
+      throw new Error(`ESCROW_ADDRESS must be an address, not '${escrow}'.`)
+    networkConfig.escrow = escrow
   }
 
   return {

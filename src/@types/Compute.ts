@@ -5,6 +5,10 @@ import type {
   ComputeResourceRequest,
   ProviderComputeInitializeResults
 } from '@oceanprotocol/lib'
+import type {
+  EscrowPaymentLimits,
+  ProviderFeeLimits
+} from '../utils/paymentLimits.js'
 
 /**
  * A reference to a published asset to compute on.
@@ -34,7 +38,16 @@ export interface ComputeAlgorithmRef extends ComputeAssetRef {
 /** Compute resources to request. Ids come from `ComputeEnvironment.resources`. */
 export type ComputeResources = ComputeResourceRequest[]
 
-export interface ComputeConfig {
+/**
+ * Configuration for {@link Nautilus.compute}.
+ *
+ * `maxProviderFee` / `confirmProviderFees` decide whether the inputs' provider fees may be
+ * paid, and `maxEscrowPayment` / `confirmEscrowPayment` how much the job may lock in
+ * escrow. Without them (here or in `Nautilus.create`), a non-zero fee or payment is
+ * refused before anything is spent. Setting either option of a pair here, even to
+ * `undefined`, replaces both `Nautilus.create` defaults of that pair.
+ */
+export interface ComputeConfig extends ProviderFeeLimits, EscrowPaymentLimits {
   dataset: ComputeAssetRef
   algorithm: ComputeAlgorithmRef
   additionalDatasets?: ComputeAssetRef[]
@@ -82,7 +95,10 @@ export interface ComputeConfig {
  */
 export type FreeComputeConfig = Omit<
   ComputeConfig,
-  'paymentToken' | 'maxJobDuration'
+  | 'paymentToken'
+  | 'maxJobDuration'
+  | keyof ProviderFeeLimits
+  | keyof EscrowPaymentLimits
 >
 
 export interface ComputeStatusConfig {

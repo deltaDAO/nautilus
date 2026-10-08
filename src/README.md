@@ -124,7 +124,11 @@ const data = await fetch(url)
 ```
 
 nautilus orders the service if you do not already hold a valid order, and reuses the
-existing one if you do.
+existing one if you do. The node sets the order's provider fee, so a non-zero one is paid
+only within a ceiling you set (`maxProviderFee`, per call or in `Nautilus.create`); paid
+compute likewise needs `maxEscrowPayment`, and funds only the chain's `EnterpriseEscrow`
+contract (or the `config.escrow` you set). Without them nautilus throws before anything is
+spent.
 
 ### 4. Publish an asset
 

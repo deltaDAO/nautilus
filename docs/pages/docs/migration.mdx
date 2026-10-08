@@ -76,8 +76,59 @@ const indexed = await nautilus.waitForIndexer(did, txid, { timeoutMs: 600_000 })
 await nautilus.publish(asset, { waitForIndexer: { timeoutMs: 600_000 } }) // [!code ++]
 ```
 
+**Allow the provider fees and escrow payments you will pay.** The node chooses the provider
+fee of a download or compute input (its token, its amount and who receives it) and the
+escrow contract and amount of a paid compute job. nautilus used to approve and pay whatever
+the node quoted. It now pays a non-zero provider fee only within `maxProviderFee` or when
+`confirmProviderFees` returns `true`, funds escrow only within `maxEscrowPayment` or when
+`confirmEscrowPayment` returns `true`, and funds exactly one escrow contract: your
+`config.escrow` when you set it, else the chain's `EnterpriseEscrow` in Ocean's address
+data (ocean.js's bundled addresses, or `ADDRESS_FILE` when set), else its `Escrow`.
+Otherwise `access()` and `compute()` throw a `ProviderFeeNotAllowedError` or an
+`EscrowPaymentNotAllowedError` before any approval, purchase, deposit or order. Zero fees
+and zero escrow payments need nothing (a zero escrow quote is not checked further, so it may
+name no contract). Amounts are in the token's smallest unit. Set the ceilings once in
+`Nautilus.create`, or per call. The defaults come in pairs, `maxProviderFee` with
+`confirmProviderFees` and `maxEscrowPayment` with `confirmEscrowPayment`: a call that sets
+either option of a pair, even to `undefined`, uses its own pair and neither default of it.
+
+```ts
+const nautilus = await Nautilus.create(signer, { config }) // [!code --]
+const nautilus = await Nautilus.create(signer, { // [!code ++]
+  config, // [!code ++]
+  maxProviderFee: { token: feeToken, amount: parseUnits('0.5', 18) }, // [!code ++]
+  maxEscrowPayment: { token: paymentToken, amount: parseUnits('5', 18) } // [!code ++]
+}) // [!code ++]
+```
+
+**The escrow contract is `EnterpriseEscrow` by default.** ocean-node 4.2.0 quotes the
+chain's `EnterpriseEscrow` where Ocean's address data has one (OP Sepolia, Optimism,
+Sepolia, Ethereum mainnet) and `Escrow` elsewhere, and nautilus funds that same contract
+and no other. The `escrow` ocean.js's `ConfigHelper` fills in (the plain `Escrow`) does not
+count: on OP Sepolia the plain `Escrow` is refused unless you set it as `config.escrow`.
+Setting `config.escrow` pins that contract and only that one, so do not spread
+`ConfigHelper`'s config, `escrow` included, into `config`. On a chain with no escrow in
+the address data (Pontus-X devnet among them), set the chain's EnterpriseEscrow contract
+as `config: { escrow: '0x…' }`, or paid compute is refused. Direct callers of `order()`,
+`reuseOrder()` and `settleOrder()` pass `maxProviderFee` / `confirmProviderFees` the same
+way.
+
+**Paid compute checks every input before it funds escrow, and serialises jobs per payer.**
+`compute()` reads and checks every input's pricing before the escrow approval, deposit or
+authorisation, so an input that cannot be ordered is refused with nothing spent. Within one
+`Nautilus` instance, paid jobs that share a chain, payer, payment token and environment
+account fund escrow, order and start one at a time, so concurrent `compute()` calls no
+longer overwrite each other's escrow authorisation. Jobs started from another instance or
+process with the same wallet are not serialised: run those one after the other.
+
 **Also breaking:**
 
+- Paid compute funds escrow itself, in exact amounts, instead of through ocean.js's
+  `verifyFundsForEscrowPayment`: it approves the escrow contract for the deposit only (not
+  for an amount scaled by the token's decimals twice), deposits what escrow lacks for the
+  job, and authorises the environment's account to lock the job's amount on top of its
+  current locks. A wallet that cannot cover the deposit gets an `Error` before any
+  transaction, instead of `{ isValid: false }` turned into an error.
 - `writeMetadata` is no longer exported. Metadata is only written through
   `Nautilus.publish()`, `completePublish()` and `edit()`, which run every encrypted-only check
   first. `prepareMetadata` stays and returns redacted pointers.
@@ -195,6 +246,12 @@ await nautilus.publish(asset, { waitForIndexer: { timeoutMs: 600_000 } }) // [!c
 
 **New:**
 
+- `maxProviderFee`, `confirmProviderFees`, `maxEscrowPayment` and `confirmEscrowPayment`
+  on `Nautilus.create`, `access()` and `compute()` (the provider-fee pair on `order()`,
+  `reuseOrder()` and `settleOrder()` too), with the types `TokenAmount`,
+  `ProviderFeeQuote`, `EscrowPaymentQuote`, `ProviderFeeLimits` and `EscrowPaymentLimits`.
+- `ProviderFeeNotAllowedError` (`fees`, `reason`) and `EscrowPaymentNotAllowedError`
+  (`payment`, `reason`), both thrown before anything is spent.
 - `S3RemoteStore` — the envelope in an S3 bucket (AWS S3, Exoscale SOS, MinIO), with a
   separate write key and a read-only key for the node, `verify()` with the read key, and
   `remove(pointer)` to clean up. Read and write key policies must cover
@@ -480,6 +537,10 @@ const { url, transferTxId, reusedOrder } = await nautilus.access({ assetDid }) /
 If the service is credential-gated, nautilus resolves the policy before placing any order —
 so a failed presentation costs nothing. See §10.
 
+A non-zero provider fee is paid only within `maxProviderFee` or with `confirmProviderFees`;
+v1 paid whatever the node quoted. See
+[Upgrading from 2.0.0-beta.0](#upgrading-from-200-beta0).
+
 ## 9. Compute
 
 Compute changed the most, because C2D v2 is a different model.
@@ -497,8 +558,10 @@ const { jobs, environment, orders } = await nautilus.compute({ // [!code ++]
 
 - **Environments**: `nautilus.getComputeEnvironments()` lists them with their resources,
   limits and per-chain fees. `resources` and `paymentToken` default from the environment.
-- **Escrow**: paid jobs lock funds in the `Escrow` contract. nautilus funds and authorises
-  it from what the node quotes.
+- **Escrow**: paid jobs lock funds in an escrow contract. nautilus funds and authorises
+  it from what the node quotes, in exact amounts, only in the pinned contract (your
+  `config.escrow`, else the chain's `EnterpriseEscrow`, else its `Escrow`) and only within
+  `maxEscrowPayment` (or with `confirmEscrowPayment`).
 - **Free compute**: `nautilus.freeCompute({ dataset, algorithm })` — no order, no escrow, no
   payment token. Requires an environment exposing `free`.
 - **Output**: `ComputeOutput` is now `{ remoteStorage?, encryption? }`. The old

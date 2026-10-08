@@ -5,7 +5,7 @@
  * on-chain spend**. If a policy cannot be satisfied, the caller has paid nothing.
  */
 
-import type { Config, ProviderFees } from '@oceanprotocol/lib'
+import type { Config } from '@oceanprotocol/lib'
 import { LoggerInstance } from '@oceanprotocol/lib'
 import type { Signer } from 'ethers'
 import type { AccessConfig, AccessResult } from '../@types/Access.js'
@@ -24,19 +24,18 @@ import {
   shouldResolveCredentials
 } from '../identity/policy.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
-import { order, payingAccount, reuseOrder } from '../utils/order.js'
 import {
-  getOrderPrice,
-  getPricingInfo,
-  hasReusableOrder
-} from '../utils/pricing.js'
+  assertProviderFeesAllowed,
+  ceilingFor,
+  quoteProviderFee
+} from '../utils/paymentLimits.js'
 import {
-  assertProviderFeeSignature,
   initializeWithValidProviderFee,
-  isFeeDue,
-  type ProviderFeeLike,
   providerFeeToSend
 } from '../utils/providerFee.js'
+import { settleOrder } from './settlement.js'
+
+export { settleOrder } from './settlement.js'
 
 export interface AccessContext {
   node: OceanNodeClient
@@ -129,19 +128,31 @@ export async function access(
       `Could not determine the datatoken for service ${service.id} of ${asset.id}.`
     )
 
-  // 3. Reuse or place an order.
+  // 3. The node chose the fee's token and amount, and in a download it is the
+  //    publisher's node: pay a non-zero fee only within what the caller allowed, before
+  //    any chain read or transaction.
+  const fee = quoteProviderFee(providerFeeToSend(initialized), {
+    datatoken: datatokenAddress,
+    did: asset.id,
+    serviceId: service.id
+  })
+
+  await assertProviderFeesAllowed([fee], config)
+
+  // 4. Reuse or place an order, allowed to pay exactly the fee approved above.
   const { transferTxId, reused } = await settleOrder({
     signer,
     chainConfig,
     datatokenAddress,
     serviceIndex: getServiceIndex(asset, service.id),
     initialized,
-    consumer: consumerAddress
+    consumer: consumerAddress,
+    maxProviderFee: ceilingFor([fee])
   })
 
   LoggerInstance.debug('[access] order settled', { transferTxId, reused })
 
-  // 4. Build the download URL — on the service's node, which holds the decryption key —
+  // 5. Build the download URL — on the service's node, which holds the decryption key —
   // carrying the verifier session when there is one.
   const url = await serviceNode.getDownloadUrl(
     asset.id,
@@ -161,68 +172,4 @@ export async function access(
     transferTxId,
     reusedOrder: reused
   }
-}
-
-/**
- * Reuses a valid order when the node says one exists and no new provider fee is due;
- * otherwise extends it, or places a fresh order.
- *
- * Every path but the first sends the node's provider fee to the datatoken, so it throws a
- * `ProviderFeeSignatureError` before any chain read or transaction when that fee is
- * missing, incomplete, or carries a signature the datatoken would reject. Those paths also
- * throw for a `payer` other than the signer (see `OrderRequest.payer`).
- */
-export async function settleOrder(params: {
-  signer: Signer
-  chainConfig: Config
-  datatokenAddress: string
-  serviceIndex: number
-  initialized: { validOrder?: string; providerFee?: unknown }
-  consumer: string
-  payer?: string
-}): Promise<{ transferTxId: string; reused: boolean }> {
-  const { signer, chainConfig, datatokenAddress, serviceIndex, initialized } =
-    params
-
-  const providerFee = initialized.providerFee as ProviderFeeLike | undefined
-
-  // Nothing to pay and an order already in force: reuse the transaction as it stands.
-  // Nothing is sent, so no fee is needed.
-  if (hasReusableOrder(initialized) && !isFeeDue(providerFee))
-    return { transferTxId: initialized.validOrder as string, reused: true }
-
-  // Both remaining paths send the fee to the datatoken, which checks it first: refuse
-  // one it would reject here, once. `order()` and `reuseOrder()` check again for their
-  // direct callers, and approve what the fee pulls together with the rest of the order.
-  assertProviderFeeSignature(providerFee)
-
-  // Checked above: every field is present.
-  const providerFees = providerFee as unknown as ProviderFees
-
-  // The signer pays on both paths; `order()` checks again for its direct callers.
-  await payingAccount(signer, params.payer)
-
-  // An order in force but a new fee period: extend it rather than buying again.
-  if (hasReusableOrder(initialized))
-    return reuseOrder({
-      signer,
-      config: chainConfig,
-      datatokenAddress,
-      validOrderTx: initialized.validOrder as string,
-      providerFees
-    })
-
-  const pricing = await getPricingInfo(signer, datatokenAddress, chainConfig)
-  const price = await getOrderPrice(signer, pricing, chainConfig)
-
-  return order({
-    signer,
-    config: chainConfig,
-    pricing,
-    price,
-    serviceIndex,
-    providerFees,
-    consumer: params.consumer,
-    payer: params.payer
-  })
 }

@@ -58,6 +58,14 @@ nautilus v2 requires ethers v6. A v5 `Signer` is not structurally compatible.
 Overrides merged over `ConfigHelper`'s defaults. `chainId`, if you pass it, must be the
 chain the signer's provider is on.
 
+`config.escrow`, when you pass it, is the only escrow contract paid
+[`compute`](/docs/api/nautilus/compute#escrow-contract) funds. Leave it out to fund the
+chain's **`EnterpriseEscrow`** from Ocean's address data (its `Escrow` where the data lists
+no `EnterpriseEscrow`). The `escrow` `ConfigHelper` fills in is the plain `Escrow` and does
+not count as your choice; spreading `ConfigHelper`'s config into `config` would make it
+one, so leave its `escrow` out. On Pontus-X devnet, whose address data lists no escrow, set
+the chain's EnterpriseEscrow contract here.
+
 One `oceanNodeUri` now replaces v1's `metadataCacheUri` and `providerUri` — a single
 ocean-node serves metadata, provider services and the indexer. There is no `subgraphUri`:
 pricing comes from chain reads.
@@ -162,6 +170,84 @@ How long one `encrypt` call to the node may take, including the signature and on
 a rejected nonce. Passed to the node clients `create` builds; see
 [`OceanNodeClient`](/docs/api/node/OceanNodeClient).
 
+##### maxProviderFee
+
+- Type: `TokenAmount | TokenAmount[]`, where `TokenAmount` is
+  `{ token: string; amount: bigint | string }`
+
+The default ceiling on the provider fees of every [`access`](/docs/api/nautilus/access) and
+[`compute`](/docs/api/nautilus/compute) call, per token, in the token's smallest unit.
+
+The four options are defaults in two pairs: `maxProviderFee` with `confirmProviderFees`, and
+`maxEscrowPayment` with `confirmEscrowPayment`. A call that sets either option of a pair,
+even to `undefined`, uses its own pair and neither default of it. So a call with a tighter
+`maxProviderFee` does not inherit a permissive `confirmProviderFees` from here, and a call
+can clear a default by passing the option as `undefined`.
+
+:::warning[Set a fee ceiling]
+The node chooses the provider fee: its token, its amount and who receives it. For a
+download, that node is the service's `serviceEndpoint`, which the publisher chooses.
+Without a ceiling or a confirmation callback, nautilus pays only zero fees and throws a
+`ProviderFeeNotAllowedError` for any other, before anything is spent. Set the most you are
+prepared to pay per call, in the tokens you expect fees in:
+
+```ts twoslash
+import { JsonRpcProvider, parseUnits, Wallet } from 'ethers'
+import { Nautilus } from '@deltadao/nautilus'
+const signer = new Wallet('0x1234', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const config = { oceanNodeUri: 'https://node.example.org' }
+const feeToken = '0x...'
+const paymentToken = '0x...'
+// ---cut---
+const nautilus = await Nautilus.create(signer, {
+  config,
+  maxProviderFee: { token: feeToken, amount: parseUnits('0.5', 18) }, // [!code focus]
+  maxEscrowPayment: { token: paymentToken, amount: parseUnits('5', 18) } // [!code focus]
+})
+```
+:::
+
+##### confirmProviderFees
+
+- Type: `(fees: ProviderFeeQuote[]) => boolean | Promise<boolean>`
+
+The default confirmation for provider fees `maxProviderFee` does not cover, for example to
+ask a user. A call that sets `maxProviderFee` or `confirmProviderFees` does not use it. See
+[`access`](/docs/api/nautilus/access#confirmproviderfees-optional).
+
+##### maxEscrowPayment
+
+- Type: `TokenAmount | TokenAmount[]`
+
+The default ceiling on what one [`compute`](/docs/api/nautilus/compute) job may lock in
+escrow, per payment token, in the token's smallest unit. A call that sets
+`maxEscrowPayment` or `confirmEscrowPayment` does not use it.
+
+nautilus funds exactly one escrow contract, whatever contract the node names:
+
+1. `config.escrow`, when you set it: that contract, and no other;
+2. otherwise the chain's **`EnterpriseEscrow`** in Ocean's address data (ocean.js's bundled
+   addresses, or the file `ADDRESS_FILE` names), the contract ocean-node 4.2.0 uses where
+   the address data has one (OP Sepolia among them);
+3. otherwise the chain's `Escrow`.
+
+On a chain with neither (Pontus-X devnet among them), set the chain's EnterpriseEscrow
+contract as `config.escrow`, or paid compute is refused. See
+[Escrow contract](/docs/api/nautilus/compute#escrow-contract).
+
+##### confirmEscrowPayment
+
+- Type: `(payment: EscrowPaymentQuote) => boolean | Promise<boolean>`
+
+The default confirmation for an escrow payment `maxEscrowPayment` does not cover. A call
+that sets `maxEscrowPayment` or `confirmEscrowPayment` does not use it. See
+[`compute`](/docs/api/nautilus/compute#confirmescrowpayment-optional).
+
+Paid compute jobs of one instance that share a chain, payer, payment token and environment
+account fund escrow and start one at a time, so concurrent jobs do not overwrite each
+other's escrow authorisation. Jobs from another instance or process are not covered; see
+[Concurrent jobs](/docs/api/nautilus/compute#concurrent-jobs).
+
 ## Throws
 
 - When `config.chainId` differs from the chain of the signer's provider, or the signer has no
@@ -169,4 +255,7 @@ a rejected nonce. Passed to the node clients `create` builds; see
 - When `oceanNodeUri` is missing, or is plain `http://` on a non-loopback host without
   `allowInsecureTransport`.
 - When `nftFactoryAddress`, `fixedRateExchangeAddress` or `dispenserAddress` is missing or not
-  an address.
+  an address, or `escrow` is set but is not an address.
+- When `maxProviderFee` or `maxEscrowPayment` has an entry whose `token` is not an address,
+  whose `amount` is not a non-negative integer, or whose token is listed twice, or when
+  `confirmProviderFees` or `confirmEscrowPayment` is not a function.

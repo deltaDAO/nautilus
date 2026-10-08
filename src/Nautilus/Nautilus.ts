@@ -76,6 +76,12 @@ import {
 import { resolvePublisherTrustedAlgorithms } from '../utils/helpers/trusted-algorithms.js'
 import { errorMessage } from '../utils/http.js'
 import { getChainId } from '../utils/index.js'
+import { createKeyedLock } from '../utils/keyedLock.js'
+import {
+  assertValidLimits,
+  type EscrowPaymentLimits,
+  type ProviderFeeLimits
+} from '../utils/paymentLimits.js'
 import { getPricingInfo } from '../utils/pricing.js'
 import { assertSecureTransport } from '../utils/transport.js'
 import { warnOnce } from '../utils/warn.js'
@@ -210,7 +216,17 @@ function attachPublished(
   )
 }
 
-export interface NautilusOptions {
+/**
+ * `maxProviderFee`, `confirmProviderFees`, `maxEscrowPayment` and `confirmEscrowPayment`
+ * set the default for every `access()` and `compute()` call of this instance. Each pair
+ * is replaced as a whole: a call that sets `maxProviderFee` or `confirmProviderFees` (even
+ * to `undefined`) uses its own pair and neither provider-fee default, and the same holds
+ * for `maxEscrowPayment` / `confirmEscrowPayment`. Without them, a non-zero provider fee
+ * or escrow payment is refused before anything is spent.
+ */
+export interface NautilusOptions
+  extends ProviderFeeLimits,
+    EscrowPaymentLimits {
   /**
    * Where the signed DDO is stored. Required to publish, because nautilus writes a
    * `{remote}` pointer on chain rather than the document itself.
@@ -223,7 +239,15 @@ export interface NautilusOptions {
   ddoSigner?: DdoSigner
   /** Satisfies credential-gated access. Omit to skip SSI entirely. */
   credentials?: CredentialProvider
-  /** Overrides for the chain config resolved from the signer's network. */
+  /**
+   * Overrides for the chain config resolved from the signer's network.
+   *
+   * `config.escrow`, when set here, is the only escrow contract paid compute funds. Left
+   * out, nautilus funds the chain's `EnterpriseEscrow` from Ocean's address data, else its
+   * `Escrow`: the `escrow` ocean.js's `ConfigHelper` fills in (its `Escrow` entry) does not
+   * count as a choice. Spreading `ConfigHelper`'s config in here does, so leave its
+   * `escrow` out.
+   */
   config?: Partial<Config>
   /**
    * Accept a plain `http://` `oceanNodeUri` on a host other than `localhost`,
@@ -326,12 +350,25 @@ export class Nautilus {
   private config!: Config
   private node!: OceanNodeClient
   private options: NautilusOptions
+  /**
+   * The escrow contract the caller set as `config.escrow`, if any; `compute()` funds only
+   * that one. Kept apart from `config.escrow`, which ocean.js fills from `Escrow`.
+   */
+  private explicitEscrow?: string
 
   /**
    * One promise chain per NFT (lower-cased), so this instance's publish, edit and
    * lifecycle transactions for one asset never run concurrently. See `withNftLock()`.
    */
   private readonly nftLocks = new Map<string, Promise<void>>()
+
+  /**
+   * Serialises this instance's paid compute jobs per (chain, payer, payment token, payee):
+   * escrow reads, deposit, authorisation, orders and `computeStart` run one job at a time,
+   * so concurrent jobs do not overwrite each other's escrow authorisation. Jobs from other
+   * instances or processes are not covered.
+   */
+  private readonly escrowLock = createKeyedLock()
 
   /** The one-time check that the publisher is not the node's own key. */
   private nodeKeyCheck?: Promise<void>
@@ -346,6 +383,9 @@ export class Nautilus {
     signer: Signer,
     options: NautilusOptions = {}
   ): Promise<Nautilus> {
+    // A malformed ceiling fails here, not at the first paid call.
+    assertValidLimits(options)
+
     const instance = new Nautilus(signer, options)
 
     await instance.init()
@@ -388,6 +428,12 @@ export class Nautilus {
       ...this.options.config
     } as Config
 
+    // Only the caller's own `config.escrow` pins the escrow contract; the one
+    // `ConfigHelper` fills in is its address data's `Escrow` entry, not a choice.
+    const escrow = this.options.config?.escrow
+    this.explicitEscrow =
+      typeof escrow === 'string' && escrow.trim() ? escrow.trim() : undefined
+
     this.assertUsableConfig()
 
     this.node = new OceanNodeClient({
@@ -428,6 +474,11 @@ export class Nautilus {
       if (!value || !isAddress(value))
         problems.push(`${field} is not a valid address`)
     }
+
+    if (this.explicitEscrow !== undefined && !isAddress(this.explicitEscrow))
+      problems.push(
+        "escrow is not a valid address (set the chain's EnterpriseEscrow contract, or leave escrow out to use Ocean's address data)"
+      )
 
     if (problems.length)
       throw new Error(
@@ -1472,13 +1523,49 @@ export class Nautilus {
     )
   }
 
+  /**
+   * The provider-fee pair for a call: the call's own when it sets either option, else
+   * `Nautilus.create`'s.
+   *
+   * The pair is taken as a whole, never merged field by field: a call that sets a tight
+   * `maxProviderFee` must not inherit a permissive `confirmProviderFees` default. A key
+   * the call sets to `undefined` counts as set, so `{ confirmProviderFees: undefined }`
+   * clears the default callback.
+   */
+  private withProviderFeeDefaults<T extends ProviderFeeLimits>(config: T): T {
+    if ('maxProviderFee' in config || 'confirmProviderFees' in config)
+      return config
+
+    return {
+      ...config,
+      maxProviderFee: this.options.maxProviderFee,
+      confirmProviderFees: this.options.confirmProviderFees
+    }
+  }
+
+  /**
+   * The escrow pair for a call: the call's own when it sets `maxEscrowPayment` or
+   * `confirmEscrowPayment`, else `Nautilus.create`'s. Taken as a whole, like
+   * `withProviderFeeDefaults`.
+   */
+  private withEscrowDefaults<T extends EscrowPaymentLimits>(config: T): T {
+    if ('maxEscrowPayment' in config || 'confirmEscrowPayment' in config)
+      return config
+
+    return {
+      ...config,
+      maxEscrowPayment: this.options.maxEscrowPayment,
+      confirmEscrowPayment: this.options.confirmEscrowPayment
+    }
+  }
+
   // #endregion
 
   // #region access
 
   /** Orders a service if needed and returns a one-time download URL. */
   async access(config: AccessConfig): Promise<AccessResult> {
-    return access(config, {
+    return access(this.withProviderFeeDefaults(config), {
       node: this.node,
       signer: this.signer,
       chainConfig: this.config,
@@ -1504,12 +1591,17 @@ export class Nautilus {
 
   /** Starts a paid compute job: orders inputs, funds escrow, then starts. */
   async compute(config: ComputeConfig): Promise<ComputeResult> {
-    return compute(config, {
-      node: this.node,
-      signer: this.signer,
-      chainConfig: this.config,
-      credentials: this.getCredentialProvider()
-    })
+    return compute(
+      this.withEscrowDefaults(this.withProviderFeeDefaults(config)),
+      {
+        node: this.node,
+        signer: this.signer,
+        chainConfig: this.config,
+        credentials: this.getCredentialProvider(),
+        escrow: this.explicitEscrow,
+        escrowLock: this.escrowLock
+      }
+    )
   }
 
   /** Starts a free compute job. No orders, no escrow, no payment token. */

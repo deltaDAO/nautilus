@@ -24,6 +24,7 @@ import {
 import { getAddress, type Signer } from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { order, reuseOrder } from '../../src/utils/order.js'
+import { ProviderFeeNotAllowedError } from '../../src/utils/paymentLimits.js'
 import type { OrderPrice, PricingInfo } from '../../src/utils/pricing.js'
 import { ProviderFeeSignatureError } from '../../src/utils/providerFee.js'
 import {
@@ -56,6 +57,17 @@ const FEE_TOKEN = '0x8888888888888888888888888888888888888888'
 const OTHER_TOKEN = '0x9999999999999999999999999999999999999999'
 
 const ONE = 10n ** 18n
+
+/**
+ * A ceiling generous enough for every provider fee below, so the allowance tests see the
+ * order as a caller who allowed its fee does. The ceiling itself is tested at the end.
+ */
+const ANY_FEE = {
+  maxProviderFee: [FEE_TOKEN, BASE_TOKEN, OTHER_TOKEN].map((token) => ({
+    token,
+    amount: 10n * ONE
+  }))
+}
 
 const signer = { getAddress: async () => CONSUMER } as unknown as Signer
 
@@ -170,7 +182,8 @@ function placeOrder(
     price,
     serviceIndex: 0,
     providerFees,
-    consumer: CONSUMER
+    consumer: CONSUMER,
+    ...ANY_FEE
   })
 }
 
@@ -386,7 +399,8 @@ describe('order() checks everything before the first approval', () => {
       price,
       serviceIndex: 0,
       providerFees: undefined as never,
-      consumer: CONSUMER
+      consumer: CONSUMER,
+      ...ANY_FEE
     }).catch((caught) => caught)
 
     expect(thrown).to.be.instanceOf(ProviderFeeSignatureError)
@@ -446,7 +460,8 @@ describe('order() checks everything before the first approval', () => {
           price,
           serviceIndex: 0,
           providerFees: providerFeeIn(FEE_TOKEN),
-          consumer: CONSUMER
+          consumer: CONSUMER,
+          ...ANY_FEE
         }),
       /no fixedRateExchangeAddress/
     )
@@ -465,7 +480,8 @@ describe('order() checks everything before the first approval', () => {
           price: { ...price, consumeMarket: { address: '', fee: '0.02' } },
           serviceIndex: 0,
           providerFees: providerFeeIn(FEE_TOKEN),
-          consumer: CONSUMER
+          consumer: CONSUMER,
+          ...ANY_FEE
         }),
       /no collector address/
     )
@@ -489,7 +505,8 @@ describe('order() checks everything before the first approval', () => {
           price,
           serviceIndex: 0,
           providerFees: providerFeeIn(FEE_TOKEN),
-          consumer: CONSUMER
+          consumer: CONSUMER,
+          ...ANY_FEE
         }),
       /no dispenserAddress/
     )
@@ -543,7 +560,8 @@ describe('order() payer', () => {
             serviceIndex: 0,
             providerFees: providerFeeIn(BASE_TOKEN),
             consumer: CONSUMER,
-            payer: OTHER_PAYER
+            payer: OTHER_PAYER,
+            ...ANY_FEE
           }),
         new RegExp(
           `The payer ${OTHER_PAYER} is not the signer ${CONSUMER}.*signed by the account that pays`
@@ -570,7 +588,8 @@ describe('order() payer', () => {
       serviceIndex: 0,
       providerFees: providerFeeIn(BASE_TOKEN),
       consumer: CONSUMER,
-      payer: checksummed.toLowerCase()
+      payer: checksummed.toLowerCase(),
+      ...ANY_FEE
     })
 
     // ocean.js's approve compares the allowance of this account before it approves.
@@ -588,7 +607,8 @@ describe('reuseOrder() allowance', () => {
       config: chainConfig,
       datatokenAddress: DATATOKEN,
       validOrderTx: '0xexisting',
-      providerFees: providerFees as never
+      providerFees: providerFees as never,
+      ...ANY_FEE
     })
   }
 
@@ -646,5 +666,216 @@ describe('reuseOrder() allowance', () => {
 
     expect(vi.mocked(approveWei)).not.toHaveBeenCalled()
     expect(datatoken.reuseOrder).not.toHaveBeenCalled()
+  })
+})
+
+describe('order() and reuseOrder() pay only an allowed provider fee', () => {
+  // The node chooses the fee's token and amount; a valid signature only proves it signed
+  // them. Direct callers of order()/reuseOrder() get the same consent rule as access().
+  const fee = providerFeeIn(FEE_TOKEN) // 2 tokens
+
+  function orderWith(limits: object, providerFees: unknown = fee) {
+    return order({
+      signer,
+      config: chainConfig,
+      pricing: fixed(1, NO_PUBLISH_FEE),
+      price,
+      serviceIndex: 0,
+      providerFees: providerFees as never,
+      consumer: CONSUMER,
+      ...limits
+    })
+  }
+
+  function reuseWith(limits: object) {
+    return reuseOrder({
+      signer,
+      config: chainConfig,
+      datatokenAddress: DATATOKEN,
+      validOrderTx: '0xexisting',
+      providerFees: fee,
+      ...limits
+    })
+  }
+
+  it('refuses a non-zero fee without a ceiling or confirmation, before any approval', async () => {
+    const { exchange, datatoken } = mockChain()
+
+    const thrown = await orderWith({}).catch((caught) => caught)
+
+    expect(thrown).to.be.instanceOf(ProviderFeeNotAllowedError)
+    expect(thrown.reason).to.equal('no-limit')
+    expect(thrown.fees).to.deep.equal([
+      {
+        token: FEE_TOKEN,
+        amount: 2n * ONE,
+        collector: fee.providerFeeAddress,
+        datatoken: DATATOKEN
+      }
+    ])
+    expect(thrown.message).to.match(/Nothing was spent/)
+    expect(approvals()).to.deep.equal([])
+    expect(exchange.buyDatatokens).not.toHaveBeenCalled()
+    expect(datatoken.startOrder).not.toHaveBeenCalled()
+  })
+
+  it('refuses a fee over the ceiling, or in a token the ceiling does not list', async () => {
+    mockChain()
+
+    for (const maxProviderFee of [
+      { token: FEE_TOKEN, amount: 2n * ONE - 1n },
+      [{ token: OTHER_TOKEN, amount: 100n * ONE }]
+    ]) {
+      const thrown = await orderWith({ maxProviderFee }).catch(
+        (caught) => caught
+      )
+      expect(thrown).to.be.instanceOf(ProviderFeeNotAllowedError)
+      expect(thrown.reason).to.equal('over-limit')
+    }
+
+    expect(approvals()).to.deep.equal([])
+  })
+
+  it('pays a fee within the ceiling, approving exactly the fee', async () => {
+    const { datatoken } = mockChain()
+
+    // Exactly at the ceiling, given as a decimal string with the token in lower case.
+    await orderWith({
+      maxProviderFee: {
+        token: FEE_TOKEN.toLowerCase(),
+        amount: (2n * ONE).toString()
+      }
+    })
+
+    expect(approvals()).to.deep.equal([
+      { token: BASE_TOKEN, spender: EXCHANGE, amount: '10.5', units: 'human' },
+      {
+        token: FEE_TOKEN,
+        spender: DATATOKEN,
+        amount: (2n * ONE).toString(),
+        units: 'wei'
+      }
+    ])
+    expect(datatoken.startOrder).toHaveBeenCalledOnce()
+  })
+
+  it('asks confirmProviderFees when the ceiling does not cover the fee, and follows it', async () => {
+    mockChain()
+    const confirm = vi.fn(async () => true)
+
+    await orderWith({
+      maxProviderFee: { token: FEE_TOKEN, amount: 1n },
+      confirmProviderFees: confirm
+    })
+
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(confirm.mock.calls[0]).to.deep.equal([
+      [
+        {
+          token: FEE_TOKEN,
+          amount: 2n * ONE,
+          collector: fee.providerFeeAddress,
+          datatoken: DATATOKEN
+        }
+      ]
+    ])
+    expect(vi.mocked(approveWei)).toHaveBeenCalledOnce()
+
+    vi.mocked(approve).mockClear()
+    vi.mocked(approveWei).mockClear()
+    const declined = await orderWith({
+      confirmProviderFees: () => false
+    }).catch((caught) => caught)
+
+    expect(declined).to.be.instanceOf(ProviderFeeNotAllowedError)
+    expect(declined.reason).to.equal('declined')
+    expect(approvals()).to.deep.equal([])
+  })
+
+  it('does not ask about a fee within the ceiling', async () => {
+    mockChain()
+    const confirm = vi.fn(() => false)
+
+    await orderWith({
+      maxProviderFee: { token: FEE_TOKEN, amount: 2n * ONE },
+      confirmProviderFees: confirm
+    })
+
+    expect(confirm).not.toHaveBeenCalled()
+  })
+
+  it('pays a zero fee, or one the datatoken does not charge, without any consent', async () => {
+    mockChain()
+    const confirm = vi.fn(() => false)
+
+    await orderWith(
+      { confirmProviderFees: confirm },
+      signedProviderFee({ providerFeeAmount: '0' })
+    )
+    await orderWith(
+      { confirmProviderFees: confirm },
+      signedProviderFee({ providerFeeToken: ZERO_ADDRESS })
+    )
+
+    expect(confirm).not.toHaveBeenCalled()
+    expect(vi.mocked(approveWei)).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a throwing confirmProviderFees, before any approval', async () => {
+    mockChain()
+
+    await expectThrowsAsync(
+      () =>
+        orderWith({
+          confirmProviderFees: () => {
+            throw new Error('the user closed the dialog')
+          }
+        }),
+      /closed the dialog/
+    )
+    expect(approvals()).to.deep.equal([])
+  })
+
+  it('refuses a malformed ceiling before any approval', async () => {
+    mockChain()
+
+    await expectThrowsAsync(
+      () => orderWith({ maxProviderFee: { token: 'nope', amount: 1n } }),
+      /maxProviderFee: every entry needs a token address/
+    )
+    await expectThrowsAsync(
+      () => orderWith({ maxProviderFee: { token: FEE_TOKEN, amount: '1.5' } }),
+      /non-negative integer/
+    )
+    await expectThrowsAsync(
+      () => orderWith({ maxProviderFee: { token: FEE_TOKEN, amount: -1n } }),
+      /non-negative integer/
+    )
+    await expectThrowsAsync(
+      () =>
+        orderWith({
+          maxProviderFee: [
+            { token: FEE_TOKEN, amount: 1n },
+            { token: FEE_TOKEN.toLowerCase(), amount: 2n }
+          ]
+        }),
+      /listed twice/
+    )
+    expect(approvals()).to.deep.equal([])
+  })
+
+  it('applies the same rule to reuseOrder()', async () => {
+    const { datatoken } = mockChain()
+
+    const thrown = await reuseWith({}).catch((caught) => caught)
+    expect(thrown).to.be.instanceOf(ProviderFeeNotAllowedError)
+    expect(vi.mocked(approveWei)).not.toHaveBeenCalled()
+    expect(datatoken.reuseOrder).not.toHaveBeenCalled()
+
+    await reuseWith({ maxProviderFee: { token: FEE_TOKEN, amount: 2n * ONE } })
+    expect(vi.mocked(approveWei).mock.calls[0][5]).to.equal(
+      (2n * ONE).toString()
+    )
+    expect(datatoken.reuseOrder).toHaveBeenCalledOnce()
   })
 })

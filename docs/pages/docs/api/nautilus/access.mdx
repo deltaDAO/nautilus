@@ -6,16 +6,29 @@ Download an asset: order the service if needed, then get a one-time URL.
 
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'
-import { Wallet } from 'ethers'
+import { parseUnits, Wallet } from 'ethers'
 const nautilus = await Nautilus.create(new Wallet('0x1234'))
 // ---cut---
 const { url } = await nautilus.access({ // [!code focus]
-  assetDid: 'did:ope:1234abcd...' // [!code focus]
+  assetDid: 'did:ope:1234abcd...', // [!code focus]
+  // the most this download may pay the node, in the fee token's smallest unit // [!code focus]
+  maxProviderFee: { token: '0x...', amount: parseUnits('0.5', 18) } // [!code focus]
 }) // [!code focus]
 
 // fetch the actual data
 const data = await fetch(url)
 ```
+
+:::warning[Set a fee ceiling]
+The provider fee's token, amount and recipient are chosen by the node the service names in
+its `serviceEndpoint`, and the publisher chooses that node. The fee signature only proves
+that this node signed the fee, not that the fee is reasonable. So nautilus pays a non-zero
+provider fee only within [`maxProviderFee`](#maxproviderfee-optional) or when
+[`confirmProviderFees`](#confirmproviderfees-optional) returns `true`, and otherwise throws a
+`ProviderFeeNotAllowedError` before anything is spent. A fee of zero always passes. Set the
+ceiling once for every call with [`Nautilus.create`](/docs/api/nautilus/create#maxproviderfee),
+or per call here.
+:::
 
 What happens in order:
 
@@ -31,11 +44,14 @@ What happens in order:
    same on every request. A fee that is missing or lacks a field is refused at once. In
    every case it throws a `ProviderFeeSignatureError` before any approval, purchase or
    order.
-3. An existing order is reused where possible — extended if a new fee period is due, or
+3. A non-zero fee must be allowed by `maxProviderFee` or `confirmProviderFees`, or nautilus
+   throws a `ProviderFeeNotAllowedError`, again before any chain read, approval, purchase or
+   order. The order is then allowed to pay exactly the fee that was allowed.
+4. An existing order is reused where possible — extended if a new fee period is due, or
    used as-is if not. Otherwise a datatoken is bought and a new order placed. Everything the
    order pulls from you (the purchase, the publish-market fee and the provider fee) is
    approved with one allowance per token and spender, after every check has passed.
-4. The download URL is built, carrying the verifier session if there was one.
+5. The download URL is built, carrying the verifier session if there was one.
 
 ## Returns
 
@@ -112,3 +128,41 @@ Values for the service's consumer parameters. See the
 
 Skip the credential presentation even for a gated service. Only useful when you already
 hold a valid verifier session and supplied it as a `StaticCredentialProvider`.
+
+##### maxProviderFee (optional)
+
+- Type: `TokenAmount | TokenAmount[]`, where `TokenAmount` is
+  `{ token: string; amount: bigint | string }`
+- Default: the [`Nautilus.create`](/docs/api/nautilus/create#maxproviderfee) option, else none
+
+The most this call may pay in provider fees, per token, in the token's smallest unit (wei
+for an 18-decimal token; `parseUnits('0.5', 18)` from ethers converts). A fee in a token not
+listed is not covered. `amount` is a `bigint` or a decimal integer string; anything else
+throws before the node is asked for a fee.
+
+##### confirmProviderFees (optional)
+
+- Type: `(fees: ProviderFeeQuote[]) => boolean | Promise<boolean>`
+- Default: the [`Nautilus.create`](/docs/api/nautilus/create#confirmproviderfees) option, else none
+
+Asked when `maxProviderFee` does not cover the fee, for example to show it to a user. It
+receives each non-zero fee as `{ token, amount, collector, datatoken, did, serviceId }`
+(`amount` a `bigint` in the token's smallest unit, `collector` the `providerFeeAddress` that
+receives it). Return `true` to pay, `false` to refuse. It is not called for a zero fee or a
+fee within the ceiling, and an error it throws propagates before anything is spent.
+
+`maxProviderFee` and `confirmProviderFees` replace the `Nautilus.create` defaults as a
+pair: set either one here, even to `undefined`, and neither default applies to this call.
+So a tight `maxProviderFee` passed here never falls back to a permissive
+`confirmProviderFees` set in `Nautilus.create`, and `{ confirmProviderFees: undefined }`
+clears the default callback.
+
+## Throws
+
+- `ProviderFeeSignatureError`: the node's fee is missing, incomplete, or its signature would
+  fail the datatoken's check.
+- `ProviderFeeNotAllowedError`: the fee is not zero and neither `maxProviderFee` nor
+  `confirmProviderFees` allows it. `error.fees` lists the fees, `error.reason` is
+  `'no-limit'`, `'over-limit'` or `'declined'`.
+
+Both are thrown before any approval, purchase or order.
