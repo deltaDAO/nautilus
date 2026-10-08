@@ -98,9 +98,11 @@ from a bare one you stored, put the first segment of the job's environment id in
 
 `getComputeStatus()` returns `undefined` for a job the node does not know, and reports the
 job under the id you passed. It is typed `NodeComputeJob`, which adds the node's
-`environment`, `resources` and `payment` fields to `ComputeJob`. The same applies to
-`OceanNodeClient`'s `computeStatus()`, `getComputeJob()`, `computeStop()`,
-`getComputeResultUrl()`, `getComputeResult()` and `getComputeLogs()`.
+`environment`, `resources` and `payment` fields to `ComputeJob`. `OceanNodeClient`'s
+`computeStatus()` and `getComputeJob()` return `NodeComputeJob` too, and `getComputeJob()`
+returns `undefined` for an unknown job. `computeStop()`, `getComputeResultUrl()`,
+`getComputeResult()` and `getComputeLogs()` keep their return types; like every job method
+they now require the qualified job id.
 
 **`streamComputeResult()` streams the job's `output`** (`outputs.tar`), as
 `getComputeResult()` does, rather than the result at index 0 (the image log). Pass
