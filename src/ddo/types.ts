@@ -74,7 +74,7 @@ export interface StoredRequestCredential {
 /**
  * Address allow/deny list. nautilus writes `{ address }` objects, as the enterprise market
  * does; assets from other producers can hold bare strings, which the policy server and
- * ocean-node 4.2.2 read too.
+ * OceanProtocolEnterprise ocean-node read too.
  */
 export interface AddressCredential {
   type: 'address'

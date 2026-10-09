@@ -571,8 +571,8 @@ describe('normalizeStoredCredentials', () => {
   })
 
   it('leaves address entries as stored, bare strings included', () => {
-    // ocean-node 4.2.0's built-in check reads only bare strings: rewriting a list the edit
-    // does not touch would break its gate there.
+    // Upstream ocean-node 4.2.0's built-in check reads only bare strings: rewriting a list
+    // the edit does not touch would break its gate there.
     const input = {
       allow: [{ type: 'address', values: ['0xAbC', { address: '0x2' }, 5] }],
       deny: [{ type: 'address', values: ['0xDeF'] }]
@@ -649,8 +649,8 @@ describe('address credentials', () => {
 
   it('keeps an entry stored as bare strings in that form', () => {
     // Before, `addCredentialAddresses` wrote `{ address: undefined }` for each string and
-    // `removeCredentialAddresses` threw on `.toLowerCase()`. ocean-node 4.2.0 without a
-    // policy server reads only bare strings.
+    // `removeCredentialAddresses` threw on `.toLowerCase()`. Upstream ocean-node 4.2.0
+    // without a policy server reads only bare strings.
     const stored = () =>
       ({
         allow: [{ type: 'address', values: ['0xAbC', '0x2'] }]
