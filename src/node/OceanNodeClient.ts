@@ -122,8 +122,9 @@ export interface OceanNodeClientOptions {
    * and the node's answer, including the one retry after a rejected nonce. Default 120 s,
    * which leaves room for a wallet's signature prompt. A call that runs out throws an
    * `OceanNodeError`, and the next queued call starts. Over HTTP it also bounds an
-   * `initialize` request, and a `getComputeLogs` request until the stream starts. Carried
-   * over to `forEndpoint` clients.
+   * `initialize` request, and the signing of a `getComputeLogs` request (the log request
+   * waits for the job's first output with no timeout). Carried over to `forEndpoint`
+   * clients.
    */
   requestTimeoutMs?: number
 }
@@ -703,6 +704,15 @@ function normalizeStateQuery(query: IndexingStateQuery): [string, string] {
 /** The node's answer when a signed command reuses a nonce it has already seen. */
 const NONCE_REJECTED = /not a valid nonce/i
 
+/**
+ * How long a `getComputeLogs` request holds this client's signed-call queue while it waits
+ * for the node's answer. The node stores the request's nonce before it opens the log
+ * stream, so the next signed call waits for the headers, but no longer than this: a
+ * running job that has written nothing yet sends no headers, and must not hold up every
+ * other signed call. A call that still meets the old nonce is retried once.
+ */
+const LOGS_QUEUE_HOLD_MS = 10_000
+
 /** The command string ocean-node verifies an `initializePSVerification` signature with. */
 const POLICY_SERVER_INITIALIZE = 'PolicyServerInitialize'
 
@@ -894,6 +904,29 @@ function untilSettled(
       signal.removeEventListener('abort', onAbort)
       resolve()
     }
+    promise.then(done, done)
+  })
+}
+
+/**
+ * Resolves when `promise` settles, after `ms`, or when `signal` aborts, whichever comes
+ * first. Never rejects.
+ */
+function settledWithin(
+  promise: Promise<unknown>,
+  ms: number,
+  signal: AbortSignal
+): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', done)
+      resolve()
+    }
+    const timer = setTimeout(done, ms)
+
+    signal.addEventListener('abort', done, { once: true })
+    if (signal.aborted) done()
     promise.then(done, done)
   })
 }
@@ -1152,7 +1185,7 @@ export class OceanNodeClient {
    * same way. `initializePolicyVerification` and `getComputeLogs` use it.
    */
   private async withNonceRetry<T>(
-    signal: AbortSignal,
+    signal: AbortSignal | undefined,
     send: () => Promise<T>
   ): Promise<T> {
     try {
@@ -1160,7 +1193,7 @@ export class OceanNodeClient {
     } catch (error) {
       if (
         !isSigner(this.auth) ||
-        signal.aborted ||
+        signal?.aborted ||
         !(error instanceof OceanNodeError) ||
         !NONCE_REJECTED.test(error.message)
       )
@@ -2356,8 +2389,10 @@ export class OceanNodeClient {
    * (signed as ocean.js signs it), so a refusal throws an `OceanNodeError` with the node's
    * status and text (`HTTP 404: Job not found or not running`). The request is serialized
    * with this client's other signed commands and retried once when the node rejected the
-   * nonce, as `encrypt` is; `requestTimeoutMs` bounds it until the stream starts. Over P2P
-   * it goes through ocean.js.
+   * nonce, as `encrypt` is. `requestTimeoutMs` bounds the signing only: the node sends no
+   * headers until the job writes its first output, so the request waits for them with no
+   * timeout. Abort `signal` to stop waiting, or to end the stream. Over P2P it goes through
+   * ocean.js.
    *
    * Treat the job id as a secret: ocean-node 4.2.2 checks the request's signature but not
    * that the signer owns the job, so anyone who has the id can stream a running job's logs.
@@ -2388,20 +2423,8 @@ export class OceanNodeClient {
       return logs
     }
 
-    const response = await this.serializeSigned(
-      operation,
-      signal,
-      async (callSignal) => {
-        const response = await this.withNonceRetry(callSignal, () =>
-          this.requestComputeLogs(jobId, signal, callSignal)
-        )
-
-        // Timed out meanwhile: nobody reads this stream.
-        if (callSignal.aborted)
-          await response.body?.cancel().catch(() => undefined)
-
-        return response
-      }
+    const response = await this.withNonceRetry(signal, () =>
+      this.requestComputeLogs(jobId, signal)
     )
 
     return responseBodyToAsyncIterable(response.body)
@@ -2410,19 +2433,21 @@ export class OceanNodeClient {
   /**
    * One signed `GET /api/services/computeStreamableLogs`, resolving with the response whose
    * body is the stream. A non-2xx answer throws an `OceanNodeError` with the node's status
-   * and text. `callSignal` bounds the signing; the request gets the caller's `signal` and
-   * `requestTimeoutMs` up to its headers, so the stream is not cut off when `callSignal`'s
-   * timeout fires.
+   * and text.
+   *
+   * It is signed in this client's signed-call queue, within `requestTimeoutMs`, and holds
+   * the queue until the node answers or for `LOGS_QUEUE_HOLD_MS`. The request itself has
+   * only the caller's `signal`, so neither the queue nor its timeout cuts it off.
    */
   private async requestComputeLogs(
     jobId: string,
-    signal: AbortSignal | undefined,
-    callSignal: AbortSignal
+    signal: AbortSignal | undefined
   ): Promise<Response> {
     const operation = 'computeStreamableLogs'
+    const sent: { request?: Promise<FetchedResponse> } = {}
 
-    let answer: FetchedResponse
-    try {
+    let failure: unknown
+    await this.serializeSigned(operation, signal, async (callSignal) => {
       const { consumerAddress, nonce, signature, authorization } =
         await this.signCommand(
           PROTOCOL_COMMANDS.COMPUTE_GET_STREAMABLE_LOGS,
@@ -2432,15 +2457,31 @@ export class OceanNodeClient {
       if (signature) query.set('signature', signature)
       if (nonce) query.set('nonce', nonce)
 
-      answer = await fetchResponse(
+      sent.request = fetchResponse(
         fetch,
         `${this.baseUrl()}/api/services/computeStreamableLogs?${query}`,
         {
           method: 'GET',
           headers: authorization ? { Authorization: authorization } : {}
         },
-        { timeoutMs: this.requestTimeoutMs, signal }
+        { signal }
       )
+
+      await settledWithin(sent.request, LOGS_QUEUE_HOLD_MS, callSignal)
+    }).catch((error) => {
+      failure = error
+    })
+
+    // A failure after the request went out (the queue's timeout) leaves it running.
+    const { request } = sent
+    if (!request) {
+      if (signal?.aborted) throw signal.reason
+      throw OceanNodeError.from(operation, failure)
+    }
+
+    let answer: FetchedResponse
+    try {
+      answer = await request
     } catch (error) {
       if (signal?.aborted) throw signal.reason
       throw OceanNodeError.from(operation, error)

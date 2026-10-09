@@ -62,9 +62,12 @@ Report what ocean-node answered when a call fails.
   Over HTTP it reads the DDO itself, with a 15 s timeout.
 - **`OceanNodeError.cause`** of a wrapped ocean.js error is a sanitized copy, and
   `IndexingError` messages are cut at 200 characters. `initialize` throws on a redirect.
-- **`initialize` and `getComputeLogs` over HTTP** have a timeout of `requestTimeoutMs`
-  (default 120 s; for the logs, until the stream starts). A finished job's logs still come
-  from its `algorithmLog` result (`Nautilus.getComputeLogs`).
+- **`initialize` over HTTP** has a timeout of `requestTimeoutMs` (default 120 s).
+  `getComputeLogs` signs within it, then waits for the job's first output with no timeout,
+  as before: ocean-node sends no headers until the job writes. It holds the signing queue
+  for at most 10 s meanwhile. `Nautilus.getComputeLogs` takes a `signal`
+  (`ComputeLogsConfig`) to stop waiting. A finished job's logs still come from its
+  `algorithmLog` result.
 
 **New**
 

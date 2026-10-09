@@ -409,6 +409,121 @@ describe('getComputeLogs', () => {
 
     expect(node.answers).to.deep.equal([401])
   })
+
+  /** A node whose log route answers only when `answer` is called, or rejects on abort. */
+  function quietNode() {
+    const pending: {
+      init: RequestInit
+      answer: (body: string) => void
+    }[] = []
+    const fetch = vi.fn(
+      (input: string | URL | Request, init: RequestInit = {}) => {
+        const url = new URL(String(input))
+        if (url.pathname === '/api/services/nonce')
+          return Promise.resolve(new Response('{"nonce":"0"}'))
+
+        return new Promise<Response>((resolve, reject) => {
+          init.signal?.addEventListener('abort', () =>
+            reject(init.signal?.reason)
+          )
+          pending.push({ init, answer: (body) => resolve(new Response(body)) })
+        })
+      }
+    )
+    vi.stubGlobal('fetch', fetch)
+
+    return pending
+  }
+
+  const withTimeout = (auth: NodeAuth = SIGNED) =>
+    new OceanNodeClient({
+      nodeUri: NODE,
+      chainId: CHAIN_ID,
+      auth,
+      consumerAddress: NFT_ADDRESS,
+      requestTimeoutMs: 1_000
+    })
+
+  it('waits past requestTimeoutMs for a quiet job’s first output', async () => {
+    // ocean-node sends no headers until the job's container writes.
+    vi.useFakeTimers()
+    try {
+      const requests = quietNode()
+      const logs = withTimeout().getComputeLogs(JOB)
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      requests[0].answer('line 1\n')
+
+      expect(await collect(await logs)).to.equal('line 1\n')
+      expect(requests[0].init.signal?.aborted).to.equal(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('holds the signed-call queue for a quiet job at most 10 s, without aborting it', async () => {
+    vi.useFakeTimers()
+    try {
+      const requests = quietNode()
+      const logs = client(NODE, Wallet.createRandom())
+      const stop = new AbortController()
+
+      const first = logs.getComputeLogs(JOB, stop.signal).catch(() => 'stopped')
+      const second = logs
+        .getComputeLogs(JOB, stop.signal)
+        .catch(() => 'stopped')
+
+      await vi.advanceTimersByTimeAsync(9_999)
+      expect(requests).to.have.length(1)
+
+      await vi.advanceTimersByTimeAsync(1)
+      expect(requests).to.have.length(2)
+      expect(requests[0].init.signal?.aborted).to.equal(false)
+
+      stop.abort(new Error('done'))
+      expect(await Promise.all([first, second])).to.deep.equal([
+        'stopped',
+        'stopped'
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops waiting when the caller aborts, with its reason', async () => {
+    const requests = quietNode()
+    const stop = new AbortController()
+    const reason = new Error('stop')
+
+    const logs = withTimeout().getComputeLogs(JOB, stop.signal)
+    await vi.waitFor(() => expect(requests).to.have.length(1))
+    stop.abort(reason)
+
+    expect(await logs.catch((error: unknown) => error)).to.equal(reason)
+    expect(requests[0].init.signal?.aborted).to.equal(true)
+  })
+
+  it('still bounds the signing by requestTimeoutMs, sending nothing', async () => {
+    vi.useFakeTimers()
+    try {
+      const requests = quietNode()
+      const wallet = Wallet.createRandom()
+      const signer = Object.assign(Object.create(wallet), {
+        signMessage: () => new Promise<string>(() => {})
+      }) as Wallet
+
+      const logs = withTimeout(signer).getComputeLogs(JOB)
+      const error = rejection(() => logs)
+      await vi.advanceTimersByTimeAsync(1_000)
+
+      expect((await error).message).to.match(
+        /timed out after 1000 ms \(requestTimeoutMs\)/
+      )
+      expect(requests).to.have.length(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('calls that stay on ocean.js', () => {

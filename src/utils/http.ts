@@ -267,6 +267,15 @@ export function fetchText(
   )
 }
 
+/** `FetchTextOptions` for `fetchResponse`, whose `timeoutMs` is optional. */
+export type FetchResponseOptions = Omit<FetchTextOptions, 'timeoutMs'> & {
+  /**
+   * The timeout up to the headers, and over a non-2xx body. Without it only `signal` bounds
+   * the request, e.g. a stream whose headers wait for its first output.
+   */
+  timeoutMs?: number
+}
+
 /**
  * Like `fetchText`, but a 2xx answer resolves with its `Response` as soon as the headers
  * arrived, and leaves the body to the caller, e.g. to stream it: `timeoutMs` covers the
@@ -279,7 +288,7 @@ export function fetchResponse(
   fetchImpl: typeof fetch,
   url: string,
   init: RequestInit,
-  options: FetchTextOptions
+  options: FetchResponseOptions
 ): Promise<FetchedResponse> {
   return request(
     fetchImpl,
@@ -310,15 +319,15 @@ export function fetchResponse(
 
 /**
  * The one implementation behind `fetchText` and `fetchResponse`: sends the request and runs
- * `read` on its answer, both within `timeoutMs`, after the redirect rule. `signal` (the
- * caller's, combined with the timeout) stays attached to the body after this settles; the
- * timer does not.
+ * `read` on its answer, both within `timeoutMs` when it is given, after the redirect rule.
+ * `signal` (the caller's, combined with the timeout) stays attached to the body after this
+ * settles; the timer does not.
  */
 async function request<T>(
   fetchImpl: typeof fetch,
   url: string,
   init: RequestInit,
-  options: FetchTextOptions,
+  options: FetchResponseOptions,
   read: (
     response: Response,
     finalUrl: string,
@@ -327,7 +336,7 @@ async function request<T>(
 ): Promise<T> {
   const { timeoutMs, signal, followRedirects = false } = options
 
-  if (!Number.isFinite(timeoutMs) || timeoutMs < 0)
+  if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs < 0))
     throw new RangeError(
       `timeoutMs must be a finite number of milliseconds, 0 or more; got ${timeoutMs}`
     )
@@ -336,13 +345,16 @@ async function request<T>(
 
   const controller = new AbortController()
   let timedOut = false
-  const timer = setTimeout(
-    () => {
-      timedOut = true
-      controller.abort()
-    },
-    Math.min(timeoutMs, MAX_TIMER_MS)
-  )
+  const timer =
+    timeoutMs === undefined
+      ? undefined
+      : setTimeout(
+          () => {
+            timedOut = true
+            controller.abort()
+          },
+          Math.min(timeoutMs, MAX_TIMER_MS)
+        )
   const requestSignal = signal
     ? AbortSignal.any([signal, controller.signal])
     : controller.signal
@@ -358,7 +370,7 @@ async function request<T>(
     return await read(response, finalUrl, requestSignal)
   } catch (error) {
     if (signal?.aborted) throw signal.reason
-    if (timedOut) throw new RequestTimeoutError(timeoutMs)
+    if (timedOut) throw new RequestTimeoutError(timeoutMs as number)
 
     throw error
   } finally {
@@ -370,7 +382,9 @@ async function request<T>(
  * How much of an error answer's body is read: `MAX_ERROR_BODY_BYTES`, or `maxBodyBytes`
  * when that is smaller.
  */
-function errorBodyBytes(options: FetchTextOptions): number {
+function errorBodyBytes(
+  options: Pick<FetchTextOptions, 'maxBodyBytes'>
+): number {
   return Math.min(
     MAX_ERROR_BODY_BYTES,
     options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES

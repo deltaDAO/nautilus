@@ -540,6 +540,21 @@ describe('Nautilus compute jobs', () => {
     ).to.equal(JOB_ID)
   })
 
+  it('getComputeLogs passes its signal to the log request', async () => {
+    const nautilus = await createNautilus()
+    statusAnswers([running()])
+    const logs = logsAnswer(200, 'live')
+    const stop = new AbortController()
+
+    await nautilus.getComputeLogs({ jobId: JOB_ID, signal: stop.signal })
+    stop.abort()
+
+    expect((logs.mock.calls[0] as unknown[])[1]).to.have.nested.property(
+      'signal.aborted',
+      true
+    )
+  })
+
   it("getComputeLogs reads a finished job's algorithmLog result", async () => {
     const nautilus = await createNautilus()
     statusAnswers([statusJob()])

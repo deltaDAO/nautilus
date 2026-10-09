@@ -201,8 +201,9 @@ endpoints.
 - Default: `120000` (120 s)
 
 How long one `encrypt` call to the node may take, including the signature and one retry after
-a rejected nonce. Over HTTP it also bounds an `initialize` request, and a `getComputeLogs`
-request until the stream starts. Passed to the node clients `create` builds; see
+a rejected nonce. Over HTTP it also bounds an `initialize` request, and the signing of a
+`getComputeLogs` request; the log request itself waits for the job's first output with no
+timeout (pass `signal` to stop it). Passed to the node clients `create` builds; see
 [`OceanNodeClient`](/docs/api/node/OceanNodeClient).
 
 ##### maxProviderFee

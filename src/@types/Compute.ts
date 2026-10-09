@@ -103,6 +103,14 @@ export interface ComputeStatusConfig {
   agreementId?: string
 }
 
+export interface ComputeLogsConfig extends ComputeStatusConfig {
+  /**
+   * Stops waiting for the logs, and ends the stream. A running job's log request waits
+   * with no timeout for the job's first output.
+   */
+  signal?: AbortSignal
+}
+
 export interface ComputeResultConfig extends ComputeStatusConfig {
   /**
    * The `index` of the result to read, from the job's `results`. Defaults to its `output`

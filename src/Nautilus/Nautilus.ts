@@ -22,6 +22,7 @@ import type {
   AccessConfig,
   AccessResult,
   ComputeConfig,
+  ComputeLogsConfig,
   ComputeResult,
   ComputeResultConfig,
   ComputeStatusConfig,
@@ -293,7 +294,7 @@ export interface NautilusOptions
   allowInsecureTransport?: boolean
   /**
    * Per-call timeout for the node client's `encrypt` calls, and for `initialize` and the
-   * start of `getComputeLogs` over HTTP, passed to `OceanNodeClient`. Default 120 s.
+   * signing of `getComputeLogs` over HTTP, passed to `OceanNodeClient`. Default 120 s.
    */
   requestTimeoutMs?: number
 }
@@ -1761,19 +1762,22 @@ export class Nautilus {
    * job's `algorithmLog` result once it has finished, since the node streams logs only
    * while the algorithm runs.
    *
+   * A running job's log request waits with no timeout for the job's first output: pass
+   * `signal` to stop waiting.
+   *
    * Treat the job id as a secret: ocean-node 4.2.2 checks the log request's signature but
    * not that the signer owns the job, so anyone who has the id can stream a running job's
    * logs.
    */
   async getComputeLogs(
-    config: ComputeStatusConfig
+    config: ComputeLogsConfig
   ): Promise<ComputeResultStream> {
     const node = this.nodeFor(config.nodeUri)
     let job = await this.requireJob(node, config.jobId)
 
     if (!isJobFinished(job)) {
       try {
-        return await node.getComputeLogs(job.jobId)
+        return await node.getComputeLogs(job.jobId, config.signal)
       } catch (error) {
         // The job may have finished since its status was read.
         const latest = await node.getComputeJob(job.jobId)
