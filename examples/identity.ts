@@ -713,9 +713,10 @@ export async function explainCredentialFailure(
  * Two things worth knowing about deployments before you conclude gating works:
  *
  *   - ocean-node checks credentials with a policy server only when it has one
- *     (`POLICY_SERVER_URL`, reported as `isPSConfigured` in its status). Without one it
- *     checks address and access lists itself, and no `SSIpolicy` is checked. nautilus reads
- *     the status and opens no session there.
+ *     (`POLICY_SERVER_URL`). Without one it checks address and access lists itself, and an
+ *     `SSIpolicy` is a type it does not know: it denies everyone under the default
+ *     `match_allow: 'all'`, and is ignored under `'any'` when another entry matches.
+ *     nautilus opens no session there.
  *   - The policy server checks consume time: `initiate`, `download` and `startCompute`. Its
  *     publish-time actions (`newDDO`, `updateDDO`, `validateDDO`, `encrypt`, `decrypt`)
  *     allow every request.

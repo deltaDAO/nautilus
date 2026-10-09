@@ -41,12 +41,19 @@ and leaving the asset open under the remaining policies. Removing the last addre
 allow list now keeps the entry as `values: []`, which denies everyone, as the node and the
 policy server read it.
 
+**`AddressCredential.values` is `({ address: string } | string)[]`.** Assets from other
+producers can store bare strings, and an edit keeps them: an entry nautilus does not change
+stays as stored, and one stored as bare strings only stays that way when addresses are added
+or removed. Read each value as `typeof value === 'string' ? value : value.address`.
+
 ### Policy-server sessions
 
 nautilus now opens the policy-server session itself, on every download and compute job that
-the node checks: whenever the node has a policy server (`isPSConfigured` in its status) and
-the asset or service has `credentials` (`{}` included). An asset gated by addresses only needs
-no wallet any more, and a refusal is reported before anything is ordered.
+the node checks: whenever the node has a policy server and the asset or service has
+`credentials` (`{}` included). The node's status says whether it has one (`isPSConfigured`);
+upstream ocean-node 4.2.0 does not report it, and there `initiate` tells (a 404 with no
+body). An asset gated by addresses only needs no wallet any more, and a refusal is reported
+before anything is ordered.
 
 **A custom `CredentialProvider` implements `present()` instead of `resolve()`.** nautilus
 opens the session, reads its id and checks the result (`checkSessionId`); the provider only
@@ -69,7 +76,7 @@ credentials. Ask `challenge.node` for anything about the session.
 provider is the default and works for address-only gates; a session is always opened by
 nautilus, since the policy server binds it to (consumer, asset, service) and checks it on the
 same node. `skipCredentials` is gone from `access()`, `compute()` and `freeCompute()`: a node
-without a policy server is detected from its status.
+without a policy server is detected from its status, or from its answer to `initiate`.
 
 **Catch `PolicyDeniedError`.** A refusal by the policy server (`initiate` answering with its
 own reply, `success: false` and a 4xx, or a presentation the verifier did not accept) throws
@@ -114,11 +121,13 @@ a store no one else can read. Session ids are credentials; keep them out of logs
 session is reused for at most `sessionTtlMs` (new `Nautilus.create` option, 2 minutes by
 default).
 
-**`OceanNodeClient.initializePolicyVerification` returns the reply or throws.** It never
-returns `null`: ask `hasPolicyServer()` first, as `PolicySessionResolver` does. It throws a
-`PolicyDeniedError` for the policy server's refusal and an `OceanNodeError` with the status
-otherwise. Pass it `policySessionAddress(consumerAddress)`, the address the node forwards
-(for a JWT, the token's). `hasPolicyServer()`, `policySessionAddress()` and
+**`OceanNodeClient.initializePolicyVerification` returns the reply, `null` or throws.** It
+returns `null` only for a node without a policy server (a 404 with no body), and
+`hasPolicyServer()` then answers `false` for 10 minutes, unless it knew the node to have
+one. It throws a `PolicyDeniedError` for
+the policy server's refusal and an `OceanNodeError` with the status otherwise. Pass it
+`policySessionAddress(consumerAddress)`, the address the node forwards (for a JWT, the
+token's). `hasPolicyServer()`, `policySessionAddress()` and
 `checkPolicySession(sessionId)` (`{ verified, policyResults }`) are new. `PolicyServerAction`
 moved to the node client and has only `GET_PD` and `CHECK_SESSION_ID`.
 
@@ -839,8 +848,14 @@ const { url } = await nautilus.access({ assetDid: 'did:ope:…' })
 
 :::warning[Deployment behaviours to know about]
 - ocean-node checks credentials with a policy server only when it has one
-  (`POLICY_SERVER_URL`, `isPSConfigured` in its status); without one it checks address and
-  access lists itself. nautilus reads the status and opens no session there.
+  (`POLICY_SERVER_URL`). Without one it runs its own check, with no session: address and
+  access lists, while an `SSIpolicy` entry is a type it does not know, which denies everyone
+  under the default `match_allow: 'all'`. nautilus opens no session there.
+- Address values are written as `{ address }`, the form the enterprise market writes and
+  reads. An edit leaves an address entry it does not change as stored.
+  OceanProtocolEnterprise ocean-node and the policy server read both forms; upstream
+  ocean-node 4.2.0 without a policy server reads only bare strings, and fails a request on
+  `{ address }` with an error.
 - On a node with a policy server, an asset needs an address allow list: the policy server
   refuses every address that is not on it. It checks consume time (`initiate`, `download`,
   `startCompute`); its publish-time actions (`newDDO`, `updateDDO`, `validateDDO`,

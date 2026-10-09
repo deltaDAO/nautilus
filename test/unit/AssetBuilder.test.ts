@@ -536,9 +536,10 @@ describe('AssetBuilder in edit mode', () => {
       .addCredentialAddresses(CredentialListTypes.ALLOW, ['0x3'])
       .build()
 
+    // Kept as bare strings, the form it was stored in.
     expect(asset.ddo.credentials.allow?.[0]).to.deep.equal({
       type: 'address',
-      values: [{ address: '0x2' }, { address: '0x3' }]
+      values: ['0x2', '0x3']
     })
   })
 

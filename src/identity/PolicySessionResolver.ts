@@ -158,8 +158,9 @@ export class PolicySessionResolver {
    * The session for one service, as the payload for the node's `policyServer` slot.
    *
    * `null` when the node checks none: neither the asset nor the service has `credentials`,
-   * or the node's status says it has no policy server (`hasPolicyServer`). When the status
-   * cannot be read, the session is opened all the same.
+   * or the node has no policy server, as its status says (`hasPolicyServer`) or, when the
+   * status does not say, its answer to `initiate`. A node without one checks the
+   * credentials itself.
    *
    * Throws a `PolicyDeniedError` when the policy server refuses the consumer, or the
    * verifier does not accept the presentation; an `Error` before `initiate` when the
@@ -210,6 +211,10 @@ export class PolicySessionResolver {
       consumerAddress,
       policyServer: emptyPolicyServerPayload('')
     })
+
+    // The node has no policy server after all (upstream ocean-node 4.2.0 does not report
+    // `isPSConfigured`, and an empty `POLICY_SERVER_URL` reports one): no session.
+    if (!reply) return null
 
     const { sessionId, redirectUri } = readInitiateReply(reply)
 
