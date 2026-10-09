@@ -1,5 +1,515 @@
 # @deltadao/nautilus
 
+## 2.0.0-beta.2
+
+### Patch Changes
+
+- [#204](https://github.com/deltaDAO/nautilus/pull/204) [`c5ec236`](https://github.com/deltaDAO/nautilus/commit/c5ec2367e9b085d24711c1dd8145a9e5e1d5e5c3) Thanks [@Abrom8](https://github.com/Abrom8)! - Check the service and its consumer parameters before `access()` and `compute()` send
+  anything.
+  
+  **Fixes**
+  
+  - **Consumer parameters are validated.** A value of the wrong type was sent on: a service
+    declaring `rows` as a `number` took `userdata: { rows: 'not-a-number' }`, and the order
+    was placed and the file downloaded. `access()` now checks `userdata` against the
+    service's `consumerParameters` before the node is asked for a fee, and `compute()` /
+    `freeCompute()` check every input's `userdata` and the algorithm's `algocustomdata`
+    before the environment is read. `algocustomdata` is checked against the algorithm
+    metadata's `consumerParameters`, else, when that is absent or empty, the
+    `container.consumerParameters` some DDOs carry.
+  - **`null` consumer parameters are not sent.** An explicit `null` counted as absent for an
+    optional parameter but was still forwarded, reaching `initialize`, the download URL
+    (`?age=null`) or the job. Keys set to `undefined` or `null` are now dropped from
+    `userdata` and `algocustomdata` before anything is sent, whether or not the asset
+    declares parameters; the caller's object is left unchanged.
+  - **`userdata` reaches the node intact over HTTP.** ocean.js appended it to the download
+    URL with `encodeURI`, which leaves `&`, `#`, `+` and `=` as they are: a value holding one
+    of them, or a number such as `1e21` (sent as `1e+21`), broke the query, and the node ran
+    the paid download without any `userdata`. It is now encoded as one query component. The
+    download signature does not cover it, so the URL stays valid. P2P is unchanged.
+  - **`access()` refuses a non-access service.** On a `compute` service it called the node's
+    `initialize` and failed with a JSON parse error. It now throws before any node call, naming
+    `compute()` and `freeCompute()`; an asset with only a `compute` service gets the same
+    pointer.
+  
+  **Breaking (beta API)**
+  
+  - **`ConsumerParameterError`** (`did`, `serviceId`, `field`, `issues`) is thrown before
+    anything is sent when the values do not fit what the asset declares. Each issue is
+    `{ parameter, reason, message }`. A message gives the refused value's type and, for a
+    string, its length, never the value, so a secret typed into the wrong field stays out of
+    logs; parameter names and option keys, the publisher's text, are shown without control
+    characters and cut to 40 characters, and lists of them, like the issues in the error's
+    message, stop after 10 (`error.issues` keeps them all). `reason` is one of:
+    - `'missing'`: a `required` parameter is absent (`undefined` or `null`);
+    - `'wrong-type'`: `text` takes a string, `number` a finite number (not `'5'`), `boolean`
+      a boolean, `select` a string, and any other type a string, a finite number or a
+      boolean;
+    - `'not-an-option'`: a `select` value is not the first key of one of its options (the
+      key the node and the market read; other keys are refused);
+    - `'invalid-declaration'`: a `select` whose options are missing, empty or malformed.
+      Any value for it is refused (it used to take every string); an optional one can be
+      left absent;
+    - `'unknown'`: a key the asset does not declare;
+    - `'not-object'`: the values are not a plain object. A `Date`, `Map`, `Set` or class
+      instance is refused too.
+  
+    An asset that declares no parameters takes any keys, but not any values as it used to:
+    they must be a plain object (`'not-object'`), each a string, a finite number or a
+    boolean (`'wrong-type'`), since an object or an array reached the file's URL as
+    `[object Object]`. Defaults are not filled in: an absent optional parameter stays
+    absent, and values left empty once `undefined` and `null` keys are dropped are not sent.
+  - **`access()` downloads from `access` services only**, with an `Error` for any other
+    service type.
+  
+  **New**
+  
+  - `checkConsumerParameters(declared, values)` returns the same issues without throwing, to
+    validate a form before calling. `declared` is a `DeclaredConsumerParameter[]`, which a
+    service's or an algorithm's `consumerParameters` and ddo-js's v4 `ConsumerParameter[]`
+    all fit.
+  - `getAlgorithmConsumerParameters(asset)` returns the parameters an algorithm declares for
+    `algocustomdata`.
+  
+  **Migration**
+  
+  Send values of the declared types, only for declared parameters, and every required one.
+  For an asset that declares none, send strings, numbers and booleans only:
+  
+  ```ts
+  await nautilus.access({
+    assetDid,
+    userdata: { rows: 5 } // was { rows: '5' }
+  })
+  ```
+  
+  For a `compute` service, run a job with `compute()` or `freeCompute()` instead of calling
+  `access()`.
+
+- [#204](https://github.com/deltaDAO/nautilus/pull/204) [`b928b3c`](https://github.com/deltaDAO/nautilus/commit/b928b3c411dcf90858ff000090c75487224862b8) Thanks [@Abrom8](https://github.com/Abrom8)! - Address a compute job by the id ocean-node gives it, read the job's `output` and final logs,
+  request a CPU and memory limit by default, and publish algorithms without a dataset's
+  compute settings.
+  
+  **Fixes**
+  
+  - **A job's status, result and logs are the job's own.** nautilus shortened a started job's
+    id to the bare `<jobId>` and asked the node for that. ocean-node filters on a job only by
+    `<environmentHash>-<jobId>`, and given a bare id answers with every job of the consumer;
+    nautilus then took the first, so an unknown or mistyped id returned another job's status
+    and `getComputeResult()` that job's output URL. Every status request also transferred the
+    consumer's whole job history. Jobs are now addressed by the qualified id, and
+    `getComputeStatus()` (and `OceanNodeClient.getComputeJob()`) return `undefined` when no
+    job matches.
+  - **`streamComputeResult()` streams the job's `output`.** It read the result at index 0,
+    which on ocean-node 4.2 is the image log (`imageLog`, `configurationLog`, `algorithmLog`,
+    `output`). It now picks the result as `getComputeResult()` does.
+  - **A failed job has finished.** A job counts as finished once the node sets its
+    `dateFinished`, as the node itself decides, rather than from status `70`: failed jobs end
+    below it (`2`, `11`, `13`, `21`, `22`, `31`, `41`, `42`, `61`, `62`, …), so
+    `getComputeResult()` reported them as not finished forever and `getComputeLogs()` failed
+    on them. Both now read a failed job's results.
+  - **A job at `71` without its `output` yet is not ready, not output-less.** The node sets
+    `71` (`JobSettle`) before it writes `outputs.tar`, so `getComputeResult()` logs that the
+    job has not listed its `output` yet instead of warning that it has none, and
+    `streamComputeResult()` says so in its error.
+  - **`getComputeLogs()` works on a finished job.** The node serves live logs only while the
+    algorithm runs, so once the job has finished it streams the job's `algorithmLog` result,
+    also when the job finishes between the status check and the log request.
+  - **Job ids cannot add query parameters.** ocean.js puts the job id into the query string of
+    signed requests unencoded, and nautilus accepted any id with a dash, so `h-x&index=3` added
+    a parameter. Job ids must now be exactly what ocean-node builds (`0x` and 64 hex digits, a
+    dash, 64 hex digits), result indexes non-negative safe integers; errors give a malformed
+    id's length, not the id.
+  - **Node URIs in compute errors and logs show only their origin**, since a URI can carry
+    credentials; job ids are left out of those messages too.
+  - **Jobs get a CPU and memory limit by default.** Without `resources` (or with `[]`), each resource
+    defaulted to the environment's minimum, `0` for RAM and disk on ocean-node 4.2
+    environments, so free jobs ran without a memory limit. `cpu`, `ram` and `disk` now
+    default to at least `1` within the resource's maximum, on free and paid jobs; other
+    resources default to their minimum. A non-empty `resources` list is sent exactly as
+    given.
+  - **Algorithms carry no `compute` block.** An algorithm's compute service was published with
+    a dataset's settings (`allowRawAlgorithm`, `allowNetworkAccess`, an empty
+    `publisherTrustedAlgorithms`, …), which ocean-node reads from datasets only. Assets of type
+    `algorithm` are now published and edited without them.
+  - **Docs:** the `output` result is `outputs.tar`, a tar archive; `configurationLog` is no
+    longer misspelt. A qualified job id is to be kept secret: ocean-node 4.2.2 checks that a
+    live-log request is signed, not that the signer owns the job.
+  - **Example:** `retrieveComputeResult` no longer prints the signed result URL, and counts the
+    archive's bytes as they stream instead of buffering it.
+  
+  **Breaking (beta API)**
+  
+  - **Job ids are `<environmentHash>-<jobId>`.** `compute()` and `freeCompute()` return the
+    id as the node gives it, and `getComputeStatus()`, `getComputeResult()`,
+    `streamComputeResult()`, `getComputeLogs()` and `stopCompute()` take it. A bare id throws,
+    as it does on `OceanNodeClient`'s `computeStatus()`, `getComputeJob()`, `computeStop()`,
+    `getComputeResultUrl()`, `getComputeResult()` and `getComputeLogs()`. Jobs from the
+    node come back under the qualified id.
+  - **`getComputeStatus()` returns `NodeComputeJob | undefined`**, which adds the node's
+    `environment`, `resources` and `payment` to `ComputeJob`; so do
+    `OceanNodeClient.computeStatus()` and `getComputeJob()`. `compute()` and `freeCompute()`
+    return `jobs: NodeComputeJob[]`, and `stopCompute()`, `OceanNodeClient.computeStart()`,
+    `freeComputeStart()` and `computeStop()` return `NodeComputeJob[]`.
+  - **A job id must match ocean-node's exact format**, and `getComputeResultUrl()` and
+    `getComputeResult()` throw a `RangeError` for an `index` that is not a non-negative safe
+    integer.
+  - **`getComputeLogs()` returns a `ComputeResultStream`** (`AsyncIterable<Uint8Array>`)
+    instead of `unknown`, on `Nautilus` and `OceanNodeClient`. `OceanNodeClient.getComputeLogs()`
+    throws when the node returns no stream.
+  - **`streamComputeResult()` throws for a job that has not finished**, as well as for an
+    unknown job or one without the result.
+  - **Paid jobs request at least 1 CPU, 1 GB of RAM and 1 GB of disk by default**, so their
+    escrow quote can be higher than with beta.1's defaults. Pass `resources` to choose.
+  
+  **Migration**
+  
+  Wait for a job on `dateFinished`, not on status `70` or `71`; a failed job never reaches
+  them:
+  
+  ```ts
+  const job = await nautilus.getComputeStatus({ jobId })
+  if (job?.dateFinished) console.log('finished with', job.status, job.statusText)
+  ```
+  
+  Keep the `jobId` that `compute()` or `freeCompute()` returned, whole. To rebuild it from a
+  bare id stored with beta.1, put the first segment of the job's environment id in front of
+  it:
+  
+  ```ts
+  const jobId = `${environment.id.split('-')[0]}-${bareJobId}`
+  const job = await nautilus.getComputeStatus({ jobId })
+  ```
+  
+  Read logs as a stream:
+  
+  ```ts
+  for await (const chunk of await nautilus.getComputeLogs({ jobId }))
+    process.stdout.write(chunk)
+  ```
+
+- [#204](https://github.com/deltaDAO/nautilus/pull/204) [`c06369b`](https://github.com/deltaDAO/nautilus/commit/c06369b16ea8fb82c4547a6e7d60a08c151e8008) Thanks [@Abrom8](https://github.com/Abrom8)! - Report what ocean-node answered when a call fails.
+  
+  **Fixes**
+  
+  - **`initialize` and the compute logs report the node's message.** ocean-node answers many
+    errors in plain text, and ocean.js reads them as JSON, so a refused call surfaced as
+    `initialize: Unexpected token 'U', "Use the in"... is not valid JSON`, also on the
+    access-denied path, and `getComputeLogs` as `Unexpected token 'J', "Job not fo"...`. Over
+    HTTP, nautilus now sends these two requests itself (signed as ocean.js signs them), and a
+    refusal throws an `OceanNodeError` with the node's status and text: `[ocean-node]
+    initialize: HTTP 400 Bad Request: Use the initializeCompute endpoint to initialize compute
+    jobs`. ocean.js no longer logs these failures to the console. Over P2P they still go
+    through ocean.js.
+  - **Other node messages are unwrapped.** For the calls that still go through ocean.js, a
+    JSON string answer is unquoted (`freeComputeStart: Error: Access to asset … was denied`,
+    not `"Error: …"`) and the `error` of a JSON object answer is used. A plain-text answer,
+    whose status and text ocean.js does not pass on, reads "the node's error answer is not
+    JSON" instead of a JSON parse fragment, which stays on `cause`.
+  - **The node's text is sanitized.** Before it goes into a message, ANSI escapes and control
+    characters (CR, LF) are removed; signatures, tokens (`vp_token`, `id_token`, bare JWTs,
+    bearer credentials), `request_uri`, `code`, `nonce`, passwords and API keys are redacted in
+    a query, a JSON field or `key: value` prose; a URL keeps its origin only, so a policy
+    server's redirect URI or an internal host's path is not relayed; and the text is cut at
+    200 characters. An error answer's body is read up to 64 KB, within the request's timeout.
+    For an ocean.js error, `cause` is a sanitized copy rather than the error itself. An
+    indexing record's `txId` is named only when it is a transaction hash.
+  - **A missing asset is reported as missing.** `resolve()` (and `getAsset()`) dropped the
+    node's 404, so an unknown DID surfaced as `resolve: HTTP request failed`. It now reads the
+    DDO itself and throws an `AssetNotFoundError`. After a 404 it reads the node's indexing
+    state for the DID, and when the node recorded an indexing failure the message says so:
+    `no asset found for did:ope:… (HTTP 404); the node recorded an indexing error for tx
+    0x…: …`. The two indexing-state reads run in parallel. Over P2P, the node's `Not found`
+    answer throws an `AssetNotFoundError` too, without the indexing state (served over HTTP
+    only).
+  - **Redirects.** `initialize` does not follow redirects: its query carries the consumer's
+    address and `userdata`. The read-only node GETs (`resolve`, `waitForIndexer`,
+    `getIndexingState`, `getNodeAddress`, `getIndexerNonceState`) refuse a redirect from a
+    public node to a loopback, private or link-local host (cloud metadata, for one), so its
+    answer cannot end up in an error message.
+  - **The compute logs request with a JWT.** Without `consumerAddress` it threw; the address
+    is now read from the token's `address` claim, as ocean.js reads it, and `consumerAddress`
+    is optional for a JWT. With a Signer, the request is serialized with the client's other
+    signed commands, so concurrent calls no longer reuse a nonce, and it is retried once when
+    the node rejects the nonce.
+  - **`PolicyDeniedError.consumerAddress` is the address sent**: a Signer's own, not the one
+    the request named.
+  
+  **Breaking (beta API)**
+  
+  - **Node error messages changed form.** A failure the node answered reads `[ocean-node]
+    <operation>: HTTP <status> <statusText>: <text>`, and `OceanNodeError.status` holds the
+    status. `getNodeAddress`, `getIndexerNonceState`, `getIndexingState` and
+    `initializePolicyVerification` (for an answer that is not a refusal) use the same form.
+    An `OceanNodeError` thrown inside a wrapped call (`requireSigner` in `validateRemote`) is
+    passed on rather than wrapped again.
+  - **`resolve()` throws an `AssetNotFoundError`** (`did`, `status` 404, and `state` with the
+    node's indexing failure record when there is one) for an asset the node does not serve.
+    Over HTTP it reads the DDO itself, with a 15 s timeout.
+  - **`OceanNodeError.cause`** of a wrapped ocean.js error is a sanitized copy, and
+    `IndexingError` messages are cut at 200 characters. `initialize` throws on a redirect.
+  - **`initialize` over HTTP** has a timeout of `requestTimeoutMs` (default 120 s).
+    `getComputeLogs` signs within it, then waits for the job's first output with no timeout,
+    as before: ocean-node sends no headers until the job writes. It holds the signing queue
+    for at most 10 s meanwhile. `Nautilus.getComputeLogs` takes a `signal`
+    (`ComputeLogsConfig`) to stop waiting. A finished job's logs still come from its
+    `algorithmLog` result.
+  
+  **New**
+  
+  - `AssetNotFoundError`, and `OceanNodeError.status`.
+
+- [#204](https://github.com/deltaDAO/nautilus/pull/204) [`c84dfd1`](https://github.com/deltaDAO/nautilus/commit/c84dfd1834006e02a15204fb40956b1fc6f1cbc3) Thanks [@Abrom8](https://github.com/Abrom8)! - Reuse a download order that is still valid, so `access()` no longer pays for a new order
+  on every call within the service's timeout.
+  
+  ocean-node's access `initialize` reports no `validOrder` (only its compute `initialize`
+  checks a previous order), and nautilus reused an order only when the node reported one.
+  
+  **Fixes**
+  
+  - **`access()` finds the previous order on chain.** When `initialize` reports no
+    `validOrder`, nautilus reads the datatoken's `OrderStarted` events with the account as
+    consumer and its `OrderReused` events with the account as caller, and checks each
+    transaction, newest first, from its receipt as the node checks a download. It counts only
+    what both upstream ocean-node (4.2.0) and OceanProtocolEnterprise ocean-node (4.2) accept.
+    It follows the first `OrderReused` (whose caller must be the account) and takes the first
+    `OrderStarted` for the account (consumer or payer), which must be the datatoken's
+    (upstream takes it from any contract, enterprise the datatoken's first). It refuses that
+    order for another service index, and keeps it while inside the service's `timeout`
+    counted from the `OrderStarted` block (`0`, or a missing timeout, never expires). A
+    transaction with two orders (the wrong service index first), with a look-alike order
+    from another contract first, or with a bogus reuse ahead of a valid one, is refused. A
+    transaction not sent to the datatoken itself (an order through the factory, a contract
+    wallet or a relayer), which upstream refuses as it reads the datatoken from its `to`, is
+    only extended.
+  - **Used as it stands, or extended.** When the transaction carries a provider fee signed
+    by the service's node for this service that the node keeps (`validUntil` `0`, or the
+    time since the transaction's block at most `validUntil`, the node's own comparison),
+    the download uses it and nothing is sent. Otherwise the order is extended with
+    `reuseOrder` and the fee the node quotes now. Either way the result has
+    `reusedOrder: true`, and `transferTxId` is the transaction the download uses. An order
+    is reused only with at least 10 minutes of its timeout left, since a reuse does not
+    restart it, and only with three confirmations, so a shallow reorg cannot drop it.
+  - **Consent only for the fee that is paid.** `access()` decides on reuse before it asks
+    for consent, then asks `maxProviderFee` / `confirmProviderFees` once, for the fee it
+    will pay: none for an order used as it stands, even when the node quotes a fee; the fee
+    quoted now for an order extended or placed. Before, the quoted fee was authorised first,
+    so an order used as it stands asked the callback for nothing, or threw a
+    `ProviderFeeNotAllowedError` with no limit set. Every check still runs before the first
+    transaction, and the order may pay exactly the fee allowed.
+  - **Bounded reads.** The events are read newest first, 2 000 blocks per `eth_getLogs`
+    call, halved while the RPC refuses the range, back to the first block inside the
+    service's timeout (found from at most three block reads), and at most 100 000 blocks or 100
+    rounds of reads, checking at most 50 candidates (each up to two receipt reads), since
+    anyone can emit orders naming the account. An order beyond that is not found, and a new
+    one is placed; so is one when the RPC fails otherwise.
+  
+  A node that reports `validOrder` is followed as before, with no chain read.
+  `settleOrder()` takes an optional `service: { id, timeout? }` to look the order up;
+  without it, only the node's `validOrder` is reused. It also takes an optional `did`, named
+  with the service in the fee passed to `confirmProviderFees`.
+
+- [#204](https://github.com/deltaDAO/nautilus/pull/204) [`0ecee9a`](https://github.com/deltaDAO/nautilus/commit/0ecee9a641ed119dd30a35b7f273699988769aa2) Thanks [@Abrom8](https://github.com/Abrom8)! - Open the policy-server session in nautilus itself, on every download and compute job the
+  node checks, and report a refusal before anything is ordered.
+  
+  On a node with a policy server, ocean-node checks a policy-server session on every download
+  and compute job of an asset whose asset or service has `credentials` (`{}` included), whether
+  it is gated by addresses or by an `SSIpolicy`. The policy server opens that session in
+  `initiate`, after checking the consumer's address against the asset's allow list, and binds
+  it to (consumer, asset, service). beta.1 opened it only through a `CredentialProvider`, read
+  it only from a redirect containing `success` and `id=`, and took any failed `initiate` for
+  "no policy server". So an address-gated download was ordered and then refused, a refused
+  compute job lost the policy server's reason, and a presentation the verifier did not accept
+  was found out only after the order.
+  
+  **Breaking (beta API)**
+  
+  - **`CredentialProvider` is presentation-only.** Its one method is
+    `present(challenge): Promise<void>`, called only for a service whose `SSIpolicy` asks for
+    credentials, with the open session (`sessionId`) and the openid4vp request (`redirectUri`)
+    on the challenge. `resolve()` and `interactive` are removed. nautilus opens the session,
+    reads its id and checks the result itself (`PolicySessionResolver`).
+  - **`StaticCredentialProvider` and `NoopCredentialProvider` are removed.** No provider is
+    the default, and address-gated assets need none. An asset that asks for a presentation is
+    refused before anything is signed or ordered when no provider is set.
+  - **`skipCredentials` is removed** from `access()`, `compute()` and `freeCompute()`. A node
+    without a policy server is read from its status (`isPSConfigured`) or, where the status
+    does not say (upstream ocean-node 4.2.0), from its answer to `initiate`, so there is
+    nothing to skip.
+  - **`WaltIdCredentialProvider`** implements `present()`: it no longer calls `initiate`, takes
+    no `sessionStore`, and has no `clearSessions()` or `explainFailure()`. The session cache is
+    `Nautilus.create`'s new `sessionStore` option; the failed policies are on
+    `PolicyDeniedError.reason`.
+  - **`OceanNodeClient.initializePolicyVerification` returns the reply, `null` or throws.** It
+    returns `null` only for a node without a policy server, which answers a 404 with no body
+    (over P2P, a bare 404 status), and `hasPolicyServer()` then answers `false` for 10
+    minutes, unless it knew the node to have one (an empty `POLICY_SERVER_URL` answers this
+    way too, and is warned about). It throws a `PolicyDeniedError` only for the policy server's own refusal (a reply
+    with `success: false` and a 4xx), and an `OceanNodeError` with the status for everything
+    else: the node's own 401 (nonce, signature, "Auth not configured"), 404 (asset not indexed
+    there) and 400 (policy server unreachable), a network error, a timeout, a rate limit or a
+    5xx. With a Signer, a rejected nonce is retried
+    once. Over HTTP it signs and sends the command itself, as ocean.js signs it: ocean.js 9.2
+    throws `JSON.stringify(await response.json())` for a failed answer, which keeps the policy
+    server's JSON reply but turns the node's plain-text errors into a `SyntaxError`, losing
+    their status and text (the rejected nonce among them). Over P2P, where ocean.js keeps the
+    node's text, it goes through ocean.js.
+  - **`PolicyDeniedError.details` is replaced by `policyResults`**: the verifier's per-policy
+    name, outcome and error only. `details` held the verifier's whole record, the presentation
+    (`vp_token`) included. `reason` is bounded, without control characters.
+  - **`checkPolicySession` returns `{ verified, policyResults }`** instead of
+    `{ verified, result }`, for the same reason. Over HTTP nautilus sends it itself, with a
+    bounded read, since ocean.js logs the body of the error answer (the record with the
+    presentation).
+  - **A `sessionStore` of your own gets only address-only sessions.** The id of a presented
+    session lets anyone read the presentation through the node (`checkSessionId` is not
+    signed), so presented sessions stay in the resolver's memory unless
+    `persistPresentedSessions: true` (new option of `Nautilus.create` and
+    `PolicySessionResolver`, which warns once).
+  - **`WaltIdCredentialProvider` checks what the node sends.** For a download that node is the
+    publisher's `serviceEndpoint`. It refuses a request that is not `openid4vp://`, a
+    `request_uri`, `response_uri` or `presentation_definition_uri` that is not `https://` (or
+    `http://` on a loopback host, or anywhere with its new `allowInsecureTransport`), or that
+    points at a link-local or metadata address; refuses a presentation definition with an input
+    descriptor for a credential type the asset's or service's `request_credentials` do not
+    name; presents only credentials of the requested types; and refuses when its signer is not
+    the session's consumer.
+  - **`PolicyServerAction` moved to the node client** (still exported from the package root)
+    and has only `GET_PD` and `CHECK_SESSION_ID`.
+  - **`setCredentialProvider(undefined)`** removes the provider; the instance no longer writes
+    the provider into its options.
+  - **`access()` and `compute()` take `policySessions`** (a `PolicySessionResolver`) in their
+    standalone `context` instead of `credentials`.
+  - **`SessionEntry` is `{ sessionId, createdAt, presented }`**: `skipped` is removed (only
+    verified sessions are cached), and a `SessionStore` of your own must keep when the session
+    was opened and whether it was presented. `MemorySessionStore` keys the consumer address
+    exactly as given, no longer lower-cased; key a store of your own on `sessionKeyString(key)`.
+  - **`assertPolicySatisfied`** now refuses a service that asks for a presentation when no
+    provider can make one (`canPresent`), and `shouldResolveCredentials` is removed.
+  
+  **Fixes**
+  
+  - **An allowlisted download is no longer refused after the order.** `access()` opens the
+    session before `initialize` and the order whenever the service's node has a policy server
+    and the asset or service has `credentials`, with no wallet for an address-only gate, and
+    passes it to the download URL. The session id is `message.sessionId` from `initiate`, which
+    policy server 1.3 always sends.
+  - **A refused compute job keeps the policy server's reason.** `compute()` and
+    `freeCompute()` open one session per input, the algorithm included, each for its own asset
+    and service, before escrow, approvals and orders, and send the same array to
+    `initializeCompute` and `computeStart` / `freeComputeStart`. A refusal throws a
+    `PolicyDeniedError` with the policy server's message.
+  - **A presentation is checked before the order.** After the provider presents, nautilus asks
+    the policy server (`checkSessionId`) and goes on only on `verificationResult: true`, else a
+    `PolicyDeniedError` names the failed VC/VP policies.
+  - **Refusals are never cached**, and the session is opened for and cached under the address
+    the node forwards to the policy server (`OceanNodeClient.policySessionAddress`):
+    `signer.getAddress()` unchanged for a Signer, which also goes to the download or compute
+    call, and the token's address for a JWT, which the node uses whatever the request says. The
+    policy server hashes it into the session id as it is, so a session opened for the
+    checksummed address is never handed to a request with the lower-cased one.
+  - **Parallel calls to one node no longer sign the same nonce.** `forEndpoint` returns one
+    client per normalised node URI, shared by every client derived from the same one, with
+    one signing queue and one `hasPolicyServer` answer; it used to build a new client, and
+    queue, on every call.
+  - **Response bodies are read up to a limit**: 8 MiB by default for every request nautilus
+    sends itself, 256 KiB for policy-server answers.
+  - **A cached session is never spent stale.** It is reused for at most `sessionTtlMs` from
+    `initiate` (2 minutes by default, well inside the 5 minutes walt.id's verifier keeps a
+    session), and one that needed a presentation is checked again (`checkSessionId`) before
+    it is reused. A stale one, also from a `sessionStore` that outlived the policy server or
+    its restart, is opened again before anything is ordered.
+  - **`publish()` and `edit()` warn about an asset no consumer can use**: when a node the
+    asset is served from has a policy server and the asset-level `credentials` are `{}`, or
+    have an `allow` list without an `address` entry, that policy server refuses every
+    consumer. They log a warning and go on.
+  
+  **New**
+  
+  - `PolicyDeniedError` (`did`, `serviceId`, `consumerAddress`, `code`, `reason`,
+    `policyResults`) and `PolicyCheckResult`, exported. It is not an `OceanNodeError`.
+  - `PolicySessionResolver`, exported, with `resolve()`, `setCredentialProvider()` and
+    `clearSessions()`; it and `Nautilus.create` take `sessionStore`, `persistPresentedSessions`
+    and `sessionTtlMs` (`DEFAULT_SESSION_TTL_MS`, exported).
+  - `sessionKeyString(key)`: the key `MemorySessionStore` stores an entry under.
+  - `OceanNodeClient.hasPolicyServer()` (the node's `isPSConfigured`, or what an `initiate`
+    showed; a "yes" kept per client, a "no" for 10 minutes),
+    `policySessionAddress(consumerAddress)` and `checkPolicySession(sessionId)`;
+    `authTokenAddress(token)`, the address in a node JWT.
+  - `hasCredentials(ddo, service)`: whether ocean-node checks credentials for a service.
+
+- [#204](https://github.com/deltaDAO/nautilus/pull/204) [`4c3b185`](https://github.com/deltaDAO/nautilus/commit/4c3b185e0007a2e975c616f326b17a2b257b5d25) Thanks [@Abrom8](https://github.com/Abrom8)! - Store SSI policies in the form ocean-node 4.2.x indexes and the policy server parses, so
+  credential-gated assets are indexed.
+  
+  **Fixes**
+  
+  - **Credential-gated assets are indexed.** An asset whose `vp_policies` mixed a name with a
+    `{ policy, args }` object, as the identity guide showed, was published but never indexed by
+    ocean-node 4.2.x. Every VP policy is
+    now written as `{ policy }` or `{ policy, args }`, as the enterprise market writes them.
+  - **Per-credential policies take effect.** `request_credentials[].policies` are stored
+    JSON-encoded (`'signature'` becomes `'"signature"'`, an object its JSON), the form the
+    policy server parses and the enterprise market writes. The policy server skipped a bare
+    name, so those checks never ran.
+  - **Edits write no legacy form back.** Editing an asset normalises the policies it loads
+    (asset level, every service, including services the edit does not touch): bare-name VP
+    policies become objects, non-string `args` are JSON-stringified, and raw per-credential
+    policies are encoded, so a per-credential check stored as a bare name starts being
+    enforced once the edit is published.
+  - **Loaded VC policies are normalised too.** `{ policy }` objects in `vc_policies` become
+    names (deduplicated).
+  - **The address helpers read bare-string addresses.** `addCredentialAddresses()` no longer
+    writes `{ address: undefined }` and `removeCredentialAddresses()` no longer throws on an
+    asset whose address `values` are bare strings. An entry stored as bare strings only stays
+    that way, a mixed one is written back as `{ address }`, and an edit leaves address entries
+    it does not touch as stored, since upstream ocean-node 4.2.0 without a policy server
+    reads only bare strings. `AddressCredential.values` is typed
+    `({ address: string } | string)[]` accordingly.
+  - **`removeCredentialAddresses()` removes from every address entry of the list.** It
+    changed only the first, so an address also held by a second entry stayed allowed by the
+    policy server, which reads them as one list.
+  - **Loading reads every stored shape the policy server accepts.** A single policy or request
+    credential stored without its array is wrapped in one, and list entries that are not
+    objects are skipped, so even a metadata-only edit of such an asset no longer throws.
+  - **Unreadable policies fail closed.** An edit throws, naming the entry, on a VP policy,
+    request credential or per-credential policy it cannot read, rather than dropping it and
+    leaving the asset open under the remaining policies. `setVpPolicies()` refuses one too,
+    and writes a bare name from an untyped caller as `{ policy }`.
+  - **A stored per-credential policy is not encoded twice** when passed back into
+    `addRequestCredentials()`.
+  - **Edits keep every `SSIpolicy` value.** Only the first value of the entry was kept, so the
+    request credentials of the others were dropped. Values (and a second `SSIpolicy` entry in
+    the same list) are merged into one, as the policy server reads them, so `setVcPolicies()`
+    and `setVpPolicies()` replace the policies of all of them.
+  - **Removing the last allowed address keeps the gate.** `removeCredentialAddresses()`
+    dropped the allow entry once it was empty, which lifted the address gate; the node and
+    the policy server read an empty allow list as "deny everyone". The entry is now kept as
+    `values: []`. An emptied deny entry is still dropped.
+  
+  **Breaking (beta API)**
+  
+  - **`VpPolicy` is `{ policy: string; args?: string }`.** `setVpPolicies()` and the
+    `vpPolicies` of `addRequestCredentials()` no longer accept bare names, and `args` is a
+    string. The policy server parses it as JSON when it can, so `'1'` reaches the verifier
+    as `1`.
+  - **`SsiPolicyValue.request_credentials` is `StoredRequestCredential[]`**, whose
+    `policies` are JSON strings. `RequestCredential`, which the builders take, is unchanged.
+  
+  **Migration**
+  
+  VP policies are now stored as objects. Write each one as an object, and pass structured
+  arguments through `JSON.stringify`:
+  
+  ```ts
+  builder.setVpPolicies(CredentialListTypes.ALLOW, [
+    { policy: 'holder-binding' }, // was 'holder-binding'
+    { policy: 'minimum-credentials', args: '1' }
+  ])
+  ```
+  
+  An asset already published with a mixed `vp_policies` list was never indexed, so publish
+  it again. An indexed asset with bare names is rewritten to objects by its next edit.
+
 ## 2.0.0-beta.1
 
 ### Patch Changes
