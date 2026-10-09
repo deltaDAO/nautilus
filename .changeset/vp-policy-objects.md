@@ -20,10 +20,13 @@ credential-gated assets are indexed.
   policies become objects, non-string `args` are JSON-stringified, and raw per-credential
   policies are encoded, so a per-credential check stored as a bare name starts being
   enforced once the edit is published.
-- **Loaded VC policies and addresses are normalised too.** `{ policy }` objects in
-  `vc_policies` become names (deduplicated), and bare-string address `values` become
-  `{ address }`, so `addCredentialAddresses()` no longer writes `{ address: undefined }`
-  and `removeCredentialAddresses()` no longer throws on such an asset.
+- **Loaded VC policies are normalised too.** `{ policy }` objects in `vc_policies` become
+  names (deduplicated).
+- **The address helpers read bare-string addresses.** `addCredentialAddresses()` no longer
+  writes `{ address: undefined }` and `removeCredentialAddresses()` no longer throws on an
+  asset whose address `values` are bare strings; they write the entry they change back as
+  `{ address }`. An edit leaves address entries it does not touch as stored, since
+  ocean-node 4.2.0 without a policy server reads only bare strings.
 - **Loading reads every stored shape the policy server accepts.** A single policy or request
   credential stored without its array is wrapped in one, and list entries that are not
   objects are skipped, so even a metadata-only edit of such an asset no longer throws.

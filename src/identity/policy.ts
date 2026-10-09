@@ -147,7 +147,8 @@ function updateSsiPolicy(
  * Adds addresses to the `type: 'address'` entry of one list.
  *
  * Written as `{ address }` objects: the policy server's `extractAddressList` accepts bare
- * strings too, but every producer in the stack writes objects, so nautilus matches them.
+ * strings too, but the enterprise market writes and reads objects, so nautilus matches it.
+ * The entry's stored values are read in either form and written back as objects.
  */
 export function addCredentialAddresses(
   credentials: DdoCredentials,
@@ -158,7 +159,7 @@ export function addCredentialAddresses(
   const existing = entries.find(isAddressCredential)
 
   const merged = dedupe([
-    ...(existing?.values || []).map((value) => value.address),
+    ...(existing ? storedAddresses(existing) : []),
     ...addresses
   ])
 
@@ -173,7 +174,8 @@ export function addCredentialAddresses(
 }
 
 /**
- * Removes addresses.
+ * Removes addresses, compared case-insensitively. The entry's stored values are read in
+ * either form and the rest written back as objects.
  *
  * An allow entry left empty is kept as `values: []`: the node and the policy server read an
  * empty address allow list as "deny everyone", so dropping it would lift the gate. A deny
@@ -190,9 +192,9 @@ export function removeCredentialAddresses(
   if (index === -1) return credentials
 
   const removed = new Set(addresses.map((address) => address.toLowerCase()))
-  const remaining = (entries[index] as AddressCredential).values.filter(
-    (value) => !removed.has(value.address.toLowerCase())
-  )
+  const remaining = storedAddresses(entries[index] as AddressCredential)
+    .filter((address) => !removed.has(address.toLowerCase()))
+    .map((address) => ({ address }))
 
   if (remaining.length || list === CredentialListTypes.ALLOW)
     (entries[index] as AddressCredential).values = remaining
@@ -304,16 +306,20 @@ function dedupe<T>(values: T[]): T[] {
  * makes them take effect.
  *
  * Other producers can also write `{ policy }` objects into `vc_policies` (the policy
- * server reads only the name) and bare-string address `values`. Both are rewritten to the
- * single form nautilus writes, so every array stays one type and the address helpers can
- * read every entry. A single policy or request credential stored without its array is
- * wrapped in one, as the policy server does for `vp_policies`.
+ * server reads only the name); they are rewritten to names, so the array stays one type. A
+ * single policy or request credential stored without its array is wrapped in one, as the
+ * policy server does for `vp_policies`.
  *
- * Unusable addresses and VC policies are dropped, as the policy server skips them; an
- * allow entry left without addresses stays `values: []` and keeps denying everyone. An
- * unreadable VP policy, request credential or per-credential policy throws instead:
- * dropping it would leave the asset open under the remaining policies, where the policy
- * server today refuses or fails on it.
+ * Address entries are left as stored: bare strings and `{ address }` objects are both read
+ * by the policy server and ocean-node 4.2.2, but ocean-node 4.2.0's built-in check (no
+ * policy server) reads strings only, so rewriting a list the edit does not touch could
+ * break its gate there. `addCredentialAddresses` and `removeCredentialAddresses` read
+ * either form.
+ *
+ * Unusable VC policies are dropped, as the policy server skips them. An unreadable VP
+ * policy, request credential or per-credential policy throws instead: dropping it would
+ * leave the asset open under the remaining policies, where the policy server today
+ * refuses or fails on it.
  */
 export function normalizeStoredCredentials(
   credentials: DdoCredentials
@@ -323,18 +329,12 @@ export function normalizeStoredCredentials(
   for (const list of [copy.allow, copy.deny]) {
     if (!Array.isArray(list)) continue
 
-    // The guards skip entries that are not objects, which the stack cannot match either.
-    for (const entry of list) {
-      if (isAddressCredential(entry))
-        // A non-array list holds no address the stack can match.
-        entry.values = Array.isArray(entry.values)
-          ? (entry.values as unknown[]).flatMap(readAddress)
-          : []
-      else if (isSsiPolicyCredential(entry))
+    // The guard skips entries that are not objects, which the stack cannot match either.
+    for (const entry of list)
+      if (isSsiPolicyCredential(entry))
         entry.values = toArray(entry.values)
           .filter(isObject)
           .map(normalizeSsiValue)
-    }
   }
 
   return copy
@@ -383,17 +383,20 @@ function mergeSsiValues(values: unknown[]): SsiPolicyValue {
 }
 
 /**
- * A stored address value as `{ address }`. The case is kept, as `addCredentialAddresses`
- * keeps it; removal compares case-insensitively.
+ * The addresses an address entry holds, read from bare strings and `{ address }` objects
+ * alike, with their case kept. A value that is neither, or a `values` that is not an
+ * array, holds no address the stack can match, and is skipped.
  */
-function readAddress(raw: unknown): { address: string }[] {
-  if (typeof raw === 'string') return [{ address: raw }]
+function storedAddresses(entry: AddressCredential): string[] {
+  const values: unknown = entry.values
+  if (!Array.isArray(values)) return []
 
-  const address = (raw as { address?: unknown } | null)?.address
-  if (typeof address === 'string') return [{ address }]
+  return values.flatMap((raw: unknown) => {
+    if (typeof raw === 'string') return [raw]
 
-  // Unusable: the policy server cannot match it either.
-  return []
+    const address = (raw as { address?: unknown } | null)?.address
+    return typeof address === 'string' ? [address] : []
+  })
 }
 
 /** A stored VC policy as its name: the policy server reads only `policy` from an object. */

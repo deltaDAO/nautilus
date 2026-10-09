@@ -504,20 +504,10 @@ describe('normalizeStoredCredentials', () => {
       allow: [
         null,
         'address',
-        { type: 'address', values: [] },
+        { type: 'address', values: null },
         { type: 'SSIpolicy', values: [{ request_credentials: [] }] }
       ],
-      deny: [null, { type: 'address', values: [] }]
-    })
-  })
-
-  it('keeps an allow entry whose addresses are all unusable, so it still denies all', () => {
-    const input = {
-      allow: [{ type: 'address', values: [null, 5] }]
-    } as unknown as DdoCredentials
-
-    expect(normalizeStoredCredentials(input)).to.deep.equal({
-      allow: [{ type: 'address', values: [] }]
+      deny: [null, { type: 'address', values: '0x1' }]
     })
   })
 
@@ -580,23 +570,20 @@ describe('normalizeStoredCredentials', () => {
     ])
   })
 
-  it('turns bare-string addresses into objects, keeping their case', () => {
+  it('leaves address entries as stored, bare strings included', () => {
+    // ocean-node 4.2.0's built-in check reads only bare strings: rewriting a list the edit
+    // does not touch would break its gate there.
     const input = {
       allow: [{ type: 'address', values: ['0xAbC', { address: '0x2' }, 5] }],
-      deny: [{ type: 'address', values: ['*'] }]
+      deny: [{ type: 'address', values: ['0xDeF'] }]
     } as unknown as DdoCredentials
 
-    expect(normalizeStoredCredentials(input)).to.deep.equal({
-      allow: [
-        { type: 'address', values: [{ address: '0xAbC' }, { address: '0x2' }] }
-      ],
-      deny: [{ type: 'address', values: [{ address: '*' }] }]
-    })
+    expect(normalizeStoredCredentials(input)).to.deep.equal(input)
   })
 
   it('lets the address helpers work on a loaded bare-string list', () => {
-    // Read raw, `addCredentialAddresses` wrote `{ address: undefined }` for each string
-    // and `removeCredentialAddresses` threw on `.toLowerCase()`.
+    // Before, `addCredentialAddresses` wrote `{ address: undefined }` for each string and
+    // `removeCredentialAddresses` threw on `.toLowerCase()`.
     const loaded = normalizeStoredCredentials({
       allow: [{ type: 'address', values: ['0xAbC', '0x2'] }]
     } as unknown as DdoCredentials)
@@ -682,6 +669,41 @@ describe('address credentials', () => {
     credentials = removeCredentialAddresses(credentials, DENY, ['0x1'])
 
     expect(credentials.deny).to.deep.equal([])
+  })
+
+  it('reads stored bare strings and objects alike, writing the entry back as objects', () => {
+    const stored = () =>
+      ({
+        allow: [{ type: 'address', values: ['0xAbC', { address: '0x2' }, 5] }],
+        deny: [{ type: 'address', values: ['0xDeF', '0x4'] }]
+      }) as unknown as DdoCredentials
+
+    expect(
+      addCredentialAddresses(stored(), ALLOW, ['0x2', '0x3']).allow
+    ).to.deep.equal([
+      {
+        type: 'address',
+        values: [{ address: '0xAbC' }, { address: '0x2' }, { address: '0x3' }]
+      }
+    ])
+
+    // Every other deny address is kept: none is lost to the change of form.
+    expect(
+      removeCredentialAddresses(stored(), DENY, ['0xdef']).deny
+    ).to.deep.equal([{ type: 'address', values: [{ address: '0x4' }] }])
+    expect(
+      removeCredentialAddresses(stored(), ALLOW, ['0x2']).allow
+    ).to.deep.equal([{ type: 'address', values: [{ address: '0xAbC' }] }])
+  })
+
+  it('keeps a stored allow entry that has no readable address, which denies everyone', () => {
+    const stored = {
+      allow: [{ type: 'address', values: null }]
+    } as unknown as DdoCredentials
+
+    expect(
+      removeCredentialAddresses(stored, ALLOW, ['0x1']).allow
+    ).to.deep.equal([{ type: 'address', values: [] }])
   })
 
   it('is a no-op when removing from a list with no address entry', () => {
