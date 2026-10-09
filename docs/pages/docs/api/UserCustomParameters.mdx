@@ -111,3 +111,73 @@ const userdata = {
 } satisfies UserCustomParameters
 ```
 In the select case, you have to pass over one of the options defined in the metadata of the requested asset.
+
+## Validation
+
+`access()`, `compute()` and `freeCompute()` check the values against what the asset
+declares before anything is sent: a download's `userdata` and a compute input's `userdata`
+against the service's `consumerParameters`, and an algorithm's `algocustomdata` against the
+`consumerParameters` of its algorithm metadata.
+
+- The values must be a plain object (an object literal): not an array, a string, a `Date`,
+  a `Map`, a `Set` or a class instance.
+- A `required` parameter must have a value. `undefined` and `null` count as absent. An
+  absent optional parameter stays absent; nautilus does not fill in its `default`.
+- `text` takes a string, `number` a finite number (not a numeric string such as `'5'`),
+  `boolean` `true` or `false`, and `select` a string that is one of its option keys. Each
+  option is `{ key: label }`, and only its first key is a valid value, as the node and the
+  market read it.
+- A parameter of any other type takes a string, a finite number or a boolean: an object or
+  an array would reach a download URL as `[object Object]`.
+- A `select` whose options are missing, empty or malformed is a broken declaration: any
+  value for it is refused, since there is nothing to check it against. Leave it absent if
+  it is optional, or ask the publisher to fix the asset.
+- Keys the asset does not declare are refused, so a misspelt key does not travel to the
+  data source unnoticed: a download's `userdata` is appended to the file's URL as query
+  parameters. An asset that declares no parameters takes any keys, but the rules that do
+  not depend on a declaration still apply: the values must be a plain object, and each one
+  a string, a finite number or a boolean.
+
+What is sent is a copy of the values without the keys set to `undefined` or `null`, whether
+or not the asset declares parameters: `{ surname: 'Doe', age: null }` reaches the node, the
+download URL or the job as `{ surname: 'Doe' }`, never as `age=null`. Values left empty
+this way are not sent at all.
+
+The messages name the parameter and the value's type (and a string's length), never the
+value itself, so a secret typed into the wrong field does not end up in a log. Parameter
+names and option keys come from the publisher: they are shown without control characters,
+cut to 40 characters, and a list of them stops after 10.
+
+A mismatch throws a `ConsumerParameterError` before the node is asked for a fee and before
+any transaction. `error.issues` lists every refused value, and `error.did`,
+`error.serviceId` and `error.field` (`'userdata'` or `'algocustomdata'`) say where it was
+going. Each issue is `{ parameter, reason, message }`, `reason` one of:
+
+| `reason` | Meaning |
+| --- | --- |
+| `'missing'` | A `required` parameter is absent (`undefined` or `null`). |
+| `'wrong-type'` | The value does not have the declared type; for any other type, or a key of an asset that declares none, it is not a string, a finite number or a boolean. |
+| `'not-an-option'` | A `select` value is not one of its option keys. |
+| `'invalid-declaration'` | A `select` declares no usable options, so no value fits. |
+| `'unknown'` | The key is not a declared parameter. |
+| `'not-object'` | The values are not a plain object. |
+
+To validate a form before calling, use `checkConsumerParameters`, which returns the same
+issues instead of throwing. It takes a service's `consumerParameters` for `userdata`, or
+`getAlgorithmConsumerParameters(algorithm)` for an algorithm's `algocustomdata`:
+
+```ts twoslash
+import {
+  checkConsumerParameters,
+  getServiceByType,
+  Nautilus
+} from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+const asset = await nautilus.getAsset('did:ope:1234...')
+const service = getServiceByType(asset, 'access')
+
+const issues = checkConsumerParameters(service?.consumerParameters, { rows: '5' }) // [!code focus]
+// [{ parameter: 'rows', reason: 'wrong-type', message: "'rows' must be a finite number, got a string of 1 character" }]
+```

@@ -22,11 +22,12 @@ const { jobs } = await nautilus.freeCompute({ // [!code focus]
 New in v2. The environment must expose a `free` configuration, and its access list may
 still restrict who can use it — an environment without one throws, naming it.
 
-Credentials are still satisfied: free of charge is not the same as ungated.
+Policy-server sessions are still opened for every input, as for
+[`compute`](/docs/api/nautilus/compute): free of charge is not the same as ungated.
 
 ## Returns
 
-- Type: `{ jobs: ComputeJob[]; environment: ComputeEnvironment }`
+- Type: `{ jobs: NodeComputeJob[]; environment: ComputeEnvironment }`
 
 No `orders` or `initializeResults`, because nothing was ordered or quoted.
 
@@ -37,4 +38,14 @@ No `orders` or `initializeResults`, because nothing was ordered or quoted.
 - Type: `FreeComputeConfig`
 
 The same as [`ComputeConfig`](/docs/api/nautilus/compute) minus `paymentToken` and
-`maxJobDuration`. Resources default to the environment's `free.resources`.
+`maxJobDuration`. Without `resources`, or with an empty list, they default from the environment's
+`free.resources`: each one's minimum, raised to `1` for `cpu`, `ram` and `disk` within its
+maximum; a non-empty `resources` list is sent exactly as given (see
+[`resources`](/docs/api/nautilus/compute#resources-optional)).
+
+Each job's `jobId` is `<environmentHash>-<jobId>`, the id every job method takes.
+
+Consumer parameters are checked as in [`compute`](/docs/api/nautilus/compute): an input's
+`userdata` or the algorithm's `algocustomdata` that does not fit what the asset declares
+throws a `ConsumerParameterError` before the job is sent, and keys set to `undefined` or
+`null` are dropped from what is sent.

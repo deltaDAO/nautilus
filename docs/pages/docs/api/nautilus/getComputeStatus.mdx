@@ -21,11 +21,15 @@ pass `nodeUri` only for a job running on a different node.
 
 ## Returns
 
-- Type: `ComputeJob | undefined`
+- Type: `NodeComputeJob | undefined`
 
-`undefined` when the node does not know the job. Status `70` (`JobFinished`) and `71`
-(`JobSettle`) both mean the results are ready — either is enough for
-[`getComputeResult`](/docs/api/nautilus/getComputeResult) to return a URL.
+The job, under the `jobId` you passed, with the node's `environment`, `resources` and
+`payment` beside the `ComputeJob` fields. `undefined` when the node does not know the job;
+it is never another job of yours. The job has finished once its `dateFinished` is set,
+whether it succeeded or not: failed jobs end below `70` (`41` when the algorithm failed, `11`
+when its image could not be pulled, …), so poll on `dateFinished` and read `status` for how
+the job ended. See [`getComputeResult`](/docs/api/nautilus/getComputeResult) for when the
+`output` is ready.
 
 ## Parameters
 
@@ -38,6 +42,13 @@ pass `nodeUri` only for a job running on a different node.
 ##### jobId
 
 - Type: `string`
+
+`<environmentHash>-<jobId>`, as [`compute`](/docs/api/nautilus/compute) and
+[`freeCompute`](/docs/api/nautilus/freeCompute) return it. A bare id throws: asked for one,
+ocean-node lists every job of the consumer instead of filtering. To rebuild the full id
+from a bare one, put the first segment of the job's environment id and a dash in front of
+it. Anything but ocean-node's exact form, `0x` and 64 hex digits, a dash, then 64 hex
+digits, throws before a request; the message gives the id's length, not the id.
 
 ##### nodeUri (optional)
 

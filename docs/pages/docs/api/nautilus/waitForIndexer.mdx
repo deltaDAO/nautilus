@@ -97,7 +97,8 @@ shorter), even when less of `timeoutMs` is left.
 The lookups send no credentials, so they follow redirects, for example from a reverse proxy
 in front of `/api/aquarius`. A redirect that ends on plain `http://` on a host other than
 loopback fails the lookup, unless the node URI is plain `http://` already
-(`allowInsecureTransport`).
+(`allowInsecureTransport`), and so does one that ends on a loopback, private or link-local
+host, unless the node is on one itself.
 
 :::info
 Without a `txid`, the indexing state is not checked: the wait only polls for the asset until

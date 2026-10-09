@@ -1,7 +1,6 @@
 import type { AssetV5 } from '@oceanprotocol/ddo-js'
 import {
   type ComputeEnvironment,
-  type ComputeJob,
   type ComputeResultStream,
   type Config,
   ConfigHelper,
@@ -9,6 +8,7 @@ import {
   type LogLevel,
   Nft,
   NftFactory,
+  type NodeComputeJob,
   type SearchQuery
 } from '@oceanprotocol/lib'
 import {
@@ -22,6 +22,7 @@ import type {
   AccessConfig,
   AccessResult,
   ComputeConfig,
+  ComputeLogsConfig,
   ComputeResult,
   ComputeResultConfig,
   ComputeStatusConfig,
@@ -33,10 +34,19 @@ import type {
 import type { AssetState } from '../@types/Nautilus.js'
 import { access } from '../access/index.js'
 import { compute, freeCompute, selectEnvironment } from '../compute/index.js'
+import {
+  assertResultIndex,
+  findResultIndex,
+  isJobFinished,
+  isOutputPending
+} from '../compute/jobs.js'
 import { getLifecycleState, getNftAddress } from '../ddo/read.js'
+import type { DdoCredentials } from '../ddo/types.js'
 import { assertValid } from '../ddo/validate.js'
 import type { CredentialProvider } from '../identity/CredentialProvider.js'
-import { NoopCredentialProvider } from '../identity/CredentialProvider.js'
+import { PolicySessionResolver } from '../identity/PolicySessionResolver.js'
+import { isAddressCredential } from '../identity/policy.js'
+import type { SessionStore } from '../identity/session.js'
 import {
   IndexerNonceStuckError,
   isIndexerNonceSignable,
@@ -237,8 +247,34 @@ export interface NautilusOptions
    * (`alg: 'ETH-EIP191'`); pass a `WaltIdVcSigner` to issue from a real DID.
    */
   ddoSigner?: DdoSigner
-  /** Satisfies credential-gated access. Omit to skip SSI entirely. */
+  /**
+   * Answers the verifiable-presentation request of a service whose `SSIpolicy` asks for
+   * credentials, e.g. a `WaltIdCredentialProvider`. nautilus opens the policy-server
+   * session itself, so a service gated by addresses only needs none; without one, a service
+   * that asks for a presentation is refused before anything is spent.
+   */
   credentials?: CredentialProvider
+  /**
+   * Where the policy-server sessions of this instance are cached. Defaults to an in-memory
+   * store. A session is bound to one (node, asset, service, consumer).
+   *
+   * A store of your own gets only sessions opened without a presentation; presented ones
+   * stay in memory unless `persistPresentedSessions`. Session ids are credentials: keep the
+   * store private.
+   */
+  sessionStore?: SessionStore
+  /**
+   * Also keep presented sessions in `sessionStore`. Default `false`. The id of a presented
+   * session lets anyone read the presentation (`vp_token`) through the node until the
+   * verifier forgets it, so opt in only for a store no one else can read.
+   */
+  persistPresentedSessions?: boolean
+  /**
+   * How long, in milliseconds from its opening, a cached policy-server session is reused
+   * before it is opened again. `0` turns the cache off. Default: `DEFAULT_SESSION_TTL_MS`
+   * (2 minutes), well within the 5 minutes walt.id's verifier keeps a session.
+   */
+  sessionTtlMs?: number
   /**
    * Overrides for the chain config resolved from the signer's network.
    *
@@ -257,8 +293,8 @@ export interface NautilusOptions
    */
   allowInsecureTransport?: boolean
   /**
-   * Per-call timeout for the node client's `encrypt` calls, passed to `OceanNodeClient`.
-   * Default 120 s.
+   * Per-call timeout for the node client's `encrypt` calls, and for `initialize` and the
+   * signing of `getComputeLogs` over HTTP, passed to `OceanNodeClient`. Default 120 s.
    */
   requestTimeoutMs?: number
 }
@@ -304,6 +340,28 @@ export interface CompletePublishOptions extends PublishOptions {
   metadataTxHash?: string
 }
 
+/** Whether the asset-level `allow` list has an `address` entry naming at least one address. */
+function hasAddressAllowList(credentials: DdoCredentials | undefined): boolean {
+  return (credentials?.allow || []).some(
+    (entry) => isAddressCredential(entry) && (entry.values || []).length > 0
+  )
+}
+
+/**
+ * A node as errors and logs name it: `node <origin>` for an HTTP URI, which leaves out the
+ * user name, password, path and query that can carry credentials; `the node` otherwise.
+ */
+function nodeLabel(nodeUri: string): string {
+  try {
+    const { origin } = new URL(nodeUri)
+    if (origin !== 'null') return `node ${origin}`
+  } catch {
+    // Not a URL, e.g. a peer id.
+  }
+
+  return 'the node'
+}
+
 /**
  * The nautilus client.
  *
@@ -322,29 +380,6 @@ export interface CompletePublishOptions extends PublishOptions {
  * const { url } = await nautilus.access({ assetDid: 'did:ope:…' })
  * ```
  */
-/**
- * The results endpoint addresses a job as `<environmentHash>-<jobId>`.
- *
- * It splits on the first dash to recover the compute environment
- * (`getResults.ts`), so a bare job id resolves to an empty hash and the node
- * answers "Invalid C2D Environment". Every other compute endpoint takes the
- * plain id, which is why this only applies here.
- */
-function qualifyJobId(job: { jobId: string; environment?: string }): string {
-  const [environmentHash] = (job.environment ?? '').split('-')
-
-  if (!environmentHash) return job.jobId
-
-  // Idempotent on purpose: `compute`/`freeCompute` hand back an already
-  // qualified id while `getComputeStatus` reports the bare one, so this is
-  // reached with both forms.
-  const bare = job.jobId.startsWith(`${environmentHash}-`)
-    ? job.jobId.slice(environmentHash.length + 1)
-    : job.jobId
-
-  return `${environmentHash}-${bare}`
-}
-
 export class Nautilus {
   private signer: Signer
   private config!: Config
@@ -373,9 +408,18 @@ export class Nautilus {
   /** The one-time check that the publisher is not the node's own key. */
   private nodeKeyCheck?: Promise<void>
 
+  /** Opens and caches the policy-server sessions of `access()` and `compute()`. */
+  private readonly policySessions: PolicySessionResolver
+
   private constructor(signer: Signer, options: NautilusOptions) {
     this.signer = signer
     this.options = options
+    this.policySessions = new PolicySessionResolver({
+      credentials: options.credentials,
+      sessionStore: options.sessionStore,
+      persistPresentedSessions: options.persistPresentedSessions,
+      sessionTtlMs: options.sessionTtlMs
+    })
   }
 
   /** Creates an instance, resolving the chain config from the signer's network. */
@@ -503,13 +547,12 @@ export class Nautilus {
     return this.signer
   }
 
-  /** Swaps in a credential provider after construction. */
-  setCredentialProvider(credentials: CredentialProvider): void {
-    this.options.credentials = credentials
-  }
-
-  private getCredentialProvider(): CredentialProvider {
-    return this.options.credentials || new NoopCredentialProvider()
+  /**
+   * Swaps in a credential provider after construction, or removes it with `undefined`.
+   * Cached sessions stay.
+   */
+  setCredentialProvider(credentials: CredentialProvider | undefined): void {
+    this.policySessions.setCredentialProvider(credentials)
   }
 
   // #endregion
@@ -596,6 +639,7 @@ export class Nautilus {
     // store that can tell it will fail says so now, before anything is spent.
     await remoteStore.check?.()
     await this.warnIfPublisherIsNode()
+    await this.warnIfPolicyServerDeniesAll(asset)
     await this.assertIndexerNotStuck(options)
 
     const published: PublishedService[] = []
@@ -751,6 +795,7 @@ export class Nautilus {
       })
       await remoteStore.check?.()
       await this.warnIfPublisherIsNode()
+      await this.warnIfPolicyServerDeniesAll(asset)
       await this.assertIndexerNotStuck(options)
 
       // Every reused datatoken is on its service before the first transaction, so a retry
@@ -1089,6 +1134,7 @@ export class Nautilus {
       })
       await remoteStore.check?.()
       await this.warnIfPublisherIsNode()
+      await this.warnIfPolicyServerDeniesAll(asset)
       await this.assertIndexerNotStuck(options)
 
       const published: PublishedService[] = []
@@ -1252,6 +1298,49 @@ export class Nautilus {
     })()
 
     return this.nodeKeyCheck
+  }
+
+  /**
+   * Warns when a node that checks this asset has a policy server and the asset-level
+   * `credentials` hold no address allow list: `{}`, or an `allow` list without an
+   * `address` entry that names an address. That policy server checks the consumer's
+   * address against the asset-level allow list before anything else and refuses an
+   * address that is not on it, so it refuses every consumer: the asset is published, but
+   * nobody can download it or run compute on it.
+   *
+   * The nodes asked are the configured one and each service's `serviceEndpoint`. Best
+   * effort: a node whose status cannot be read is skipped. Never throws.
+   */
+  private async warnIfPolicyServerDeniesAll(
+    asset: NautilusAsset
+  ): Promise<void> {
+    if (hasAddressAllowList(asset.ddo.credentials)) return
+
+    const endpoints = new Set([
+      this.node.nodeUri,
+      ...asset.ddo.services
+        .map((service) => service.serviceEndpoint)
+        .filter(Boolean)
+    ])
+
+    for (const endpoint of endpoints) {
+      let configured: boolean | undefined
+      try {
+        configured = await this.node.forEndpoint(endpoint).hasPolicyServer()
+      } catch (error) {
+        LoggerInstance.debug(
+          `[publish] could not ask ${endpoint} whether it has a policy server: ${errorMessage(error)}`
+        )
+        continue
+      }
+
+      if (configured) {
+        LoggerInstance.warn(
+          `[publish] ${endpoint} has a policy server, and this asset's credentials have no address allow list (credentials: {}, or an allow list without an 'address' entry). The policy server checks the consumer's address against that list first, so it denies every consumer: the asset will be published, but nobody can download it or compute on it. Add the consumers' addresses with addCredentialAddresses(CredentialListTypes.ALLOW, [...]) before publishing.`
+        )
+        return
+      }
+    }
   }
 
   /**
@@ -1569,7 +1658,7 @@ export class Nautilus {
       node: this.node,
       signer: this.signer,
       chainConfig: this.config,
-      credentials: this.getCredentialProvider()
+      policySessions: this.policySessions
     })
   }
 
@@ -1597,7 +1686,7 @@ export class Nautilus {
         node: this.node,
         signer: this.signer,
         chainConfig: this.config,
-        credentials: this.getCredentialProvider(),
+        policySessions: this.policySessions,
         escrow: this.explicitEscrow,
         escrowLock: this.escrowLock
       }
@@ -1612,112 +1701,167 @@ export class Nautilus {
       node: this.node,
       signer: this.signer,
       chainConfig: this.config,
-      credentials: this.getCredentialProvider()
+      policySessions: this.policySessions
     })
   }
 
+  /**
+   * The status of a job, or `undefined` when the node does not know it.
+   *
+   * `jobId` is the `<environmentHash>-<jobId>` id `compute()` and `freeCompute()` return,
+   * and the job comes back under that same id. A bare id is refused: the node would answer
+   * with every job of the consumer instead.
+   */
   async getComputeStatus(
     config: ComputeStatusConfig
-  ): Promise<ComputeJob | undefined> {
+  ): Promise<NodeComputeJob | undefined> {
     return this.nodeFor(config.nodeUri).getComputeJob(config.jobId)
   }
 
-  /** `JobFinished` and `JobSettle` — see `getComputeResult` below. */
-  private static readonly TERMINAL_JOB_STATUSES = [70, 71]
-
   /**
-   * A download URL for a finished job's result.
+   * A download URL for a finished job's result: its `output` (the job's `outputs.tar`)
+   * unless `resultIndex` names another.
    *
-   * Defaults to the first `output` result. Statuses 70 (`JobFinished`) and 71
-   * (`JobSettle`) are both terminal for results — see `TERMINAL_JOB_STATUSES`.
+   * `undefined`, with a log line saying why, when the node does not know the job, the job
+   * has not finished (no `dateFinished`) or has not listed its `output` yet, or it has no
+   * such result.
    */
   async getComputeResult(
     config: ComputeResultConfig
   ): Promise<string | undefined> {
     const node = this.nodeFor(config.nodeUri)
-    const job = await node.getComputeJob(config.jobId)
+    const result = await this.findResult(node, config)
 
-    if (!job) {
-      LoggerInstance.warn(`[compute] node does not know job ${config.jobId}`)
+    if ('reason' in result) {
+      if (result.retry) LoggerInstance.log(`[compute] ${result.reason}`)
+      else LoggerInstance.warn(`[compute] ${result.reason}`)
       return undefined
     }
 
-    /**
-     * 70 is `JobFinished`, 71 is `JobSettle`. Both are terminal as far as
-     * results go: by the time a job reaches 71 the algorithm has run and the
-     * node has already listed its outputs — it is only waiting on the
-     * payment-claim cron, which a free job never has anything to do for.
-     * Treating 71 as unfinished made results unreachable for the whole of that
-     * window (an hour by default).
-     */
-    if (!Nautilus.TERMINAL_JOB_STATUSES.includes(job.status)) {
-      LoggerInstance.log(
-        `[compute] job ${config.jobId} is not finished yet (status ${job.status}: ${job.statusText})`
-      )
-      return undefined
-    }
-
-    const index =
-      config.resultIndex ??
-      job.results?.findIndex((result) => result.type === 'output')
-
-    if (index === undefined || index < 0) {
-      LoggerInstance.error(
-        `[compute] job ${config.jobId} has no 'output' result; pass resultIndex explicitly. Results: ${JSON.stringify(job.results)}`
-      )
-      return undefined
-    }
-
-    return node.getComputeResultUrl(qualifyJobId(job), index)
+    return node.getComputeResultUrl(result.jobId, result.index)
   }
 
-  /** Streams a result instead of returning a URL. */
+  /**
+   * Streams a finished job's result, chosen as `getComputeResult` chooses it: its `output`
+   * unless `resultIndex` names another. Throws where `getComputeResult` returns
+   * `undefined`.
+   */
   async streamComputeResult(
     config: ComputeResultConfig
   ): Promise<ComputeResultStream> {
     const node = this.nodeFor(config.nodeUri)
-    const job = await node.getComputeJob(config.jobId)
+    const result = await this.findResult(node, config)
 
-    if (!job)
-      throw new Error(`[compute] node does not know job ${config.jobId}`)
+    if ('reason' in result) throw new Error(`[compute] ${result.reason}`)
 
-    return node.getComputeResult(
-      qualifyJobId({ ...job, jobId: config.jobId }),
-      config.resultIndex ?? 0
-    )
+    return node.getComputeResult(result.jobId, result.index)
   }
 
-  /** Streamable job logs — useful while a job is still running. */
-  async getComputeLogs(config: ComputeStatusConfig): Promise<unknown> {
+  /**
+   * A job's algorithm logs: streamed live while the algorithm runs, and read from the
+   * job's `algorithmLog` result once it has finished, since the node streams logs only
+   * while the algorithm runs.
+   *
+   * A running job's log request waits with no timeout for the job's first output: pass
+   * `signal` to stop waiting.
+   *
+   * Treat the job id as a secret: ocean-node 4.2.2 checks the log request's signature but
+   * not that the signer owns the job, so anyone who has the id can stream a running job's
+   * logs.
+   */
+  async getComputeLogs(
+    config: ComputeLogsConfig
+  ): Promise<ComputeResultStream> {
     const node = this.nodeFor(config.nodeUri)
+    let job = await this.requireJob(node, config.jobId)
 
-    return node.getComputeLogs(await this.qualify(node, config.jobId))
+    if (!isJobFinished(job)) {
+      try {
+        return await node.getComputeLogs(job.jobId, config.signal)
+      } catch (error) {
+        if (config.signal?.aborted) throw error
+
+        // The job may have finished since its status was read.
+        const latest = await node.getComputeJob(job.jobId)
+        if (!latest || !isJobFinished(latest)) throw error
+        job = latest
+      }
+    }
+
+    const index = findResultIndex(job, 'algorithmLog')
+
+    if (index === undefined)
+      throw new Error(
+        `[compute] the job has finished (status ${job.status}: ${job.statusText}) and has no 'algorithmLog' result. Results: ${JSON.stringify(job.results)}`
+      )
+
+    return node.getComputeResult(job.jobId, index)
   }
 
-  async stopCompute(config: StopComputeConfig): Promise<ComputeJob[]> {
-    const node = this.nodeFor(config.nodeUri)
-
-    return node.computeStop(
-      await this.qualify(node, config.jobId),
+  /** Asks the node to stop a job, and returns the jobs as they stand after the request. */
+  async stopCompute(config: StopComputeConfig): Promise<NodeComputeJob[]> {
+    return this.nodeFor(config.nodeUri).computeStop(
+      config.jobId,
       config.agreementId
     )
   }
 
-  /**
-   * Rewrites a bare job id into the `<environmentHash>-<jobId>` form.
-   *
-   * The results, streamable-logs and stop handlers all recover the compute
-   * environment by splitting the id on its first dash, so a bare id leaves them
-   * with an empty hash and they answer "Invalid C2D Environment" — or, for
-   * stop, a bare 500. `getComputeStatus` is the exception: it tolerates either.
-   *
-   * nautilus reports bare ids everywhere (see `normaliseJobIds`), so this is
-   * where the node's preferred form is put back.
-   */
-  private async qualify(node: OceanNodeClient, jobId: string): Promise<string> {
+  /** The job, or an error saying the node does not know it. */
+  private async requireJob(
+    node: OceanNodeClient,
+    jobId: string
+  ): Promise<NodeComputeJob> {
     const job = await node.getComputeJob(jobId)
 
-    return job ? qualifyJobId({ ...job, jobId }) : jobId
+    if (!job)
+      throw new Error(
+        `[compute] ${nodeLabel(node.nodeUri)} does not know the job`
+      )
+
+    return job
+  }
+
+  /**
+   * Finds the result `getComputeResult` and `streamComputeResult` read: `resultIndex`, or
+   * the finished job's `output`. Otherwise a `reason`, with `retry` when the job may still
+   * get there: it has not finished, or it is at `71` (`JobSettle`) and has not listed its
+   * `output` yet.
+   */
+  private async findResult(
+    node: OceanNodeClient,
+    config: ComputeResultConfig
+  ): Promise<
+    { jobId: string; index: number } | { reason: string; retry: boolean }
+  > {
+    if (config.resultIndex !== undefined) assertResultIndex(config.resultIndex)
+
+    const job = await node.getComputeJob(config.jobId)
+
+    if (!job)
+      return {
+        reason: `${nodeLabel(node.nodeUri)} does not know the job`,
+        retry: false
+      }
+
+    const status = `status ${job.status}: ${job.statusText}`
+
+    if (!isJobFinished(job))
+      return { reason: `the job is not finished yet (${status})`, retry: true }
+
+    const index = config.resultIndex ?? findResultIndex(job, 'output')
+
+    if (index !== undefined) return { jobId: job.jobId, index }
+
+    if (isOutputPending(job))
+      return {
+        reason: `the job has not listed its 'output' result yet (${status})`,
+        retry: true
+      }
+
+    return {
+      reason: `the job has no 'output' result (${status}); pass resultIndex to read another. Results: ${JSON.stringify(job.results)}`,
+      retry: false
+    }
   }
 
   /** A client for another node, when a job runs somewhere other than the default. */

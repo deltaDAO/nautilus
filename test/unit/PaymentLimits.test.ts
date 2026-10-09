@@ -11,8 +11,8 @@
  * approved, funded and authorised for exact amounts.
  *
  * Everything on chain is stubbed: the escrow contract, ocean.js's `sendTx`, approvals and
- * the token balance read. `sendSettlement` is stubbed for `compute()`, and `order()` /
- * `reuseOrder()` for `access()`.
+ * the token balance read. `order()` and `reuseOrder()` are stubbed, under the real
+ * settlement plan and send.
  */
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -92,9 +92,9 @@ vi.mock('ethers', async (importOriginal) => ({
   })
 }))
 
-// `compute()` plans every order with the real `planSettlement` (its checks and pricing
-// reads), then sends them through `sendSettlement`, stubbed here. `access()` settles
-// through the real module, which then calls `order()` / `reuseOrder()`, stubbed below.
+// `access()` and `compute()` plan every order with the real `planSettlement` (its checks
+// and pricing reads), then send it with the real `sendSettlement`, spied on here, which
+// calls `order()` / `reuseOrder()`, stubbed below.
 vi.mock('../../src/access/settlement.js', async (importOriginal) => {
   const original =
     await importOriginal<typeof import('../../src/access/settlement.js')>()
@@ -102,11 +102,7 @@ vi.mock('../../src/access/settlement.js', async (importOriginal) => {
   return {
     ...original,
     planSettlement: vi.fn(original.planSettlement),
-    sendSettlement: vi.fn(
-      async ({ datatokenAddress }: { datatokenAddress: string }) => ({
-        transferTxId: `tx-${datatokenAddress}`
-      })
-    )
+    sendSettlement: vi.fn(original.sendSettlement)
   }
 })
 
@@ -203,6 +199,13 @@ function computeNode(quote: object) {
 
   const client = {
     nodeUri: 'https://node.test.invalid',
+    // A node without a policy server: no session is opened.
+    policySessionAddress(address: string) {
+      return address
+    },
+    async hasPolicyServer() {
+      return false
+    },
     async resolve(did: string) {
       return assets[did]
     },
@@ -1367,6 +1370,13 @@ describe('access() provider fee', () => {
 
     const client = {
       nodeUri: 'https://node.test.invalid',
+      // A node without a policy server: no session is opened.
+      policySessionAddress(address: string) {
+        return address
+      },
+      async hasPolicyServer() {
+        return false
+      },
       forEndpoint() {
         return client
       },

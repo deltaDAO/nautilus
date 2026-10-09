@@ -204,10 +204,9 @@ export async function computeMultipleDatasets(
 /**
  * Reads a job's status.
  *
- * 70 is `JobFinished`. 71 (`JobSettle`) is also terminal — the algorithm has
- * run and the results are already listed; the node is only waiting on its
- * payment-claim cron, which a free job has nothing to do for. ocean-node's own
- * integration tests accept either, so treat both as done.
+ * A job has finished once the node sets its `dateFinished`, whether it succeeded or not:
+ * failed jobs end at statuses below 70 (41 when the algorithm failed, 11 when its image
+ * could not be pulled, …). The status says how it ended.
  */
 export async function getComputeStatus(nautilus: Nautilus, jobId: string) {
   const job = await nautilus.getComputeStatus({ jobId })
@@ -220,6 +219,7 @@ export async function getComputeStatus(nautilus: Nautilus, jobId: string) {
   console.log(`Job ${jobId}`)
   console.log(`  status:  ${job.status} (${job.statusText})`)
   console.log(`  created: ${job.dateCreated}`)
+  console.log(`  finished: ${job.dateFinished || 'not yet'}`)
   console.log(`  results: ${job.results?.length ?? 0}`)
 
   for (const result of job.results ?? [])
@@ -230,10 +230,7 @@ export async function getComputeStatus(nautilus: Nautilus, jobId: string) {
   return job
 }
 
-/** Polls until a job finishes, or the attempts run out. */
-/** JobFinished and JobSettle — see getComputeStatus above. */
-const TERMINAL_STATUSES = [70, 71]
-
+/** Polls until a job finishes, successfully or not, or the attempts run out. */
 export async function waitForComputeJob(
   nautilus: Nautilus,
   jobId: string,
@@ -249,7 +246,7 @@ export async function waitForComputeJob(
       `  [${attempt + 1}/${attempts}] ${job.status} ${job.statusText}`
     )
 
-    if (TERMINAL_STATUSES.includes(job.status)) return job
+    if (job.dateFinished) return job
 
     await new Promise((resolve) => setTimeout(resolve, intervalMs))
   }
@@ -260,19 +257,27 @@ export async function waitForComputeJob(
 }
 
 /**
- * The container's logs, while the job is still running.
+ * The algorithm's logs: live while the job runs, and its `algorithmLog` result once it has
+ * finished.
  *
  * New in v2, and the practical way to debug an algorithm you cannot otherwise observe.
  */
 export async function getComputeLogs(nautilus: Nautilus, jobId: string) {
-  const logs = await nautilus.getComputeLogs({ jobId })
+  const stream = await nautilus.getComputeLogs({ jobId })
+  const decoder = new TextDecoder()
 
-  console.log('Job logs:', logs)
-
-  return logs
+  for await (const chunk of stream)
+    process.stdout.write(decoder.decode(chunk, { stream: true }))
 }
 
-/** A download URL for a finished job's output. */
+/**
+ * Downloads a finished job's output, `outputs.tar` (a tar archive), through its URL, and
+ * returns its size in bytes.
+ *
+ * The URL is signed (it carries your address, a nonce and a signature) and works for anyone
+ * who has it, so it is not printed. The body is read as a stream, so the archive is never
+ * held in memory; write the chunks to a file to keep it.
+ */
 export async function retrieveComputeResult(nautilus: Nautilus, jobId: string) {
   const url = await nautilus.getComputeResult({ jobId })
 
@@ -282,14 +287,20 @@ export async function retrieveComputeResult(nautilus: Nautilus, jobId: string) {
     return undefined
   }
 
-  console.log('Compute result URL:', url)
-
   const response = await fetch(url)
-  const body = await response.text()
 
-  console.log('Result:', body.slice(0, 1000))
+  if (!response.ok || !response.body)
+    throw new Error(`Downloading the result failed: HTTP ${response.status}`)
 
-  return body
+  const reader = response.body.getReader()
+  let bytes = 0
+
+  for (let part = await reader.read(); !part.done; part = await reader.read())
+    bytes += part.value.length
+
+  console.log(`Result: outputs.tar, ${bytes} bytes`)
+
+  return bytes
 }
 
 /** Streams a result instead of downloading it through a URL. Better for large outputs. */

@@ -33,5 +33,8 @@ An `AsyncIterable<Uint8Array>`.
 
 - Type: `ComputeResultConfig`
 
-Same as [`getComputeResult`](/docs/api/nautilus/getComputeResult). `resultIndex` defaults
-to `0` here rather than searching for the `output` entry.
+Same as [`getComputeResult`](/docs/api/nautilus/getComputeResult): it streams the job's
+`output` result, `outputs.tar` (a tar archive), unless `resultIndex` names another.
+
+Throws when the node does not know the job, when the job has not finished, or when it has
+no such result — the cases where `getComputeResult` returns `undefined`.

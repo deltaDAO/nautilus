@@ -1,0 +1,87 @@
+# PolicySessionResolver
+
+Opens the policy-server session that ocean-node checks on a download or compute job.
+`Nautilus` holds one per instance, built from its `credentials` and `sessionStore`; use it
+directly only with the standalone `access(config, context)` / `compute(config, context)`
+functions (as `context.policySessions`).
+
+## Usage
+
+```ts twoslash
+import {
+  PolicySessionResolver,
+  WaltIdCredentialProvider
+} from '@deltadao/nautilus'
+import type { AssetV5, OceanNodeClient } from '@deltadao/nautilus'
+
+declare const node: OceanNodeClient
+declare const asset: AssetV5
+// ---cut---
+const policySessions = new PolicySessionResolver({
+  credentials: new WaltIdCredentialProvider(node, { walletApi: 'https://wallet.example.org' })
+})
+
+const session = await policySessions.resolve({ // [!code focus]
+  node, // the node that checks the policy // [!code focus]
+  asset, // [!code focus]
+  serviceId: 'a-service-id', // [!code focus]
+  consumerAddress: '0x…' // signer.getAddress(), unchanged // [!code focus]
+}) // [!code focus]
+```
+
+## What `resolve` does
+
+1. Neither the asset nor the service has `credentials` (`{}` counts as having them): `null`.
+2. A cached session for (node, asset, service, consumer), opened less than `sessionTtlMs`
+   ago: that one. A session that needed a presentation is first checked again
+   (`checkSessionId`), since the verifier forgets it when it expires or restarts. An entry
+   that is too old, or that the check does not report verified, is deleted and the steps
+   below run again.
+3. The node is known to have no policy server (`hasPolicyServer()` is `false`: its status
+   says `isPSConfigured: false`, or an earlier `initiate` showed it): `null`. When the
+   status does not say, as on upstream ocean-node 4.2.0, step 5 tells.
+4. The service asks for a verifiable presentation and no credential provider is set: throws,
+   before anything is signed.
+5. `initiate`, for `node.policySessionAddress(consumerAddress)`: the address the node
+   forwards to the policy server (for a Signer, `consumerAddress` itself; for a JWT, the
+   address in the token). A node without a policy server answers with a 404 and no body:
+   `null`; no session is cached, and `hasPolicyServer()` answers `false` for 10 minutes
+   unless it knew the node to have one.
+   Otherwise the policy server checks it and opens a session, or refuses
+   (`PolicyDeniedError`). The session id is `message.sessionId`; the openid4vp
+   request is `message.redirectUri`.
+6. Only when the `SSIpolicy` asks for credentials: the provider's `present()`, then
+   `checkSessionId`, which must report `verificationResult: true` (else `PolicyDeniedError`).
+7. The session is cached and returned as the payload for the node's `policyServer` slot: a
+   presented session in memory only, unless `persistPresentedSessions`.
+
+## Options
+
+| Option | Type | Purpose |
+| --- | --- | --- |
+| `credentials` | `CredentialProvider` | Answers presentation requests. Not needed for address-only gates. |
+| `sessionStore` | `SessionStore` | Where sessions are kept. Default: [`MemorySessionStore`](/docs/api/identity/MemorySessionStore). A store of your own gets only sessions opened without a presentation. |
+| `persistPresentedSessions` | `boolean` | Also keep presented sessions in `sessionStore`. Default `false`. See the warning below. |
+| `sessionTtlMs` | `number` | How long a cached session is reused, in ms from `initiate`. `0` caches nothing. Default: `DEFAULT_SESSION_TTL_MS`, 2 minutes. |
+
+:::warning
+A session id is a credential. The node accepts it for the download or compute job, and
+the id of a presented session lets anyone read the verifier's record of it through the
+node's passthrough (`checkSessionId` is not signed), the presentation (`vp_token`) included,
+until the verifier forgets it. Keep session ids out of logs and shared URLs, and opt in to
+`persistPresentedSessions` only for a store no one else can read.
+:::
+
+## Methods
+
+`resolve(request)` · `setCredentialProvider(credentials | undefined)` · `clearSessions()`
+
+## Errors
+
+| Error | When |
+| --- | --- |
+| `PolicyDeniedError` | The policy server refused the consumer: a reply with `success: false` and a 4xx (`code`: its status, `reason`: its message, bounded), or the verifier did not accept the presentation (`code` is `undefined`, `reason` names the failed policies, `policyResults` lists each policy's name, outcome and error, never the presentation). Also carries `did`, `serviceId` and `consumerAddress`. |
+| `OceanNodeError` | Anything else, with the status: the node's own 401 (nonce, signature, "Auth not configured"), its 404 (`Not found`: the asset is not indexed there), its 400 when it cannot reach the policy server, a network error, a timeout, a rate limit or a 5xx. |
+| `Error` | The service asks for a presentation and no credential provider is set. |
+
+See [credential-gated assets](/docs/guides/identity).

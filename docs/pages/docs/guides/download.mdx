@@ -53,7 +53,9 @@ const { url, transferTxId, reusedOrder, serviceId } = await nautilus.access({
 
 `reusedOrder` is worth checking: `true` means no datatoken was bought, because an order from
 a previous access was still inside the service's timeout. That is the difference between a
-free download and a paid one.
+free download and a paid one. The node does not report that order, so nautilus finds it in
+the datatoken's events; see
+[the order on chain](/docs/guides/pricing#downloads-the-order-on-chain).
 
 :::warning
 v1 returned a bare URL string here. The object form exists so the order backing the download
@@ -63,7 +65,9 @@ is visible to the caller.
 ## Choosing a service
 
 An asset can offer several services. By default nautilus takes the first `access` service;
-name one explicitly when there is more than one:
+name one explicitly when there is more than one. `access()` downloads from `access`
+services only and refuses a `compute` service before calling the node: run a job on it with
+[`compute()`](/docs/api/nautilus/compute) or [`freeCompute()`](/docs/api/nautilus/freeCompute).
 
 ```ts twoslash
 import { Nautilus, getServices } from '@deltadao/nautilus'
@@ -102,8 +106,14 @@ const { url } = await nautilus.access({
 })
 ```
 
-See the [ConsumerParameterBuilder](/docs/api/ConsumerParameterBuilder) for the publishing
-side.
+The values are checked against the service's declaration before anything is sent: a
+missing required parameter, a value of the wrong type, a `select` value outside its options
+(or for a `select` that declares none) or an undeclared key throws a
+`ConsumerParameterError`. Keys set to `undefined` or `null` are left out of the download
+URL, and the rest is encoded as one query parameter, so values holding `&`, `#`, `+` or `=`
+reach the node intact. See
+[validation](/docs/api/UserCustomParameters#validation), and the
+[ConsumerParameterBuilder](/docs/api/ConsumerParameterBuilder) for the publishing side.
 
 ## Selecting a file
 

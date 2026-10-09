@@ -239,6 +239,10 @@ const algorithm = new AssetBuilder()
   .build()
 ```
 
+An algorithm's service is published without a `compute` block: `allowRawAlgorithms`,
+`allowAlgorithmNetworkAccess` and the trusted-algorithm settings say which algorithms may run
+on a dataset, and ocean-node reads them from the dataset's service only.
+
 ## Multiple services on one asset
 
 Useful for offering an open preview alongside a restricted full dataset, or both download

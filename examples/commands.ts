@@ -51,7 +51,6 @@ import {
   computeOnGatedDataset,
   connectSsiWallet,
   consumeGatedAsset,
-  consumeWithExistingSession,
   explainCredentialFailure,
   publishGatedComputeDataset,
   publishGatedDataset,
@@ -409,7 +408,7 @@ export const COMMANDS: Record<string, Command> = {
   },
   'compute:status': {
     role: 'consumer',
-    summary: 'Job status (70 means finished)',
+    summary: 'Job status (finished once dateFinished is set)',
     args: ['jobId'],
     run: (ctx, jobId) => getComputeStatus(ctx.consumer, jobId)
   },
@@ -563,20 +562,13 @@ export const COMMANDS: Record<string, Command> = {
       return computeOnGatedDataset(identity.nautilus, dataset, algorithm)
     }
   },
-  'ssi:consume-session': {
-    summary: 'Replay a session established elsewhere, e.g. in a browser',
-    args: ['sessionId', 'did'],
-    role: 'consumer',
-    identity: true,
-    run: (ctx, sessionId, did) =>
-      consumeWithExistingSession(ctx.networkConfig, sessionId, did)
-  },
   'ssi:explain': {
-    summary: 'Explain why a presentation was refused',
-    args: ['sessionId'],
+    summary: 'Check a policy-server session, and name the policies that failed',
+    args: ['sessionId', 'serviceEndpoint?'],
     role: 'consumer',
     identity: true,
-    run: (ctx, sessionId) => explainCredentialFailure(ctx.consumer, sessionId)
+    run: (ctx, sessionId, serviceEndpoint) =>
+      explainCredentialFailure(ctx.consumer, sessionId, serviceEndpoint)
   },
   'ssi:round-trip': {
     usesStore: true,

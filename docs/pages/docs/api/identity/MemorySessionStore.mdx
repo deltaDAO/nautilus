@@ -1,29 +1,57 @@
 # MemorySessionStore
 
-The default cache for verifier sessions, held in process.
+The default cache for policy-server sessions, held in process.
 
 ## Usage
 
 ```ts twoslash
-import { MemorySessionStore, WaltIdCredentialProvider } from '@deltadao/nautilus'
-import type { OceanNodeClient } from '@deltadao/nautilus'
-
-declare const node: OceanNodeClient
+import { MemorySessionStore, Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const signer = new Wallet('0x1234')
 // ---cut---
-const credentials = new WaltIdCredentialProvider(node, {
-  walletApi: 'https://wallet.example.org',
+const nautilus = await Nautilus.create(signer, {
+  config: { oceanNodeUri: 'https://node.example.org' },
   sessionStore: new MemorySessionStore() // [!code focus]
 })
 ```
 
 Sessions are keyed by `{ nodeUri, did, serviceId, consumerAddress }`, so re-accessing the
 same gated service does not repeat the exchange — while switching accounts, or reaching a
-service hosted on another node, does. A session id means nothing to a policy server that
-did not mint it.
+service hosted on another node, does. A session id means nothing to a policy server that did
+not open it. `consumerAddress` is the address the node forwards to the policy server
+(`OceanNodeClient.policySessionAddress`): `signer.getAddress()` unchanged for a Signer, the
+token's address for a JWT. It is not case-folded: the policy server hashes the forwarded
+string into the session id, so a session opened for the checksummed address would be refused
+for the lower-cased one.
+
+Only sessions the policy server opened, and the verifier accepted where a presentation was
+asked for, are stored. A refusal is never cached: the next call asks again.
+
+:::warning
+Session ids are credentials. A store you pass as `sessionStore` gets only sessions opened
+without a presentation: a presented session stays in the resolver's memory, because its id
+lets anyone read the presentation (`vp_token`) through the node until the verifier forgets
+it. `persistPresentedSessions: true` stores those too; use it only for a store no one else
+can read.
+:::
+
+Each entry is a `SessionEntry`:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `sessionId` | `string` | The session the policy server opened. |
+| `createdAt` | `number` | When it was opened, in ms since the epoch (`Date.now()` before `initiate`). |
+| `presented` | `boolean` | Whether the verifier accepted a presentation for it (an `SSIpolicy` session). |
+
+The store only keeps entries. [`PolicySessionResolver`](/docs/api/identity/PolicySessionResolver)
+never reuses one older than `sessionTtlMs` (2 minutes by default), or with no valid
+`createdAt`, and checks a `presented` one with the policy server (`checkSessionId`) before
+reusing it; a stale entry is deleted and the session opened again.
 
 :::info
-Implement `SessionStore` yourself — `get`, `set`, `delete`, `clear` — to share sessions across
-processes or persist them between runs.
+Implement `SessionStore` yourself — `get`, `set`, `delete`, `clear` — to share address-only
+sessions across processes or persist them between runs. Key entries on `sessionKeyString(key)`, which is what
+`MemorySessionStore` uses, and keep `createdAt` and `presented` with the session id.
 :::
 
 See [credential-gated assets](/docs/guides/identity).

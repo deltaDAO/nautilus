@@ -1,4 +1,4 @@
-import type { AssetV5, ServiceV5 } from '@oceanprotocol/ddo-js'
+import type { AssetV5 } from '@oceanprotocol/ddo-js'
 /**
  * Compute-to-Data, on the C2D v2 model.
  *
@@ -34,29 +34,25 @@ import type {
   ComputeResult,
   FreeComputeConfig
 } from '../@types/Compute.js'
+import { selectService } from '../access/guards.js'
 import {
   planSettlement,
   type SettlementPlan,
   sendSettlement
 } from '../access/settlement.js'
 import {
-  getCredentials,
   getDatatokenForService,
   getMetadata,
-  getService,
-  getServiceByType,
-  getServiceCredentials,
   getServiceIndex,
-  getServices,
-  supportsSsi
+  getServices
 } from '../ddo/read.js'
 import type { PolicyServerComputePayload } from '../ddo/types.js'
-import type { CredentialProvider } from '../identity/CredentialProvider.js'
-import {
-  assertPolicySatisfied,
-  shouldResolveCredentials
-} from '../identity/policy.js'
+import { PolicySessionResolver } from '../identity/PolicySessionResolver.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
+import {
+  assertConsumerParameters,
+  getAlgorithmConsumerParameters
+} from '../utils/consumerParameters.js'
 import type { KeyedLock } from '../utils/keyedLock.js'
 import {
   assertEscrowPaymentAllowed,
@@ -82,7 +78,13 @@ export interface ComputeContext {
   node: OceanNodeClient
   signer: Signer
   chainConfig: Config
-  credentials?: CredentialProvider
+  /**
+   * Opens the policy-server sessions, and caches them. `Nautilus` passes one per
+   * instance, holding its `credentials`. Without it, a resolver with no credential provider
+   * is used: inputs gated by addresses work, and one that asks for a verifiable
+   * presentation is refused before anything is spent.
+   */
+  policySessions?: PolicySessionResolver
   /**
    * The escrow contract a paid job may fund, chosen by the caller. When set, it is the only
    * one funded. When omitted, the job funds the chain's `EnterpriseEscrow` in Ocean's
@@ -104,40 +106,31 @@ export interface ComputeContext {
   escrowLock?: KeyedLock
 }
 
-/** One resolved compute input: the asset, the chosen service, and its reference. */
+/**
+ * One resolved compute input: the asset, the chosen service, its reference, and the
+ * checked consumer-parameter values to send (without their `undefined` or `null` entries).
+ */
 interface ResolvedInput {
   ref: ComputeAssetRef
   asset: AssetV5
   serviceId: string
   isAlgorithm: boolean
+  userdata?: Record<string, unknown>
+  /** The algorithm's only. */
+  algocustomdata?: Record<string, unknown>
 }
 
-/** Runs a paid compute job. */
 /**
- * The node reports a started job as `<environmentHash>-<jobId>` but reports the
- * same job as a bare id everywhere else — `getComputeStatus`, `getComputeLogs`
- * and `stopCompute` all expect and return the short form. Normalise on the way
- * out so every nautilus API speaks one dialect; the qualified form is rebuilt
- * internally where the node insists on it (see `getComputeResult`).
+ * Runs a paid compute job.
+ *
+ * Each returned job's `jobId` is `<environmentHash>-<jobId>`, the form every job method
+ * takes (see `./jobs.ts`).
  */
-function normaliseJobIds(jobs: ComputeJob[]): ComputeJob[] {
-  return jobs.map((job) => {
-    // `environment` is present at runtime but absent from ocean.js's ComputeJob.
-    const { environment } = job as ComputeJob & { environment?: string }
-    const [environmentHash] = (environment ?? '').split('-')
-
-    if (!environmentHash || !job.jobId?.startsWith(`${environmentHash}-`))
-      return job
-
-    return { ...job, jobId: job.jobId.slice(environmentHash.length + 1) }
-  })
-}
-
 export async function compute(
   config: ComputeConfig,
   context: ComputeContext
 ): Promise<ComputeResult> {
-  const { node, signer, chainConfig, credentials } = context
+  const { node, signer, chainConfig } = context
   // Resolved first, so a malformed explicit escrow fails before any node call.
   const escrowPin = resolveEscrowPin(chainConfig.chainId, context.escrow)
   const consumerAddress = await signer.getAddress()
@@ -156,14 +149,15 @@ export async function compute(
     config.maxJobDuration
   )
 
-  // 1. Satisfy every policy before any order is placed. Any failure aborts the whole job
-  //    with nothing spent — the ordering here is the whole point.
+  // 1. Open every input's policy session, the algorithm's included, before any escrow,
+  //    approval or order. Any refusal aborts the whole job with nothing spent — the
+  //    ordering here is the whole point. The node checks the same sessions at
+  //    `initializeCompute` and at `computeStart`, so both get this one array.
   const policyServer = await resolvePolicies(
     node,
     inputs,
     consumerAddress,
-    credentials,
-    config.skipCredentials
+    context.policySessions
   )
 
   const validUntil = Math.floor(Date.now() / 1000) + maxJobDuration
@@ -172,8 +166,7 @@ export async function compute(
     .filter((input) => !input.isAlgorithm)
     .map(toComputeAsset)
   const algorithm = toComputeAlgorithm(
-    inputs.find((input) => input.isAlgorithm) as ResolvedInput,
-    config.algorithm
+    inputs.find((input) => input.isAlgorithm) as ResolvedInput
   )
 
   // Read before anything is asked or spent: an input without a datatoken cannot be
@@ -301,7 +294,7 @@ export async function compute(
   )
 
   return {
-    jobs: normaliseJobIds(jobs),
+    jobs,
     environment,
     initializeResults,
     orders
@@ -318,7 +311,7 @@ export async function freeCompute(
   config: FreeComputeConfig,
   context: ComputeContext
 ): Promise<Omit<ComputeResult, 'initializeResults' | 'orders'>> {
-  const { node, signer, credentials } = context
+  const { node, signer } = context
   const consumerAddress = await signer.getAddress()
 
   const inputs = await resolveInputs(node, config)
@@ -333,16 +326,14 @@ export async function freeCompute(
     node,
     inputs,
     consumerAddress,
-    credentials,
-    config.skipCredentials
+    context.policySessions
   )
 
   const jobs = await node.freeComputeStart({
     computeEnv: environment.id,
     datasets: inputs.filter((input) => !input.isAlgorithm).map(toComputeAsset),
     algorithm: toComputeAlgorithm(
-      inputs.find((input) => input.isAlgorithm) as ResolvedInput,
-      config.algorithm
+      inputs.find((input) => input.isAlgorithm) as ResolvedInput
     ),
     resources: resolveResources(environment, config.resources, true),
     metadata: config.metadata,
@@ -353,7 +344,7 @@ export async function freeCompute(
     outputBucketId: config.outputBucketId
   })
 
-  return { jobs: normaliseJobIds(jobs), environment }
+  return { jobs, environment }
 }
 
 // #region inputs
@@ -381,34 +372,48 @@ async function resolveInputs(
       // they are routinely published with only an `access` service (v1 ordered
       // `services[0]` regardless of type, and the node accepts it), so the algorithm
       // prefers a compute service but falls back to the first one.
-      const service = ref.serviceId
-        ? findServiceById(asset, ref.serviceId)
-        : isAlgorithm
-          ? getServiceByType(asset, 'compute') || getServices(asset)[0]
-          : getServiceByType(asset, 'compute')
+      const service =
+        selectService(asset, ref.did, ref.serviceId, 'compute') ??
+        (isAlgorithm ? getServices(asset)[0] : undefined)
 
       if (!service)
         throw new Error(
-          ref.serviceId
-            ? `Asset ${ref.did} has no service with id ${ref.serviceId}.`
-            : isAlgorithm
-              ? `Asset ${ref.did} has no services.`
-              : `Asset ${ref.did} has no 'compute' service.`
+          isAlgorithm
+            ? `Asset ${ref.did} has no services.`
+            : `Asset ${ref.did} has no 'compute' service.`
         )
 
       if (!isAlgorithm && service.type !== 'compute')
         throw new Error(
-          `Service ${ref.serviceId} of ${ref.did} is a '${service.type}' service; compute jobs need a 'compute' service.`
+          `Service ${service.id} of ${ref.did} is a '${service.type}' service; compute jobs need a 'compute' service.`
         )
 
-      return { ref, asset, serviceId: service.id, isAlgorithm }
-    })
-  )
-}
+      // Consumer parameters are checked here, before the environment, any policy session,
+      // `initializeCompute` or an order: the algorithm's service takes `userdata`, its
+      // metadata `algocustomdata`. Only the checked values are sent from here on.
+      const target = { did: asset.id, serviceId: service.id }
+      const userdata = assertConsumerParameters(
+        service.consumerParameters,
+        ref.userdata,
+        { ...target, field: 'userdata' }
+      )
+      const algocustomdata = isAlgorithm
+        ? assertConsumerParameters(
+            getAlgorithmConsumerParameters(asset),
+            (ref as ComputeAlgorithmRef).algocustomdata,
+            { ...target, field: 'algocustomdata' }
+          )
+        : undefined
 
-function findServiceById(asset: AssetV5, serviceId: string) {
-  return asset.credentialSubject?.services?.find(
-    (service) => service.id === serviceId
+      return {
+        ref,
+        asset,
+        serviceId: service.id,
+        isAlgorithm,
+        userdata,
+        algocustomdata
+      }
+    })
   )
 }
 
@@ -416,14 +421,11 @@ function toComputeAsset(input: ResolvedInput): ComputeAsset {
   return {
     documentId: input.asset.id,
     serviceId: input.serviceId,
-    ...(input.ref.userdata ? { userdata: input.ref.userdata } : {})
+    ...(input.userdata ? { userdata: input.userdata } : {})
   }
 }
 
-function toComputeAlgorithm(
-  input: ResolvedInput,
-  ref: ComputeAlgorithmRef
-): ComputeAlgorithm {
+function toComputeAlgorithm(input: ResolvedInput): ComputeAlgorithm {
   /**
    * `meta` carries the container spec, and the node needs it in the request
    * itself — `getAlgorithmImage()` reads `algorithm.meta.container` and does
@@ -431,14 +433,15 @@ function toComputeAlgorithm(
    * it starts with "Unable to extract docker image null from algoritm".
    */
   const { algorithm } = getMetadata(input.asset)
+  const { envs } = input.ref as ComputeAlgorithmRef
 
   return {
     documentId: input.asset.id,
     serviceId: input.serviceId,
     ...(algorithm ? { meta: algorithm } : {}),
-    ...(ref.userdata ? { userdata: ref.userdata } : {}),
-    ...(ref.algocustomdata ? { algocustomdata: ref.algocustomdata } : {}),
-    ...(ref.envs ? { envs: ref.envs } : {})
+    ...(input.userdata ? { userdata: input.userdata } : {}),
+    ...(input.algocustomdata ? { algocustomdata: input.algocustomdata } : {}),
+    ...(envs ? { envs } : {})
   }
 }
 
@@ -517,21 +520,44 @@ function resolvePaymentToken(
   return match.feeToken
 }
 
-/** Defaults each resource to the environment's declared minimum, or 1. */
+/**
+ * Resources every environment has, and that a job gets no limit on when it requests `0` of
+ * them: ocean-node sets a container's CPU and memory limits only for an amount above `0`.
+ */
+const BASELINE_RESOURCES = ['cpu', 'ram', 'disk']
+
+/**
+ * The resources a job requests: a non-empty `requested` exactly as given, or, when the
+ * caller passed none or an empty list, every resource the environment lists (for a free
+ * job, its `free` list).
+ *
+ * Each defaults to its minimum, raised to `1` for `cpu`, `ram` and `disk` within its
+ * maximum: a node fills a resource left out with its minimum, which is often `0`, so a job
+ * would otherwise run without a memory limit. Other resources, such as GPUs, default to
+ * their minimum.
+ */
 function resolveResources(
   environment: ComputeEnvironment,
-  requested?: ComputeResourceRequest[],
+  requested: ComputeResourceRequest[] | undefined,
   free = false
 ): ComputeResourceRequest[] {
   if (requested?.length) return requested
 
-  const available =
-    (free ? environment.free?.resources : environment.resources) || []
+  const advertised = free
+    ? (environment.free?.resources ?? [])
+    : (environment.resources ?? [])
 
-  return available.map((resource) => ({
-    id: resource.id,
-    amount: resource.min ?? 1
-  }))
+  return advertised.map((resource) => {
+    // A free resource without its own bounds has the environment's.
+    const paid = environment.resources?.find(
+      (candidate) => candidate.id === resource.id
+    )
+    const min = resource.min ?? paid?.min ?? 0
+    const max = resource.max ?? paid?.max ?? min
+    const floor = BASELINE_RESOURCES.includes(resource.id) ? 1 : 0
+
+    return { id: resource.id, amount: Math.max(min, Math.min(floor, max)) }
+  })
 }
 
 function resolveMaxJobDuration(
@@ -557,59 +583,36 @@ function resolveMaxJobDuration(
 // #region policies
 
 /**
- * Resolves one policy payload per (asset, service) pair.
+ * Opens one policy session per input, datasets and algorithm alike, each for its own
+ * (asset, service) on the node running the job: that node checks every input.
  *
- * The policy server receives the whole array on each per-asset check and selects the entry
- * matching `documentId` + `serviceId`, so both must be tagged on every element.
- *
- * Unlike the ocean-cli, a v4 asset in the batch does not disable SSI for the v5 assets
- * alongside it — each input is gated on its own version.
+ * The policy server receives the whole array on each per-input check and selects the entry
+ * matching `documentId` + `serviceId`, so both are tagged on every element, and an input
+ * never borrows another input's session. One input after the other: `initiate` is a signed
+ * command, and the node accepts each nonce once.
  */
 async function resolvePolicies(
   node: OceanNodeClient,
   inputs: ResolvedInput[],
   consumerAddress: string,
-  credentials?: CredentialProvider,
-  skip?: boolean
+  policySessions: PolicySessionResolver = new PolicySessionResolver()
 ): Promise<PolicyServerComputePayload[] | undefined> {
   const payloads: PolicyServerComputePayload[] = []
 
   for (const input of inputs) {
-    if (!supportsSsi(input.asset)) continue
+    const session = await policySessions.resolve({
+      node,
+      asset: input.asset,
+      serviceId: input.serviceId,
+      consumerAddress
+    })
 
-    const resolved = shouldResolveCredentials(credentials, skip)
-      ? await (credentials as CredentialProvider).resolve({
-          asset: input.asset,
-          serviceId: input.serviceId,
-          consumerAddress,
-          // The node running the job is the one that checks every input's policy — unlike
-          // a download, which is served by each service's own node.
-          node
-        })
-      : null
-
-    if (resolved) {
+    if (session)
       payloads.push({
-        ...resolved,
+        ...session,
         documentId: input.asset.id,
         serviceId: input.serviceId
       })
-      continue
-    }
-
-    // A gated input with no session fails the whole job here, before any order or escrow
-    // deposit. A compute job orders every input, so paying for all of them and then being
-    // refused on one is the most expensive version of this mistake.
-    assertPolicySatisfied({
-      did: input.asset.id,
-      serviceId: input.serviceId,
-      assetCredentials: getCredentials(input.asset),
-      serviceCredentials: getServiceCredentials(
-        getService(input.asset, input.serviceId) as ServiceV5
-      ),
-      resolved,
-      skipped: skip
-    })
   }
 
   return payloads.length ? payloads : undefined

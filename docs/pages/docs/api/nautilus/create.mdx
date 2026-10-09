@@ -130,7 +130,10 @@ Pass a `WaltIdVcSigner` to issue from a real DID instead — see the
 
 - Type: `CredentialProvider`
 
-Satisfies credential-gated access. Omit it and nautilus skips SSI entirely.
+Answers the verifiable-presentation request of a service whose `SSIpolicy` asks for
+credentials. nautilus opens the policy-server session itself, so a service gated by
+addresses only needs no provider. Without one, a service that asks for a presentation is
+refused before anything is spent. See [credential-gated assets](/docs/guides/identity).
 
 ```ts twoslash
 import { JsonRpcProvider, Wallet } from 'ethers'
@@ -146,6 +149,37 @@ const nautilus = await Nautilus.create(signer, {
   }) // [!code focus]
 })
 ```
+
+##### sessionStore
+
+- Type: `SessionStore`
+- Default: a [`MemorySessionStore`](/docs/api/identity/MemorySessionStore)
+
+Where this instance caches its policy-server sessions, one per (node, asset, service,
+consumer). Only sessions the policy server opened and, where a presentation was asked for,
+the verifier accepted are stored. A store of your own gets only sessions opened without a
+presentation; presented ones stay in memory unless `persistPresentedSessions`. Session ids
+are credentials: keep the store private.
+
+##### persistPresentedSessions
+
+- Type: `boolean`
+- Default: `false`
+
+Also keep presented sessions (a service whose `SSIpolicy` asks for credentials) in
+`sessionStore`. The id of such a session lets anyone read the presentation (`vp_token`)
+through the node until the verifier forgets it, so opt in only for a store no one else can
+read. nautilus warns once when it is on.
+
+##### sessionTtlMs
+
+- Type: `number`
+- Default: `DEFAULT_SESSION_TTL_MS` (2 minutes)
+
+How long a cached policy-server session is reused, in milliseconds from when it was opened.
+An older one is opened again, before anything is ordered. walt.id's verifier keeps a
+presentation session for 5 minutes from its creation, and the session must still be alive
+when the node checks it after the orders, so keep this well below that. `0` caches nothing.
 
 ##### allowInsecureTransport
 
@@ -167,7 +201,9 @@ endpoints.
 - Default: `120000` (120 s)
 
 How long one `encrypt` call to the node may take, including the signature and one retry after
-a rejected nonce. Passed to the node clients `create` builds; see
+a rejected nonce. Over HTTP it also bounds an `initialize` request, and the signing of a
+`getComputeLogs` request; the log request itself waits for the job's first output with no
+timeout (pass `signal` to stop it). Passed to the node clients `create` builds; see
 [`OceanNodeClient`](/docs/api/node/OceanNodeClient).
 
 ##### maxProviderFee

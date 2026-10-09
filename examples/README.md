@@ -364,7 +364,7 @@ walt.id wallet ──▶ policy-server proxy ───────────�
 ```
 
 nautilus talks only to ocean-node and to the walt.id wallet. What it needs out of the exchange
-is one value — a verifier session id — which it then carries into the download or compute call.
+is one value — a policy-server session id — which it then carries into the download or compute call.
 
 **Setting it up:**
 
@@ -382,7 +382,7 @@ assetBuilder
     { type: 'VerifiableId', format: 'jwt_vc_json' }
   ])
   .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'not-before'])
-  .setVpPolicies(CredentialListTypes.ALLOW, ['holder-binding'])
+  .setVpPolicies(CredentialListTypes.ALLOW, [{ policy: 'holder-binding' }])
 ```
 
 VC policies check each credential; VP policies check the presentation as a whole. Gating also
@@ -394,21 +394,28 @@ publishes a gated compute dataset that trusts that algorithm, and
 `npm start -- ssi:compute <datasetDid> <algorithmDid>` runs a job on it, presenting the
 credential before anything is ordered.
 
-**On the consuming side**, nothing changes at the call site. Configure a credential provider
-once and `access()` looks exactly as it does for an open asset. Credentials are resolved
-**before** any order is placed, so a policy you cannot satisfy costs nothing.
+**On the consuming side**, nothing changes at the call site: `access()` looks exactly as it
+does for an open asset. nautilus opens the policy-server session itself **before** any order
+is placed, so a policy you cannot satisfy costs nothing. An asset gated by addresses only needs
+no wallet; configure a credential provider once for assets whose `SSIpolicy` asks for
+credentials.
 
 Selection is headless by default — every matching credential, the wallet's first DID — so
 scripts work unattended. Pass `{ interactive: true }` to `createCredentialProvider` to see the
 callback shape for a UI.
 
-**Two things to check before concluding that gating works:**
+**Things to check before concluding that gating works:**
 
-- ocean-node **fails open** when its `POLICY_SERVER_URL` is unset, so an unconfigured node
-  allows everything. nautilus detects this and continues without SSI rather than failing.
-- Publish-time enforcement does not exist yet. The policy server's `newDDO`, `updateDDO`,
-  `validateDDO`, `encrypt` and `decrypt` actions are stubs that always allow. Only `download`
-  and `startCompute` are genuinely checked.
+- ocean-node checks credentials with a policy server only when it has one
+  (`POLICY_SERVER_URL`). Without one it checks address and access lists itself, and an
+  `SSIpolicy` is a type it does not know: it denies everyone under the default
+  `match_allow: 'all'`, and is ignored under `'any'` when another entry matches. nautilus
+  opens no session there.
+- The policy server checks consume time (`initiate`, `download`, `startCompute`). Its
+  publish-time actions (`newDDO`, `updateDDO`, `validateDDO`, `encrypt`, `decrypt`) allow every
+  request.
+- On a node with a policy server, an asset needs an address allow list: the policy server
+  refuses every address that is not on it, and `publish()` warns about an asset without one.
 
 ## Compute changed shape
 

@@ -18,7 +18,7 @@ import {
   ProviderInstance,
   type SignerOrAuthTokenOrSignature
 } from '@oceanprotocol/lib'
-import type { Signer } from 'ethers'
+import { isAddress, type Signer } from 'ethers'
 
 export type NodeAuth = SignerOrAuthTokenOrSignature
 
@@ -42,8 +42,8 @@ export function isSigner(auth: NodeAuth): auth is Signer {
 /**
  * The address the node will attribute the request to.
  *
- * For a JWT the address is embedded in the token, but ocean.js does not re-export its
- * `decodeJwt` helper, so callers using token auth must supply the address themselves.
+ * For a JWT it is `fallback` when given, else the token's `address` claim (see
+ * `authTokenAddress`).
  */
 export async function resolveConsumerAddress(
   auth: NodeAuth,
@@ -51,11 +51,44 @@ export async function resolveConsumerAddress(
 ): Promise<string> {
   if (isCompleteSignature(auth)) return auth.consumerAddress
   if (isSigner(auth)) return auth.getAddress()
-  if (fallback) return fallback
+
+  const address = fallback || authTokenAddress(auth)
+  if (address) return address
 
   throw new Error(
-    'Cannot determine the consumer address from an auth token. Pass consumerAddress explicitly, or authenticate with a Signer.'
+    'Cannot determine the consumer address from an auth token: it has no address claim. Pass consumerAddress explicitly, or authenticate with a Signer.'
   )
+}
+
+/**
+ * The `address` claim of a node auth token, read the way ocean.js reads it
+ * (`decodeJwt(token).address`): the payload is decoded, not verified, which is all it takes
+ * to name the address the node checks the token against and attributes a request made with
+ * it to. `undefined` for a token that is not a JWT or whose claim is not an address.
+ */
+export function authTokenAddress(token: string): string | undefined {
+  const payload = token.split('.')[1]
+  if (!payload) return undefined
+
+  try {
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const binary = atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, '='))
+    const claims: unknown = JSON.parse(
+      new TextDecoder().decode(
+        Uint8Array.from(binary, (char) => char.charCodeAt(0))
+      )
+    )
+    const address =
+      claims && typeof claims === 'object'
+        ? (claims as { address?: unknown }).address
+        : undefined
+
+    return typeof address === 'string' && isAddress(address)
+      ? address
+      : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /**

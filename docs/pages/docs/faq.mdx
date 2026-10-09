@@ -50,12 +50,15 @@ v1's `getAccessDetails` and `AccessDetails` are replaced by
 
 ## Why is my gated asset letting everyone through?
 
-Almost certainly because the node has no `POLICY_SERVER_URL` configured. ocean-node **fails
-open**: with no policy server it allows everything, regardless of what credentials the asset
-requires.
+Check whether the node has a policy server (`POLICY_SERVER_URL`). Without one, ocean-node
+checks address and access lists itself, and does not know an `SSIpolicy` entry: with
+`match_allow: 'any'`, another entry that matches lets the consumer through without the
+credentials the `SSIpolicy` asks for. (Under the default `match_allow: 'all'` the unknown
+entry denies everyone instead.)
 
-`initializePSVerification` returning `null` is the clean signal that no policy is being
-enforced. This is a deployment property, not something nautilus can compensate for.
+`initializePolicyVerification` returning `null`, or `hasPolicyServer()` answering `false`,
+says the node has no policy server. This is a deployment property, not something nautilus
+can compensate for.
 
 :::warning
 Publish-time policy enforcement does not exist yet either — the policy server's `newDDO`,
@@ -65,15 +68,15 @@ Credential gating is enforced on **consumption**, not on publication.
 
 ## Why am I paying twice for the same asset?
 
-nautilus reuses an order only when the node's `initialize` reports one in `validOrder`. In
-ocean-node 3.0 to 4.2, the access `initialize` returns
-`{ providerFee, datatoken, nonce, computeAddress }`, without `validOrder`, so
-`hasReusableOrder()` is false and each [`access`](/docs/api/nautilus/access) call places a
-new order, also inside the service timeout. (`initializeCompute` reports `validOrder` for
-an input whose request carries a still-valid `transferTxId`.)
+[`access`](/docs/api/nautilus/access) reuses your previous order while it is inside the
+service's timeout. ocean-node 3.0 to 4.2 report no `validOrder` from the access
+`initialize`, so nautilus finds the order in the datatoken's events instead, reading back
+no further than the timeout and at most 100 000 blocks. An order older than that, one
+placed by another account or for another service, or a lookup the RPC refuses, means a new
+order. `reusedOrder` in the result says which happened.
 
-On a paid asset, keep the download URL you get back rather than calling `access` again.
-See [Do you already hold an order?](/docs/guides/pricing#do-you-already-hold-an-order).
+[`compute`](/docs/api/nautilus/compute) orders each input on every job. See
+[Do you already hold an order?](/docs/guides/pricing#do-you-already-hold-an-order).
 
 ## Never put `127.0.0.1` in a DDO
 

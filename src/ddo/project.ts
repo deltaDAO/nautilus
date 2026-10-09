@@ -10,6 +10,7 @@ import {
   type MetadataV5,
   type ServiceV5
 } from '@oceanprotocol/ddo-js'
+import { normalizeStoredCredentials } from '../identity/policy.js'
 import { type LanguageOptions, toLanguageValue } from './language.js'
 import { getServiceCredentials } from './read.js'
 import type {
@@ -168,7 +169,8 @@ export function project(
     nftAddress,
     version,
     metadata,
-    services,
+    services:
+      metadata.type === 'algorithm' ? services.map(withoutCompute) : services,
     credentials: state.credentials
   }
 
@@ -185,6 +187,24 @@ export function project(
   else if (ddo.issuer === undefined) ddo.issuer = ''
 
   return ddo
+}
+
+/**
+ * An algorithm's service without a `compute` block.
+ *
+ * The block (`allowRawAlgorithm`, `allowNetworkAccess`, `publisherTrustedAlgorithms`,
+ * `publisherTrustedAlgorithmPublishers`) says which algorithms may run on a dataset.
+ * ocean-node reads it from the dataset's service only, and the v5 shapes do not require it,
+ * so an algorithm carries none: an empty trusted list there would read as "no algorithm may
+ * run". Applied to every service of an algorithm, kept ones included.
+ */
+function withoutCompute(service: ServiceV5): ServiceV5 {
+  if (!service.compute) return service
+
+  const copy = { ...service }
+  delete copy.compute
+
+  return copy
 }
 
 /**
@@ -233,7 +253,8 @@ export function stripDerivedFields(
  * A kept baseline service has its `credentials` normalized to the object form. The v5
  * shape (ddo-js 1.0.0) requires every service to carry a `credentials` object, and older
  * assets can have none, or the legacy array form, which would otherwise fail validation on
- * an edit that never touched that service.
+ * an edit that never touched that service. Its policies are normalized too (see
+ * `normalizeStoredCredentials`), so an edit writes no legacy policy form back.
  */
 export function mergeServices(
   baselineServices: ServiceV5[],
@@ -259,13 +280,10 @@ export function mergeServices(
 }
 
 function withCredentialsObject(service: ServiceV5): ServiceV5 {
-  const raw = service.credentials as unknown
-  if (raw && typeof raw === 'object' && !Array.isArray(raw)) return service
-
   return {
     ...service,
-    credentials: getServiceCredentials(
-      service
+    credentials: normalizeStoredCredentials(
+      getServiceCredentials(service)
     ) as unknown as ServiceV5['credentials']
   }
 }

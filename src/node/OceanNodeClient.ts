@@ -37,13 +37,17 @@ import {
   type DownloadResponse,
   type FileInfo,
   LoggerInstance,
+  type NodeComputeJob,
   type NodeStatus,
   type PersistentStorageFileEntry,
+  PROTOCOL_COMMANDS,
   type ProviderComputeInitializeResults,
   type ProviderInitialize,
   ProviderInstance,
+  responseBodyToAsyncIterable,
   type SearchQuery,
   type StorageObject,
+  signRequest,
   type UserCustomParameters
 } from '@oceanprotocol/lib'
 import {
@@ -54,17 +58,37 @@ import {
   type Signer,
   toUtf8Bytes
 } from 'ethers'
+import {
+  assertQualifiedJobId,
+  assertResultIndex,
+  withQualifiedJobId
+} from '../compute/jobs.js'
 import type { PolicyServerPayload } from '../ddo/types.js'
 import {
   errorMessage,
+  type FetchedResponse,
   type FetchedText,
+  fetchResponse,
   fetchText,
   MAX_TIMER_MS,
   RequestTimeoutError
 } from '../utils/http.js'
 import { assertSecureTransport, parseHttpUrl } from '../utils/transport.js'
 import { warnOnce } from '../utils/warn.js'
-import { isSigner, type NodeAuth, resolveConsumerAddress } from './auth.js'
+import {
+  authTokenAddress,
+  isAuthToken,
+  isCompleteSignature,
+  isSigner,
+  type NodeAuth,
+  resolveConsumerAddress
+} from './auth.js'
+import {
+  boundedNodeMessage,
+  describeAnswer,
+  describeError,
+  sanitizedError
+} from './messages.js'
 
 /** Payload accepted by the `policyServer` slots: one entry, or one per compute asset. */
 export type PolicyServerArg =
@@ -79,7 +103,10 @@ export interface OceanNodeClientOptions {
   chainId: number
   /** A Signer, a JWT auth token, or a pre-computed signature. */
   auth: NodeAuth
-  /** Required when `auth` is a JWT, which nautilus cannot decode. */
+  /**
+   * For a JWT `auth`: the consumer address to name. By default it is read from the token's
+   * `address` claim, as ocean.js reads it; required for a token without one.
+   */
   consumerAddress?: string
   /**
    * Accept a plain `http://` `nodeUri` on a host other than `localhost`, `127.0.0.0/8`,
@@ -94,7 +121,9 @@ export interface OceanNodeClientOptions {
    * How long one `encrypt` call may take, in milliseconds: the nonce lookup, the signature
    * and the node's answer, including the one retry after a rejected nonce. Default 120 s,
    * which leaves room for a wallet's signature prompt. A call that runs out throws an
-   * `OceanNodeError`, and the next queued call starts. Carried over to `forEndpoint`
+   * `OceanNodeError`, and the next queued call starts. Over HTTP it also bounds an
+   * `initialize` request, and the signing of a `getComputeLogs` request (the log request
+   * waits for the job's first output with no timeout). Carried over to `forEndpoint`
    * clients.
    */
   requestTimeoutMs?: number
@@ -103,18 +132,80 @@ export interface OceanNodeClientOptions {
 /** The default of `OceanNodeClientOptions.requestTimeoutMs`. */
 const DEFAULT_ENCRYPT_TIMEOUT_MS = 120_000
 
-/** Thrown when ocean-node rejects a request or answers unusably. */
+/**
+ * Thrown when ocean-node rejects a request or answers unusably. When the node answered, the
+ * message carries its status and text (`[ocean-node] initialize: HTTP 400 Bad Request: …`)
+ * and `status` the HTTP status.
+ */
 export class OceanNodeError extends Error {
   readonly operation: string
   readonly cause?: unknown
+  /** The HTTP status the node answered with, when there was an answer. */
+  readonly status?: number
 
-  constructor(operation: string, message: string, cause?: unknown) {
+  constructor(
+    operation: string,
+    message: string,
+    cause?: unknown,
+    status?: number
+  ) {
     super(`[ocean-node] ${operation}: ${message}`)
     this.name = 'OceanNodeError'
     this.operation = operation
     this.cause = cause
+    this.status = status
+  }
+
+  /**
+   * The error for a failed ocean.js call: its message with a quoted or JSON node message
+   * unwrapped (see `describeError`). An `OceanNodeError` is passed on as it is.
+   *
+   * ocean.js puts the node's answer into its error messages, so `cause` is not the ocean.js
+   * error itself but a copy with its name and its message redacted and bounded, as the
+   * message is (see `sanitizedError`).
+   */
+  static from(operation: string, error: unknown): OceanNodeError {
+    if (error instanceof OceanNodeError) return error
+
+    return new OceanNodeError(
+      operation,
+      describeError(error),
+      sanitizedError(error)
+    )
   }
 }
+
+/**
+ * Thrown by `resolve` when the node does not serve the asset (HTTP 404). When the node has
+ * recorded an indexing failure for the DID, the message carries it and `state` the record.
+ */
+export class AssetNotFoundError extends OceanNodeError {
+  readonly did: string
+  /** The node's indexing failure record for the DID, when it has one. */
+  readonly state?: IndexingState
+
+  constructor(did: string, state?: IndexingState) {
+    super('resolve', assetNotFoundMessage(did, state), undefined, 404)
+    this.name = 'AssetNotFoundError'
+    this.did = did
+    this.state = state
+  }
+}
+
+function assetNotFoundMessage(did: string, state?: IndexingState): string {
+  if (!state)
+    return `no asset found for ${did} (HTTP 404). An asset the node has not indexed yet is not found either; waitForIndexer() waits for it.`
+
+  const error = state.error?.trim() || 'marked invalid without a message'
+  // The record is the node's: only a transaction hash is named.
+  const tx = TX_HASH.test(state.txId?.trim() ?? '') ? state.txId?.trim() : ''
+  const hint = indexingErrorHint(error)
+
+  return `no asset found for ${did} (HTTP 404); the node recorded an indexing error${tx ? ` for tx ${tx}` : ''}: ${boundedNodeMessage(error)}${hint ? `. Hint: ${hint}` : ''}`
+}
+
+/** A 32-byte `0x` hex transaction hash. */
+const TX_HASH = /^0x[0-9a-fA-F]{64}$/
 
 /** Thrown when the node has recorded that it could not index an asset. */
 export class IndexingError extends OceanNodeError {
@@ -129,13 +220,120 @@ export class IndexingError extends OceanNodeError {
 
     super(
       'waitForIndexer',
-      `the node could not index ${did}${txId ? ` (tx ${txId})` : ''}: ${error}${hint ? `. Hint: ${hint}` : ''}`
+      `the node could not index ${did}${txId ? ` (tx ${txId})` : ''}: ${boundedNodeMessage(error)}${hint ? `. Hint: ${hint}` : ''}`
     )
     this.name = 'IndexingError'
     this.did = did
     this.txId = txId
     this.state = state
   }
+}
+
+/** Actions nautilus sends to the policy server through the node's passthrough. */
+export enum PolicyServerAction {
+  /** The presentation definition of a session. */
+  GET_PD = 'getPD',
+  /** The verifier's record of a session: whether its presentation was verified. */
+  CHECK_SESSION_ID = 'checkSessionId'
+}
+
+/** One VC or VP policy the verifier ran on a presentation, without its data. */
+export interface PolicyCheckResult {
+  /** The credential type it ran on (`VerifiablePresentation` for a VP policy). */
+  credential?: string
+  /** The policy's name, e.g. `signature` or `holder-binding`. */
+  policy: string
+  success: boolean
+  /** Why it failed, as the verifier said it, bounded. */
+  error?: string
+}
+
+/**
+ * Thrown when the policy server refuses a consumer for a service, before anything is
+ * ordered or paid: `initiate` answered with the policy server's own refusal (a 4xx reply
+ * with `success: false`: the address is not on the asset's allow list, the asset's
+ * `SSIpolicy` cannot be read, …), or the verifier did not accept the presentation
+ * (`checkSessionId`).
+ *
+ * Not an `OceanNodeError`: the policy server answered, and the answer was no. Anything the
+ * node says itself (a rejected nonce or signature, an asset it has not indexed, a policy
+ * server it cannot reach), a network error, a timeout, a rate limit or a 5xx stays an
+ * `OceanNodeError`.
+ */
+export class PolicyDeniedError extends Error {
+  readonly did: string
+  readonly serviceId: string
+  /** The address the policy server checked, as it was sent. */
+  readonly consumerAddress: string
+  /**
+   * The policy server's status for the refusal (403 for an address it does not allow, 422
+   * for an `SSIpolicy` it cannot read). `undefined` when the presentation was not verified.
+   */
+  readonly code?: number
+  /** The policy server's reason, bounded and without control characters. */
+  readonly reason: string
+  /**
+   * The verifier's per-policy results, when the presentation was not verified. Only the
+   * policy names, outcomes and errors: never the presentation or its token.
+   */
+  readonly policyResults?: PolicyCheckResult[]
+
+  constructor(params: {
+    nodeUri: string
+    did: string
+    serviceId: string
+    consumerAddress: string
+    code?: number
+    reason: string
+    policyResults?: PolicyCheckResult[]
+  }) {
+    const reason = boundedNodeMessage(params.reason) || 'no reason given'
+
+    super(
+      `The policy server of ${params.nodeUri} refused service ${params.serviceId} of ${params.did} for ${params.consumerAddress}${params.code ? ` (${params.code})` : ''}: ${reason}. Nothing was ordered or paid. Check the asset's credentials (its address allow list and SSIpolicy) with the publisher.`
+    )
+    this.name = 'PolicyDeniedError'
+    this.did = params.did
+    this.serviceId = params.serviceId
+    this.consumerAddress = params.consumerAddress
+    this.code = params.code
+    this.reason = reason
+    this.policyResults = params.policyResults
+  }
+}
+
+/** The request `initializePolicyVerification` sends. */
+export interface PolicyVerificationRequest {
+  documentId: string
+  serviceId: string
+  /**
+   * The address the session is opened for. Pass `policySessionAddress(...)`: the node
+   * forwards the address it authenticated, which for a JWT is the token's own.
+   */
+  consumerAddress: string
+  policyServer: PolicyServerPayload
+}
+
+/**
+ * The policy server's envelope. `message` is the payload: for `initiate`
+ * `{ sessionId, redirectUri }`, for `checkSessionId` the verifier's session record, and for
+ * a refusal `{ error, redirectUri }` or a string.
+ */
+export interface PolicyServerReply {
+  success?: boolean
+  httpStatus?: number
+  message?: unknown
+}
+
+/** What `checkPolicySession` reports. */
+export interface PolicySessionCheck {
+  /** `true` only when the verifier reports `verificationResult: true`. */
+  verified: boolean
+  /**
+   * The verifier's per-policy results. The rest of its record, the presentation and its
+   * `vp_token` included, is dropped.
+   */
+  policyResults: PolicyCheckResult[]
 }
 
 /**
@@ -405,7 +603,9 @@ class NodeRateLimitedError extends OceanNodeError {
   constructor(operation: string, response: FetchedText) {
     super(
       operation,
-      `the node rate-limited the request: ${response.status} ${response.statusText} ${boundedNodeMessage(response.body)}`.trim()
+      `the node rate-limited the request: ${describeAnswer(response)}`,
+      undefined,
+      response.status
     )
     this.name = 'NodeRateLimitedError'
     this.retryAfterMs = retryAfterMs(response)
@@ -441,6 +641,17 @@ function retryAfterMs(response: FetchedText): number | undefined {
   return ms === undefined ? undefined : Math.min(ms, MAX_RATE_LIMIT_BACKOFF_MS)
 }
 
+/**
+ * A node URI as `forEndpoint` keys it: an HTTP URL as the URL parser writes it (scheme and
+ * host lower-cased, a default port dropped), without trailing slashes; a peer id or
+ * multiaddr trimmed of them.
+ */
+function normalizeNodeUri(uri: string): string {
+  const url = parseHttpUrl(uri)
+
+  return (url ? url.href : uri.trim()).replace(/\/+$/, '')
+}
+
 /** Whether the node URI is an `http:`/`https:` URL, judged as the transport rule judges it. */
 function isHttpUri(uri: string): boolean {
   return parseHttpUrl(uri) !== undefined
@@ -473,7 +684,7 @@ function normalizeStateQuery(query: IndexingStateQuery): [string, string] {
   }
 
   if (key === 'txId') {
-    if (!/^0x[0-9a-fA-F]{64}$/.test(value))
+    if (!TX_HASH.test(value))
       throw new OceanNodeError(
         'getIndexingState',
         `txId ${JSON.stringify(value)} is not a 32-byte 0x hex transaction hash`
@@ -493,17 +704,183 @@ function normalizeStateQuery(query: IndexingStateQuery): [string, string] {
 /** The node's answer when a signed command reuses a nonce it has already seen. */
 const NONCE_REJECTED = /not a valid nonce/i
 
-/** How much of a node's error body goes into an error message. */
-const MAX_NODE_MESSAGE_LENGTH = 200
+/**
+ * How long a `getComputeLogs` request holds this client's signed-call queue while it waits
+ * for the node's answer. The node stores the request's nonce before it opens the log
+ * stream, so the next signed call waits for the headers, but no longer than this: a
+ * running job that has written nothing yet sends no headers, and must not hold up every
+ * other signed call. A call that still meets the old nonce is retried once.
+ */
+const LOGS_QUEUE_HOLD_MS = 10_000
 
-function boundedNodeMessage(value: unknown): string {
-  const text = (
-    typeof value === 'string' ? value : (JSON.stringify(value) ?? String(value))
-  ).trim()
+/** The command string ocean-node verifies an `initializePSVerification` signature with. */
+const POLICY_SERVER_INITIALIZE = 'PolicyServerInitialize'
 
-  return text.length > MAX_NODE_MESSAGE_LENGTH
-    ? `${text.slice(0, MAX_NODE_MESSAGE_LENGTH)}…`
-    : text
+/**
+ * The largest policy-server answer read: an `initiate` reply is an openid4vp URL, a
+ * `checkSessionId` reply the verifier's record of one presentation.
+ */
+const MAX_POLICY_REPLY_BYTES = 256 * 1024
+
+/** What ocean.js puts before the node's message when a P2P command fails. */
+const P2P_ERROR_PREFIX = /^P2P command error: /
+
+/**
+ * How long a "no policy server" answer is kept. ocean-node reads its `POLICY_SERVER_URL`
+ * once, at startup, so only a restart changes the answer; a node restarted with a policy
+ * server is asked again after this long.
+ */
+const NO_POLICY_SERVER_TTL_MS = 10 * 60 * 1000
+
+/**
+ * Whether an `initiate` failure over P2P is a node without a policy server. ocean-node
+ * (upstream and OceanProtocolEnterprise 4.2 alike) answers `initiate` with a bare
+ * `{"httpStatus":404}` status frame when `POLICY_SERVER_URL` is unset or empty, which
+ * ocean.js 9.2 throws as exactly this message, wrapped in `P2P command error: …` with it as
+ * the `cause`. The node's own 404 (an asset it has not indexed) carries its text instead,
+ * `Not found`.
+ */
+function isP2pNoPolicyServer(error: unknown): boolean {
+  for (
+    let current = error, depth = 0;
+    current instanceof Error && depth < 3;
+    current = (current as { cause?: unknown }).cause, depth++
+  )
+    if (current.message === 'Gateway node error: 404') return true
+
+  return false
+}
+
+/** The policy server's `{ success, httpStatus, message }` envelope, or `undefined`. */
+function parsePolicyServerReply(text: string): PolicyServerReply | undefined {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return undefined
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+    return undefined
+
+  const reply = parsed as PolicyServerReply
+
+  return typeof reply.success === 'boolean' ? reply : undefined
+}
+
+/**
+ * The policy server's reply in an error ocean.js threw: over HTTP it throws the body of a
+ * failed answer as the message, over P2P the node's error text after `P2P command error: `,
+ * with the bare text as the `cause`.
+ */
+function policyServerReplyIn(error: unknown): PolicyServerReply | undefined {
+  for (
+    let current = error, depth = 0;
+    current instanceof Error && depth < 3;
+    current = (current as { cause?: unknown }).cause, depth++
+  ) {
+    const reply = parsePolicyServerReply(
+      current.message.replace(P2P_ERROR_PREFIX, '')
+    )
+    if (reply) return reply
+  }
+
+  return undefined
+}
+
+/**
+ * Whether a reply is the policy server refusing the request: `success: false` with a 4xx.
+ * A 5xx is the policy server or its verifier failing, not a refusal.
+ */
+function isPolicyRefusal(reply: PolicyServerReply | undefined): boolean {
+  const status = reply?.httpStatus
+
+  return (
+    reply?.success === false &&
+    typeof status === 'number' &&
+    status >= 400 &&
+    status < 500
+  )
+}
+
+/**
+ * The reason in a refusal: the policy server's `message.error` (`"Access denied: Address
+ * not allowed at asset level."`) or `message`, else the whole reply. Sanitized and bounded
+ * by `PolicyDeniedError` (`boundedNodeMessage`).
+ */
+function policyServerReason(reply: PolicyServerReply): string {
+  const { message } = reply
+
+  if (typeof message === 'string' && message.trim()) return message
+
+  const error =
+    message && typeof message === 'object'
+      ? (message as { error?: unknown }).error
+      : undefined
+  if (typeof error === 'string' && error.trim()) return error
+
+  return JSON.stringify(reply)
+}
+
+/** A walt.id verifier session record, as `checkSessionId` returns it. */
+function isSessionRecord(value: unknown): boolean {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    'verificationResult' in (value as object)
+  )
+}
+
+/**
+ * The per-policy results in a verifier session record
+ * (`policyResults.results[].policyResults[]`), reduced to name, outcome and error. Each
+ * policy's `result` and `args`, and everything else in the record (`tokenResponse` with the
+ * `vp_token`, the presentation definition), are dropped.
+ */
+function readPolicyResults(record: unknown): PolicyCheckResult[] {
+  const results = (
+    record as {
+      policyResults?: { results?: unknown }
+    } | null
+  )?.policyResults?.results
+  if (!Array.isArray(results)) return []
+
+  const read: PolicyCheckResult[] = []
+
+  for (const entry of results) {
+    const { credential, policyResults } = (entry ?? {}) as {
+      credential?: unknown
+      policyResults?: unknown
+    }
+    if (!Array.isArray(policyResults)) continue
+
+    for (const raw of policyResults) {
+      const { policy, is_success, error } = (raw ?? {}) as {
+        policy?: unknown
+        is_success?: unknown
+        error?: unknown
+      }
+      if (typeof policy !== 'string') continue
+
+      const reason =
+        error === undefined || error === null
+          ? undefined
+          : boundedNodeMessage(
+              typeof error === 'string'
+                ? error.split('\n')[0]
+                : ((error as { message?: unknown }).message ?? error)
+            )
+
+      read.push({
+        ...(typeof credential === 'string' ? { credential } : {}),
+        policy,
+        success: is_success === true,
+        ...(reason ? { error: reason } : {})
+      })
+    }
+  }
+
+  return read
 }
 
 /** Resolves once `promise` settles; rejects with `signal.reason` if `signal` aborts first. */
@@ -531,15 +908,35 @@ function untilSettled(
   })
 }
 
+/**
+ * Resolves when `promise` settles, after `ms`, or when `signal` aborts, whichever comes
+ * first. Never rejects.
+ */
+function holdUntilSettled(
+  promise: Promise<unknown>,
+  ms: number,
+  signal: AbortSignal
+): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', done)
+      resolve()
+    }
+    const timer = setTimeout(done, ms)
+
+    signal.addEventListener('abort', done, { once: true })
+    if (signal.aborted) done()
+    promise.then(done, done)
+  })
+}
+
+/** Runs one ocean.js call and turns its failure into an `OceanNodeError` of `operation`. */
 async function attempt<T>(operation: string, fn: () => Promise<T>): Promise<T> {
   try {
     return await fn()
   } catch (error) {
-    throw new OceanNodeError(
-      operation,
-      error instanceof Error ? error.message : String(error),
-      error
-    )
+    throw OceanNodeError.from(operation, error)
   }
 }
 
@@ -558,6 +955,19 @@ export class OceanNodeClient {
    * so this is a queue per address.
    */
   private signedQueue: Promise<unknown> = Promise.resolve()
+
+  /**
+   * Whether the node has a policy server, once its status or an `initiate` said so, and
+   * until when that holds. See `hasPolicyServer`.
+   */
+  private policyServerAnswer?: { configured: boolean; until: number }
+
+  /**
+   * The clients `forEndpoint` hands out, keyed by normalised node URI, shared by every
+   * client derived from the same one: so each node has one client, one signing queue and
+   * one `hasPolicyServer` answer.
+   */
+  private endpoints: Map<string, OceanNodeClient>
 
   /** Memoized `isValidProvider` probes, keyed by URI. Service endpoints are re-checked
    * once per service on every publish, and the answer does not change mid-run. */
@@ -586,16 +996,21 @@ export class OceanNodeClient {
     this.auth = options.auth
     this.consumerAddressOverride = options.consumerAddress
     this.aquarius = new Aquarius(options.nodeUri)
+    this.endpoints = new Map([[normalizeNodeUri(options.nodeUri), this]])
   }
 
   /**
-   * A client for another node, carrying this one's auth, chain and consumer address.
+   * The client for a node, carrying this one's auth, chain and consumer address.
    *
    * Consume flows need this: a service's file object is encrypted with a key local to the
    * node in its `serviceEndpoint` (see `encrypt`), so `initialize` and the download must be
-   * addressed to that node — the configured one cannot decrypt. Trailing slashes are
-   * normalized, and the same endpoint returns this very client, so per-instance state
-   * (like a minted session token via `setAuth`) is only left behind on an actual switch.
+   * addressed to that node — the configured one cannot decrypt.
+   *
+   * One client per node: every client derived from this one returns the same client for
+   * the same URI (scheme and host case, a default port and trailing slashes normalised),
+   * and this very client for its own. So parallel calls to one node share its signing
+   * queue, and do not sign the same nonce, and its `hasPolicyServer` answer. A client whose
+   * auth no longer matches this one's (after `setAuth`) is replaced.
    *
    * The JWT caveat from `encrypt` applies here too: a token minted for one node is
    * rejected by another, so cross-node consume needs Signer auth.
@@ -605,18 +1020,28 @@ export class OceanNodeClient {
    * `allowInsecureTransport: true`, since this client's auth would travel to it.
    */
   forEndpoint(uri: string): OceanNodeClient {
-    const normalize = (value: string) => value.replace(/\/+$/, '')
+    const key = normalizeNodeUri(uri)
+    const existing = this.endpoints.get(key)
 
-    if (normalize(uri) === normalize(this.nodeUri)) return this
+    if (
+      existing &&
+      existing.auth === this.auth &&
+      existing.consumerAddressOverride === this.consumerAddressOverride
+    )
+      return existing
 
-    return new OceanNodeClient({
-      nodeUri: normalize(uri),
+    const client = new OceanNodeClient({
+      nodeUri: key,
       chainId: this.chainId,
       auth: this.auth,
       consumerAddress: this.consumerAddressOverride,
       allowInsecureTransport: this.allowInsecureTransport,
       requestTimeoutMs: this.requestTimeoutMs
     })
+    client.endpoints = this.endpoints
+    this.endpoints.set(key, client)
+
+    return client
   }
 
   /**
@@ -656,17 +1081,194 @@ export class OceanNodeClient {
     return resolveConsumerAddress(this.auth, this.consumerAddressOverride)
   }
 
+  /** The node URI without trailing slashes. */
+  private baseUrl(): string {
+    return this.nodeUri.replace(/\/+$/, '')
+  }
+
+  /**
+   * A `GET` of `path` on this node with nautilus's own HTTP helper, for `operation`. The
+   * answer is returned whatever its status, the body of a non-2xx answer read up to
+   * `MAX_ERROR_BODY_BYTES`. A failed request (network error, timeout, a refused redirect)
+   * throws an `OceanNodeError` with the error on `cause`; aborting `signal` rejects with its
+   * reason. `timeoutMs` defaults to 15 s.
+   *
+   * Redirects are followed unless `followRedirects: false`, which a request that carries
+   * credentials or consumer data needs. The read-only GETs carry neither (only `Accept`),
+   * and a reverse proxy in front of `/api/aquarius` may redirect them. `fetchText` still
+   * refuses a redirect that ends on plain `http://` on a non-loopback host (unless the node
+   * URI is such a URL already, `allowInsecureTransport`), and one that ends on a loopback,
+   * private or link-local host unless the node is on one itself, so no public node can make
+   * nautilus read an internal service and relay its answer in an error message.
+   */
+  private async get(
+    operation: string,
+    path: string,
+    options: {
+      timeoutMs?: number
+      signal?: AbortSignal
+      followRedirects?: boolean
+    } = {}
+  ): Promise<FetchedText> {
+    const {
+      timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+      signal,
+      followRedirects = true
+    } = options
+
+    try {
+      return await fetchText(
+        fetch,
+        `${this.baseUrl()}${path}`,
+        { method: 'GET', headers: { Accept: 'application/json' } },
+        { timeoutMs, signal, followRedirects }
+      )
+    } catch (error) {
+      if (signal?.aborted) throw signal.reason
+      throw new OceanNodeError(operation, errorMessage(error), error)
+    }
+  }
+
+  /**
+   * The `consumerAddress`, `nonce` and `signature` ocean-node checks on a signed command,
+   * made as ocean.js makes them (`getSignedCommandParams`): a Signer signs
+   * `address + (stored nonce + 1) + command` with its own address (ocean.js's `getNonce`
+   * and `signRequest`), a pre-computed signature is used as it is, and a JWT goes in
+   * `Authorization` instead, with no nonce or signature. For a JWT the address is
+   * `consumerAddress` when given, else the token's `address` claim, which the node requires
+   * the request to name, else this client's (see `getConsumerAddress`).
+   */
+  private async signCommand(
+    command: string,
+    signal?: AbortSignal,
+    consumerAddress?: string
+  ): Promise<{
+    consumerAddress: string
+    nonce?: string
+    signature?: string
+    authorization?: string
+  }> {
+    const auth = this.auth
+
+    if (isAuthToken(auth))
+      return {
+        consumerAddress:
+          consumerAddress ||
+          authTokenAddress(auth) ||
+          (await this.getConsumerAddress()),
+        authorization: auth
+      }
+    if (isCompleteSignature(auth))
+      return {
+        consumerAddress: auth.consumerAddress,
+        nonce: auth.nonce,
+        signature: auth.signature
+      }
+
+    const address = await auth.getAddress()
+    const nonce = String(
+      (await ProviderInstance.getNonce(this.nodeUri, address, signal)) + 1
+    )
+    const signature = await signRequest(auth, `${address}${nonce}${command}`)
+
+    if (!signature) throw new Error(`could not sign the ${command} command`)
+
+    return { consumerAddress: address, nonce, signature }
+  }
+
+  /**
+   * Runs `send`, one signed command, and once more when the node rejected its nonce: an
+   * `OceanNodeError` whose message says so (`NONCE_REJECTED`). A fresh nonce is read on
+   * every call, so one retry gets past a nonce another request for this address used in
+   * between. Only a Signer's command is retried, and not once `signal` aborted: a
+   * pre-computed signature carries a fixed nonce and a JWT none, so a retry would fail the
+   * same way. `initializePolicyVerification` and `getComputeLogs` use it.
+   */
+  private async withNonceRetry<T>(
+    signal: AbortSignal | undefined,
+    send: () => Promise<T>
+  ): Promise<T> {
+    try {
+      return await send()
+    } catch (error) {
+      if (
+        !isSigner(this.auth) ||
+        signal?.aborted ||
+        !(error instanceof OceanNodeError) ||
+        !NONCE_REJECTED.test(error.message)
+      )
+        throw error
+
+      return send()
+    }
+  }
+
   // #region metadata
 
-  /** Resolves a DID. Throws rather than returning `undefined` for an unknown asset. */
+  /**
+   * Resolves a DID. Throws an `AssetNotFoundError` when the node does not serve the asset
+   * (HTTP 404), carrying the node's indexing failure for the DID when it recorded one, and
+   * an `OceanNodeError` with the node's status and text for any other failure.
+   *
+   * Over HTTP this reads `GET /api/aquarius/assets/ddo/<did>` itself (see `get`), with a
+   * 15 s timeout. Only after a 404 does it read the indexing state of the DID (two requests
+   * in parallel, within one 15 s timeout). Over P2P it goes through ocean.js, and a 404 is
+   * told by the node's "Not found" answer; the indexing state is not read (it is served over
+   * HTTP only), so the error carries no `state`. Aborting `signal` rejects with its reason.
+   */
   async resolve(did: string, signal?: AbortSignal): Promise<AssetV5> {
-    const asset = await attempt('resolve', () =>
-      this.aquarius.resolve(did, signal)
+    if (!isHttpUri(this.nodeUri)) {
+      const asset = await this.aquarius.resolve(did, signal).catch((error) => {
+        if (signal?.aborted) throw signal.reason
+        if (isP2pNotFound(error)) throw new AssetNotFoundError(did)
+        throw OceanNodeError.from('resolve', error)
+      })
+      if (!asset) throw new AssetNotFoundError(did)
+
+      return asset as unknown as AssetV5
+    }
+
+    const response = await this.get('resolve', ddoPath(did), { signal })
+
+    if (response.status === 404)
+      throw new AssetNotFoundError(
+        did,
+        await this.indexingFailureOf(did, signal)
+      )
+
+    return nodeJson<AssetV5>('resolve', response)
+  }
+
+  /**
+   * The node's indexing failure record for a DID it does not serve, if it has one. The node
+   * files a failure under the `did:op:` form of the id, or under the `did:ope:` form once
+   * the DDO's id is known, so both are read, in parallel; the given form's record wins.
+   * Best effort: a failed read is no record.
+   */
+  private async indexingFailureOf(
+    did: string,
+    signal: AbortSignal | undefined
+  ): Promise<IndexingState | undefined> {
+    const match = /^did:(ope?):([0-9a-f]{64})$/i.exec(did.trim())
+    if (!match) return undefined
+
+    const [, method, hash] = match
+    const forms = method.toLowerCase() === 'op' ? ['op', 'ope'] : ['ope', 'op']
+
+    const states = await Promise.all(
+      forms.map((form) =>
+        this.readIndexingState(
+          { did: `did:${form}:${hash}` },
+          signal,
+          DEFAULT_REQUEST_TIMEOUT_MS
+        ).catch(() => {
+          if (signal?.aborted) throw signal.reason
+          return undefined
+        })
+      )
     )
 
-    if (!asset) throw new OceanNodeError('resolve', `no asset found for ${did}`)
-
-    return asset as unknown as AssetV5
+    return states.find((state) => state && isIndexingFailure(state))
   }
 
   /**
@@ -685,7 +1287,7 @@ export class OceanNodeClient {
    * `WaitForIndexerOptions.intervalMs`), never more than 60 s.
    *
    * Each request has its own timeout (`requestTimeoutMs`); over P2P it bounds each lookup.
-   * The read-only GETs follow redirects (see `getPublic`). After `maxConsecutiveFailures`
+   * The read-only GETs follow redirects (see `get`). After `maxConsecutiveFailures`
    * failed asset lookups in a row this throws an `OceanNodeError` with the last error, so a
    * wrong node URL or a node that answers 500 is reported as such rather than as "not
    * indexed". When `timeoutMs` is up, one last lookup runs; then this throws an
@@ -845,10 +1447,13 @@ export class OceanNodeClient {
     if (!isHttpUri(this.nodeUri))
       return this.lookupIndexedP2p(did, txid, signal, timeoutMs)
 
-    const url = `${this.nodeUri.replace(/\/+$/, '')}/api/aquarius/assets/ddo/${encodeURIComponent(did)}`
+    const path = ddoPath(did)
 
     try {
-      const response = await this.getPublic(url, timeoutMs, signal)
+      const response = await this.get('waitForIndexer', path, {
+        timeoutMs,
+        signal
+      })
 
       if (response.status === 404) return { kind: 'pending' }
       if (isRateLimited(response))
@@ -859,9 +1464,7 @@ export class OceanNodeClient {
       if (!response.ok)
         return {
           kind: 'failed',
-          error: new Error(
-            `GET ${url} answered ${response.status} ${response.statusText} ${response.body.slice(0, 200)}`.trim()
-          )
+          error: new Error(`GET ${path} answered ${describeAnswer(response)}`)
         }
 
       const asset = JSON.parse(response.body) as AssetV5
@@ -883,7 +1486,11 @@ export class OceanNodeClient {
     } catch (error) {
       if (signal?.aborted) throw signal.reason
 
-      return { kind: 'failed', error }
+      // The request's own error: `waitForIndexer` names the operation itself.
+      return {
+        kind: 'failed',
+        error: error instanceof OceanNodeError ? (error.cause ?? error) : error
+      }
     }
   }
 
@@ -947,26 +1554,6 @@ export class OceanNodeClient {
   }
 
   /**
-   * A read-only `GET` to the node that follows redirects, e.g. from a reverse proxy in front
-   * of `/api/aquarius`. Safe because it carries no credentials (no `Authorization`, no
-   * token, no body), only `Accept`. The transport rule still applies to where it ends:
-   * `fetchText` refuses a redirect to plain `http://` on a non-loopback host, unless the
-   * node URI is such a URL already (`allowInsecureTransport`).
-   */
-  private getPublic(
-    url: string,
-    timeoutMs: number,
-    signal: AbortSignal | undefined
-  ): Promise<FetchedText> {
-    return fetchText(
-      fetch,
-      url,
-      { method: 'GET', headers: { Accept: 'application/json' } },
-      { timeoutMs, signal, followRedirects: true }
-    )
-  }
-
-  /**
    * The node's own address (`providerAddress` in `GET /`), or `undefined` when the node
    * does not say or is reached over P2P. The indexer signs its decrypt calls with this key.
    *
@@ -976,22 +1563,14 @@ export class OceanNodeClient {
   async getNodeAddress(signal?: AbortSignal): Promise<string | undefined> {
     if (!isHttpUri(this.nodeUri)) return undefined
 
-    let response: Awaited<ReturnType<typeof fetchText>>
-    try {
-      response = await this.getPublic(
-        `${this.nodeUri.replace(/\/+$/, '')}/`,
-        DEFAULT_REQUEST_TIMEOUT_MS,
-        signal
-      )
-    } catch (error) {
-      if (signal?.aborted) throw error
-      throw new OceanNodeError('getNodeAddress', errorMessage(error), error)
-    }
+    const response = await this.get('getNodeAddress', '/', { signal })
 
     if (!response.ok)
       throw new OceanNodeError(
         'getNodeAddress',
-        `${response.status} ${response.statusText} ${boundedNodeMessage(response.body)}`.trim()
+        describeAnswer(response),
+        undefined,
+        response.status
       )
 
     let info: unknown
@@ -1029,26 +1608,18 @@ export class OceanNodeClient {
     const nodeAddress = await this.getNodeAddress(signal)
     if (!nodeAddress) return undefined
 
-    let response: Awaited<ReturnType<typeof fetchText>>
-    try {
-      response = await this.getPublic(
-        `${this.nodeUri.replace(/\/+$/, '')}/api/services/nonce?userAddress=${nodeAddress}`,
-        DEFAULT_REQUEST_TIMEOUT_MS,
-        signal
-      )
-    } catch (error) {
-      if (signal?.aborted) throw error
-      throw new OceanNodeError(
-        'getIndexerNonceState',
-        errorMessage(error),
-        error
-      )
-    }
+    const response = await this.get(
+      'getIndexerNonceState',
+      `/api/services/nonce?userAddress=${nodeAddress}`,
+      { signal }
+    )
 
     if (!response.ok)
       throw new OceanNodeError(
         'getIndexerNonceState',
-        `${response.status} ${response.statusText} ${boundedNodeMessage(response.body)}`.trim()
+        describeAnswer(response),
+        undefined,
+        response.status
       )
 
     let raw: unknown
@@ -1112,15 +1683,11 @@ export class OceanNodeClient {
 
     const [key, value] = normalizeStateQuery(query)
 
-    const url = `${this.nodeUri.replace(/\/+$/, '')}/api/aquarius/state/ddo?${key}=${encodeURIComponent(value)}`
-
-    const response = await attempt('getIndexingState', () =>
-      this.getPublic(url, timeoutMs, signal)
-    ).catch((error) => {
-      // Like the other calls: an abort rejects with the signal's own reason.
-      if (signal?.aborted) throw signal.reason
-      throw error
-    })
+    const response = await this.get(
+      'getIndexingState',
+      `/api/aquarius/state/ddo?${key}=${encodeURIComponent(value)}`,
+      { timeoutMs, signal }
+    )
 
     if (response.status === 404) return undefined
 
@@ -1130,7 +1697,9 @@ export class OceanNodeClient {
     if (!response.ok)
       throw new OceanNodeError(
         'getIndexingState',
-        `${response.status} ${response.statusText} ${response.body.slice(0, 200)}`.trim()
+        describeAnswer(response),
+        undefined,
+        response.status
       )
 
     let state: IndexingState
@@ -1147,7 +1716,7 @@ export class OceanNodeClient {
     if (!state || typeof state !== 'object' || typeof state.valid !== 'boolean')
       throw new OceanNodeError(
         'getIndexingState',
-        `the node answered with something that is not an indexing state record: ${JSON.stringify(state)?.slice(0, 200)}`
+        `the node answered with something that is not an indexing state record: ${boundedNodeMessage(state)}`
       )
 
     return state
@@ -1356,13 +1925,7 @@ export class OceanNodeClient {
         signal
       )
     } catch (error) {
-      return {
-        error: new OceanNodeError(
-          'encrypt',
-          error instanceof Error ? error.message : String(error),
-          error
-        )
-      }
+      return { error: OceanNodeError.from('encrypt', error) }
     }
 
     if (!result || result === '0x')
@@ -1457,7 +2020,15 @@ export class OceanNodeClient {
 
   // #region access
 
-  /** Provider fees and any reusable order for a service. */
+  /**
+   * Provider fees and any reusable order for a service.
+   *
+   * Over HTTP this sends `GET /api/services/initialize` itself, so a refusal throws an
+   * `OceanNodeError` with the node's status and text (`HTTP 403: Error: Access to asset …
+   * was denied`). The request is not signed, but its query carries the consumer's address
+   * and `userdata`, so a redirect is not followed: it throws an `OceanNodeError`. Over P2P
+   * it goes through ocean.js.
+   */
   async initialize(
     did: string,
     serviceId: string,
@@ -1472,6 +2043,32 @@ export class OceanNodeClient {
   ): Promise<ProviderInitialize> {
     const consumerAddress =
       options.consumerAddress || (await this.getConsumerAddress())
+
+    if (isHttpUri(this.nodeUri)) {
+      const query = new URLSearchParams({
+        documentId: did,
+        serviceId,
+        fileIndex: String(options.fileIndex ?? 0),
+        consumerAddress
+      })
+      if (options.userdata)
+        query.set('userdata', JSON.stringify(options.userdata))
+      if (options.computeEnv) query.set('environment', options.computeEnv)
+      if (options.validUntil)
+        query.set('validUntil', String(options.validUntil))
+
+      const response = await this.get(
+        'initialize',
+        `/api/services/initialize?${query}`,
+        {
+          timeoutMs: this.requestTimeoutMs,
+          signal: options.signal,
+          followRedirects: false
+        }
+      )
+
+      return nodeJson<ProviderInitialize>('initialize', response)
+    }
 
     const result = await attempt('initialize', () =>
       ProviderInstance.initialize(
@@ -1497,8 +2094,16 @@ export class OceanNodeClient {
   }
 
   /**
-   * Builds the one-time download URL. `policyServer` carries the verifier session id when
-   * the service is credential-gated.
+   * Builds the one-time download URL. `policyServer` carries the policy-server session id
+   * when the node checks the service's credentials.
+   *
+   * Over HTTP, `userdata` is appended here as one encoded query component. ocean.js
+   * appends it with `encodeURI`, which leaves `&`, `#`, `+` and `=` as they are: a value
+   * holding one of them (or a number such as `1e21`, serialized as `1e+21`) broke the query,
+   * and the node, unable to parse it, ran the paid download without any `userdata`. The
+   * download signature covers the consumer address, the nonce and the command only, so
+   * appending the parameter afterwards leaves it valid. Over P2P the values travel as an
+   * object, and ocean.js sends them.
    */
   async getDownloadUrl(
     did: string,
@@ -1510,6 +2115,7 @@ export class OceanNodeClient {
       userdata?: UserCustomParameters
     } = {}
   ): Promise<string> {
+    const http = isHttpUri(this.nodeUri)
     const url = await attempt('getDownloadUrl', () =>
       ProviderInstance.getDownloadUrl(
         did,
@@ -1519,7 +2125,7 @@ export class OceanNodeClient {
         this.nodeUri,
         this.auth,
         options.policyServer ?? undefined,
-        options.userdata
+        http ? undefined : options.userdata
       )
     )
 
@@ -1529,9 +2135,12 @@ export class OceanNodeClient {
         'the node returned no download URL'
       )
 
-    return typeof url === 'string'
-      ? url
-      : (url as DownloadResponse as unknown as string)
+    if (typeof url !== 'string')
+      return url as DownloadResponse as unknown as string
+
+    return http && options.userdata
+      ? `${url}&userdata=${encodeURIComponent(JSON.stringify(options.userdata))}`
+      : url
   }
 
   // #endregion
@@ -1606,7 +2215,7 @@ export class OceanNodeClient {
     queueMaxWaitTime?: number
     outputBucketId?: string
     signal?: AbortSignal
-  }): Promise<ComputeJob[]> {
+  }): Promise<NodeComputeJob[]> {
     const jobs = await attempt('computeStart', () =>
       ProviderInstance.computeStart(
         this.nodeUri,
@@ -1629,7 +2238,7 @@ export class OceanNodeClient {
       )
     )
 
-    return toJobArray('computeStart', jobs)
+    return toJobArray('computeStart', jobs).map(withQualifiedJobId)
   }
 
   /** Free compute: no order, no escrow, no payment token. Gated by `env.free`. */
@@ -1645,7 +2254,7 @@ export class OceanNodeClient {
     queueMaxWaitTime?: number
     outputBucketId?: string
     signal?: AbortSignal
-  }): Promise<ComputeJob[]> {
+  }): Promise<NodeComputeJob[]> {
     const jobs = await attempt('freeComputeStart', () =>
       ProviderInstance.freeComputeStart(
         this.nodeUri,
@@ -1665,14 +2274,22 @@ export class OceanNodeClient {
       )
     )
 
-    return toJobArray('freeComputeStart', jobs)
+    return toJobArray('freeComputeStart', jobs).map(withQualifiedJobId)
   }
 
+  /**
+   * Jobs of this client's consumer, with ids in the `<environmentHash>-<jobId>` form.
+   *
+   * With a `jobId`, which must be in that form, the node answers with that job only.
+   * Without one, it lists every job of the consumer, or of `agreementId`.
+   */
   async computeStatus(
     jobId?: string,
     agreementId?: string,
     signal?: AbortSignal
-  ): Promise<ComputeJob[]> {
+  ): Promise<NodeComputeJob[]> {
+    if (jobId !== undefined) assertQualifiedJobId(jobId)
+
     const status = await attempt('computeStatus', () =>
       ProviderInstance.computeStatus(
         this.nodeUri,
@@ -1683,24 +2300,32 @@ export class OceanNodeClient {
       )
     )
 
-    return Array.isArray(status) ? status : status ? [status] : []
+    const jobs = Array.isArray(status) ? status : status ? [status] : []
+
+    return jobs.map(withQualifiedJobId)
   }
 
-  /** Status of one job, or `undefined` if the node does not know it. */
+  /**
+   * Status of one job, or `undefined` if the node does not know it.
+   *
+   * @param jobId `<environmentHash>-<jobId>`, as `computeStart` returns it
+   */
   async getComputeJob(
     jobId: string,
     signal?: AbortSignal
-  ): Promise<ComputeJob | undefined> {
+  ): Promise<NodeComputeJob | undefined> {
     const jobs = await this.computeStatus(jobId, undefined, signal)
 
-    return jobs.find((job) => job.jobId === jobId) || jobs[0]
+    return jobs.find((job) => job.jobId === jobId)
   }
 
   async computeStop(
     jobId: string,
     agreementId?: string,
     signal?: AbortSignal
-  ): Promise<ComputeJob[]> {
+  ): Promise<NodeComputeJob[]> {
+    assertQualifiedJobId(jobId)
+
     const jobs = await attempt('computeStop', () =>
       ProviderInstance.computeStop(
         jobId,
@@ -1711,10 +2336,13 @@ export class OceanNodeClient {
       )
     )
 
-    return toJobArray('computeStop', jobs)
+    return toJobArray('computeStop', jobs).map(withQualifiedJobId)
   }
 
   async getComputeResultUrl(jobId: string, index: number): Promise<string> {
+    assertQualifiedJobId(jobId)
+    assertResultIndex(index)
+
     const url = await attempt('getComputeResultUrl', () =>
       ProviderInstance.getComputeResultUrl(
         this.nodeUri,
@@ -1739,6 +2367,9 @@ export class OceanNodeClient {
     index: number,
     offset = 0
   ): Promise<ComputeResultStream> {
+    assertQualifiedJobId(jobId)
+    assertResultIndex(index)
+
     return attempt('getComputeResult', () =>
       ProviderInstance.getComputeResult(
         this.nodeUri,
@@ -1750,15 +2381,124 @@ export class OceanNodeClient {
     )
   }
 
-  async getComputeLogs(jobId: string, signal?: AbortSignal): Promise<unknown> {
-    return attempt('computeStreamableLogs', () =>
-      ProviderInstance.computeStreamableLogs(
-        this.nodeUri,
-        this.auth,
-        jobId,
-        signal
+  /**
+   * Streams a running job's algorithm output. The node serves these logs only while the
+   * algorithm runs; a finished job's are in its `algorithmLog` result.
+   *
+   * Over HTTP this sends the signed `GET /api/services/computeStreamableLogs` itself
+   * (signed as ocean.js signs it), so a refusal throws an `OceanNodeError` with the node's
+   * status and text (`HTTP 404: Job not found or not running`). The request is serialized
+   * with this client's other signed commands and retried once when the node rejected the
+   * nonce, as `encrypt` is. `requestTimeoutMs` bounds the signing only: the node sends no
+   * headers until the job writes its first output, so the request waits for them with no
+   * timeout. Abort `signal` to stop waiting, or to end the stream. Over P2P it goes through
+   * ocean.js.
+   *
+   * Treat the job id as a secret: ocean-node 4.2.2 checks the request's signature but not
+   * that the signer owns the job, so anyone who has the id can stream a running job's logs.
+   */
+  async getComputeLogs(
+    jobId: string,
+    signal?: AbortSignal
+  ): Promise<ComputeResultStream> {
+    assertQualifiedJobId(jobId)
+
+    const operation = 'computeStreamableLogs'
+
+    if (!isHttpUri(this.nodeUri)) {
+      const logs: ComputeResultStream | null = await attempt(operation, () =>
+        ProviderInstance.computeStreamableLogs(
+          this.nodeUri,
+          this.auth,
+          jobId,
+          signal
+        )
       )
+      if (!logs)
+        throw new OceanNodeError(
+          operation,
+          'the node returned no logs for the job'
+        )
+
+      return logs
+    }
+
+    const response = await this.withNonceRetry(signal, () =>
+      this.requestComputeLogs(jobId, signal)
     )
+
+    return responseBodyToAsyncIterable(response.body)
+  }
+
+  /**
+   * One signed `GET /api/services/computeStreamableLogs`, resolving with the response whose
+   * body is the stream. A non-2xx answer throws an `OceanNodeError` with the node's status
+   * and text.
+   *
+   * It is signed in this client's signed-call queue, within `requestTimeoutMs`, and holds
+   * the queue until the node answers or for `LOGS_QUEUE_HOLD_MS`. The request itself has
+   * only the caller's `signal`, so neither the queue nor its timeout cuts it off.
+   */
+  private async requestComputeLogs(
+    jobId: string,
+    signal: AbortSignal | undefined
+  ): Promise<Response> {
+    const operation = 'computeStreamableLogs'
+    const sent: { request?: Promise<FetchedResponse> } = {}
+
+    let failure: unknown
+    await this.serializeSigned(operation, signal, async (callSignal) => {
+      const { consumerAddress, nonce, signature, authorization } =
+        await this.signCommand(
+          PROTOCOL_COMMANDS.COMPUTE_GET_STREAMABLE_LOGS,
+          callSignal
+        )
+      // Signed after the queue's timeout or the caller's abort: the call has given up.
+      callSignal.throwIfAborted()
+
+      const query = new URLSearchParams({ jobId, consumerAddress })
+      if (signature) query.set('signature', signature)
+      if (nonce) query.set('nonce', nonce)
+
+      sent.request = fetchResponse(
+        fetch,
+        `${this.baseUrl()}/api/services/computeStreamableLogs?${query}`,
+        {
+          method: 'GET',
+          headers: authorization ? { Authorization: authorization } : {}
+        },
+        { signal }
+      )
+
+      await holdUntilSettled(sent.request, LOGS_QUEUE_HOLD_MS, callSignal)
+    }).catch((error) => {
+      failure = error
+    })
+
+    // A failure after the request went out (the queue's timeout) leaves it running.
+    const { request } = sent
+    if (!request) {
+      if (signal?.aborted) throw signal.reason
+      throw OceanNodeError.from(operation, failure)
+    }
+
+    let answer: FetchedResponse
+    try {
+      answer = await request
+    } catch (error) {
+      if (signal?.aborted) throw signal.reason
+      throw OceanNodeError.from(operation, error)
+    }
+
+    if (!answer.ok)
+      throw new OceanNodeError(
+        operation,
+        describeAnswer(answer),
+        undefined,
+        answer.status
+      )
+
+    return answer.response
   }
 
   // #endregion
@@ -1766,38 +2506,356 @@ export class OceanNodeClient {
   // #region policy server
 
   /**
-   * Starts a policy-server verification for one asset/service.
+   * Whether the node has a policy server: `isPSConfigured` from its status, or what an
+   * `initiate` through this client showed. `undefined` when neither has said: the status
+   * cannot be read, or does not say, as on upstream ocean-node 4.2.0, which does not
+   * report `isPSConfigured`.
    *
-   * Returns `null` when the request fails — the feature-test for "this deployment has no
-   * policy server", which callers treat as "SSI is unavailable" rather than as an error.
-   * ocean.js throws on *any* non-ok response, so a node without a policy server is
-   * indistinguishable here from a misconfigured one; the failure is logged as a warning so
-   * the latter stays diagnosable.
+   * A "yes" is kept for the lifetime of this client (the node reads its `POLICY_SERVER_URL`
+   * once, at startup), even past an `initiate` answered without one; a "no" for 10
+   * minutes, so a node restarted with a policy server is found; a failed read is not kept,
+   * so the next call asks again. Rejects with the signal's reason when `signal` aborts.
    */
-  async initializePolicyVerification(
-    request: {
-      documentId: string
-      serviceId: string
-      consumerAddress: string
-      policyServer: unknown
-    },
-    signal?: AbortSignal
-  ): Promise<unknown | null> {
-    try {
-      return await ProviderInstance.initializePSVerification(
-        this.nodeUri,
-        this.auth,
-        request,
-        signal
-      )
-    } catch (error) {
-      LoggerInstance.warn(
-        '[ocean-node] initializePSVerification failed; treating the node as having no policy server',
-        error instanceof Error ? error.message : String(error)
-      )
+  async hasPolicyServer(signal?: AbortSignal): Promise<boolean | undefined> {
+    const known = this.knownPolicyServer()
+    if (known !== undefined) return known
 
+    let status: unknown
+    try {
+      status = await this.getNodeStatus(signal)
+    } catch (error) {
+      if (signal?.aborted) throw signal.reason
+      LoggerInstance.debug(
+        `[ocean-node] could not read the status of ${this.nodeUri}: ${errorMessage(error)}`
+      )
+      return undefined
+    }
+
+    const configured = (status as { isPSConfigured?: unknown } | null)
+      ?.isPSConfigured
+    if (typeof configured !== 'boolean') return undefined
+
+    this.rememberPolicyServer(configured)
+
+    return configured
+  }
+
+  /** The kept `hasPolicyServer` answer, while it holds. */
+  private knownPolicyServer(): boolean | undefined {
+    const known = this.policyServerAnswer
+    if (known && Date.now() < known.until) return known.configured
+
+    this.policyServerAnswer = undefined
+    return undefined
+  }
+
+  private rememberPolicyServer(configured: boolean): void {
+    this.policyServerAnswer = {
+      configured,
+      until: configured
+        ? Number.POSITIVE_INFINITY
+        : Date.now() + NO_POLICY_SERVER_TTL_MS
+    }
+  }
+
+  /** An opened session, which shows the node has a policy server. */
+  private opened(reply: PolicyServerReply): PolicyServerReply {
+    this.rememberPolicyServer(true)
+
+    return reply
+  }
+
+  /**
+   * An `initiate` answered as a node without a policy server does: `null`, remembered for
+   * `hasPolicyServer` when nothing else was known.
+   *
+   * Also `null` when this client knew the node to have one, but then the "yes" is kept, so
+   * the next call opens a session again: OceanProtocolEnterprise ocean-node reports
+   * `isPSConfigured` for a `POLICY_SERVER_URL` that is set but empty, as its
+   * `.env.node.example` ships it, and such a node grants every request without a session
+   * (warned about once); a policy server behind a proxy that failed for a moment must not
+   * lose its sessions for long.
+   */
+  private noPolicyServer(): null {
+    if (!this.knownPolicyServer()) {
+      this.rememberPolicyServer(false)
       return null
     }
+
+    warnOnce(
+      `empty-policy-server-url:${normalizeNodeUri(this.nodeUri)}`,
+      `${this.nodeUri} reported a policy server but answers as a node without one: its POLICY_SERVER_URL is likely set but empty, and it then checks no credentials at all.`
+    )
+
+    return null
+  }
+
+  /**
+   * The address a policy-server session opened through this client is bound to, for the
+   * caller's `consumerAddress` (`signer.getAddress()`). Pass it to
+   * `initializePolicyVerification` and key a session cache on it.
+   *
+   * The policy server hashes the address the node forwards into the session id, and the
+   * node checks the session against the address of the download or compute call. The node
+   * forwards the address it authenticated (ocean-node `Auth`): for a Signer, the request's,
+   * so `consumerAddress` as given; for a JWT, the address stored with the token, whatever
+   * the request says, and ocean.js sends that one with the download too; for a pre-computed
+   * signature, its own `consumerAddress`. A JWT whose payload does not decode, or whose
+   * `address` claim is not an address, leaves `consumerAddress` as given (`authTokenAddress`,
+   * which `signCommand` reads the token's address with too).
+   */
+  policySessionAddress(consumerAddress: string): string {
+    const auth = this.auth
+
+    if (isAuthToken(auth)) return authTokenAddress(auth) ?? consumerAddress
+    if (isCompleteSignature(auth)) return auth.consumerAddress
+
+    return consumerAddress
+  }
+
+  /**
+   * Starts a policy-server verification for one service (the policy server's `initiate`)
+   * and returns its answer, `{ success: true, message: { sessionId, redirectUri } }`.
+   *
+   * `null` when the node has no policy server, and needs no session: ocean-node answers
+   * `initiate` with a 404 and no body (over P2P, a bare `{"httpStatus":404}`) when its
+   * `POLICY_SERVER_URL` is unset or empty, and neither the node's own errors nor the policy
+   * server's answer that way. `hasPolicyServer` remembers it, as it remembers an opened
+   * session's "yes": upstream ocean-node 4.2.0 does not report `isPSConfigured`, so this is
+   * how a node like it is told apart.
+   *
+   * Throws a `PolicyDeniedError` only for the policy server's own refusal: a reply with
+   * `success: false` and a 4xx `httpStatus`. Everything else throws an `OceanNodeError` with
+   * the status: the node's own 401 (a rejected nonce or signature, "Auth not configured"),
+   * its 404 for an asset it has not indexed (`Not found`), its 400 when it cannot reach
+   * the policy server, a rate limit, a 5xx, a network error, a timeout, and an answer that
+   * is not a policy-server reply. With a Signer, a rejected nonce is retried once, as
+   * `encrypt` does. Calls are serialized with this client's other signed commands, and each
+   * call, its retry included, has `requestTimeoutMs`.
+   *
+   * Over HTTP nautilus signs and sends the command itself, the way ocean.js signs it
+   * (`consumerAddress + (stored nonce + 1) + "PolicyServerInitialize"`, or the JWT as
+   * `Authorization`), because ocean.js 9.2 loses the node's own errors: on a failed answer
+   * it throws `JSON.stringify(await response.json())`. That keeps the policy server's reply,
+   * which is JSON and carries its `httpStatus`, but the node answers its own errors in plain
+   * text, so `response.json()` throws a `SyntaxError` instead and the status and the text
+   * are gone, the rejected nonce among them. Over P2P ocean.js keeps the node's text
+   * (`P2P command error: …`), so the command goes through it.
+   */
+  async initializePolicyVerification(
+    request: PolicyVerificationRequest,
+    signal?: AbortSignal
+  ): Promise<PolicyServerReply | null> {
+    return this.serializeSigned(
+      'initializePolicyVerification',
+      signal,
+      (callSignal) =>
+        this.withNonceRetry(callSignal, () =>
+          this.initiateOnce(request, callSignal)
+        )
+    )
+  }
+
+  /** One `initiate`, see `initializePolicyVerification`. */
+  private async initiateOnce(
+    request: PolicyVerificationRequest,
+    signal: AbortSignal
+  ): Promise<PolicyServerReply | null> {
+    const operation = 'initializePolicyVerification'
+
+    // `consumerAddress` is the address the request was sent with, which need not be
+    // `request.consumerAddress`: a Signer or a pre-computed signature sends its own.
+    const refusal = (reply: PolicyServerReply, consumerAddress: string) =>
+      new PolicyDeniedError({
+        nodeUri: this.nodeUri,
+        did: request.documentId,
+        serviceId: request.serviceId,
+        consumerAddress,
+        code: reply.httpStatus,
+        reason: policyServerReason(reply)
+      })
+
+    if (!isHttpUri(this.nodeUri)) {
+      // ocean.js sends the credential's address, as `getConsumerAddress` reads it without
+      // this client's `consumerAddress`.
+      const sentAddress = () =>
+        resolveConsumerAddress(this.auth).catch(() => request.consumerAddress)
+
+      let reply: PolicyServerReply | undefined
+      try {
+        reply = (await ProviderInstance.initializePSVerification(
+          this.nodeUri,
+          this.auth,
+          request,
+          signal
+        )) as PolicyServerReply | undefined
+      } catch (error) {
+        if (isP2pNoPolicyServer(error)) return this.noPolicyServer()
+
+        const refused = policyServerReplyIn(error)
+        if (refused && isPolicyRefusal(refused))
+          throw refusal(refused, await sentAddress())
+
+        throw OceanNodeError.from(operation, error)
+      }
+
+      if (reply?.success === true) return this.opened(reply)
+      if (isPolicyRefusal(reply))
+        throw refusal(reply as PolicyServerReply, await sentAddress())
+
+      throw new OceanNodeError(
+        operation,
+        `the node answered with something other than an opened session: ${boundedNodeMessage(reply)}`
+      )
+    }
+
+    let response: FetchedText
+    let consumerAddress: string
+    try {
+      const signed = await this.signCommand(
+        POLICY_SERVER_INITIALIZE,
+        signal,
+        request.consumerAddress
+      )
+      consumerAddress = signed.consumerAddress
+
+      response = await fetchText(
+        fetch,
+        `${this.baseUrl()}/api/services/initializePSVerification`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(signed.authorization
+              ? { Authorization: signed.authorization }
+              : {})
+          },
+          body: JSON.stringify({
+            ...request,
+            consumerAddress,
+            nonce: signed.nonce,
+            signature: signed.signature
+          })
+        },
+        {
+          timeoutMs: this.requestTimeoutMs,
+          signal,
+          maxBodyBytes: MAX_POLICY_REPLY_BYTES
+        }
+      )
+    } catch (error) {
+      throw new OceanNodeError(operation, errorMessage(error), error)
+    }
+
+    // Exactly empty: the node's own 404 says `Not found`, the policy server's is JSON.
+    if (response.status === 404 && response.body === '')
+      return this.noPolicyServer()
+
+    const reply = parsePolicyServerReply(response.body)
+    if (response.ok && reply?.success === true) return this.opened(reply)
+    if (isPolicyRefusal(reply))
+      throw refusal(reply as PolicyServerReply, consumerAddress)
+
+    throw new OceanNodeError(
+      operation,
+      describeAnswer(response),
+      undefined,
+      response.status
+    )
+  }
+
+  /**
+   * Asks the policy server whether the presentation for a session was verified
+   * (`checkSessionId`, through the node's passthrough), and returns the verifier's
+   * per-policy results only.
+   *
+   * The policy server answers an unverified session with an error status and the
+   * verifier's record; that comes back here as `verified: false`, not as a throw. A node or
+   * policy server that answers anything else throws an `OceanNodeError`.
+   *
+   * Over HTTP the request is sent by nautilus, with a bounded read: ocean.js would log the
+   * body of the error answer, which holds the presentation (`vp_token`).
+   */
+  async checkPolicySession(
+    sessionId: string,
+    signal?: AbortSignal
+  ): Promise<PolicySessionCheck> {
+    const operation = 'checkPolicySession'
+    const command = {
+      policyServerPassthrough: {
+        action: PolicyServerAction.CHECK_SESSION_ID,
+        sessionId
+      }
+    }
+
+    let reply: PolicyServerReply | undefined
+    let failed: string | undefined
+
+    if (isHttpUri(this.nodeUri)) {
+      let response: FetchedText
+      try {
+        response = await fetchText(
+          fetch,
+          `${this.nodeUri.replace(/\/+$/, '')}/api/services/PolicyServerPassthrough`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(command)
+          },
+          {
+            timeoutMs: this.requestTimeoutMs,
+            signal,
+            maxBodyBytes: MAX_POLICY_REPLY_BYTES
+          }
+        )
+      } catch (error) {
+        if (signal?.aborted) throw signal.reason
+        throw new OceanNodeError(operation, errorMessage(error), error)
+      }
+
+      reply = parsePolicyServerReply(response.body)
+      if (!response.ok)
+        failed = `${response.status} ${response.statusText}`.trim()
+    } else {
+      try {
+        reply = (await ProviderInstance.PolicyServerPassthrough(
+          this.nodeUri,
+          command,
+          signal
+        )) as PolicyServerReply | undefined
+      } catch (error) {
+        if (signal?.aborted) throw signal.reason
+
+        reply = policyServerReplyIn(error)
+        if (!reply)
+          throw new OceanNodeError(
+            operation,
+            boundedNodeMessage(errorMessage(error))
+          )
+        failed = 'the policy server refused'
+      }
+    }
+
+    const record = reply?.message
+
+    if (isSessionRecord(record))
+      return {
+        verified:
+          !failed &&
+          (record as { verificationResult?: unknown }).verificationResult ===
+            true,
+        policyResults: readPolicyResults(record)
+      }
+
+    if (failed || reply?.success !== true)
+      throw new OceanNodeError(
+        operation,
+        boundedNodeMessage(
+          `${failed ?? ''} ${reply ? policyServerReason(reply) : 'the answer is not a policy-server reply'}`
+        )
+      )
+
+    return { verified: false, policyResults: [] }
   }
 
   /** Forwards an action to the policy server through the node. */
@@ -1883,10 +2941,56 @@ export class OceanNodeClient {
   // #endregion
 }
 
+/** The path of `GET /api/aquarius/assets/ddo/<did>`. */
+function ddoPath(did: string): string {
+  return `/api/aquarius/assets/ddo/${encodeURIComponent(did)}`
+}
+
+/**
+ * Whether ocean.js failed a P2P `getDDO` because the node does not have the DDO. Over P2P
+ * the node answers `{ httpStatus: 404, error: "Not found" }`, and ocean.js throws
+ * `P2P command error: Not found` with an error carrying the node's text on `cause`.
+ */
+function isP2pNotFound(error: unknown): boolean {
+  for (
+    let current: unknown = error, depth = 0;
+    current instanceof Error && depth < 4;
+    current = (current as { cause?: unknown }).cause, depth++
+  )
+    if (/^(?:P2P command error: )?Not found$/i.test(current.message.trim()))
+      return true
+
+  return false
+}
+
+/**
+ * The JSON of a 2xx answer. Otherwise throws an `OceanNodeError` with the node's status and
+ * text, or for a body that is not JSON.
+ */
+function nodeJson<T>(operation: string, response: FetchedText): T {
+  if (!response.ok)
+    throw new OceanNodeError(
+      operation,
+      describeAnswer(response),
+      undefined,
+      response.status
+    )
+
+  try {
+    return JSON.parse(response.body) as T
+  } catch (error) {
+    throw new OceanNodeError(
+      operation,
+      `the node answered with something that is not JSON: ${boundedNodeMessage(response.body)}`,
+      error
+    )
+  }
+}
+
 function toJobArray(
   operation: string,
   jobs: ComputeJob | ComputeJob[]
-): ComputeJob[] {
+): NodeComputeJob[] {
   if (!jobs)
     throw new OceanNodeError(operation, 'the node returned no compute job')
 

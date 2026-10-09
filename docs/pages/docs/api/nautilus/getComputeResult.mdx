@@ -1,6 +1,6 @@
 # getComputeResult
 
-Get a download URL for a finished job's result.
+Get a download URL for a finished job's result: by default its `output`, `outputs.tar`.
 
 ## Usage
 
@@ -21,12 +21,20 @@ if (url) {
 - Type: `string | undefined`
 
 `undefined` — with a log line explaining which — when the node does not know the job, the
-job has not reached a terminal status, or it has no `output` result and no
-`resultIndex` was given.
+job has not finished, or it has no `output` result and no `resultIndex` was given.
 
-Both `70` (`JobFinished`) and `71` (`JobSettle`) count as terminal: by the time a job
-reaches `71` the algorithm has run and its outputs are listed, and only the
-payment-claim cron is outstanding. There is no need to wait through `71`.
+A job has finished once the node sets its `dateFinished`, whatever its status: a failed job
+(`41`, `11`, …) has finished too, usually without an `output`, and its other results are
+readable through `resultIndex`. The node sets `71` (`JobSettle`) before it writes
+`outputs.tar`, so a job at `71` without an `output` result yet is reported as not ready
+(logged, not warned) rather than as having none; try again.
+
+The URL is signed with your address, a nonce and a signature, and fetches the result for
+whoever holds it: do not log or share it.
+
+The `output` result is `outputs.tar`, a **tar archive** of what the algorithm wrote to its
+outputs folder. It is listed only when the results stay on the node, not when the job was
+started with `output` storage or an `outputBucketId`.
 
 To stream a large result instead of downloading it through a URL, use
 [`streamComputeResult`](/docs/api/nautilus/streamComputeResult).
@@ -43,12 +51,16 @@ To stream a large result instead of downloading it through a URL, use
 
 - Type: `string`
 
+`<environmentHash>-<jobId>`, as [`compute`](/docs/api/nautilus/compute) returns it.
+
 ##### resultIndex (optional)
 
 - Type: `number`
 
-Which result to fetch. Defaults to the first result of type `output`. A job also produces
-`algorithmLog`, `configrationLog` and `publishLog` entries.
+The `index` of the result to fetch, from the job's `results`; a non-negative integer, or a
+`RangeError` is thrown. Defaults to its `output` result. On ocean-node 4.2 a finished job lists `imageLog` (`image.log`),
+`configurationLog` (`configuration.log`), `algorithmLog` (`algorithm.log`) and `output`
+(`outputs.tar`), in that order, and `publishLog` (`publish.log`) when the node wrote one.
 
 ##### nodeUri (optional)
 

@@ -3,6 +3,7 @@ import type {
   ComputeJob,
   ComputeOutput,
   ComputeResourceRequest,
+  NodeComputeJob,
   ProviderComputeInitializeResults
 } from '@oceanprotocol/lib'
 import type {
@@ -58,8 +59,10 @@ export interface ComputeConfig extends ProviderFeeLimits, EscrowPaymentLimits {
    */
   computeEnv?: string
   /**
-   * Resources to request. Defaults to each resource's `min` (or 1) as advertised by the
-   * environment.
+   * Resources to request, sent exactly as given. When left out or empty, every resource the
+   * environment lists (for a free job, its `free` list) is requested at its minimum, raised
+   * to `1` for `cpu`, `ram` and `disk` within its maximum, so a job does not run without a
+   * CPU or memory limit by default.
    */
   resources?: ComputeResources
   /** Job duration in seconds. Capped to the environment's `maxJobDuration`. */
@@ -75,18 +78,6 @@ export interface ComputeConfig extends ProviderFeeLimits, EscrowPaymentLimits {
   metadata?: Record<string, string | number | boolean>
   /** Seconds to wait in the queue when resources are unavailable. */
   queueMaxWaitTime?: number
-  /**
-   * Skip the interactive credential presentation even when an input is gated.
-   *
-   * A provider that only replays a session you already hold — `StaticCredentialProvider` —
-   * is still consulted, so this is the flag to set when you minted the session out of band.
-   *
-   * It also waives the pre-order check that every gated input has a session behind it. A
-   * compute job orders *all* of its inputs, so waiving it risks paying for the lot and
-   * being refused on one; only do so when you know the deployment does not enforce the
-   * policy (ocean-node fails open when it has no `POLICY_SERVER_URL`).
-   */
-  skipCredentials?: boolean
 }
 
 /**
@@ -102,14 +93,29 @@ export type FreeComputeConfig = Omit<
 >
 
 export interface ComputeStatusConfig {
+  /**
+   * The job's `<environmentHash>-<jobId>` id, as `compute()` and `freeCompute()` return
+   * it. A bare id is refused.
+   */
   jobId: string
   /** Defaults to the node the Nautilus instance is configured with. */
   nodeUri?: string
   agreementId?: string
 }
 
+export interface ComputeLogsConfig extends ComputeStatusConfig {
+  /**
+   * Stops a running job's live logs: the wait for its first output, which has no timeout,
+   * and the stream once it has started. A finished job's `algorithmLog` is not affected.
+   */
+  signal?: AbortSignal
+}
+
 export interface ComputeResultConfig extends ComputeStatusConfig {
-  /** Defaults to the first `output` result. */
+  /**
+   * The `index` of the result to read, from the job's `results`. Defaults to its `output`
+   * result, the job's `outputs.tar`.
+   */
   resultIndex?: number
 }
 
@@ -120,7 +126,7 @@ export interface StopComputeConfig extends ComputeStatusConfig {
 
 /** What `compute()` returns: the jobs plus what it had to pay to start them. */
 export interface ComputeResult {
-  jobs: ComputeJob[]
+  jobs: NodeComputeJob[]
   environment: ComputeEnvironment
   initializeResults: ProviderComputeInitializeResults
   /**
@@ -133,4 +139,4 @@ export interface ComputeResult {
   orders: Record<string, string>
 }
 
-export type { ComputeEnvironment, ComputeJob, ComputeOutput }
+export type { ComputeEnvironment, ComputeJob, ComputeOutput, NodeComputeJob }

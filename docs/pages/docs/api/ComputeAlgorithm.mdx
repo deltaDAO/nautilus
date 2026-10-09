@@ -32,8 +32,12 @@ As [`ComputeAssetRef`](/docs/api/ComputeAsset).
 
 - Type: `Record<string, unknown>`
 
-Values for the *algorithm's* own consumer parameters, as distinct from the dataset's
-`userdata`.
+Values for the *algorithm's* own consumer parameters, declared in its algorithm metadata
+(`metadata.algorithm.consumerParameters`), as distinct from the `userdata` its service
+takes. When that list is absent or empty, the parameters nested under the container
+(`metadata.algorithm.container.consumerParameters`), which some DDOs carry, are used
+instead. `getAlgorithmConsumerParameters(asset)` returns the list that applies. Checked
+before anything is sent (see [validation](/docs/api/UserCustomParameters#validation)).
 
 ```ts twoslash
 import type { ComputeAlgorithmRef } from '@deltadao/nautilus'

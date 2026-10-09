@@ -2,7 +2,9 @@
 
 Set the checks applied to the presentation as a whole.
 
-Where VC policies check individual credentials, these check the presentation: that the holder is bound to it, that it satisfies the definition, that it carries enough credentials. Parameterised policies take an `args` value.
+Where VC policies check individual credentials, these check the presentation: that the holder is bound to it, that it satisfies the definition, that it carries enough credentials.
+
+Each policy is an object: `{ policy }`, or `{ policy, args }` for a parameterised one. An asset whose `vp_policies` mixed names and objects was not indexed by ocean-node 4.2.x, so nautilus writes objects only, as the enterprise market does. `args` is a string; the policy server parses it as JSON when it can (`'1'` reaches the verifier as `1`), so pass structured arguments through `JSON.stringify`.
 
 ## Usage
 
@@ -14,11 +16,16 @@ const assetBuilder = new AssetBuilder()
 import { CredentialListTypes } from '@deltadao/nautilus'
 
 assetBuilder.setVpPolicies(CredentialListTypes.ALLOW, [ // [!code focus]
-  'holder-binding', // [!code focus]
-  'presentation-definition', // [!code focus]
+  { policy: 'holder-binding' }, // [!code focus]
+  { policy: 'presentation-definition' }, // [!code focus]
   { policy: 'minimum-credentials', args: '1' } // [!code focus]
 ]) // [!code focus]
 ```
+
+:::info
+On an asset built from a resolved DDO, VP policies stored as bare names (by an earlier
+nautilus) are rewritten as objects when the edit is published.
+:::
 
 :::info
 This *replaces* the list. On an asset built from a resolved DDO, the policies you pass are

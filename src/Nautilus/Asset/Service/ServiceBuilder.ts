@@ -22,7 +22,8 @@ import type {
 } from '../../../ddo/types.js'
 import {
   addCredentialAddresses,
-  addRequestCredentials
+  addRequestCredentials,
+  normalizeStoredCredentials
 } from '../../../identity/policy.js'
 import {
   type FileTypes,
@@ -92,7 +93,10 @@ export class ServiceBuilder<
     // Deep copies, not references: `getService()` hands back the resolved asset's own
     // objects, and the compute/credential mutators write in place — aliasing them would
     // contaminate the caller's asset, and reset() would replay the mutated state.
-    service.credentials = structuredClone(getServiceCredentials(existing))
+    // Normalising rewrites legacy policy forms the way nautilus writes them now.
+    service.credentials = normalizeStoredCredentials(
+      getServiceCredentials(existing)
+    )
 
     if (existing.name) service.name = existing.name
     if (existing.displayName) service.displayName = existing.displayName

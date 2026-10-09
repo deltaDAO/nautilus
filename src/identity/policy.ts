@@ -5,16 +5,17 @@
  * `../ddo/types` for why, and `policy-server/src/handlers/waltIdPolicyHandler.ts`
  * (`parseRequestCredentials`, `hasSSIPolicyToBeChecked`) for the parser this must satisfy.
  */
-import type {
-  AddressCredential,
+import {
+  type AddressCredential,
   CredentialListTypes,
-  DdoCredential,
-  DdoCredentials,
-  RequestCredential,
-  SsiPolicyCredential,
-  SsiPolicyValue,
-  VcPolicy,
-  VpPolicy
+  type DdoCredential,
+  type DdoCredentials,
+  type RequestCredential,
+  type SsiPolicyCredential,
+  type SsiPolicyValue,
+  type StoredRequestCredential,
+  type VcPolicy,
+  type VpPolicy
 } from '../ddo/types.js'
 
 /** The policy server's own defaults, from `policy-server/default-verification-policies`. */
@@ -27,13 +28,14 @@ export const DEFAULT_VC_POLICIES: VcPolicy[] = [
 export function isSsiPolicyCredential(
   credential: DdoCredential
 ): credential is SsiPolicyCredential {
-  return credential.type === 'SSIpolicy'
+  // Null-safe: a stored list can hold entries that are not objects.
+  return credential?.type === 'SSIpolicy'
 }
 
 export function isAddressCredential(
   credential: DdoCredential
 ): credential is AddressCredential {
-  return credential.type === 'address'
+  return credential?.type === 'address'
 }
 
 /**
@@ -42,6 +44,8 @@ export function isAddressCredential(
  *
  * Additive throughout: everything already on the entry is kept. Use `setVcPolicies` /
  * `setVpPolicies` to replace a policy list outright.
+ *
+ * Each per-credential policy is stored JSON-encoded (see `StoredRequestCredential`).
  */
 export function addRequestCredentials(
   credentials: DdoCredentials,
@@ -52,7 +56,7 @@ export function addRequestCredentials(
   return updateSsiPolicy(credentials, list, (value) => {
     value.request_credentials = dedupeRequestCredentials([
       ...(value.request_credentials || []),
-      ...requestCredentials
+      ...requestCredentials.map(encodeRequestCredential)
     ])
 
     // Always arrays: the policy server's scalar fallback reads a typo'd `v_cpolicies`, so a
@@ -106,8 +110,10 @@ export function setVpPolicies(
 /**
  * Applies a change to one list's single `SSIpolicy` entry, creating it if needed.
  *
- * One entry per list: the policy server merges asset- and service-level entries, but two
- * entries in the same list is needless ambiguity.
+ * One entry with one value per list. The policy server merges every value of every
+ * `SSIpolicy` entry (asset and service level), so existing entries and values are merged
+ * into one first: changing only the first value dropped the request credentials of the
+ * others, and a replacement such as `setVcPolicies` left their policies running.
  */
 function updateSsiPolicy(
   credentials: DdoCredentials,
@@ -115,25 +121,34 @@ function updateSsiPolicy(
   mutate: (value: SsiPolicyValue) => void
 ): DdoCredentials {
   const entries = credentials[list] || []
-  const existing = entries.find(isSsiPolicyCredential)
+  const ssiEntries = entries.filter(isSsiPolicyCredential)
+  const [existing, ...others] = ssiEntries
 
-  const value: SsiPolicyValue = existing?.values?.[0] || {
-    request_credentials: []
-  }
+  const value = mergeSsiValues(
+    ssiEntries.flatMap((entry) => toArray(entry.values))
+  )
 
   mutate(value)
 
   if (existing) existing.values = [value]
   else entries.push({ type: 'SSIpolicy', values: [value] })
 
-  return { ...credentials, [list]: entries }
+  return {
+    ...credentials,
+    [list]: others.length
+      ? entries.filter(
+          (entry) => !isSsiPolicyCredential(entry) || entry === existing
+        )
+      : entries
+  }
 }
 
 /**
  * Adds addresses to the `type: 'address'` entry of one list.
  *
  * Written as `{ address }` objects: the policy server's `extractAddressList` accepts bare
- * strings too, but every producer in the stack writes objects, so nautilus matches them.
+ * strings too, but the enterprise market writes and reads objects, so nautilus matches it.
+ * An entry stored as bare strings only is kept that way (see `addressValues`).
  */
 export function addCredentialAddresses(
   credentials: DdoCredentials,
@@ -144,40 +159,51 @@ export function addCredentialAddresses(
   const existing = entries.find(isAddressCredential)
 
   const merged = dedupe([
-    ...(existing?.values || []).map((value) => value.address),
+    ...(existing ? storedAddresses(existing) : []),
     ...addresses
   ])
 
-  if (existing) existing.values = merged.map((address) => ({ address }))
-  else
-    entries.push({
-      type: 'address',
-      values: merged.map((address) => ({ address }))
-    })
+  if (existing) existing.values = addressValues(merged, existing)
+  else entries.push({ type: 'address', values: addressValues(merged) })
 
   return { ...credentials, [list]: entries }
 }
 
-/** Removes addresses, dropping the whole entry when its list becomes empty. */
+/**
+ * Removes addresses, compared case-insensitively, from every address entry of the list that
+ * holds one: the policy server reads them as one list, and under `match_allow: 'any'` the
+ * node lets in an address any of them holds. Each changed entry keeps its stored form (see
+ * `addressValues`); the others are left as stored.
+ *
+ * An allow entry left empty is kept as `values: []`: the node and the policy server read an
+ * empty address allow list as "deny everyone", so dropping it would lift the gate. A deny
+ * entry left empty denies no one and is dropped.
+ */
 export function removeCredentialAddresses(
   credentials: DdoCredentials,
   list: CredentialListTypes,
   addresses: string[]
 ): DdoCredentials {
   const entries = credentials[list] || []
-  const index = entries.findIndex(isAddressCredential)
-
-  if (index === -1) return credentials
-
   const removed = new Set(addresses.map((address) => address.toLowerCase()))
-  const remaining = (entries[index] as AddressCredential).values.filter(
-    (value) => !removed.has(value.address.toLowerCase())
-  )
 
-  if (remaining.length) (entries[index] as AddressCredential).values = remaining
-  else entries.splice(index, 1)
+  const kept = entries.flatMap((entry): DdoCredential[] => {
+    if (!isAddressCredential(entry)) return [entry]
 
-  return { ...credentials, [list]: entries }
+    const stored = storedAddresses(entry)
+    const remaining = stored.filter(
+      (address) => !removed.has(address.toLowerCase())
+    )
+    if (remaining.length === stored.length) return [entry]
+    if (!remaining.length && list === CredentialListTypes.DENY) return []
+
+    entry.values = addressValues(remaining, entry)
+    return [entry]
+  })
+
+  if (!entries.some(isAddressCredential)) return credentials
+
+  return { ...credentials, [list]: kept }
 }
 
 /** Adds an on-chain access-list credential. */
@@ -218,48 +244,53 @@ export function requiresPresentation(
 }
 
 /**
- * Whether the configured provider should be consulted for this call.
- *
- * `skipCredentials` skips the *presentation*, not the provider: one that simply replays a
- * session the caller already holds (`StaticCredentialProvider`) has no flow to skip, and
- * bypassing it threw away the very session the flag exists to reuse.
+ * The credential types a service asks for: the `type` of every `request_credentials` entry
+ * in the `SSIpolicy` entries of the asset's and the service's `allow` lists, which the
+ * policy server merges into the presentation request.
  */
-export function shouldResolveCredentials(
-  credentials: { interactive?: boolean } | undefined,
-  skip?: boolean
-): boolean {
-  if (!credentials) return false
+export function requestedCredentialTypes(
+  assetCredentials: DdoCredentials | undefined,
+  serviceCredentials?: DdoCredentials
+): Set<string> {
+  const types = new Set<string>()
 
-  return !(skip && credentials.interactive !== false)
+  for (const entry of [
+    ...(assetCredentials?.allow || []),
+    ...(serviceCredentials?.allow || [])
+  ])
+    if (isSsiPolicyCredential(entry))
+      for (const value of entry.values || [])
+        for (const credential of value.request_credentials || [])
+          if (typeof credential?.type === 'string' && credential.type)
+            types.add(credential.type)
+
+  return types
 }
 
 /**
- * Refuses to go on when a gated service has no verifier session behind it.
+ * Refuses to open a policy session that cannot be completed: the service asks for a
+ * verifiable presentation (`requiresPresentation`) and no `CredentialProvider` is set to
+ * make one.
  *
- * This is what makes "credentials before spend" true rather than aspirational. Without it
- * a missing session surfaced only when the download URL was requested — after the order
- * had been placed and paid for — because an unresolved policy is indistinguishable from
- * "no gating applies" at the point where it is resolved.
- *
- * `skipped` is the deliberate escape hatch: ocean-node fails open when it has no
- * `POLICY_SERVER_URL`, so a DDO can declare policies that the deployment never enforces.
- * A caller who knows that is the case passes `skipCredentials` and takes the risk.
+ * `PolicySessionResolver` calls this before `initiate`, unless it knows the node has no
+ * policy server, so nothing is signed, ordered or paid. A service gated by addresses only
+ * needs no provider: the session `initiate` opens is all the node checks.
  */
 export function assertPolicySatisfied(params: {
   did: string
   serviceId: string
   assetCredentials: DdoCredentials | undefined
   serviceCredentials: DdoCredentials | undefined
-  resolved: unknown
-  skipped?: boolean
+  /** Whether a `CredentialProvider` is set. */
+  canPresent: boolean
 }): void {
-  if (params.resolved || params.skipped) return
+  if (params.canPresent) return
 
   if (!requiresPresentation(params.assetCredentials, params.serviceCredentials))
     return
 
   throw new Error(
-    `Service ${params.serviceId} of ${params.did} requires a verifiable presentation, but no verifier session could be resolved. Pass a CredentialProvider to Nautilus.create() — a WaltIdCredentialProvider to run the presentation, or a StaticCredentialProvider if you already hold a session id. Set skipCredentials to continue anyway (the node will refuse the request unless its policy server is disabled).`
+    `Service ${params.serviceId} of ${params.did} requires a verifiable presentation, and no credential provider is set to make one. Pass a WaltIdCredentialProvider as \`credentials\` to Nautilus.create(), or call setCredentialProvider(). Nothing was ordered or paid.`
   )
 }
 
@@ -267,20 +298,226 @@ function dedupe<T>(values: T[]): T[] {
   return Array.from(new Set(values))
 }
 
-function dedupeVpPolicies(policies: VpPolicy[]): VpPolicy[] {
-  const seen = new Set<string>()
+/**
+ * Normalises a credentials block read from a published DDO, so that writing it back
+ * produces the form nautilus writes itself. Returns a deep copy.
+ *
+ * Assets published before VP policies were stored as objects can carry bare-string
+ * `vp_policies` and raw (not JSON-encoded) per-credential policies. Left as they are, an
+ * edit that adds an object policy would write a mixed array, which the node does not
+ * index. Raw per-credential names were also dropped by the policy server, so encoding them
+ * makes them take effect.
+ *
+ * Other producers can also write `{ policy }` objects into `vc_policies` (the policy
+ * server reads only the name); they are rewritten to names, so the array stays one type. A
+ * single policy or request credential stored without its array is wrapped in one, as the
+ * policy server does for `vp_policies`.
+ *
+ * Address entries are left as stored: bare strings and `{ address }` objects are both read
+ * by the policy server and OceanProtocolEnterprise ocean-node, but upstream ocean-node
+ * 4.2.0's built-in check (no policy server) reads strings only, so rewriting a list the
+ * edit does not touch could break its gate there. `addCredentialAddresses` and
+ * `removeCredentialAddresses` read either form.
+ *
+ * Unusable VC policies are dropped, as the policy server skips them. An unreadable VP
+ * policy, request credential or per-credential policy throws instead: dropping it would
+ * leave the asset open under the remaining policies, where the policy server today
+ * refuses or fails on it.
+ */
+export function normalizeStoredCredentials(
+  credentials: DdoCredentials
+): DdoCredentials {
+  const copy = structuredClone(credentials)
 
-  return policies.filter((policy) => {
-    const key = JSON.stringify(policy)
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
+  for (const list of [copy.allow, copy.deny]) {
+    if (!Array.isArray(list)) continue
+
+    // The guard skips entries that are not objects, which the stack cannot match either.
+    for (const entry of list)
+      if (isSsiPolicyCredential(entry))
+        entry.values = toArray(entry.values)
+          .filter(isObject)
+          .map(normalizeSsiValue)
+  }
+
+  return copy
+}
+
+/** Normalises one stored `SSIpolicy` value in place (see `normalizeStoredCredentials`). */
+function normalizeSsiValue(raw: Record<string, unknown>): SsiPolicyValue {
+  const value = raw as unknown as SsiPolicyValue
+
+  if (raw.request_credentials !== undefined)
+    value.request_credentials = toArray(raw.request_credentials).map(
+      readRequestCredential
+    )
+
+  if (raw.vc_policies !== undefined)
+    value.vc_policies = dedupe(toArray(raw.vc_policies).flatMap(readVcPolicy))
+
+  if (raw.vp_policies !== undefined)
+    value.vp_policies = dedupeVpPolicies(toArray(raw.vp_policies))
+
+  return value
+}
+
+/**
+ * Merges `SSIpolicy` values into one, as the policy server reads them: request
+ * credentials and both policy lists are combined and deduplicated.
+ */
+function mergeSsiValues(values: unknown[]): SsiPolicyValue {
+  const parts = values.filter(isObject).map(normalizeSsiValue)
+
+  const merged: SsiPolicyValue = Object.assign({}, ...parts, {
+    request_credentials: dedupeRequestCredentials(
+      parts.flatMap((part) => part.request_credentials ?? [])
+    )
+  })
+
+  if (parts.some((part) => part.vc_policies))
+    merged.vc_policies = dedupe(parts.flatMap((part) => part.vc_policies ?? []))
+
+  if (parts.some((part) => part.vp_policies))
+    merged.vp_policies = dedupeVpPolicies(
+      parts.flatMap((part) => part.vp_policies ?? [])
+    )
+
+  return merged
+}
+
+/**
+ * Addresses as the values of an address entry: bare strings when `stored` holds bare
+ * strings only, `{ address }` objects otherwise (a new or empty entry included).
+ *
+ * ocean-node and the policy server accept bare strings, and upstream ocean-node 4.2.0
+ * without a policy server reads nothing else, so changing an address of such an entry must
+ * not turn it into objects.
+ */
+function addressValues(
+  addresses: string[],
+  stored?: AddressCredential
+): AddressCredential['values'] {
+  const values: unknown = stored?.values
+  const bareStrings =
+    Array.isArray(values) &&
+    values.length > 0 &&
+    values.every((value) => typeof value === 'string')
+
+  return bareStrings ? addresses : addresses.map((address) => ({ address }))
+}
+
+/**
+ * The addresses an address entry holds, read from bare strings and `{ address }` objects
+ * alike, with their case kept. A value that is neither, or a `values` that is not an
+ * array, holds no address the stack can match, and is skipped.
+ */
+function storedAddresses(entry: AddressCredential): string[] {
+  const values: unknown = entry.values
+  if (!Array.isArray(values)) return []
+
+  return values.flatMap((raw: unknown) => {
+    if (typeof raw === 'string') return [raw]
+
+    const address = (raw as { address?: unknown } | null)?.address
+    return typeof address === 'string' ? [address] : []
   })
 }
 
+/** A stored VC policy as its name: the policy server reads only `policy` from an object. */
+function readVcPolicy(raw: unknown): VcPolicy[] {
+  if (typeof raw === 'string') return [raw]
+
+  const policy = (raw as { policy?: unknown } | null)?.policy
+  return typeof policy === 'string' ? [policy] : []
+}
+
+/** A VP policy in any form the stack has written, as a `VpPolicy`. Throws if unreadable. */
+function readVpPolicy(raw: unknown): VpPolicy {
+  if (typeof raw === 'string') return { policy: raw }
+
+  if (isObject(raw) && typeof raw.policy === 'string') {
+    const { policy, args } = raw
+    if (args === undefined) return { policy }
+
+    return {
+      policy,
+      args: typeof args === 'string' ? args : JSON.stringify(args)
+    }
+  }
+
+  throw unreadable('VP policy', raw, 'a name or { policy, args? }')
+}
+
+/** A stored request credential, its per-credential policies JSON-encoded. */
+function readRequestCredential(raw: unknown): StoredRequestCredential {
+  if (!isObject(raw))
+    throw unreadable('request credential', raw, '{ type, format?, policies? }')
+
+  const credential = raw as unknown as StoredRequestCredential
+  if (raw.policies === undefined) return credential
+
+  return {
+    ...credential,
+    policies: toArray(raw.policies).map(readCredentialPolicy)
+  }
+}
+
+/**
+ * A per-credential policy, JSON-encoded. A string that already parses to a name or an
+ * object is kept; any other string is a raw name and is encoded, as is a
+ * `{ policy, args? }` object. The single encoder for builder input and stored policies, so
+ * a stored policy passed back in is not encoded twice. Throws if unreadable.
+ */
+function readCredentialPolicy(raw: unknown): string {
+  if (typeof raw === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      if (typeof parsed === 'string' || (parsed && typeof parsed === 'object'))
+        return raw
+    } catch {
+      // A raw policy name.
+    }
+
+    return JSON.stringify(raw)
+  }
+
+  if (isObject(raw) && typeof raw.policy === 'string')
+    return JSON.stringify(raw)
+
+  throw unreadable('per-credential policy', raw, 'a name or { policy, args? }')
+}
+
+function encodeRequestCredential(
+  credential: RequestCredential
+): StoredRequestCredential {
+  return {
+    type: credential.type,
+    ...(credential.format !== undefined && { format: credential.format }),
+    ...(credential.policies && {
+      policies: credential.policies.map(readCredentialPolicy)
+    })
+  }
+}
+
+/**
+ * Reads each VP policy (see `readVpPolicy`) and deduplicates by value, writing each as a
+ * plain `{ policy, args? }` object. Takes `unknown[]` because callers outside TypeScript,
+ * and stored DDOs, can hand it bare names or worse.
+ */
+function dedupeVpPolicies(policies: readonly unknown[]): VpPolicy[] {
+  const byKey = new Map<string, VpPolicy>()
+
+  for (const policy of policies.map(readVpPolicy)) {
+    const key = JSON.stringify([policy.policy, policy.args ?? null])
+    if (!byKey.has(key)) byKey.set(key, policy)
+  }
+
+  return [...byKey.values()]
+}
+
 function dedupeRequestCredentials(
-  requestCredentials: RequestCredential[]
-): RequestCredential[] {
+  requestCredentials: StoredRequestCredential[]
+): StoredRequestCredential[] {
   const seen = new Set<string>()
 
   return requestCredentials.filter((credential) => {
@@ -293,4 +530,27 @@ function dedupeRequestCredentials(
     seen.add(key)
     return true
   })
+}
+
+function isObject(raw: unknown): raw is Record<string, unknown> {
+  return typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+}
+
+/** A stored value that may be one item rather than an array, as an array. */
+function toArray(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw
+  return raw === undefined || raw === null ? [] : [raw]
+}
+
+function unreadable(kind: string, raw: unknown, expected: string): Error {
+  let shown: string
+  try {
+    shown = JSON.stringify(raw) ?? String(raw)
+  } catch {
+    shown = String(raw)
+  }
+
+  return new Error(
+    `Cannot read the ${kind} ${shown}: expected ${expected}. Nautilus does not drop it, which would leave the asset open under the remaining policies; fix or remove it.`
+  )
 }

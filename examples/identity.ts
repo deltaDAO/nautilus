@@ -13,7 +13,6 @@ import {
   type PricingConfigWithoutOwner,
   ServiceBuilder,
   ServiceTypes,
-  StaticCredentialProvider,
   WaltIdCredentialProvider,
   WaltIdHttpWallet,
   WaltIdVcSigner,
@@ -360,7 +359,7 @@ export async function publishGatedDataset(
       'revoked-status-list'
     ])
     .setVpPolicies(CredentialListTypes.ALLOW, [
-      'holder-binding',
+      { policy: 'holder-binding' },
       { policy: 'minimum-credentials', args: '1' }
     ])
     .build()
@@ -435,7 +434,7 @@ export async function publishGatedComputeDataset(
       'not-before',
       'revoked-status-list'
     ])
-    .setVpPolicies(CredentialListTypes.ALLOW, ['holder-binding'])
+    .setVpPolicies(CredentialListTypes.ALLOW, [{ policy: 'holder-binding' }])
     .build()
 
   const result = await publishAsset(nautilus, asset)
@@ -669,58 +668,40 @@ function defaultResources(environment: ComputeEnvironment) {
 }
 
 /**
- * Reusing a session you already hold.
+ * Checks a policy-server session, and names the policies that failed.
  *
- * Useful when the exchange happened elsewhere — in a browser, say — and you only need to
- * replay the result.
+ * `access()` and `compute()` already do this after every presentation and throw a
+ * `PolicyDeniedError` whose `reason` and `policyResults` name the failed policies. This is the
+ * same check, for a session id you have from elsewhere (a browser flow).
  *
- * Never invent a session id. The policy server derives it from
- * `sha256(consumerAddress:documentId:serviceId)` plus a random half, and rejects any session
- * whose context does not match the request. A session is valid for exactly one
- * (asset, service, consumer) triple.
- */
-export async function consumeWithExistingSession(
-  networkConfig: NetworkConfig,
-  sessionId: string,
-  assetDid: string
-) {
-  // The session is bound to the consumer address, so replay it as the consumer.
-  const signer = getSigner(networkConfig, 'consumer')
-
-  const nautilus = await Nautilus.create(signer, {
-    config: networkConfig,
-    credentials: new StaticCredentialProvider(sessionId),
-    ...paymentLimits()
-  })
-
-  const result = await nautilus.access({ assetDid })
-
-  console.log('Download URL:', result.url)
-
-  return result
-}
-
-/**
- * Explains why a presentation was refused.
- *
- * The reason is usually one specific policy rather than a general refusal, and the verifier's
- * report says which.
+ * Only the node that opened a session knows it: for a download, the node in the service's
+ * `serviceEndpoint`; for a compute job, the configured node. Pass that node's URI. A session
+ * id is a credential (it reads the presentation back through the node), so do not log it.
  */
 export async function explainCredentialFailure(
   nautilus: Nautilus,
-  sessionId: string
+  sessionId: string,
+  nodeUri?: string
 ) {
-  const provider = createCredentialProvider(
-    nautilus
-  ) as WaltIdCredentialProvider
+  const node = nautilus.getNodeClient()
+  const { verified, policyResults } = await (nodeUri
+    ? node.forEndpoint(nodeUri)
+    : node
+  ).checkPolicySession(sessionId)
 
-  const reason = await provider.explainFailure(sessionId)
+  const failed = policyResults
+    .filter((result) => !result.success)
+    .map((result) => [result.policy, result.error].filter(Boolean).join(': '))
 
-  console.log(
-    reason ? `Refused because: ${reason}` : 'No failing policy was reported.'
-  )
+  if (verified) console.log('The verifier accepted this presentation.')
+  else
+    console.log(
+      failed.length
+        ? `Refused because: ${failed.join('; ')}`
+        : 'Not verified, and no failing policy was reported.'
+    )
 
-  return reason
+  return { verified, failed }
 }
 
 /**
@@ -731,11 +712,16 @@ export async function explainCredentialFailure(
  *
  * Two things worth knowing about deployments before you conclude gating works:
  *
- *   - ocean-node **fails open** when its `POLICY_SERVER_URL` is unset, so an unconfigured node
- *     allows everything. nautilus detects this and continues without SSI rather than failing.
- *   - Publish-time enforcement does not exist yet: the policy server's `newDDO`, `updateDDO`,
- *     `validateDDO`, `encrypt` and `decrypt` actions are stubs that always allow. Only
- *     `download` and `startCompute` are genuinely checked.
+ *   - ocean-node checks credentials with a policy server only when it has one
+ *     (`POLICY_SERVER_URL`). Without one it checks address and access lists itself, and an
+ *     `SSIpolicy` is a type it does not know: it denies everyone under the default
+ *     `match_allow: 'all'`, and is ignored under `'any'` when another entry matches.
+ *     nautilus opens no session there.
+ *   - The policy server checks consume time: `initiate`, `download` and `startCompute`. Its
+ *     publish-time actions (`newDDO`, `updateDDO`, `validateDDO`, `encrypt`, `decrypt`)
+ *     allow every request.
+ *   - On a node with a policy server, an asset needs an address allow list
+ *     (`addCredentialAddresses`): the policy server refuses every address that is not on it.
  */
 export async function runGatedPublishAndConsume(
   credentialType = 'VerifiableId'

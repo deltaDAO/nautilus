@@ -72,6 +72,9 @@ const free = await nautilus.freeCompute({ // [!code focus]
 const freeJobId = free.jobs[0].jobId
 ```
 
+The `jobId` is `<environmentHash>-<jobId>`, the form the node gives a started job. Keep it
+whole: every job method takes it, and a bare id is refused.
+
 No datatoken is bought and no escrow is touched. An environment without a `free` section
 throws, naming it — free jobs are opt-in for the node operator, and its access list may
 restrict who can use them.
@@ -132,9 +135,13 @@ one `Nautilus` instance, so two jobs started together do not overwrite each othe
 authorisation. Jobs from another instance or process are not serialised; see
 [Concurrent jobs](/docs/api/nautilus/compute#concurrent-jobs).
 
-`resources` defaults to each resource's declared minimum, `paymentToken` to the first token
-the environment accepts on your chain, and `maxJobDuration` is capped to the environment's
-limit with a warning.
+A non-empty `resources` list is sent exactly as given, and the node gives each resource it leaves out
+that resource's minimum, often `0`; a job with `0` RAM runs without a memory limit. Without
+`resources`, or with an empty list, nautilus requests every resource the environment lists at its minimum, raised to
+`1` for `cpu`, `ram` and `disk` within the resource's maximum; other resources, such as GPUs,
+at their minimum. `paymentToken` defaults to the first token the
+environment accepts on your chain, and `maxJobDuration` is capped to the environment's limit
+with a warning.
 
 :::danger[Paid jobs move real funds]
 `compute()` orders every input and locks funds in the escrow contract from what the node
@@ -188,10 +195,17 @@ const job = await nautilus.getComputeStatus({ jobId }) // [!code focus]
 console.log(job?.status, job?.statusText)
 ```
 
-Status `70` (`JobFinished`) means the algorithm has run; `71` (`JobSettle`) means it has
-run and the node is only waiting on the payment-claim cron. Results are readable at
-either. While the job runs, you can read the container's logs — useful for debugging an
-algorithm you cannot otherwise observe:
+`undefined` means the node does not know the job. The job has finished once the node sets
+its `dateFinished`, whether it succeeded or not, and the status says how it ended: failed
+jobs end below `70`, for example `41` when the algorithm failed or `11` when its image could
+not be pulled. Poll on `dateFinished` rather than on a status. A finished job's results are
+readable; at `71` (`JobSettle`) the node may still be writing `outputs.tar`, which is listed
+as the `output` result once it is written.
+
+The algorithm's logs are useful for debugging an algorithm you cannot otherwise observe.
+While the job runs they stream live; once it has finished, `getComputeLogs` reads the job's
+`algorithmLog` result instead, because the node serves live logs only while the algorithm
+runs:
 
 ```ts twoslash
 import { Nautilus } from '@deltadao/nautilus'
@@ -200,7 +214,15 @@ const nautilus = await Nautilus.create(new Wallet('0x1234'))
 const jobId = 'a-job-id'
 // ---cut---
 const logs = await nautilus.getComputeLogs({ jobId }) // [!code focus]
+
+for await (const chunk of logs) process.stdout.write(chunk) // [!code focus]
 ```
+
+:::warning[Treat the job id as a secret]
+On ocean-node 4.2.2 the live-log endpoint checks that the request is signed, but not that
+the signer owns the job, so anyone who has the qualified job id can stream a running job's
+logs. Keep the id where you would keep other access details, and out of shared logs.
+:::
 
 ## Getting the results
 
@@ -217,9 +239,24 @@ if (resultUrl) {
 }
 ```
 
-`undefined` means the job has not finished, the node does not know it, or it produced no
-`output` result — the log line says which. A job also produces `algorithmLog`,
-`configrationLog` and `publishLog` entries, reachable by `resultIndex`.
+`undefined` means the job has not finished or not listed its `output` yet, the node does not
+know it, or it produced no `output` result (a failed job usually has none) — the log line
+says which.
+
+The `output` result is `outputs.tar`, a **tar archive** of everything the algorithm wrote to
+its outputs folder, so unpack it rather than reading it as a file of its own. It is listed
+only when the results stay on the node; with `output` storage or an `outputBucketId` they go
+there instead. A finished job's `results` (on [`getComputeStatus`](/docs/api/nautilus/getComputeStatus))
+list on ocean-node 4.2:
+
+| `type` | File |
+| --- | --- |
+| `imageLog` | `image.log`, pulling or building the algorithm's image |
+| `configurationLog` | `configuration.log`, preparing the job's inputs and algorithm |
+| `algorithmLog` | `algorithm.log`, what the algorithm printed |
+| `output` | `outputs.tar`, the algorithm's outputs |
+
+Pass a result's `index` as `resultIndex` to read another one.
 
 For a large result, stream it instead of buffering a download:
 
@@ -236,9 +273,12 @@ for await (const chunk of stream) { // [!code focus]
 } // [!code focus]
 ```
 
+It reads the same result as `getComputeResult`: the `output` unless `resultIndex` says
+otherwise. Where `getComputeResult` returns `undefined`, it throws.
+
 :::info
-`getComputeResult` returns `undefined` until the job reaches a finished state, rather than
-throwing — poll [`getComputeStatus`](/docs/api/nautilus/getComputeStatus) first, or use
+`getComputeResult` returns `undefined` until the job has finished (its `dateFinished` is
+set) and listed its `output`, rather than throwing — poll [`getComputeStatus`](/docs/api/nautilus/getComputeStatus) first, or use
 [`waitForComputeJob`-style polling](/docs/api/nautilus/getComputeStatus) in your own loop.
 :::
 
@@ -276,6 +316,9 @@ const computeService = new ServiceBuilder<ServiceTypes.COMPUTE, FileTypes.URL>({
 
 `allowAlgorithmNetworkAccess(false)` is what makes the isolation meaningful: without network
 access, an algorithm cannot send your data anywhere.
+
+These settings belong to the dataset. ocean-node reads them from the dataset's service only,
+so nautilus publishes the services of an `algorithm` asset without them.
 
 See [Publishing](/docs/guides/publish) for the algorithm side.
 

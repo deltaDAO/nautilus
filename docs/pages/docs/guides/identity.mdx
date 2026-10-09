@@ -26,16 +26,36 @@ The loop is deliberate: every credential exchange passes through the node, so it
 result rather than taking the client's word for it.
 
 nautilus only ever talks to two of them directly: **ocean-node**, through its
-policy-server passthrough endpoint, and the **walt.id wallet**, to actually present
-credentials. Everything else happens between the services.
+`initializePSVerification` and policy-server passthrough endpoints, and the **walt.id
+wallet**, to actually present credentials. Everything else happens between the services.
 
-What nautilus needs out of the exchange is one thing: a **verifier session id**. That is the
-only value ocean-node wants when you later download or run compute.
+What nautilus needs out of the exchange is one thing: a **policy-server session id**. On a
+node with a policy server, ocean-node checks it on every download and compute job of an asset
+that has `credentials`, whether the asset is gated by addresses or by an `SSIpolicy`.
 
 ## Consuming a gated asset
 
-Configure a credential provider once. Nothing changes at the call site — `access` and
-`compute` handle the exchange themselves.
+nautilus opens the policy-server session itself, inside `access`, `compute` and
+`freeCompute`. Nothing changes at the call site.
+
+**Gated by addresses only**, an asset needs no wallet and no configuration: the session the
+policy server opens is all the node checks.
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus } from '@deltadao/nautilus'
+
+const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const config = { oceanNodeUri: 'https://node.example.org' }
+// ---cut---
+const nautilus = await Nautilus.create(signer, { config })
+
+// The session is opened before the order, and carried into the download URL.
+const { url } = await nautilus.access({ assetDid: 'did:ope:1234abcd...' })
+```
+
+**Gated by an `SSIpolicy`**, an asset asks for a verifiable presentation. Configure a
+credential provider once; it answers the presentation request from your wallet.
 
 ```ts twoslash
 import { JsonRpcProvider, Wallet } from 'ethers'
@@ -58,36 +78,100 @@ const nautilus = await Nautilus.create(signer, {
 const { url } = await nautilus.access({ assetDid: 'did:ope:1234abcd...' })
 ```
 
+Without a provider, an asset that asks for a presentation is refused with a clear error
+before anything is signed or ordered.
+
 ### What happens, in order
 
 ```mermaid
 sequenceDiagram
     participant N as nautilus
     participant ON as ocean-node
+    participant PS as policy server
     participant W as walt.id wallet
-    N->>ON: initialize verification (asset, service, consumer)
-    alt already verified, or not gated
-        ON-->>N: done - nothing to prove
-    else presentation required
-        ON-->>N: presentation definition
-        N->>W: authenticate with Ethereum key
-        N->>W: match credentials, present
-        W-->>N: verifier session id
-        N->>ON: download / compute, carrying the session id
+    N->>ON: status: isPSConfigured? (when it does not say, initiate tells)
+    N->>ON: initializePSVerification (asset, service, consumer)
+    ON->>PS: initiate
+    alt address not allowed
+        PS-->>N: 403 - PolicyDeniedError, nothing ordered
+    else allowed
+        PS-->>N: sessionId, redirectUri
     end
+    opt SSIpolicy asks for credentials
+        N->>W: answer the openid4vp request (CredentialProvider.present)
+        N->>ON: checkSessionId
+        ON-->>N: verificationResult
+    end
+    N->>ON: initialize, order, download / compute - carrying the session id
 ```
 
-1. nautilus asks the node to start a verification for this asset, service and consumer.
-2. If the node says verification already succeeded — or the asset carries no credential
-   policy at all — it stops there.
-3. Otherwise it fetches the presentation definition, authenticates to your walt.id wallet
-   with your Ethereum key, finds credentials matching the definition, and presents them.
-4. The resulting session id is carried into the download or compute call.
+1. nautilus reads `isPSConfigured` from the node's status. A node without a policy server
+   checks credentials itself, and needs no session: nautilus opens none. Upstream
+   ocean-node 4.2.0 does not report `isPSConfigured`; there nautilus learns it from
+   `initiate`, which such a node answers with a 404 and no body.
+2. If neither the asset nor the service has `credentials` (`{}` counts as having them, as
+   the node checks it), the node checks nothing, and no session is opened either.
+3. Otherwise nautilus starts a verification. The policy server checks your address against
+   the asset's allow list and opens a session bound to (consumer, asset, service), or refuses
+   with a `PolicyDeniedError` that carries its reason.
+4. If the asset or service carries an `SSIpolicy` that asks for credentials, the credential
+   provider answers the openid4vp request from your wallet, and nautilus checks with the
+   policy server (`checkSessionId`) that the verifier accepted it. A presentation that was not
+   accepted is a `PolicyDeniedError` naming the failed policies.
+5. The session id is carried into the download URL, or into `initializeCompute` and
+   `computeStart`: one session per compute input, the algorithm included.
 
 :::info
-Credentials are always resolved **before** anything is ordered. A policy you cannot satisfy
-costs you nothing.
+The session is always opened **before** anything is ordered. A policy you cannot satisfy
+costs you nothing, and a refusal is never cached: the next call asks again.
 :::
+
+### Handling a refusal
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus, PolicyDeniedError } from '@deltadao/nautilus'
+const signer = new Wallet('0x1234', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const nautilus = await Nautilus.create(signer, {
+  config: { oceanNodeUri: 'https://node.example.org' }
+})
+// ---cut---
+try {
+  await nautilus.access({ assetDid: 'did:ope:1234abcd...' })
+} catch (error) {
+  if (error instanceof PolicyDeniedError) // [!code focus]
+    console.log(error.code, error.reason) // [!code focus]
+  // @log: 403 'Access denied: Address not allowed at asset level.'
+  else throw error
+}
+```
+
+`code` is the policy server's status for the refusal, and `undefined` when the verifier did
+not accept a presentation; `reason` then names the failed policies
+(`revoked-status-list: credential is revoked`), and `policyResults` lists each policy's name,
+outcome and error, never the presentation itself. Only the policy server's own refusal is a
+`PolicyDeniedError`. Everything else is an `OceanNodeError` with the status: the node
+rejecting the nonce or signature (401), not having indexed the asset (404), not reaching its
+policy server (400), a network error, a timeout or a 5xx.
+
+If the wallet holds nothing that matches, the provider's error carries the credentials you are
+*missing*, rather than just reporting no match.
+
+### What the wallet trusts
+
+For a download, the presentation request comes from the node in the service's
+`serviceEndpoint`, which the publisher chose. So `WaltIdCredentialProvider` checks it before
+the wallet sees it:
+
+- the request must be an `openid4vp://` URL, and its `request_uri`, `response_uri` and
+  `presentation_definition_uri` must be `https://`, or `http://` on a loopback host
+  (`allowInsecureTransport: true` accepts plain `http://` elsewhere, e.g. a private
+  network). Other schemes, link-local hosts and cloud metadata addresses are always refused;
+- every input descriptor of the presentation definition must ask for a credential type the
+  asset's or service's `request_credentials` name, and only wallet credentials of those types
+  are presented, whatever the wallet matched or `onSelectCredentials` returned;
+- the wallet signer must be the consumer: a provider built with another signer refuses to
+  present its credentials for a session bound to your address.
 
 ### Choosing credentials and DIDs
 
@@ -118,45 +202,36 @@ const credentials = new WaltIdCredentialProvider(bootstrap.getNodeClient(), {
 
 You can also pin a wallet and DID outright with `walletId` and `did`.
 
-### Diagnosing a refusal
+### Sessions
 
-When a presentation is rejected, the reason is usually a specific policy — not a general
-"access denied". `explainFailure` digs it out of the verifier's report:
+nautilus caches each verified session per (node, asset, service, consumer): the policy
+server binds a session id to `sha256(consumerAddress:documentId:serviceId)` and the node that
+opened it, so a session for another account or node would be refused. Pass `sessionStore` to
+`Nautilus.create` to keep address-only sessions somewhere else than in memory.
 
-```ts twoslash
-import { JsonRpcProvider, Wallet } from 'ethers'
-import { Nautilus, WaltIdCredentialProvider } from '@deltadao/nautilus'
-const signer = new Wallet('0x1234', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
-const config = { oceanNodeUri: 'https://node.example.org' }
-const bootstrap = await Nautilus.create(signer, { config })
-const credentials = new WaltIdCredentialProvider(bootstrap.getNodeClient(), {
-  walletApi: 'https://wallet.example.org'
-})
-// ---cut---
-const reason = await credentials.explainFailure('a-session-id') // [!code focus]
-// @log: 'revoked-status-list: credential is revoked'
-```
+:::warning
+Session ids are credentials. The node accepts one for the download or compute job, and the id
+of a presented session lets anyone read the verifier's record through the node's passthrough
+(`checkSessionId` is not signed), the presentation (`vp_token`) included, until the verifier
+forgets it. So presented sessions stay in memory even with a `sessionStore`, unless you set
+`persistPresentedSessions: true` for a store no one else can read. Keep session ids out of
+logs and shared URLs.
+:::
 
-If the wallet holds nothing that matches, the thrown error carries the credentials you are
-*missing*, rather than just reporting no match.
-
-### Reusing a session you already hold
-
-If a session was established elsewhere — in a browser, say — replay it instead of repeating
-the exchange:
-
-```ts twoslash
-import { StaticCredentialProvider } from '@deltadao/nautilus'
-// ---cut---
-const credentials = new StaticCredentialProvider('an-existing-session-id') // [!code focus]
-```
+A cached session is reused for at most `sessionTtlMs` (2 minutes by default) from when it was
+opened, and one that needed a presentation is checked with the policy server again before it
+is reused: walt.id's verifier forgets a session after 5 minutes, or when it restarts. A stale
+session is opened again before anything is ordered, so a store that outlives the policy
+server costs one more exchange, not a refused order.
 
 :::warning
 Never invent a session id. The policy server derives it from
 `sha256(consumerAddress:documentId:serviceId)` plus a random half, and rejects any session
-whose context does not match the request. A session is valid for exactly one
-(asset, service, consumer) triple — which is also why nautilus keys its session cache on all
-three.
+whose context does not match the request. The address is hashed as the node forwards it: the
+address it authenticated, which for a Signer is the request's (nautilus sends
+`signer.getAddress()` to `initiate` and to the download or compute call) and for a JWT the
+address stored with the token, whatever the request says. nautilus keys its cache on that
+address (`OceanNodeClient.policySessionAddress`).
 :::
 
 ## Publishing a gated asset
@@ -178,7 +253,7 @@ assetBuilder
     'revoked-status-list' // [!code focus]
   ]) // [!code focus]
   .setVpPolicies(CredentialListTypes.ALLOW, [ // [!code focus]
-    'holder-binding', // [!code focus]
+    { policy: 'holder-binding' }, // [!code focus]
     { policy: 'minimum-credentials', args: '1' } // [!code focus]
   ]) // [!code focus]
 ```
@@ -187,6 +262,11 @@ assetBuilder
 whole. The policy server's defaults are `signature`, `not-before` and
 `revoked-status-list`. Valid names can be listed from the verifier's
 `/openid4vc/policy-list` endpoint.
+
+VC policies are names, while every VP policy is an object, `{ policy }` or
+`{ policy, args }` with `args` as a string, as the enterprise market writes them: an asset
+whose list mixed names and objects was published but not indexed by ocean-node 4.2.x. The policy server parses `args` as JSON when it can, so `'1'` reaches the
+verifier as the number `1`; pass structured arguments through `JSON.stringify`.
 
 Gating also works per service, via
 [`ServiceBuilder.addRequestCredentials`](/docs/api/servicebuilder/addRequestCredentials) —
@@ -231,16 +311,37 @@ const nautilus = await Nautilus.create(signer, {
 })
 ```
 
-## Two things to know about deployments
+## Things to know about deployments
 
-**A node without a policy server allows everything.** ocean-node fails open when its
-`POLICY_SERVER_URL` is unset. nautilus detects this — `initializePSVerification` returns
-`null` — and continues without SSI rather than failing. Do not assume a gated asset is
-enforced without checking how the node is configured.
+**Credentials are checked by the policy server only on a node that has one.** Without a
+policy server (`POLICY_SERVER_URL` unset), ocean-node runs its own check of address and
+access lists. An `SSIpolicy` entry is a type it does not know: under the default
+`match_allow: 'all'` it denies everyone, and under `match_allow: 'any'` it is ignored when
+another entry matches, so the credentials it asks for are not checked. In a `deny` list it
+is ignored. Check how the node is configured before relying on an `SSIpolicy`.
 
-**Publish-time enforcement does not exist yet.** The policy server's `newDDO`, `updateDDO`,
-`validateDDO`, `encrypt` and `decrypt` actions are stubs that always allow. Only
-`download` and `startCompute` are really checked.
+**Address lists are written as `{ address }`.** That is the form the enterprise market
+writes and reads; an edit leaves an address entry it does not change as stored.
+OceanProtocolEnterprise ocean-node and the policy server read bare strings and objects
+alike. Upstream ocean-node 4.2.0 without a policy server reads only bare strings, and fails
+a request on `{ address }` with an error.
+
+**An empty `POLICY_SERVER_URL` turns every check off.** With `POLICY_SERVER_URL=` (as
+OceanProtocolEnterprise ocean-node's `.env.node.example` ships it), ocean-node has no policy
+server to ask and grants every request; the enterprise build still reports
+`isPSConfigured: true`. nautilus sees the node answer `initiate` as one without a policy
+server, opens no session, and warns once.
+
+**On a node with a policy server, an asset needs an address allow list.** The policy server
+checks the consumer's address against the asset-level `allow` list before anything else, and
+refuses an address that is not on it. An asset with `credentials: {}`, or an allow list
+without an `address` entry, is refused to every consumer. `publish()` and `edit()` log a
+warning for such an asset when the node has a policy server. Add addresses with
+[`addCredentialAddresses`](/docs/api/assetbuilder/addCredentialAddresses).
+
+**The policy server checks consume time.** It checks `initiate`, `download` and
+`startCompute`; its publish-time actions (`newDDO`, `updateDDO`, `validateDDO`, `encrypt`,
+`decrypt`) allow every request.
 
 ## Swapping out walt.id
 

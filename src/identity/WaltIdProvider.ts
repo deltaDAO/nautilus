@@ -1,29 +1,43 @@
 /**
- * Drives the credential presentation exchange end to end.
+ * Answers the policy server's openid4vp request from a walt.id wallet.
  *
  * The topology is a deliberate loop, so that the node observes every exchange:
  *
  *   nautilus -> ocean-node -> policy-server -> walt.id verifier
  *   walt.id wallet -> policy-server proxy -> ocean-node -> policy-server -> verifier
  *
- * Nautilus only ever talks to the first hop (ocean-node, via `PolicyServerPassthrough`)
- * and to the wallet. The session id it gets back is the whole point: that is what goes
- * into ocean-node's `policyServer` slot on the subsequent download or compute call.
+ * nautilus opens the session and checks the result itself (`PolicySessionResolver`). This
+ * provider does the part in between: it fetches the presentation definition through the
+ * node's passthrough, matches it against the wallet, and has the wallet answer the request.
  *
- * Selection is **headless by default** — all matching credentials, and the wallet's first
- * DID — so scripts and CI work unattended. Supply `onSelectCredentials`/`onSelectDid` to
+ * Selection is **headless by default**: all matching credentials, and the wallet's first
+ * DID, so scripts and CI work unattended. Supply `onSelectCredentials`/`onSelectDid` to
  * drive a UI instead.
+ *
+ * The request comes from the node, and for a download that is the node in the service's
+ * `serviceEndpoint`, which the publisher chose. So the provider trusts none of it: the
+ * request must be an `openid4vp://` URL whose `request_uri`, `response_uri` and
+ * `presentation_definition_uri` are `https://` (or `http://` on a loopback host), every
+ * input descriptor of the presentation definition must ask for a credential type the
+ * asset's or service's `request_credentials` name, and only credentials of those types are
+ * presented. The wallet is used only for the session's own consumer.
  */
-import { LoggerInstance } from '@oceanprotocol/lib'
 import type { Signer } from 'ethers'
-import type { PolicyServerPayload } from '../ddo/types.js'
-import type { OceanNodeClient } from '../node/OceanNodeClient.js'
 import {
-  type CredentialChallenge,
-  type CredentialProvider,
-  emptyPolicyServerPayload
+  getCredentials,
+  getService,
+  getServiceCredentials
+} from '../ddo/read.js'
+import {
+  type OceanNodeClient,
+  PolicyServerAction
+} from '../node/OceanNodeClient.js'
+import { isLoopbackHost } from '../utils/transport.js'
+import type {
+  CredentialChallenge,
+  CredentialProvider
 } from './CredentialProvider.js'
-import { MemorySessionStore, type SessionStore } from './session.js'
+import { requestedCredentialTypes } from './policy.js'
 import {
   type WaltIdCredential,
   type WaltIdDidRef,
@@ -32,39 +46,41 @@ import {
   type WaltIdWallet
 } from './waltid/client.js'
 
-/** Actions the policy server accepts through the node's passthrough endpoint. */
-export enum PolicyServerAction {
-  INITIATE = 'initiate',
-  GET_PD = 'getPD',
-  CHECK_SESSION_ID = 'checkSessionId',
-  PRESENTATION_REQUEST = 'presentationRequest',
-  DOWNLOAD = 'download',
-  PASSTHROUGH = 'passthrough'
-}
-
 export interface WaltIdCredentialProviderOptions {
   /** Base URL of the walt.id wallet API. Ignored if `wallet` is supplied. */
   walletApi?: string
   /** A custom wallet implementation — for a walt.id api2 backend, or for tests. */
   wallet?: WaltIdWallet
-  /** The signer used to authenticate to the wallet. Defaults to the node client's signer. */
+  /**
+   * The signer used to authenticate to the wallet. Defaults to the node client's signer.
+   * Its address must be the consumer's: the provider refuses to present one account's
+   * credentials for a session bound to another.
+   */
   signer?: Signer
   /** Pin a wallet. Defaults to the first the account owns. */
   walletId?: string
   /** Pin a holder DID. Defaults to `onSelectDid`, else the first DID. */
   did?: string
-  /** Choose which credentials to present. Defaults to all that match. */
+  /**
+   * Accept a plain `http://` `request_uri`, `response_uri` or `presentation_definition_uri`
+   * on a host other than a loopback one, e.g. a policy-server proxy on a private network.
+   * Default `false`. Other schemes, link-local hosts and cloud metadata addresses are
+   * refused either way.
+   */
+  allowInsecureTransport?: boolean
+  /**
+   * Choose which credentials to present, from the matches of a requested type. Defaults to
+   * all of them. A credential returned that is not among `matches` is not presented.
+   */
   onSelectCredentials?: (
     matches: WaltIdCredential[],
     presentationDefinition: unknown
   ) => Promise<WaltIdCredential[]>
   /** Choose the holder DID. Defaults to the first. */
   onSelectDid?: (dids: WaltIdDidRef[]) => Promise<string>
-  /** Override the session cache. Defaults to an in-memory store. */
-  sessionStore?: SessionStore
 }
 
-/** Raised when the policy could not be satisfied, carrying the reason where known. */
+/** Raised when the wallet could not answer the presentation request, carrying the reason where known. */
 export class CredentialPresentationError extends Error {
   readonly details?: unknown
 
@@ -76,17 +92,17 @@ export class CredentialPresentationError extends Error {
 }
 
 export class WaltIdCredentialProvider implements CredentialProvider {
-  /** Runs the full challenge/presentation round trip, which `skipCredentials` bypasses. */
-  readonly interactive = true
-
   private readonly node: OceanNodeClient
   private readonly wallet: WaltIdWallet
   private readonly options: WaltIdCredentialProviderOptions
-  private readonly sessions: SessionStore
 
   private session?: WaltIdSession
   private resolvedWalletId?: string
 
+  /**
+   * @param node supplies the signer that logs in to walt.id when `options.signer` is not
+   * set. The presentation itself goes through the node in each challenge.
+   */
   constructor(node: OceanNodeClient, options: WaltIdCredentialProviderOptions) {
     if (!options.wallet && !options.walletApi)
       throw new Error(
@@ -98,131 +114,48 @@ export class WaltIdCredentialProvider implements CredentialProvider {
     this.wallet =
       options.wallet ||
       new WaltIdHttpWallet({ apiUrl: options.walletApi as string })
-    this.sessions = options.sessionStore || new MemorySessionStore()
   }
 
-  async resolve(
-    challenge: CredentialChallenge
-  ): Promise<PolicyServerPayload | null> {
-    const { asset, serviceId, consumerAddress } = challenge
+  async present(challenge: CredentialChallenge): Promise<void> {
+    const signer = this.options.signer || this.node.requireSigner()
+    const signerAddress = await signer.getAddress()
 
-    // The session belongs to the node that will enforce the policy, not to the one this
-    // provider was constructed with: for a service hosted on another node, a session
-    // minted here would be unknown there.
-    const node = challenge.node || this.node
-
-    const key = {
-      did: asset.id,
-      serviceId,
-      consumerAddress,
-      nodeUri: node.nodeUri
-    }
-
-    const cached = this.sessions.get(key)
-    if (cached)
-      return cached.skipped ? null : emptyPolicyServerPayload(cached.sessionId)
-
-    // 1. Ask the node to start a verification. A null answer means the node advertises no
-    //    policy-server endpoint at all, so nothing is gated here.
-    const initiated = (await node.initializePolicyVerification({
-      documentId: asset.id,
-      serviceId,
-      consumerAddress,
-      policyServer: emptyPolicyServerPayload('')
-    })) as InitiateResponse | null
-
-    if (!initiated) {
-      LoggerInstance.debug(
-        '[identity] node advertises no policy server; continuing without SSI'
-      )
-      this.sessions.set(key, { sessionId: '', skipped: true })
-      return null
-    }
-
-    const message = normalizeInitiateMessage(initiated)
-
-    // 2. A `success` redirect means no presentation is needed — either the asset carries no
-    //    SSI policy, or this consumer is already verified.
-    if (message.redirectUri?.includes('success')) {
-      const sessionId = extractQueryParam(message.redirectUri, 'id') || ''
-      this.sessions.set(key, { sessionId, skipped: !sessionId })
-      return sessionId ? emptyPolicyServerPayload(sessionId) : null
-    }
-
-    // 3. The session id must come from the server. Policy-server session ids embed
-    //    sha256(consumerAddress:documentId:serviceId), so an invented one is rejected with
-    //    ADDRESS_NOT_ALLOWED. (The ocean-cli generates its own here and is wrong.)
-    const sessionId =
-      message.sessionId ||
-      (message.redirectUri
-        ? extractQueryParam(message.redirectUri, 'state')
-        : undefined)
-
-    if (!sessionId)
+    if (signerAddress.toLowerCase() !== challenge.consumerAddress.toLowerCase())
       throw new CredentialPresentationError(
-        'The policy server did not return a session id for this verification.',
-        initiated
+        `The wallet belongs to ${signerAddress}, but the session is bound to ${challenge.consumerAddress}. Use a provider whose signer is the consumer's.`
       )
 
-    const presentationRequest = message.redirectUri
-    if (!presentationRequest)
-      throw new CredentialPresentationError(
-        'The policy server did not return an openid4vp request.',
-        initiated
-      )
-
-    // 4. Fetch the presentation definition through the node's passthrough — the same node
-    //    the session was minted on, since that is the only one that knows it.
-    const presentationDefinition = await this.getPresentationDefinition(
-      node,
-      sessionId
+    const service = getService(challenge.asset, challenge.serviceId)
+    const requestedTypes = requestedCredentialTypes(
+      getCredentials(challenge.asset),
+      service && getServiceCredentials(service)
     )
 
-    // 5-7. Satisfy it with the wallet.
-    await this.present(presentationDefinition, presentationRequest)
+    if (!requestedTypes.size)
+      throw new CredentialPresentationError(
+        `Service ${challenge.serviceId} of ${challenge.asset.id} asks for no credential type, so there is nothing to present.`
+      )
 
-    this.sessions.set(key, { sessionId, skipped: false })
+    assertPresentationRequest(
+      challenge.redirectUri,
+      this.options.allowInsecureTransport === true
+    )
 
-    return emptyPolicyServerPayload(sessionId)
-  }
+    // The session belongs to the node that opened it, and only that node's policy server
+    // can hand out its presentation definition.
+    const presentationDefinition = await this.getPresentationDefinition(
+      challenge.node,
+      challenge.sessionId
+    )
 
-  /** Clears cached sessions — call after switching accounts. */
-  clearSessions(): void {
-    this.sessions.clear()
-  }
+    assertDefinitionRequests(presentationDefinition, requestedTypes)
 
-  /**
-   * Re-checks a session and, if it failed, digs the specific failing VC policy out of the
-   * verifier's report. A named policy beats a bare "access denied".
-   *
-   * @param node the node that minted the session, when it is not the configured one — no
-   * other node can answer for it.
-   */
-  async explainFailure(
-    sessionId: string,
-    node: OceanNodeClient = this.node
-  ): Promise<string | undefined> {
-    const response = (await node.policyServerPassthrough({
-      action: PolicyServerAction.CHECK_SESSION_ID,
-      sessionId
-    })) as CheckSessionResponse | undefined
-
-    const results = response?.message?.policyResults?.results || []
-    const failures: string[] = []
-
-    for (const result of results)
-      for (const policy of result?.policyResults || [])
-        if (policy?.is_success === false)
-          failures.push(
-            [
-              policy.policy || policy.policyName,
-              policy.description || policy.reason
-            ]
-              .filter(Boolean)
-              .join(': ')
-          )
-
-    return failures.length ? failures.join('; ') : undefined
+    await this.answer(
+      signer,
+      presentationDefinition,
+      challenge.redirectUri,
+      requestedTypes
+    )
   }
 
   private async getPresentationDefinition(
@@ -238,24 +171,29 @@ export class WaltIdCredentialProvider implements CredentialProvider {
 
     if (!definition)
       throw new CredentialPresentationError(
-        'The policy server returned no presentation definition.',
-        response
+        'The policy server returned no presentation definition.'
       )
 
     return definition
   }
 
-  private async present(
+  private async answer(
+    signer: Signer,
     presentationDefinition: unknown,
-    presentationRequest: string
+    presentationRequest: string,
+    requestedTypes: Set<string>
   ): Promise<void> {
-    const { token } = await this.getWalletSession()
+    const { token } = await this.getWalletSession(signer)
     const walletId = await this.getWalletId(token)
 
-    const matches = await this.wallet.matchCredentials(
-      walletId,
-      presentationDefinition,
-      token
+    const matches = (
+      await this.wallet.matchCredentials(
+        walletId,
+        presentationDefinition,
+        token
+      )
+    ).filter((credential) =>
+      credentialTypes(credential).some((type) => requestedTypes.has(type))
     )
 
     if (!matches.length) {
@@ -264,14 +202,20 @@ export class WaltIdCredentialProvider implements CredentialProvider {
         .catch(() => [])
 
       throw new CredentialPresentationError(
-        'The wallet holds no credential satisfying the requested presentation definition.',
+        `The wallet holds no credential of the requested types (${[...requestedTypes].join(', ')}) satisfying the presentation definition.`,
         missing
       )
     }
 
-    const selected = this.options.onSelectCredentials
-      ? await this.options.onSelectCredentials(matches, presentationDefinition)
-      : matches
+    const matchedIds = new Set(matches.map((credential) => credential.id))
+    const selected = (
+      this.options.onSelectCredentials
+        ? await this.options.onSelectCredentials(
+            matches,
+            presentationDefinition
+          )
+        : matches
+    ).filter((credential) => matchedIds.has(credential.id))
 
     if (!selected.length)
       throw new CredentialPresentationError(
@@ -301,11 +245,10 @@ export class WaltIdCredentialProvider implements CredentialProvider {
       )
   }
 
-  private async getWalletSession(): Promise<WaltIdSession> {
+  private async getWalletSession(signer: Signer): Promise<WaltIdSession> {
     if (this.session && (await this.wallet.isSessionValid(this.session.token)))
       return this.session
 
-    const signer = this.options.signer || this.node.requireSigner()
     this.session = await this.wallet.authenticate(signer)
 
     if (!this.session?.token)
@@ -346,47 +289,165 @@ export class WaltIdCredentialProvider implements CredentialProvider {
   }
 }
 
-// #region response shapes
-// The policy server's envelope is `{success, message, httpStatus}`, but `message` is
-// either a bare openid4vp URL string or an object, so it is normalized here.
+// #region request checks
 
-interface InitiateResponse {
-  success?: boolean
-  message?: string | { sessionId?: string; redirectUri?: string }
-}
+/** The openid4vp parameters whose URL the wallet fetches from, or posts the presentation to. */
+const PRESENTATION_URI_PARAMS = [
+  'request_uri',
+  'response_uri',
+  'presentation_definition_uri'
+]
 
-interface CheckSessionResponse {
-  message?: {
-    policyResults?: {
-      results?: {
-        policyResults?: {
-          is_success?: boolean
-          policy?: string
-          policyName?: string
-          description?: string
-          reason?: string
-        }[]
-      }[]
+/** Cloud metadata services, by host name and by address. */
+const METADATA_HOSTS = new Set([
+  'metadata',
+  'metadata.google.internal',
+  'metadata.azure.internal',
+  '169.254.169.254',
+  '169.254.170.2',
+  '100.100.100.200',
+  'fd00:ec2::254'
+])
+
+/**
+ * Refuses a presentation request the wallet must not follow: anything but an
+ * `openid4vp://` URL, and a `request_uri`, `response_uri` or `presentation_definition_uri`
+ * that is not `https://` (or `http://` on a loopback host, or anywhere with
+ * `allowInsecure`), or that points at a link-local or cloud metadata address. The wallet
+ * fetches the first and the last, and posts the presentation to the second.
+ */
+function assertPresentationRequest(
+  redirectUri: string,
+  allowInsecure = false
+): void {
+  let request: URL
+  try {
+    request = new URL(redirectUri)
+  } catch {
+    throw new CredentialPresentationError(
+      'The presentation request is not a URL.'
+    )
+  }
+
+  if (request.protocol !== 'openid4vp:')
+    throw new CredentialPresentationError(
+      `The presentation request must be an openid4vp:// URL, not ${request.protocol}`
+    )
+
+  for (const param of PRESENTATION_URI_PARAMS) {
+    const value = request.searchParams.get(param)
+    if (value === null) continue
+
+    let url: URL
+    try {
+      url = new URL(value)
+    } catch {
+      throw new CredentialPresentationError(
+        `The presentation request's ${param} is not a URL.`
+      )
     }
+
+    const host = url.hostname
+      .toLowerCase()
+      .replace(/^\[|\]$/g, '')
+      .replace(/\.$/, '')
+
+    const allowedScheme =
+      url.protocol === 'https:' ||
+      (url.protocol === 'http:' && (allowInsecure || isLoopbackHost(host)))
+
+    if (!allowedScheme)
+      throw new CredentialPresentationError(
+        `The presentation request's ${param} must be https:// (http:// only on a loopback host, or with allowInsecureTransport), not ${url.protocol}//${host}.`
+      )
+
+    if (METADATA_HOSTS.has(host) || isLinkLocal(host))
+      throw new CredentialPresentationError(
+        `The presentation request's ${param} points at a link-local or metadata address (${host}).`
+      )
   }
 }
 
-function normalizeInitiateMessage(response: InitiateResponse): {
-  sessionId?: string
-  redirectUri?: string
-} {
-  const { message } = response
-
-  if (!message) return {}
-  if (typeof message === 'string') return { redirectUri: message }
-
-  return message
+/** `169.254.0.0/16` and `fe80::/10`. */
+function isLinkLocal(host: string): boolean {
+  return (
+    /^169\.254\.\d{1,3}\.\d{1,3}$/.test(host) || /^fe[89ab][0-9a-f]:/.test(host)
+  )
 }
 
-function extractQueryParam(uri: string, name: string): string | undefined {
-  const match = uri.match(new RegExp(`[?&]${name}=([^&]*)`))
+/**
+ * Refuses a presentation definition that asks for anything the service did not: every
+ * input descriptor must be named after a requested credential type (as walt.id's verifier
+ * names them), and every `pattern` or `const` its fields filter on must be one.
+ */
+function assertDefinitionRequests(
+  presentationDefinition: unknown,
+  requestedTypes: Set<string>
+): void {
+  const descriptors = (
+    presentationDefinition as { input_descriptors?: unknown } | null
+  )?.input_descriptors
 
-  return match ? decodeURIComponent(match[1]) : undefined
+  if (!Array.isArray(descriptors) || !descriptors.length)
+    throw new CredentialPresentationError(
+      'The presentation definition has no input descriptors.'
+    )
+
+  for (const descriptor of descriptors) {
+    const { id, constraints } = (descriptor ?? {}) as {
+      id?: unknown
+      constraints?: { fields?: unknown }
+    }
+
+    const asked = [
+      id,
+      ...(Array.isArray(constraints?.fields) ? constraints.fields : []).flatMap(
+        (field) => filterValues((field as { filter?: unknown } | null)?.filter)
+      )
+    ]
+
+    const unrequested = asked.find(
+      (value) => typeof value !== 'string' || !requestedTypes.has(value)
+    )
+
+    if (unrequested !== undefined)
+      throw new CredentialPresentationError(
+        `The presentation definition asks for ${JSON.stringify(unrequested)?.slice(0, 100)}, which the service does not request (it requests ${[...requestedTypes].join(', ')}).`
+      )
+  }
+}
+
+/** The `pattern` and `const` values of a field filter, and of its `contains`. */
+function filterValues(filter: unknown): unknown[] {
+  if (!filter || typeof filter !== 'object') return []
+
+  const {
+    pattern,
+    const: constant,
+    contains
+  } = filter as {
+    pattern?: unknown
+    const?: unknown
+    contains?: unknown
+  }
+
+  return [
+    ...(pattern === undefined ? [] : [pattern]),
+    ...(constant === undefined ? [] : [constant]),
+    ...filterValues(contains)
+  ]
+}
+
+/** The `type` of a wallet credential, from its parsed document (a W3C VC, or a JWT's `vc`). */
+function credentialTypes(credential: WaltIdCredential): string[] {
+  const document = credential.parsedDocument as
+    | { type?: unknown; vc?: { type?: unknown } }
+    | undefined
+  const type = document?.type ?? document?.vc?.type
+
+  return (Array.isArray(type) ? type : [type]).filter(
+    (value): value is string => typeof value === 'string'
+  )
 }
 
 // #endregion

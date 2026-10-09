@@ -112,9 +112,8 @@ quoting a fee nothing will collect.
 
 ## Do you already hold an order?
 
-`hasReusableOrder` answers from what the node reports, rather than reconstructing it from
-events — the node returns `validOrder` when a previous order is still inside the service's
-timeout.
+`hasReusableOrder` answers from what the node reports in `initialize`: `validOrder`, when
+the node found a previous order still inside the service's timeout.
 
 ```ts twoslash
 import { hasReusableOrder } from '@deltadao/nautilus'
@@ -134,13 +133,45 @@ returns depends on the endpoint:
 | --- | --- | --- |
 | 3.0 – 4.2 | `{ providerFee, datatoken, nonce, computeAddress }`, with no `validOrder` | `validOrder` per input, when the request carries a `transferTxId` that is still valid |
 
+### Downloads: the order on chain
+
+The access `initialize` reports no `validOrder`, so [`access`](/docs/api/nautilus/access)
+looks your previous orders up on chain: the datatoken's `OrderStarted` events with you as
+consumer, and its `OrderReused` events with you as caller. It checks each transaction, newest
+first, from its receipt exactly as the node checks the `transferTxId` of a download:
+
+- when the transaction holds an `OrderReused`, the first one is followed to the order it
+  names (nautilus also requires you to be that reuse's caller);
+- in the order's transaction, the first `OrderStarted` of this datatoken with you as consumer
+  or payer is taken, and refused when it is for another service index;
+- the order is inside the service's `timeout`, counted from the `OrderStarted` block (a
+  reuse does not restart it). `0` never expires, and neither does a missing timeout, as at
+  the node;
+- the transaction itself carries a provider fee signed by the service's node for this
+  service that the node keeps: `validUntil` is `0`, or the time since the transaction's
+  block is at most `validUntil`. The node signs `validUntil` as an absolute time but
+  compares it to that elapsed time, so in practice it keeps every fee it signed.
+
+With all four, the download uses that transaction and nothing is sent, so no provider fee is
+paid and no consent is asked, even when the node quotes one. With the first three only, the
+order is extended with `reuseOrder` and the fee the node quotes now. Otherwise a new order
+is placed. Either way `reusedOrder` and `transferTxId` say which.
+
+An order is reused only with at least 10 minutes of its timeout left, as it stands or
+extended: the node checks it again at download, and a reuse does not restart the timeout,
+so an order about to expire is ordered anew rather than extended for a download that would
+fail. A service whose timeout is 10 minutes or less is ordered anew every time. Orders mined
+in the last two blocks are not reused either, since a reorg could still drop them.
+
+The events are read newest first, 2 000 blocks per `eth_getLogs` call (halved while the RPC
+refuses the range), back to the first block inside the service's timeout and at most
+100 000 blocks or 100 rounds of reads. An order older than that is not found, and a new one
+is placed; so is one when the RPC fails otherwise.
+
 :::warning
-With these versions, `hasReusableOrder` is `false` for an access `initialize`, so each
-[`access`](/docs/api/nautilus/access) call places a new order, also within the service's
-timeout. [`compute`](/docs/api/nautilus/compute) does not send a `transferTxId` with its
-inputs, so it orders each of them too. On a paid asset, keep the download URL rather than
-calling `access` again. A node that reports `validOrder` is followed with no change on your
-side.
+[`compute`](/docs/api/nautilus/compute) does not send a `transferTxId` with its inputs, so
+it orders each of them on every job. A node that reports `validOrder` is followed with no
+change on your side.
 :::
 
 ## What the node charges on top
@@ -167,6 +198,11 @@ Otherwise `access` and `compute` throw a `ProviderFeeNotAllowedError` or
 `EscrowPaymentNotAllowedError` before any approval, purchase, deposit or order. Zero fees
 need nothing, and neither does a zero escrow payment, even one that names no escrow
 contract.
+
+Consent is asked only for the provider fee that will be paid. `access` decides first
+whether to reuse a previous order: one used as it stands pays no fee, so nothing is asked
+even when the node quotes a fee; one that is extended, or a new order, asks for the fee the
+node quotes now.
 
 Set in `Nautilus.create`, these options are defaults in pairs: a call that sets
 `maxProviderFee` or `confirmProviderFees` uses its own pair and neither default, and the

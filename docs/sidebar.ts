@@ -471,12 +471,8 @@ export const sidebar = {
               link: '/docs/api/identity/WaltIdCredentialProvider'
             },
             {
-              text: 'StaticCredentialProvider',
-              link: '/docs/api/identity/StaticCredentialProvider'
-            },
-            {
-              text: 'NoopCredentialProvider',
-              link: '/docs/api/identity/NoopCredentialProvider'
+              text: 'PolicySessionResolver',
+              link: '/docs/api/identity/PolicySessionResolver'
             },
             {
               text: 'MemorySessionStore',

@@ -1,8 +1,16 @@
 # getComputeLogs
 
-Read a job's streamable logs.
+Read the algorithm's logs.
 
-New in v2. Useful while a job is still running, when there is no result to fetch yet.
+New in v2. While the job runs, the logs stream live from the container. Once it has finished
+(the node has set its `dateFinished`, also when it failed), the node no longer serves them
+live, so this streams the job's `algorithmLog` result (`algorithm.log`) instead.
+
+:::warning[Treat the job id as a secret]
+On ocean-node 4.2.2 the live-log endpoint checks that the request is signed, but not that
+the signer owns the job, so anyone who has the qualified job id can stream a running job's
+logs. Keep the id where you would keep other access details, and out of shared logs.
+:::
 
 ## Usage
 
@@ -12,17 +20,30 @@ import { Wallet } from 'ethers'
 const nautilus = await Nautilus.create(new Wallet('0x1234'))
 // ---cut---
 const logs = await nautilus.getComputeLogs({ jobId: 'a-job-id' }) // [!code focus]
+
+for await (const chunk of logs) process.stdout.write(chunk)
 ```
 
 ## Returns
 
-- Type: `unknown`
+- Type: `ComputeResultStream`
 
-Whatever the node streams. The shape is not fixed by ocean.js, so nautilus passes it
-through rather than inventing a type for it.
+An `AsyncIterable<Uint8Array>` of the log text. Throws when the node does not know the job,
+or a finished job has no `algorithmLog` result (a job that failed before its algorithm ran,
+such as one whose image could not be pulled, has none).
 
 ## Parameters
 
 ### config
 
-- Type: `ComputeStatusConfig`
+- Type: `ComputeLogsConfig`
+
+`jobId` (the qualified id `compute()` returns), and optionally `nodeUri` and `signal`.
+
+#### signal
+
+- Type: `AbortSignal`
+
+Stops a running job's live logs: the wait for its first output, which has no timeout (the
+node sends nothing until the job writes), and the stream once it has started. A finished
+job's `algorithmLog` is read as `streamComputeResult` reads a result.

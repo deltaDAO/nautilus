@@ -1,18 +1,19 @@
 /**
  * Regression tests for the access flow and its node client.
  *
- * Each test pins one of three consume-time failures: a provider fee the datatoken was
- * never approved to pull (any non-zero fee reverted on chain), a download requested from a
- * node that cannot decrypt the file object, and a missing policy server that killed the
- * whole flow instead of degrading to "SSI unavailable".
+ * Each test pins one of the consume-time failures: a provider fee the datatoken was never
+ * approved to pull (any non-zero fee reverted on chain), and a download requested from a
+ * node that cannot decrypt the file object. The policy-server session is pinned in
+ * PolicySession.test.ts.
  */
 
 import type { Config } from '@oceanprotocol/lib'
-import { allowanceWei, approveWei, ProviderInstance } from '@oceanprotocol/lib'
+import { allowanceWei, approveWei } from '@oceanprotocol/lib'
 import type { Signer } from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { access, settleOrder } from '../../src/access/index.js'
 import type { AssetV5 } from '../../src/ddo/index.js'
+import type { PolicySessionResolver } from '../../src/identity/PolicySessionResolver.js'
 import { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
 import { order, reuseOrder } from '../../src/utils/order.js'
 import { getPricingInfo } from '../../src/utils/pricing.js'
@@ -276,6 +277,13 @@ describe('access endpoint routing', () => {
     const clientFor = (uri: string): OceanNodeClient => {
       const client = {
         nodeUri: uri,
+        // A node without a policy server: no session is opened.
+        policySessionAddress(address: string) {
+          return address
+        },
+        async hasPolicyServer() {
+          return false
+        },
         forEndpoint(next: string) {
           const normalized = next.replace(/\/+$/, '')
           return normalized === uri ? client : clientFor(normalized)
@@ -332,14 +340,14 @@ describe('access endpoint routing', () => {
     expect(calls.download).to.deep.equal(['https://node.test.invalid'])
   })
 
-  it('challenges the credential provider with the service’s node', async () => {
-    // The session has to be minted by the policy server that will check it. Resolving
-    // against the configured node created it in one place and submitted it in another.
+  it('opens the policy session on the service’s node', async () => {
+    // The session has to be opened by the policy server that will check it. Opening it on
+    // the configured node created it in one place and submitted it in another.
     const asset = getAssetFixture()
     asset.credentialSubject.services[0].serviceEndpoint = SERVICE_NODE
 
     const { client } = createAccessNodeMock(asset)
-    const challenged: string[] = []
+    const asked: string[] = []
 
     await access(
       { assetDid: ASSET_DID },
@@ -347,48 +355,16 @@ describe('access endpoint routing', () => {
         node: client,
         signer,
         chainConfig,
-        credentials: {
-          interactive: true,
-          async resolve(challenge) {
-            challenged.push(challenge.node.nodeUri)
+        policySessions: {
+          async resolve(request: { node: OceanNodeClient }) {
+            asked.push(request.node.nodeUri)
             return null
           }
-        }
+        } as unknown as PolicySessionResolver
       }
     )
 
-    expect(challenged).to.deep.equal([SERVICE_NODE])
-  })
-})
-
-describe('OceanNodeClient.initializePolicyVerification', () => {
-  it('returns null instead of failing the flow when the node rejects it', async () => {
-    // ocean.js throws on any non-ok response, so a node that simply has no policy server
-    // looked identical to a hard failure — and killed the access/compute flow that the
-    // WaltIdProvider's graceful no-SSI branch was written to survive.
-    const spy = vi
-      .spyOn(ProviderInstance, 'initializePSVerification')
-      .mockRejectedValue(new Error('404: not found'))
-
-    try {
-      const client = new OceanNodeClient({
-        nodeUri: 'https://node.test.invalid',
-        chainId: 32456,
-        auth: 'a-session-token',
-        consumerAddress: CONSUMER
-      })
-
-      const result = await client.initializePolicyVerification({
-        documentId: ASSET_DID,
-        serviceId: 'service-id',
-        consumerAddress: CONSUMER,
-        policyServer: {}
-      })
-
-      expect(result).to.equal(null)
-    } finally {
-      spy.mockRestore()
-    }
+    expect(asked).to.deep.equal([SERVICE_NODE])
   })
 })
 
@@ -435,6 +411,13 @@ describe('provider-fee signature pre-check', () => {
 
       const client = {
         nodeUri: 'https://node.test.invalid',
+        // A node without a policy server: no session is opened.
+        policySessionAddress(address: string) {
+          return address
+        },
+        async hasPolicyServer() {
+          return false
+        },
         forEndpoint() {
           return client
         },
