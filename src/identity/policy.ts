@@ -309,9 +309,9 @@ function dedupe<T>(values: T[]): T[] {
  * policy server does for `vp_policies`.
  *
  * Address entries are left as stored: bare strings and `{ address }` objects are both read
- * by the policy server and ocean-node 4.2.2, but ocean-node 4.2.0's built-in check (no
- * policy server) reads strings only, so rewriting a list the edit does not touch could
- * break its gate there. `addCredentialAddresses` and `removeCredentialAddresses` read
+ * by the policy server and OceanProtocolEnterprise ocean-node, but upstream ocean-node
+ * 4.2.0's built-in check (no policy server) reads strings only, so rewriting a list the
+ * edit does not touch could break its gate there. `addCredentialAddresses` and `removeCredentialAddresses` read
  * either form.
  *
  * Unusable VC policies are dropped, as the policy server skips them. An unreadable VP
@@ -384,9 +384,9 @@ function mergeSsiValues(values: unknown[]): SsiPolicyValue {
  * Addresses as the values of an address entry: bare strings when `stored` holds bare
  * strings only, `{ address }` objects otherwise (a new or empty entry included).
  *
- * ocean-node and the policy server accept bare strings, and ocean-node 4.2.0 without a
- * policy server reads nothing else, so changing an address of such an entry must not turn
- * it into objects.
+ * ocean-node and the policy server accept bare strings, and upstream ocean-node 4.2.0
+ * without a policy server reads nothing else, so changing an address of such an entry must
+ * not turn it into objects.
  */
 function addressValues(
   addresses: string[],
