@@ -50,12 +50,15 @@ v1's `getAccessDetails` and `AccessDetails` are replaced by
 
 ## Why is my gated asset letting everyone through?
 
-Almost certainly because the node has no `POLICY_SERVER_URL` configured. ocean-node **fails
-open**: with no policy server it allows everything, regardless of what credentials the asset
-requires.
+Check whether the node has a policy server (`POLICY_SERVER_URL`). Without one, ocean-node
+checks address and access lists itself, and does not know an `SSIpolicy` entry: with
+`match_allow: 'any'`, another entry that matches lets the consumer through without the
+credentials the `SSIpolicy` asks for. (Under the default `match_allow: 'all'` the unknown
+entry denies everyone instead.)
 
-`initializePSVerification` returning `null` is the clean signal that no policy is being
-enforced. This is a deployment property, not something nautilus can compensate for.
+`initializePolicyVerification` returning `null`, or `hasPolicyServer()` answering `false`,
+says the node has no policy server. This is a deployment property, not something nautilus
+can compensate for.
 
 :::warning
 Publish-time policy enforcement does not exist yet either — the policy server's `newDDO`,

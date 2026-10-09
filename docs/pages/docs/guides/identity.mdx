@@ -89,7 +89,7 @@ sequenceDiagram
     participant ON as ocean-node
     participant PS as policy server
     participant W as walt.id wallet
-    N->>ON: status: isPSConfigured?
+    N->>ON: status: isPSConfigured? (when it does not say, initiate tells)
     N->>ON: initializePSVerification (asset, service, consumer)
     ON->>PS: initiate
     alt address not allowed
@@ -106,7 +106,9 @@ sequenceDiagram
 ```
 
 1. nautilus reads `isPSConfigured` from the node's status. A node without a policy server
-   checks address and access lists itself, and needs no session: nautilus opens none.
+   checks credentials itself, and needs no session: nautilus opens none. ocean-node 4.2.0
+   does not report `isPSConfigured`; there nautilus learns it from `initiate`, which such a
+   node answers with a 404 and no body.
 2. If neither the asset nor the service has `credentials` (`{}` counts as having them, as
    the node checks it), the node checks nothing, and no session is opened either.
 3. Otherwise nautilus starts a verification. The policy server checks your address against
@@ -311,10 +313,17 @@ const nautilus = await Nautilus.create(signer, {
 
 ## Things to know about deployments
 
-**Credentials are checked by the policy server only on a node that has one.** ocean-node
-reports it as `isPSConfigured` in its status. Without a policy server it checks address and
-access lists itself, and no `SSIpolicy` is checked. Do not assume a gated asset is enforced
-without checking how the node is configured.
+**Credentials are checked by the policy server only on a node that has one.** Without a
+policy server (`POLICY_SERVER_URL` unset), ocean-node runs its own check of address and
+access lists. An `SSIpolicy` entry is a type it does not know: under the default
+`match_allow: 'all'` it denies everyone, and under `match_allow: 'any'` it is ignored when
+another entry matches, so the credentials it asks for are not checked. Check how the node is
+configured before relying on an `SSIpolicy`.
+
+**Address lists are written as `{ address }`.** That is the form the enterprise market
+writes and reads; an edit leaves an address entry it does not change as stored. ocean-node
+4.2.2 and the policy server read bare strings and objects alike. ocean-node 4.2.0 without a
+policy server reads only bare strings, and fails a request on `{ address }` with an error.
 
 **On a node with a policy server, an asset needs an address allow list.** The policy server
 checks the consumer's address against the asset-level `allow` list before anything else, and

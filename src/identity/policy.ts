@@ -269,8 +269,8 @@ export function requestedCredentialTypes(
  * verifiable presentation (`requiresPresentation`) and no `CredentialProvider` is set to
  * make one.
  *
- * `PolicySessionResolver` calls this once it knows the node has a policy server, before
- * `initiate`, so nothing is signed, ordered or paid. A service gated by addresses only
+ * `PolicySessionResolver` calls this before `initiate`, unless it knows the node has no
+ * policy server, so nothing is signed, ordered or paid. A service gated by addresses only
  * needs no provider: the session `initiate` opens is all the node checks.
  */
 export function assertPolicySatisfied(params: {
