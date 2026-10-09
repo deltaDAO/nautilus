@@ -20,9 +20,8 @@
  *     reuse's `caller` to be the account;
  *   - in that transaction, upstream takes the first `OrderStarted`, from any contract,
  *     whose consumer or payer is the account, enterprise the first such one this datatoken
- *     emitted.
- *     The order counts only when that first one is this datatoken's, and the node rejects
- *     it when its service index is not the service's;
+ *     emitted. The order counts only when that first one is this datatoken's, and the node
+ *     rejects it when its service index is not the service's;
  *   - the order is inside the service's `timeout`, counted from the block of the
  *     `OrderStarted` (a reuse does not restart it). `0` never expires, and neither does a
  *     timeout that is not a number (missing), since the node's `elapsed > timeout` is then
@@ -119,8 +118,8 @@ export interface PreviousOrder {
  * The events are read newest first, in chunks of blocks, from the newest block with
  * `CONFIRMATIONS` down to the first block still inside the service's timeout, and no
  * further than `MAX_BLOCKS` and `MAX_READS`; at most `MAX_CHECKS` candidates are checked,
- * after which the best extendable order found is returned. A chunk the RPC refuses as too large is read
- * again in halves; any other error is thrown.
+ * after which the best extendable order found is returned. A chunk the RPC refuses as too
+ * large is read again in halves; any other error is thrown.
  */
 export async function findPreviousOrder(
   query: PreviousOrderQuery,

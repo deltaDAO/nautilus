@@ -597,11 +597,13 @@ describe('findPreviousOrder', () => {
   })
 
   it('extends the best order found before the cap', async () => {
-    chain.started(tx(1), 100, { fee: { address: OTHER } })
+    // Newer than half the spam: found mid-scan, kept when the cap stops it.
     for (let n = 2; n <= 61; n++)
       chain.started(tx(n), 100 + n * BLOCK_TIME, { serviceIndex: 1 })
+    chain.started(tx(1), 100 + 30 * BLOCK_TIME + 1, { fee: { address: OTHER } })
 
     expect(await find()).to.deep.equal({ orderTxId: tx(1) })
+    expect(chain.getTransactionReceipt).toHaveBeenCalledTimes(50)
   })
 })
 
