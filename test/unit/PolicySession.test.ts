@@ -271,16 +271,144 @@ describe('OceanNodeClient policy server', () => {
     expect(getNodeStatus).toHaveBeenCalledOnce()
   })
 
-  it('leaves the policy-server question to the resolver: a 404 with no body throws with its status', async () => {
-    const getNodeStatus = status(false)
+  it('reads an empty 404 as a node without a policy server, and remembers it', async () => {
+    // Upstream ocean-node 4.2.0 does not report `isPSConfigured`; without
+    // `POLICY_SERVER_URL` its `initiate` answers 404 with no body.
+    const getNodeStatus = status(undefined)
     answer(404, '')
+    const node = client('a-session-token')
 
-    const thrown = await client('a-session-token')
+    expect(await node.initializePolicyVerification(request)).to.equal(null)
+    expect(await node.hasPolicyServer()).to.equal(false)
+    expect(getNodeStatus).not.toHaveBeenCalled()
+  })
+
+  it('asks again 10 minutes after a node answered it has no policy server', async () => {
+    vi.useFakeTimers()
+    try {
+      const getNodeStatus = status(undefined)
+      answer(404, '')
+      const node = client('a-session-token')
+      await node.initializePolicyVerification(request)
+
+      vi.advanceTimersByTime(10 * 60 * 1000 - 1)
+      expect(await node.hasPolicyServer()).to.equal(false)
+      expect(getNodeStatus).not.toHaveBeenCalled()
+
+      vi.advanceTimersByTime(1)
+      expect(await node.hasPolicyServer()).to.equal(undefined)
+      expect(getNodeStatus).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reads every other 404 and an empty answer as a failure, and remembers nothing', async () => {
+    const getNodeStatus = status(undefined)
+
+    for (const [httpStatus, body] of [
+      [404, 'Not found'],
+      [404, ' '],
+      [404, '<pre>Cannot POST /api/services/initializePSVerification</pre>'],
+      [200, ''],
+      [500, '']
+    ] as const) {
+      answer(httpStatus, body)
+      const node = client('a-session-token')
+
+      const thrown = await node
+        .initializePolicyVerification(request)
+        .catch((caught) => caught)
+
+      expect(thrown).to.be.instanceOf(OceanNodeError)
+      expect(await node.hasPolicyServer()).to.equal(undefined)
+    }
+    expect(getNodeStatus).toHaveBeenCalledTimes(5)
+  })
+
+  it("reads the policy server's own 404 as its refusal, not as a missing policy server", async () => {
+    status(undefined)
+    answer(404, {
+      success: false,
+      httpStatus: 404,
+      message: 'Service not found in DDO'
+    })
+    const node = client('a-session-token')
+
+    const thrown = await node
       .initializePolicyVerification(request)
       .catch((caught) => caught)
 
-    expect(thrown).to.be.instanceOf(OceanNodeError)
-    expect(thrown.message).to.match(/404/)
+    expect(thrown).to.be.instanceOf(PolicyDeniedError)
+    expect(await node.hasPolicyServer()).to.equal(undefined)
+  })
+
+  it('reads an empty 404 as no policy server even when the status reported one, keeping the yes, and warns once', async () => {
+    // OceanProtocolEnterprise ocean-node reports `isPSConfigured` for an empty
+    // `POLICY_SERVER_URL`, and then grants every request.
+    status(true)
+    const fetch = vi.fn(async () => new Response('', { status: 404 }))
+    vi.stubGlobal('fetch', fetch)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const node = client('a-session-token')
+    await node.hasPolicyServer()
+
+    expect(await node.initializePolicyVerification(request)).to.equal(null)
+    expect(await node.initializePolicyVerification(request)).to.equal(null)
+
+    // A policy server behind a proxy that failed for a moment opens sessions again.
+    expect(await node.hasPolicyServer()).to.equal(true)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(warn).toHaveBeenCalledOnce()
+    expect(String(warn.mock.calls[0]?.[0])).to.match(
+      /POLICY_SERVER_URL is likely set but empty/
+    )
+  })
+
+  it('reads an empty 404 on the retry after a rejected nonce as no policy server', async () => {
+    status(undefined)
+    const wallet = Wallet.createRandom()
+    vi.spyOn(ProviderInstance, 'getNonce').mockResolvedValue(1 as never)
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response('nonce: 2 is not a valid nonce', { status: 401 })
+      )
+      .mockResolvedValueOnce(new Response('', { status: 404 }))
+    vi.stubGlobal('fetch', fetch)
+
+    expect(
+      await client(wallet).initializePolicyVerification({
+        ...request,
+        consumerAddress: wallet.address
+      })
+    ).to.equal(null)
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('asks the status again 10 minutes after it said the node has no policy server', async () => {
+    vi.useFakeTimers()
+    try {
+      const getNodeStatus = status(false)
+      const node = client('a-session-token')
+
+      expect(await node.hasPolicyServer()).to.equal(false)
+      vi.advanceTimersByTime(10 * 60 * 1000)
+      expect(await node.hasPolicyServer()).to.equal(false)
+      expect(getNodeStatus).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('learns from an opened session that the node has a policy server', async () => {
+    const getNodeStatus = status(undefined)
+    answer(200, initiated())
+    const node = client('a-session-token')
+
+    await node.initializePolicyVerification(request)
+
+    expect(await node.hasPolicyServer()).to.equal(true)
     expect(getNodeStatus).not.toHaveBeenCalled()
   })
 
@@ -406,6 +534,50 @@ describe('OceanNodeClient policy server', () => {
       /not a valid nonce/
     )
     expect(fetch).toHaveBeenCalledOnce()
+  })
+
+  it("over P2P, reads the node's bare 404 status frame as no policy server, and nothing else", async () => {
+    const getNodeStatus = status(undefined)
+    const p2p = () =>
+      new OceanNodeClient({
+        nodeUri: '16Uiu2HAmPeer',
+        chainId: CHAIN_ID,
+        auth: 'a-session-token'
+      })
+    // ocean.js 9.2's error for a `{"httpStatus":404}` frame with no `error`.
+    const noPolicyServer = new Error(
+      'P2P command error: Gateway node error: 404',
+      {
+        cause: new Error('Gateway node error: 404')
+      }
+    )
+    const initiate = vi
+      .spyOn(ProviderInstance, 'initializePSVerification')
+      .mockRejectedValueOnce(noPolicyServer)
+
+    const node = p2p()
+    expect(await node.initializePolicyVerification(request)).to.equal(null)
+    expect(await node.hasPolicyServer()).to.equal(false)
+
+    for (const error of [
+      new Error('P2P command error: ', { cause: new Error('') }),
+      new Error('P2P command error: Gateway node error: 500', {
+        cause: new Error('Gateway node error: 500')
+      }),
+      new Error('P2P command error: Not found', {
+        cause: new Error('Not found')
+      })
+    ]) {
+      initiate.mockRejectedValueOnce(error)
+      const other = p2p()
+
+      await expectThrowsAsync(
+        () => other.initializePolicyVerification(request),
+        /P2P command error/
+      )
+      expect(await other.hasPolicyServer()).to.equal(undefined)
+    }
+    expect(getNodeStatus).toHaveBeenCalledTimes(3)
   })
 
   it("over P2P, reads the policy server's refusal behind ocean.js's prefix, and the node's own errors as OceanNodeErrors", async () => {
@@ -692,6 +864,35 @@ describe('OceanNodeClient.forEndpoint', () => {
     expect(other.forEndpoint(OTHER)).to.equal(other)
   })
 
+  it("shares what an initiate showed between the calls for one node, and not with another node's", async () => {
+    const getNodeStatus = vi
+      .spyOn(ProviderInstance, 'getNodeStatus')
+      .mockResolvedValue(null as never)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('', { status: 404 }))
+    )
+    const node = root('a-session-token')
+
+    await node.forEndpoint(OTHER).initializePolicyVerification({
+      documentId: 'did:ope:x',
+      serviceId: 's',
+      consumerAddress: CONSUMER,
+      policyServer: {
+        sessionId: '',
+        successRedirectUri: '',
+        errorRedirectUri: '',
+        responseRedirectUri: '',
+        presentationDefinitionUri: ''
+      }
+    })
+
+    expect(await node.forEndpoint(OTHER).hasPolicyServer()).to.equal(false)
+    expect(getNodeStatus).not.toHaveBeenCalled()
+    expect(await node.hasPolicyServer()).to.equal(undefined)
+    expect(getNodeStatus).toHaveBeenCalledOnce()
+  })
+
   it('shares the hasPolicyServer answer between the calls for one node', async () => {
     const getNodeStatus = vi
       .spyOn(ProviderInstance, 'getNodeStatus')
@@ -856,6 +1057,25 @@ describe('PolicySessionResolver', () => {
 
     expect((await resolve(client))?.sessionId).to.equal(SESSION)
     expect(calls).to.deep.equal(['hasPolicyServer', 'initiate'])
+  })
+
+  it('opens no session when initiate shows the node has no policy server, and caches none', async () => {
+    const { client, calls } = policyNode({
+      policyServer: undefined,
+      initiate: async () => null
+    })
+    const { provider, challenges } = recordingProvider()
+    const resolver = new PolicySessionResolver({ credentials: provider })
+
+    expect(await resolve(client, resolver, ssiAsset())).to.equal(null)
+    expect(await resolve(client, resolver, ssiAsset())).to.equal(null)
+    expect(calls).to.deep.equal([
+      'hasPolicyServer',
+      'initiate',
+      'hasPolicyServer',
+      'initiate'
+    ])
+    expect(challenges).to.deep.equal([])
   })
 
   it("opens and caches a JWT client's session for the token's address, the one the node forwards", async () => {
@@ -1321,6 +1541,21 @@ describe('access() with a policy server', () => {
     expect(downloadOptions?.policyServer).to.equal(null)
   })
 
+  it('downloads with no session when initiate shows the node has no policy server', async () => {
+    const { client, calls } = policyNode({
+      policyServer: undefined,
+      initiate: async () => null
+    })
+
+    await download(client)
+
+    expect(calls.indexOf('initiate')).to.be.lessThan(
+      calls.indexOf(`initialize:${CONSUMER}`)
+    )
+    const downloadOptions = vi.mocked(client.getDownloadUrl).mock.calls[0][3]
+    expect(downloadOptions?.policyServer).to.equal(null)
+  })
+
   it('refuses an SSI asset without a provider before initialize', async () => {
     const { client, calls } = policyNode({ asset: ssiAsset() })
 
@@ -1370,7 +1605,7 @@ describe('compute() with a policy server', () => {
   function computeNode(
     initiate?: (
       request: PolicyVerificationRequest
-    ) => Promise<PolicyServerReply>
+    ) => Promise<PolicyServerReply | null>
   ) {
     const calls: string[] = []
     const initializeCompute: { policyServer?: unknown }[] = []
@@ -1504,6 +1739,24 @@ describe('compute() with a policy server', () => {
       `initiate:${ALGO_DID}`,
       'initializeCompute'
     ])
+  })
+
+  it('sends no sessions when initiate shows the node has no policy server, for compute and free compute', async () => {
+    for (const run of [compute, freeCompute]) {
+      const node = computeNode(async () => null)
+
+      await run(job, context(node.client))
+
+      expect(node.calls.slice(0, 2)).to.deep.equal([
+        `initiate:${ASSET_DID}`,
+        `initiate:${ALGO_DID}`
+      ])
+      const sent =
+        run === compute
+          ? [node.initializeCompute[0], node.computeStart[0]]
+          : [node.freeComputeStart[0]]
+      for (const params of sent) expect(params.policyServer).to.equal(undefined)
+    }
   })
 
   it('refuses the whole job when the algorithm is refused, before anything is asked or ordered', async () => {

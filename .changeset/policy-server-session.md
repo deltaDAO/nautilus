@@ -26,19 +26,22 @@ was found out only after the order.
   the default, and address-gated assets need none. An asset that asks for a presentation is
   refused before anything is signed or ordered when no provider is set.
 - **`skipCredentials` is removed** from `access()`, `compute()` and `freeCompute()`. A node
-  without a policy server is read from its status (`isPSConfigured`), so there is nothing to
-  skip.
+  without a policy server is read from its status (`isPSConfigured`) or, where the status
+  does not say (upstream ocean-node 4.2.0), from its answer to `initiate`, so there is
+  nothing to skip.
 - **`WaltIdCredentialProvider`** implements `present()`: it no longer calls `initiate`, takes
   no `sessionStore`, and has no `clearSessions()` or `explainFailure()`. The session cache is
   `Nautilus.create`'s new `sessionStore` option; the failed policies are on
   `PolicyDeniedError.reason`.
-- **`OceanNodeClient.initializePolicyVerification` returns the reply or throws.** It never
-  returns `null`: whether the node has a policy server is asked once, by
-  `PolicySessionResolver` (`hasPolicyServer()`). It throws a `PolicyDeniedError` only for the
-  policy server's own refusal (a reply with `success: false` and a 4xx), and an
-  `OceanNodeError` with the status for everything else: the node's own 401 (nonce, signature,
-  "Auth not configured"), 404 (asset not indexed there) and 400 (policy server unreachable), a
-  network error, a timeout, a rate limit or a 5xx. With a Signer, a rejected nonce is retried
+- **`OceanNodeClient.initializePolicyVerification` returns the reply, `null` or throws.** It
+  returns `null` only for a node without a policy server, which answers a 404 with no body
+  (over P2P, a bare 404 status), and `hasPolicyServer()` then answers `false` for 10
+  minutes, unless it knew the node to have one (an empty `POLICY_SERVER_URL` answers this
+  way too, and is warned about). It throws a `PolicyDeniedError` only for the policy server's own refusal (a reply
+  with `success: false` and a 4xx), and an `OceanNodeError` with the status for everything
+  else: the node's own 401 (nonce, signature, "Auth not configured"), 404 (asset not indexed
+  there) and 400 (policy server unreachable), a network error, a timeout, a rate limit or a
+  5xx. With a Signer, a rejected nonce is retried
   once. Over HTTP it signs and sends the command itself, as ocean.js signs it: ocean.js 9.2
   throws `JSON.stringify(await response.json())` for a failed answer, which keeps the policy
   server's JSON reply but turns the node's plain-text errors into a `SyntaxError`, losing
@@ -122,7 +125,8 @@ was found out only after the order.
   `clearSessions()`; it and `Nautilus.create` take `sessionStore`, `persistPresentedSessions`
   and `sessionTtlMs` (`DEFAULT_SESSION_TTL_MS`, exported).
 - `sessionKeyString(key)`: the key `MemorySessionStore` stores an entry under.
-- `OceanNodeClient.hasPolicyServer()` (the node's `isPSConfigured`, read once per client),
+- `OceanNodeClient.hasPolicyServer()` (the node's `isPSConfigured`, or what an `initiate`
+  showed; a "yes" kept per client, a "no" for 10 minutes),
   `policySessionAddress(consumerAddress)` and `checkPolicySession(sessionId)`;
   `authTokenAddress(token)`, the address in a node JWT.
 - `hasCredentials(ddo, service)`: whether ocean-node checks credentials for a service.
