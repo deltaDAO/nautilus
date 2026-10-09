@@ -36,4 +36,14 @@ such as one whose image could not be pulled, has none).
 
 ### config
 
-- Type: `ComputeStatusConfig`
+- Type: `ComputeLogsConfig`
+
+`jobId` (the qualified id `compute()` returns), and optionally `nodeUri` and `signal`.
+
+#### signal
+
+- Type: `AbortSignal`
+
+Stops a running job's live logs: the wait for its first output, which has no timeout (the
+node sends nothing until the job writes), and the stream once it has started. A finished
+job's `algorithmLog` is read as `streamComputeResult` reads a result.

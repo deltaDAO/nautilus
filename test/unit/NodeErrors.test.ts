@@ -503,6 +503,29 @@ describe('getComputeLogs', () => {
     expect(requests[0].init.signal?.aborted).to.equal(true)
   })
 
+  it('sends nothing for a signature that arrives after requestTimeoutMs', async () => {
+    vi.useFakeTimers()
+    try {
+      const requests = quietNode()
+      const wallet = Wallet.createRandom()
+      const signer = Object.assign(Object.create(wallet), {
+        signMessage: async (message: Uint8Array) => {
+          await new Promise((resolve) => setTimeout(resolve, 1_500))
+          return wallet.signMessage(message)
+        }
+      }) as Wallet
+
+      const error = rejection(() => withTimeout(signer).getComputeLogs(JOB))
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect((await error).message).to.match(/\(requestTimeoutMs\)/)
+
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(requests).to.have.length(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('still bounds the signing by requestTimeoutMs, sending nothing', async () => {
     vi.useFakeTimers()
     try {

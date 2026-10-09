@@ -278,9 +278,10 @@ export type FetchResponseOptions = Omit<FetchTextOptions, 'timeoutMs'> & {
 
 /**
  * Like `fetchText`, but a 2xx answer resolves with its `Response` as soon as the headers
- * arrived, and leaves the body to the caller, e.g. to stream it: `timeoutMs` covers the
- * request up to the headers, and `signal` stays attached to the body. A non-2xx answer is
- * read as `fetchText` reads it, within `timeoutMs`. Same errors and redirect rule as
+ * arrived, and leaves the body to the caller, e.g. to stream it: `timeoutMs`, when given,
+ * covers the request up to the headers, and `signal` stays attached to the body. A non-2xx
+ * answer is read as `fetchText` reads it, within `timeoutMs`. Without `timeoutMs` only
+ * `signal` bounds the request and the error body. Same errors and redirect rule as
  * `fetchText`; `maxBodyBytes` bounds only the error body here, as the 2xx body is the
  * caller's to read.
  */
@@ -370,7 +371,8 @@ async function request<T>(
     return await read(response, finalUrl, requestSignal)
   } catch (error) {
     if (signal?.aborted) throw signal.reason
-    if (timedOut) throw new RequestTimeoutError(timeoutMs as number)
+    if (timedOut && timeoutMs !== undefined)
+      throw new RequestTimeoutError(timeoutMs)
 
     throw error
   } finally {

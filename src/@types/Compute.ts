@@ -105,8 +105,8 @@ export interface ComputeStatusConfig {
 
 export interface ComputeLogsConfig extends ComputeStatusConfig {
   /**
-   * Stops waiting for the logs, and ends the stream. A running job's log request waits
-   * with no timeout for the job's first output.
+   * Stops a running job's live logs: the wait for its first output, which has no timeout,
+   * and the stream once it has started. A finished job's `algorithmLog` is not affected.
    */
   signal?: AbortSignal
 }

@@ -585,6 +585,30 @@ describe('Nautilus compute jobs', () => {
     expect(result.mock.calls[0].slice(2, 4)).to.deep.equal([JOB_ID, 2])
   })
 
+  it('getComputeLogs rejects with the abort reason, even when the job has finished meanwhile', async () => {
+    const nautilus = await createNautilus()
+    const status = statusAnswers([running()], [statusJob()])
+    vi.spyOn(ProviderInstance, 'getNonce').mockResolvedValue(0)
+    const stop = new AbortController()
+    const reason = new Error('stop')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: unknown, init: RequestInit) => {
+        stop.abort(reason)
+        return Promise.reject(init.signal?.reason)
+      })
+    )
+    const result = vi.spyOn(ProviderInstance, 'getComputeResult')
+
+    const thrown = await nautilus
+      .getComputeLogs({ jobId: JOB_ID, signal: stop.signal })
+      .catch((error: unknown) => error)
+
+    expect(thrown).to.equal(reason)
+    expect(status).toHaveBeenCalledOnce()
+    expect(result).not.toHaveBeenCalled()
+  })
+
   it("getComputeLogs reads a failed job's algorithmLog instead of streaming", async () => {
     const nautilus = await createNautilus()
     statusAnswers([statusJob({ status: 41, results: RESULTS.slice(0, 3) })])

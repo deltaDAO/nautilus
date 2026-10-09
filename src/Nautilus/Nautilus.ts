@@ -1779,6 +1779,8 @@ export class Nautilus {
       try {
         return await node.getComputeLogs(job.jobId, config.signal)
       } catch (error) {
+        if (config.signal?.aborted) throw error
+
         // The job may have finished since its status was read.
         const latest = await node.getComputeJob(job.jobId)
         if (!latest || !isJobFinished(latest)) throw error

@@ -912,7 +912,7 @@ function untilSettled(
  * Resolves when `promise` settles, after `ms`, or when `signal` aborts, whichever comes
  * first. Never rejects.
  */
-function settledWithin(
+function holdUntilSettled(
   promise: Promise<unknown>,
   ms: number,
   signal: AbortSignal
@@ -2453,6 +2453,9 @@ export class OceanNodeClient {
           PROTOCOL_COMMANDS.COMPUTE_GET_STREAMABLE_LOGS,
           callSignal
         )
+      // Signed after the queue's timeout or the caller's abort: the call has given up.
+      callSignal.throwIfAborted()
+
       const query = new URLSearchParams({ jobId, consumerAddress })
       if (signature) query.set('signature', signature)
       if (nonce) query.set('nonce', nonce)
@@ -2467,7 +2470,7 @@ export class OceanNodeClient {
         { signal }
       )
 
-      await settledWithin(sent.request, LOGS_QUEUE_HOLD_MS, callSignal)
+      await holdUntilSettled(sent.request, LOGS_QUEUE_HOLD_MS, callSignal)
     }).catch((error) => {
       failure = error
     })
