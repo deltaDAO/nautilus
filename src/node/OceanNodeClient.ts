@@ -643,8 +643,8 @@ const NO_POLICY_SERVER_TTL_MS = 10 * 60 * 1000
  * (upstream and OceanProtocolEnterprise 4.2 alike) answers `initiate` with a bare
  * `{"httpStatus":404}` status frame when `POLICY_SERVER_URL` is unset or empty, which
  * ocean.js 9.2 throws as exactly this message, wrapped in `P2P command error: …` with it as
- * the `cause`. The node's own 404 (an asset
- * it has not indexed) carries its text instead, `Not found`.
+ * the `cause`. The node's own 404 (an asset it has not indexed) carries its text instead,
+ * `Not found`.
  */
 function isP2pNoPolicyServer(error: unknown): boolean {
   for (
@@ -2106,9 +2106,9 @@ export class OceanNodeClient {
    * report `isPSConfigured`.
    *
    * A "yes" is kept for the lifetime of this client (the node reads its `POLICY_SERVER_URL`
-   * once, at startup), a "no" for 10 minutes, so a node restarted with a policy server is
-   * found; a failed read is not kept, so the next call asks again. Rejects with the signal's
-   * reason when `signal` aborts.
+   * once, at startup), even past an `initiate` answered without one; a "no" for 10
+   * minutes, so a node restarted with a policy server is found; a failed read is not kept,
+   * so the next call asks again. Rejects with the signal's reason when `signal` aborts.
    */
   async hasPolicyServer(signal?: AbortSignal): Promise<boolean | undefined> {
     const known = this.knownPolicyServer()
@@ -2161,21 +2161,25 @@ export class OceanNodeClient {
 
   /**
    * An `initiate` answered as a node without a policy server does: `null`, remembered for
-   * `hasPolicyServer`.
+   * `hasPolicyServer` when nothing else was known.
    *
-   * Also when the status said the node has one: OceanProtocolEnterprise ocean-node reports
+   * Also `null` when this client knew the node to have one, but then the "yes" is kept, so
+   * the next call opens a session again: OceanProtocolEnterprise ocean-node reports
    * `isPSConfigured` for a `POLICY_SERVER_URL` that is set but empty, as its
-   * `.env.node.example` ships it, and such a node grants every request without a session.
-   * That is warned about once.
+   * `.env.node.example` ships it, and such a node grants every request without a session
+   * (warned about once); a policy server behind a proxy that failed for a moment must not
+   * lose its sessions for long.
    */
   private noPolicyServer(): null {
-    if (this.knownPolicyServer())
-      warnOnce(
-        `empty-policy-server-url:${normalizeNodeUri(this.nodeUri)}`,
-        `[ocean-node] ${this.nodeUri} reports a policy server (isPSConfigured) but answers as a node without one: its POLICY_SERVER_URL is likely set but empty, and it then checks no credentials at all.`
-      )
+    if (!this.knownPolicyServer()) {
+      this.rememberPolicyServer(false)
+      return null
+    }
 
-    this.rememberPolicyServer(false)
+    warnOnce(
+      `empty-policy-server-url:${normalizeNodeUri(this.nodeUri)}`,
+      `${this.nodeUri} reported a policy server but answers as a node without one: its POLICY_SERVER_URL is likely set but empty, and it then checks no credentials at all.`
+    )
 
     return null
   }

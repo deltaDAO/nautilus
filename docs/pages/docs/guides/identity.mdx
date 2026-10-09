@@ -326,10 +326,11 @@ OceanProtocolEnterprise ocean-node and the policy server read bare strings and o
 alike. Upstream ocean-node 4.2.0 without a policy server reads only bare strings, and fails
 a request on `{ address }` with an error.
 
-**An empty `POLICY_SERVER_URL` turns every check off.** OceanProtocolEnterprise ocean-node
-reports `isPSConfigured: true` for `POLICY_SERVER_URL=` (as its `.env.node.example` ships
-it), but has no policy server to ask, and grants every request. nautilus sees the node
-answer `initiate` as one without a policy server, opens no session, and warns once.
+**An empty `POLICY_SERVER_URL` turns every check off.** With `POLICY_SERVER_URL=` (as
+OceanProtocolEnterprise ocean-node's `.env.node.example` ships it), ocean-node has no policy
+server to ask and grants every request; the enterprise build still reports
+`isPSConfigured: true`. nautilus sees the node answer `initiate` as one without a policy
+server, opens no session, and warns once.
 
 **On a node with a policy server, an asset needs an address allow list.** The policy server
 checks the consumer's address against the asset-level `allow` list before anything else, and

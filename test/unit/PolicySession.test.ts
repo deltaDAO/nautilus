@@ -343,17 +343,23 @@ describe('OceanNodeClient policy server', () => {
     expect(await node.hasPolicyServer()).to.equal(undefined)
   })
 
-  it('reads an empty 404 as no policy server even when the status reported one, and warns', async () => {
+  it('reads an empty 404 as no policy server even when the status reported one, keeping the yes, and warns once', async () => {
     // OceanProtocolEnterprise ocean-node reports `isPSConfigured` for an empty
     // `POLICY_SERVER_URL`, and then grants every request.
     status(true)
-    answer(404, '')
+    const fetch = vi.fn(async () => new Response('', { status: 404 }))
+    vi.stubGlobal('fetch', fetch)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const node = client('a-session-token')
     await node.hasPolicyServer()
 
     expect(await node.initializePolicyVerification(request)).to.equal(null)
-    expect(await node.hasPolicyServer()).to.equal(false)
+    expect(await node.initializePolicyVerification(request)).to.equal(null)
+
+    // A policy server behind a proxy that failed for a moment opens sessions again.
+    expect(await node.hasPolicyServer()).to.equal(true)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(warn).toHaveBeenCalledOnce()
     expect(String(warn.mock.calls[0]?.[0])).to.match(
       /POLICY_SERVER_URL is likely set but empty/
     )
