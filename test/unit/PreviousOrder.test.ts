@@ -101,7 +101,7 @@ class Chain {
   logs: Log[] = []
   receipts = new Map<
     string,
-    { hash: string; blockNumber: number; logs: Log[] }
+    { hash: string; to: string | null; blockNumber: number; logs: Log[] }
   >()
 
   getLogs = vi.fn(async (filter: LogFilter) =>
@@ -125,10 +125,13 @@ class Chain {
     async (txId: string) => this.receipts.get(txId.toLowerCase()) ?? null
   )
 
-  /** A transaction mined `secondsAgo`; its events are logged in the order they are added. */
-  tx(txId: string, secondsAgo: number) {
+  /**
+   * A transaction mined `secondsAgo`, sent to `to` (the datatoken, unless another contract
+   * placed it); its events are logged in the order they are added.
+   */
+  tx(txId: string, secondsAgo: number, to: string | null = DATATOKEN_ADDRESS) {
     const block = blockAt(secondsAgo)
-    const receipt = { hash: txId, blockNumber: block, logs: [] as Log[] }
+    const receipt = { hash: txId, to, blockNumber: block, logs: [] as Log[] }
     this.receipts.set(txId, receipt)
 
     const emit = (
@@ -151,22 +154,28 @@ class Chain {
     }
 
     const events = {
+      /** An `OrderStarted`, by the datatoken unless `emitter` says otherwise. */
       started(
         options: {
           consumer?: string
           payer?: string
           serviceIndex?: number
+          emitter?: string
         } = {}
       ) {
-        emit('OrderStarted', [
-          options.consumer ?? CONSUMER,
-          options.payer ?? options.consumer ?? CONSUMER,
-          10n ** 18n,
-          options.serviceIndex ?? 0,
-          timeOf(block),
-          OTHER,
-          block
-        ])
+        emit(
+          'OrderStarted',
+          [
+            options.consumer ?? CONSUMER,
+            options.payer ?? options.consumer ?? CONSUMER,
+            10n ** 18n,
+            options.serviceIndex ?? 0,
+            timeOf(block),
+            OTHER,
+            block
+          ],
+          options.emitter
+        )
         return events
       },
       reused(orderTxId: string, caller = CONSUMER) {
@@ -208,9 +217,10 @@ class Chain {
       payer?: string
       serviceIndex?: number
       fee?: FeeOptions | false
+      to?: string | null
     } = {}
   ): void {
-    const events = this.tx(txId, secondsAgo)
+    const events = this.tx(txId, secondsAgo, options.to)
 
     if (options.fee !== false) events.fee(options.fee)
     events.started(options)
@@ -513,6 +523,88 @@ describe('findPreviousOrder', () => {
 
     expect(await find()).to.equal(undefined)
   })
+
+  it('only extends an order sent through another contract, which upstream ocean-node refuses as it stands', async () => {
+    // Upstream reads the datatoken from the transaction's `to`, here the factory's
+    // `startMultipleTokenOrder`.
+    chain.started(tx(1), 3_600, { to: OTHER, payer: OTHER })
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1) })
+  })
+
+  it('uses a reuse sent to the datatoken of an order sent through another contract', async () => {
+    chain.started(tx(1), 3_600, { to: OTHER, fee: false })
+    chain.reused(tx(2), tx(1), 100)
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(2) })
+  })
+
+  it('only extends an order whose reuse was sent through another contract', async () => {
+    chain.started(tx(1), 3_600, { fee: { address: OTHER } })
+    chain.tx(tx(2), 100, OTHER).reused(tx(1)).fee()
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1) })
+  })
+
+  it('reads the transaction’s `to` in any case, and none (a contract creation) as not the datatoken', async () => {
+    chain.started(tx(1), 3_600, { to: DATATOKEN_ADDRESS.toLowerCase() })
+    expect((await find())?.usableTxId).to.equal(tx(1))
+
+    chain = new Chain()
+    chain.started(tx(1), 3_600, { to: null })
+    expect(await find()).to.deep.equal({ orderTxId: tx(1) })
+  })
+
+  it('refuses an order behind a look-alike OrderStarted from another contract, which upstream ocean-node takes first', async () => {
+    chain
+      .tx(tx(1), 3_600)
+      .fee()
+      .started({ emitter: OTHER, serviceIndex: 1 })
+      .started()
+
+    expect(await find()).to.equal(undefined)
+
+    chain = new Chain()
+    chain
+      .tx(tx(1), 3_600, OTHER)
+      .started({ emitter: OTHER, serviceIndex: 1 })
+      .started()
+    chain.reused(tx(2), tx(1), 100)
+
+    expect(await find()).to.equal(undefined)
+  })
+
+  it('takes the first OrderStarted for the account, past another contract’s for someone else', async () => {
+    chain
+      .tx(tx(1), 3_600)
+      .fee()
+      .started({ emitter: OTHER, consumer: OTHER, payer: OTHER })
+      .started()
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(1) })
+  })
+
+  it('checks at most 50 candidates', async () => {
+    // Orders anyone can place for the account, none usable or extendable; each costs one
+    // receipt read.
+    for (let n = 1; n <= 80; n++)
+      chain.started(tx(n), 100 + n * BLOCK_TIME, { serviceIndex: 1 })
+
+    expect(await find()).to.equal(undefined)
+    expect(chain.getTransactionReceipt).toHaveBeenCalledTimes(50)
+    expect(chain.getTransactionReceipt).toHaveBeenCalledWith(tx(50))
+    expect(chain.getTransactionReceipt).not.toHaveBeenCalledWith(tx(51))
+  })
+
+  it('extends the best order found before the cap', async () => {
+    // Newer than half the spam: found mid-scan, kept when the cap stops it.
+    for (let n = 2; n <= 61; n++)
+      chain.started(tx(n), 100 + n * BLOCK_TIME, { serviceIndex: 1 })
+    chain.started(tx(1), 100 + 30 * BLOCK_TIME + 1, { fee: { address: OTHER } })
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1) })
+    expect(chain.getTransactionReceipt).toHaveBeenCalledTimes(50)
+  })
 })
 
 describe('settleOrder with an order on chain', () => {
@@ -584,6 +676,21 @@ describe('settleOrder with an order on chain', () => {
       providerFees: providerFee
     })
     expect(vi.mocked(order)).not.toHaveBeenCalled()
+  })
+
+  it('extends an order sent through another contract instead of using it as it stands', async () => {
+    chain.started(tx(1), 3_600, { to: OTHER, payer: OTHER })
+    const providerFee = signedProviderFee({
+      providerData,
+      providerFeeAmount: '0'
+    })
+
+    const result = await settle({ providerFee })
+
+    expect(result).to.deep.equal({ transferTxId: '0xreusetx', reused: true })
+    expect(vi.mocked(reuseOrder).mock.calls[0][0]).to.include({
+      validOrderTx: tx(1)
+    })
   })
 
   it('orders anew when there is no order to reuse', async () => {
