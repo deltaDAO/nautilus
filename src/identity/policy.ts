@@ -170,8 +170,10 @@ export function addCredentialAddresses(
 }
 
 /**
- * Removes addresses, compared case-insensitively, keeping the entry's stored form (see
- * `addressValues`).
+ * Removes addresses, compared case-insensitively, from every address entry of the list that
+ * holds one: the policy server reads them as one list, and under `match_allow: 'any'` the
+ * node lets in an address any of them holds. Each changed entry keeps its stored form (see
+ * `addressValues`); the others are left as stored.
  *
  * An allow entry left empty is kept as `values: []`: the node and the policy server read an
  * empty address allow list as "deny everyone", so dropping it would lift the gate. A deny
@@ -183,21 +185,25 @@ export function removeCredentialAddresses(
   addresses: string[]
 ): DdoCredentials {
   const entries = credentials[list] || []
-  const index = entries.findIndex(isAddressCredential)
-
-  if (index === -1) return credentials
-
-  const entry = entries[index] as AddressCredential
   const removed = new Set(addresses.map((address) => address.toLowerCase()))
-  const remaining = storedAddresses(entry).filter(
-    (address) => !removed.has(address.toLowerCase())
-  )
 
-  if (remaining.length || list === CredentialListTypes.ALLOW)
+  const kept = entries.flatMap((entry): DdoCredential[] => {
+    if (!isAddressCredential(entry)) return [entry]
+
+    const stored = storedAddresses(entry)
+    const remaining = stored.filter(
+      (address) => !removed.has(address.toLowerCase())
+    )
+    if (remaining.length === stored.length) return [entry]
+    if (!remaining.length && list === CredentialListTypes.DENY) return []
+
     entry.values = addressValues(remaining, entry)
-  else entries.splice(index, 1)
+    return [entry]
+  })
 
-  return { ...credentials, [list]: entries }
+  if (!entries.some(isAddressCredential)) return credentials
+
+  return { ...credentials, [list]: kept }
 }
 
 /** Adds an on-chain access-list credential. */
@@ -378,8 +384,9 @@ function mergeSsiValues(values: unknown[]): SsiPolicyValue {
  * Addresses as the values of an address entry: bare strings when `stored` holds bare
  * strings only, `{ address }` objects otherwise (a new or empty entry included).
  *
- * Every reader accepts bare strings, and ocean-node 4.2.0 without a policy server reads
- * nothing else, so changing an address of such an entry must not turn it into objects.
+ * ocean-node and the policy server accept bare strings, and ocean-node 4.2.0 without a
+ * policy server reads nothing else, so changing an address of such an entry must not turn
+ * it into objects.
  */
 function addressValues(
   addresses: string[],

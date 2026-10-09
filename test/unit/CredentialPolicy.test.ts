@@ -704,14 +704,45 @@ describe('address credentials', () => {
     ).to.deep.equal([{ type: 'address', values: [{ address: '0xAbC' }] }])
   })
 
-  it('keeps a stored allow entry that has no readable address, which denies everyone', () => {
+  it('leaves a stored entry without the address as it is', () => {
     const stored = {
-      allow: [{ type: 'address', values: null }]
+      allow: [{ type: 'address', values: null }],
+      deny: [{ type: 'address', values: ['0x2', 5] }]
     } as unknown as DdoCredentials
 
     expect(
       removeCredentialAddresses(stored, ALLOW, ['0x1']).allow
-    ).to.deep.equal([{ type: 'address', values: [] }])
+    ).to.deep.equal([{ type: 'address', values: null }])
+    expect(removeCredentialAddresses(stored, DENY, ['0x1']).deny).to.deep.equal(
+      [{ type: 'address', values: ['0x2', 5] }]
+    )
+  })
+
+  it('removes an address from every address entry of the list', () => {
+    // The policy server reads them as one list: left in a second entry, the address would
+    // stay allowed.
+    const stored = () =>
+      ({
+        allow: [
+          { type: 'address', values: [{ address: '0xA' }, { address: '0xB' }] },
+          { type: 'address', values: ['0xb', '0xC'] }
+        ],
+        deny: [
+          { type: 'address', values: ['0xD'] },
+          { type: 'address', values: ['0xd', '0xE'] }
+        ]
+      }) as unknown as DdoCredentials
+
+    expect(
+      removeCredentialAddresses(stored(), ALLOW, ['0xB']).allow
+    ).to.deep.equal([
+      { type: 'address', values: [{ address: '0xA' }] },
+      { type: 'address', values: ['0xC'] }
+    ])
+    // An emptied deny entry is dropped, the other keeps what it still denies.
+    expect(
+      removeCredentialAddresses(stored(), DENY, ['0xD']).deny
+    ).to.deep.equal([{ type: 'address', values: ['0xE'] }])
   })
 
   it('is a no-op when removing from a list with no address entry', () => {
