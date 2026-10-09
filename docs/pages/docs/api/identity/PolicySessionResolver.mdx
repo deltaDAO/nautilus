@@ -37,15 +37,19 @@ const session = await policySessions.resolve({ // [!code focus]
    (`checkSessionId`), since the verifier forgets it when it expires or restarts. An entry
    that is too old, or that the check does not report verified, is deleted and the steps
    below run again.
-3. The node's status says it has no policy server (`isPSConfigured: false`): `null`. This is
-   the only place that asks; when the status cannot be read, the session is opened anyway.
+3. The node is known to have no policy server (`hasPolicyServer()` is `false`: its status
+   says `isPSConfigured: false`, or an earlier `initiate` showed it): `null`. When the
+   status does not say, as on upstream ocean-node 4.2.0, step 5 tells.
 4. The service asks for a verifiable presentation and no credential provider is set: throws,
    before anything is signed.
 5. `initiate`, for `node.policySessionAddress(consumerAddress)`: the address the node
    forwards to the policy server (for a Signer, `consumerAddress` itself; for a JWT, the
-   address in the token). The policy server checks it and opens a session, or refuses
-   (`PolicyDeniedError`). The session id is `message.sessionId`; the openid4vp request is
-   `message.redirectUri`.
+   address in the token). A node without a policy server answers with a 404 and no body:
+   `null`; no session is cached, and `hasPolicyServer()` answers `false` for 10 minutes
+   unless it knew the node to have one.
+   Otherwise the policy server checks it and opens a session, or refuses
+   (`PolicyDeniedError`). The session id is `message.sessionId`; the openid4vp
+   request is `message.redirectUri`.
 6. Only when the `SSIpolicy` asks for credentials: the provider's `present()`, then
    `checkSessionId`, which must report `verificationResult: true` (else `PolicyDeniedError`).
 7. The session is cached and returned as the payload for the node's `policyServer` slot: a
@@ -77,7 +81,7 @@ until the verifier forgets it. Keep session ids out of logs and shared URLs, and
 | Error | When |
 | --- | --- |
 | `PolicyDeniedError` | The policy server refused the consumer: a reply with `success: false` and a 4xx (`code`: its status, `reason`: its message, bounded), or the verifier did not accept the presentation (`code` is `undefined`, `reason` names the failed policies, `policyResults` lists each policy's name, outcome and error, never the presentation). Also carries `did`, `serviceId` and `consumerAddress`. |
-| `OceanNodeError` | Anything else, with the status: the node's own 401 (nonce, signature, "Auth not configured"), its 404 (the asset is not indexed there, or no policy server), its 400 when it cannot reach the policy server, a network error, a timeout, a rate limit or a 5xx. |
+| `OceanNodeError` | Anything else, with the status: the node's own 401 (nonce, signature, "Auth not configured"), its 404 (`Not found`: the asset is not indexed there), its 400 when it cannot reach the policy server, a network error, a timeout, a rate limit or a 5xx. |
 | `Error` | The service asks for a presentation and no credential provider is set. |
 
 See [credential-gated assets](/docs/guides/identity).

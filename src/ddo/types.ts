@@ -71,10 +71,14 @@ export interface StoredRequestCredential {
 
 // #region credential entries
 
-/** Address allow/deny list. The stack accepts bare strings too, but writes objects. */
+/**
+ * Address allow/deny list. nautilus writes `{ address }` objects, as the enterprise market
+ * does; assets from other producers can hold bare strings, which the policy server and
+ * OceanProtocolEnterprise ocean-node read too.
+ */
 export interface AddressCredential {
   type: 'address'
-  values: { address: string }[]
+  values: ({ address: string } | string)[]
 }
 
 /** On-chain access-list gating. */
