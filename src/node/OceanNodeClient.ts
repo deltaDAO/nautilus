@@ -868,7 +868,7 @@ export class OceanNodeClient {
    * Whether the node has a policy server, once its status or an `initiate` said so, and
    * until when that holds. See `hasPolicyServer`.
    */
-  private policyServer?: { configured: boolean; until: number }
+  private policyServerAnswer?: { configured: boolean; until: number }
 
   /**
    * The clients `forEndpoint` hands out, keyed by normalised node URI, shared by every
@@ -2135,15 +2135,15 @@ export class OceanNodeClient {
 
   /** The kept `hasPolicyServer` answer, while it holds. */
   private knownPolicyServer(): boolean | undefined {
-    const known = this.policyServer
+    const known = this.policyServerAnswer
     if (known && Date.now() < known.until) return known.configured
 
-    this.policyServer = undefined
+    this.policyServerAnswer = undefined
     return undefined
   }
 
   private rememberPolicyServer(configured: boolean): void {
-    this.policyServer = {
+    this.policyServerAnswer = {
       configured,
       until: configured
         ? Number.POSITIVE_INFINITY
@@ -2160,18 +2160,19 @@ export class OceanNodeClient {
 
   /**
    * An `initiate` answered as a node without a policy server does: `null`, remembered for
-   * `hasPolicyServer`. When this client knew the node to have one, it throws an
-   * `OceanNodeError` instead and forgets that, so the next call asks again: a node with a
-   * policy server never gives that answer, but a proxy in front of it could.
+   * `hasPolicyServer`.
+   *
+   * Also when the status said the node has one: OceanProtocolEnterprise ocean-node reports
+   * `isPSConfigured` for a `POLICY_SERVER_URL` that is set but empty, as its
+   * `.env.node.example` ships it, and such a node grants every request without a session.
+   * That is warned about once.
    */
-  private noPolicyServer(operation: string): null {
-    if (this.knownPolicyServer()) {
-      this.policyServer = undefined
-      throw new OceanNodeError(
-        operation,
-        'the node answered as one without a policy server (404, no body), though it reported one'
+  private noPolicyServer(): null {
+    if (this.knownPolicyServer())
+      warnOnce(
+        `empty-policy-server-url:${normalizeNodeUri(this.nodeUri)}`,
+        `[ocean-node] ${this.nodeUri} reports a policy server (isPSConfigured) but answers as a node without one: its POLICY_SERVER_URL is likely set but empty, and it then checks no credentials at all.`
       )
-    }
 
     this.rememberPolicyServer(false)
 
@@ -2204,11 +2205,12 @@ export class OceanNodeClient {
    * Starts a policy-server verification for one service (the policy server's `initiate`)
    * and returns its answer, `{ success: true, message: { sessionId, redirectUri } }`.
    *
-   * `null` when the node has no policy server, and then checks credentials itself: ocean-node
-   * answers `initiate` with a 404 and no body (over P2P, a bare `{"httpStatus":404}`) when
-   * its `POLICY_SERVER_URL` is unset, and nothing else answers that way. `hasPolicyServer`
-   * remembers it, as it remembers an opened session's "yes": ocean-node 4.2.0 does not
-   * report `isPSConfigured`, so this is how a node like it is told apart.
+   * `null` when the node has no policy server, and needs no session: ocean-node answers
+   * `initiate` with a 404 and no body (over P2P, a bare `{"httpStatus":404}`) when its
+   * `POLICY_SERVER_URL` is unset or empty, and neither the node's own errors nor the policy
+   * server's answer that way. `hasPolicyServer` remembers it, as it remembers an opened
+   * session's "yes": ocean-node 4.2.0 does not report `isPSConfigured`, so this is how a
+   * node like it is told apart.
    *
    * Throws a `PolicyDeniedError` only for the policy server's own refusal: a reply with
    * `success: false` and a 4xx `httpStatus`. Everything else throws an `OceanNodeError` with
@@ -2289,7 +2291,7 @@ export class OceanNodeClient {
           signal
         )) as PolicyServerReply | undefined
       } catch (error) {
-        if (isP2pNoPolicyServer(error)) return this.noPolicyServer(operation)
+        if (isP2pNoPolicyServer(error)) return this.noPolicyServer()
 
         throw failure(
           policyServerReplyIn(error),
@@ -2337,7 +2339,7 @@ export class OceanNodeClient {
 
     // Exactly empty: the node's own 404 says `Not found`, the policy server's is JSON.
     if (response.status === 404 && response.body === '')
-      return this.noPolicyServer(operation)
+      return this.noPolicyServer()
 
     const reply = parsePolicyServerReply(response.body)
     if (response.ok && reply?.success === true) return this.opened(reply)

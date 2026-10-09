@@ -343,20 +343,56 @@ describe('OceanNodeClient policy server', () => {
     expect(await node.hasPolicyServer()).to.equal(undefined)
   })
 
-  it('throws on an empty 404 from a node that reported a policy server, and asks again next time', async () => {
-    const getNodeStatus = status(true)
+  it('reads an empty 404 as no policy server even when the status reported one, and warns', async () => {
+    // OceanProtocolEnterprise ocean-node reports `isPSConfigured` for an empty
+    // `POLICY_SERVER_URL`, and then grants every request.
+    status(true)
     answer(404, '')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const node = client('a-session-token')
     await node.hasPolicyServer()
 
-    const thrown = await node
-      .initializePolicyVerification(request)
-      .catch((caught) => caught)
+    expect(await node.initializePolicyVerification(request)).to.equal(null)
+    expect(await node.hasPolicyServer()).to.equal(false)
+    expect(String(warn.mock.calls[0]?.[0])).to.match(
+      /POLICY_SERVER_URL is likely set but empty/
+    )
+  })
 
-    expect(thrown).to.be.instanceOf(OceanNodeError)
-    expect(thrown.message).to.match(/though it reported one/)
-    expect(await node.hasPolicyServer()).to.equal(true)
-    expect(getNodeStatus).toHaveBeenCalledTimes(2)
+  it('reads an empty 404 on the retry after a rejected nonce as no policy server', async () => {
+    status(undefined)
+    const wallet = Wallet.createRandom()
+    vi.spyOn(ProviderInstance, 'getNonce').mockResolvedValue(1 as never)
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response('nonce: 2 is not a valid nonce', { status: 401 })
+      )
+      .mockResolvedValueOnce(new Response('', { status: 404 }))
+    vi.stubGlobal('fetch', fetch)
+
+    expect(
+      await client(wallet).initializePolicyVerification({
+        ...request,
+        consumerAddress: wallet.address
+      })
+    ).to.equal(null)
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('asks the status again 10 minutes after it said the node has no policy server', async () => {
+    vi.useFakeTimers()
+    try {
+      const getNodeStatus = status(false)
+      const node = client('a-session-token')
+
+      expect(await node.hasPolicyServer()).to.equal(false)
+      vi.advanceTimersByTime(10 * 60 * 1000)
+      expect(await node.hasPolicyServer()).to.equal(false)
+      expect(getNodeStatus).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('learns from an opened session that the node has a policy server', async () => {
