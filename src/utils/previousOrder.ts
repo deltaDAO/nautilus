@@ -3,16 +3,25 @@
  *
  * ocean-node's access `initialize` answers with a fresh provider fee and no `validOrder`;
  * only its compute `initialize` checks a previous order. This module looks the account's
- * orders up in the datatoken's events and checks each candidate transaction exactly the
- * way the node checks the `transferTxId` of a download (ocean-node 4.2,
- * `validateOrderTransaction` and `verifyProviderFees`), from the transaction receipts:
+ * orders up in the datatoken's events and checks each candidate transaction the way the
+ * node checks the `transferTxId` of a download (`validateOrderTransaction` and
+ * `verifyProviderFees`), from the transaction receipts. ocean-node 4.2.0 and
+ * OceanProtocolEnterprise ocean-node 4.2.2 check it differently, and a candidate counts
+ * only when both would accept it, so `access()` never skips a payment the node then
+ * refuses:
  *
+ *   - 4.2.0 reads the datatoken from the given transaction's `to`, before following a
+ *     reuse; 4.2.2 does not read `to`. A candidate is used as it stands only when its
+ *     transaction was sent to the datatoken itself; one sent through another contract (the
+ *     factory's `startMultipleTokenOrder`, a contract wallet, a relayer) is only extended,
+ *     with a `reuseOrder` nautilus sends to the datatoken;
  *   - when the transaction holds an `OrderReused`, the node follows the first one in log
  *     order, from any contract, to the transaction it names; nautilus also requires that
  *     reuse's `caller` to be the account;
- *   - in that transaction, the node takes the first `OrderStarted` of this datatoken whose
- *     consumer or payer is the account, and rejects the order when its service index is
- *     not the service's;
+ *   - in that transaction, 4.2.0 takes the first `OrderStarted`, from any contract, whose
+ *     consumer or payer is the account, 4.2.2 the first such one this datatoken emitted.
+ *     The order counts only when that first one is this datatoken's, and the node rejects
+ *     it when its service index is not the service's;
  *   - the order is inside the service's `timeout`, counted from the block of the
  *     `OrderStarted` (a reuse does not restart it). `0` never expires, and neither does a
  *     timeout that is not a number (missing), since the node's `elapsed > timeout` is then
@@ -48,6 +57,13 @@ const CHUNK_BLOCKS = 2_000
  */
 const MAX_BLOCKS = 100_000
 const MAX_READS = 100
+
+/**
+ * Candidates checked at most, each costing up to two receipt reads: anyone can emit orders
+ * naming the account, so the lookup gives up after this many and `access()` uses the best
+ * one found, or places a new order.
+ */
+const MAX_CHECKS = 50
 
 /** Blocks an order's block needs on top of it, itself included, before it is reused. */
 const CONFIRMATIONS = 3
@@ -134,6 +150,7 @@ export async function findPreviousOrder(
   const check = checker(query, now, lifetime)
   let extendable: { orderTxId: string; timestamp: number } | undefined
   let chunk = CHUNK_BLOCKS
+  let checks = 0
 
   scan: for (
     let to = latest, reads = 0;
@@ -153,7 +170,7 @@ export async function findPreviousOrder(
 
     for (const candidate of candidates) {
       // Every older candidate is older still, and so is the order it names.
-      if (candidate.timestamp < cutoff) break scan
+      if (candidate.timestamp < cutoff || checks++ === MAX_CHECKS) break scan
 
       const verdict = await check(candidate)
 
@@ -291,33 +308,40 @@ function checker(query: PreviousOrderQuery, now: number, lifetime: number) {
 
     if (!mined) return undefined
 
+    // ocean-node 4.2.0 reads the datatoken from here; a `reuseOrder` nautilus sends passes.
+    const direct = mined.to?.toLowerCase() === datatoken
+
     let ordered: TransactionReceipt | null = mined
     const reused = first(mined, 'OrderReused')
 
     if (reused) {
-      if (reused.caller !== account) return undefined
-      ordered = await receipt(reused.orderTxId)
+      if (reused.event.caller !== account) return undefined
+      ordered = await receipt(reused.event.orderTxId)
       if (!ordered) return undefined
     }
 
+    // The first one from any contract, as 4.2.0 takes it: 4.2.2 takes the first one this
+    // datatoken emitted, the same one only when it comes first.
     const started = first(
       ordered,
       'OrderStarted',
-      (event, log) =>
-        log.address.toLowerCase() === datatoken &&
-        (event.consumer === account || event.payer === account)
+      (event) => event.consumer === account || event.payer === account
     )
 
-    if (!started || started.serviceIndex !== BigInt(query.serviceIndex))
+    if (
+      !started ||
+      started.log.address.toLowerCase() !== datatoken ||
+      started.event.serviceIndex !== BigInt(query.serviceIndex)
+    )
       return undefined
-    if (now - started.timestamp > lifetime) return undefined
+    if (now - started.event.timestamp > lifetime) return undefined
 
     return {
       orderTxId: ordered.hash.toLowerCase(),
-      timestamp: started.timestamp,
-      feeAccepted: mined.logs.some((log) =>
-        feeAccepted(decode(log), candidate.timestamp)
-      )
+      timestamp: started.event.timestamp,
+      feeAccepted:
+        direct &&
+        mined.logs.some((log) => feeAccepted(decode(log), candidate.timestamp))
     }
   }
 }
@@ -343,20 +367,17 @@ type Event =
       validUntil: bigint
     }
 
-/** The first event `name` in the receipt, in log order, that `match` accepts. */
+/** The first event `name` in the receipt, in log order, that `match` accepts, with its log. */
 function first<N extends Event['name']>(
   receipt: TransactionReceipt,
   name: N,
-  match: (event: Extract<Event, { name: N }>, log: Log) => boolean = () => true
-): Extract<Event, { name: N }> | undefined {
+  match: (event: Extract<Event, { name: N }>) => boolean = () => true
+): { event: Extract<Event, { name: N }>; log: Log } | undefined {
   for (const log of receipt.logs) {
     const event = decode(log)
 
-    if (
-      event?.name === name &&
-      match(event as Extract<Event, { name: N }>, log)
-    )
-      return event as Extract<Event, { name: N }>
+    if (event?.name === name && match(event as Extract<Event, { name: N }>))
+      return { event: event as Extract<Event, { name: N }>, log }
   }
 
   return undefined
