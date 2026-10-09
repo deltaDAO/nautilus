@@ -148,7 +148,7 @@ function updateSsiPolicy(
  *
  * Written as `{ address }` objects: the policy server's `extractAddressList` accepts bare
  * strings too, but the enterprise market writes and reads objects, so nautilus matches it.
- * The entry's stored values are read in either form and written back as objects.
+ * An entry stored as bare strings only is kept that way (see `addressValues`).
  */
 export function addCredentialAddresses(
   credentials: DdoCredentials,
@@ -163,19 +163,15 @@ export function addCredentialAddresses(
     ...addresses
   ])
 
-  if (existing) existing.values = merged.map((address) => ({ address }))
-  else
-    entries.push({
-      type: 'address',
-      values: merged.map((address) => ({ address }))
-    })
+  if (existing) existing.values = addressValues(merged, existing)
+  else entries.push({ type: 'address', values: addressValues(merged) })
 
   return { ...credentials, [list]: entries }
 }
 
 /**
- * Removes addresses, compared case-insensitively. The entry's stored values are read in
- * either form and the rest written back as objects.
+ * Removes addresses, compared case-insensitively, keeping the entry's stored form (see
+ * `addressValues`).
  *
  * An allow entry left empty is kept as `values: []`: the node and the policy server read an
  * empty address allow list as "deny everyone", so dropping it would lift the gate. A deny
@@ -191,13 +187,14 @@ export function removeCredentialAddresses(
 
   if (index === -1) return credentials
 
+  const entry = entries[index] as AddressCredential
   const removed = new Set(addresses.map((address) => address.toLowerCase()))
-  const remaining = storedAddresses(entries[index] as AddressCredential)
-    .filter((address) => !removed.has(address.toLowerCase()))
-    .map((address) => ({ address }))
+  const remaining = storedAddresses(entry).filter(
+    (address) => !removed.has(address.toLowerCase())
+  )
 
   if (remaining.length || list === CredentialListTypes.ALLOW)
-    (entries[index] as AddressCredential).values = remaining
+    entry.values = addressValues(remaining, entry)
   else entries.splice(index, 1)
 
   return { ...credentials, [list]: entries }
@@ -380,6 +377,26 @@ function mergeSsiValues(values: unknown[]): SsiPolicyValue {
     )
 
   return merged
+}
+
+/**
+ * Addresses as the values of an address entry: bare strings when `stored` holds bare
+ * strings only, `{ address }` objects otherwise (a new or empty entry included).
+ *
+ * Every reader accepts bare strings, and ocean-node 4.2.0 without a policy server reads
+ * nothing else, so changing an address of such an entry must not turn it into objects.
+ */
+function addressValues(
+  addresses: string[],
+  stored?: AddressCredential
+): AddressCredential['values'] {
+  const values: unknown = stored?.values
+  const bareStrings =
+    Array.isArray(values) &&
+    values.length > 0 &&
+    values.every((value) => typeof value === 'string')
+
+  return bareStrings ? addresses : addresses.map((address) => ({ address }))
 }
 
 /**

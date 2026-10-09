@@ -36,8 +36,8 @@ was found out only after the order.
 - **`OceanNodeClient.initializePolicyVerification` returns the reply, `null` or throws.** It
   returns `null` only for a node without a policy server, which answers a 404 with no body
   (over P2P, a bare 404 status), and `hasPolicyServer()` then answers `false` for 10
-  minutes. It throws a `PolicyDeniedError` only for the policy server's own refusal (a reply with `success: false` and a 4xx), and an
-  `OceanNodeError` with the status for everything else: the node's own 401 (nonce, signature,
+  minutes. It throws a `PolicyDeniedError` only for the policy server's own refusal (a reply
+  with `success: false` and a 4xx), and an `OceanNodeError` with the status for everything else: the node's own 401 (nonce, signature,
   "Auth not configured"), 404 (asset not indexed there) and 400 (policy server unreachable), a
   network error, a timeout, a rate limit or a 5xx. With a Signer, a rejected nonce is retried
   once. Over HTTP it signs and sends the command itself, as ocean.js signs it: ocean.js 9.2

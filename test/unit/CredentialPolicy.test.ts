@@ -581,30 +581,6 @@ describe('normalizeStoredCredentials', () => {
     expect(normalizeStoredCredentials(input)).to.deep.equal(input)
   })
 
-  it('lets the address helpers work on a loaded bare-string list', () => {
-    // Before, `addCredentialAddresses` wrote `{ address: undefined }` for each string and
-    // `removeCredentialAddresses` threw on `.toLowerCase()`.
-    const loaded = normalizeStoredCredentials({
-      allow: [{ type: 'address', values: ['0xAbC', '0x2'] }]
-    } as unknown as DdoCredentials)
-
-    const added = addCredentialAddresses(structuredClone(loaded), ALLOW, [
-      '0x3'
-    ])
-    expect(added.allow?.[0]).to.deep.equal({
-      type: 'address',
-      values: [{ address: '0xAbC' }, { address: '0x2' }, { address: '0x3' }]
-    })
-
-    const removed = removeCredentialAddresses(structuredClone(loaded), ALLOW, [
-      '0xabc'
-    ])
-    expect(removed.allow?.[0]).to.deep.equal({
-      type: 'address',
-      values: [{ address: '0x2' }]
-    })
-  })
-
   it('leaves non-SSI entries and match rules alone', () => {
     const input: DdoCredentials = {
       allow: [{ type: 'address', values: [{ address: '*' }] }],
@@ -671,11 +647,43 @@ describe('address credentials', () => {
     expect(credentials.deny).to.deep.equal([])
   })
 
-  it('reads stored bare strings and objects alike, writing the entry back as objects', () => {
+  it('keeps an entry stored as bare strings in that form', () => {
+    // Before, `addCredentialAddresses` wrote `{ address: undefined }` for each string and
+    // `removeCredentialAddresses` threw on `.toLowerCase()`. ocean-node 4.2.0 without a
+    // policy server reads only bare strings.
+    const stored = () =>
+      ({
+        allow: [{ type: 'address', values: ['0xAbC', '0x2'] }]
+      }) as unknown as DdoCredentials
+
+    expect(
+      addCredentialAddresses(stored(), ALLOW, ['0x3']).allow
+    ).to.deep.equal([{ type: 'address', values: ['0xAbC', '0x2', '0x3'] }])
+    expect(
+      removeCredentialAddresses(stored(), ALLOW, ['0xabc']).allow
+    ).to.deep.equal([{ type: 'address', values: ['0x2'] }])
+    expect(
+      removeCredentialAddresses(stored(), ALLOW, ['0xabc', '0x2']).allow
+    ).to.deep.equal([{ type: 'address', values: [] }])
+  })
+
+  it('writes objects to an entry stored empty or without an array', () => {
+    for (const values of [[], null]) {
+      const stored = {
+        allow: [{ type: 'address', values }]
+      } as unknown as DdoCredentials
+
+      expect(
+        addCredentialAddresses(stored, ALLOW, ['0x1']).allow
+      ).to.deep.equal([{ type: 'address', values: [{ address: '0x1' }] }])
+    }
+  })
+
+  it('reads a mixed entry in both forms, writing it back as objects', () => {
     const stored = () =>
       ({
         allow: [{ type: 'address', values: ['0xAbC', { address: '0x2' }, 5] }],
-        deny: [{ type: 'address', values: ['0xDeF', '0x4'] }]
+        deny: [{ type: 'address', values: ['0xDeF', { address: '0x4' }] }]
       }) as unknown as DdoCredentials
 
     expect(

@@ -39,11 +39,17 @@ and leaving the asset open under the remaining policies. Removing the last addre
 allow list now keeps the entry as `values: []`, which denies everyone, as the node and the
 policy server read it.
 
+**`AddressCredential.values` is `({ address: string } | string)[]`.** Assets from other
+producers can store bare strings, and an edit keeps them: an entry nautilus does not change
+stays as stored, and one stored as bare strings only stays that way when addresses are added
+or removed. Read each value as `typeof value === 'string' ? value : value.address`.
+
 nautilus now opens the policy-server session itself, on every download and compute job that
 the node checks: whenever the node has a policy server and the asset or service has
 `credentials` (`{}` included). The node's status says whether it has one (`isPSConfigured`);
-ocean-node 4.2.0 does not report it, and there `initiate` tells (a 404 with no body). An asset gated by addresses only needs
-no wallet any more, and a refusal is reported before anything is ordered.
+ocean-node 4.2.0 does not report it, and there `initiate` tells (a 404 with no body). An
+asset gated by addresses only needs no wallet any more, and a refusal is reported before
+anything is ordered.
 
 **A custom `CredentialProvider` implements `present()` instead of `resolve()`.** nautilus
 opens the session, reads its id and checks the result (`checkSessionId`); the provider only
@@ -114,8 +120,9 @@ default).
 **`OceanNodeClient.initializePolicyVerification` returns the reply, `null` or throws.** It
 returns `null` only for a node without a policy server (a 404 with no body), and
 `hasPolicyServer()` then answers `false` for 10 minutes. It throws a `PolicyDeniedError` for
-the policy server's refusal and an `OceanNodeError` with the status otherwise. Pass it `policySessionAddress(consumerAddress)`, the address the node forwards
-(for a JWT, the token's). `hasPolicyServer()`, `policySessionAddress()` and
+the policy server's refusal and an `OceanNodeError` with the status otherwise. Pass it
+`policySessionAddress(consumerAddress)`, the address the node forwards (for a JWT, the
+token's). `hasPolicyServer()`, `policySessionAddress()` and
 `checkPolicySession(sessionId)` (`{ verified, policyResults }`) are new. `PolicyServerAction`
 moved to the node client and has only `GET_PD` and `CHECK_SESSION_ID`.
 

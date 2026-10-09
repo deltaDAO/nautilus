@@ -204,11 +204,11 @@ showed (`undefined` when neither has said; ocean-node 4.2.0 does not report it).
 kept for the client's lifetime, a "no" for 10 minutes. `policySessionAddress` is the address
 a session is bound to: the one the node forwards to the policy server, which for a JWT is the
 token's own. `initializePolicyVerification` returns the policy server's reply, or `null` for
-a node without a policy server (a 404 with no body); it throws a
-`PolicyDeniedError` only for the policy server's refusal (a reply with `success: false` and a
-4xx), and an `OceanNodeError` with the status for everything else: the node's own 401
-(retried once for a rejected nonce, with a Signer), 404 (`Not found`) and 400, a network error, a timeout,
-a rate limit or a 5xx. Over HTTP it signs and sends the command itself, as ocean.js signs it:
+a node without a policy server (a 404 with no body); it throws a `PolicyDeniedError` only
+for the policy server's refusal (a reply with `success: false` and a 4xx), and an
+`OceanNodeError` with the status for everything else: the node's own 401 (retried once for a
+rejected nonce, with a Signer), 404 (`Not found`) and 400, a network error, a timeout, a rate
+limit or a 5xx. Over HTTP it signs and sends the command itself, as ocean.js signs it:
 ocean.js keeps a failed answer only when its body is JSON, and the node answers its own
 errors in plain text. `checkPolicySession` reports `{ verified, policyResults }` from the
 policy server's `checkSessionId`: per-policy names, outcomes and errors, never the
