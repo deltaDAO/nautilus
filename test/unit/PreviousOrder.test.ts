@@ -524,8 +524,8 @@ describe('findPreviousOrder', () => {
     expect(await find()).to.equal(undefined)
   })
 
-  it('only extends an order sent through another contract, which ocean-node 4.2.0 refuses as it stands', async () => {
-    // 4.2.0 reads the datatoken from the transaction's `to`, here the factory's
+  it('only extends an order sent through another contract, which upstream ocean-node refuses as it stands', async () => {
+    // Upstream reads the datatoken from the transaction's `to`, here the factory's
     // `startMultipleTokenOrder`.
     chain.started(tx(1), 3_600, { to: OTHER, payer: OTHER })
 
@@ -555,7 +555,7 @@ describe('findPreviousOrder', () => {
     expect(await find()).to.deep.equal({ orderTxId: tx(1) })
   })
 
-  it('refuses an order behind a look-alike OrderStarted from another contract, which ocean-node 4.2.0 takes first', async () => {
+  it('refuses an order behind a look-alike OrderStarted from another contract, which upstream ocean-node takes first', async () => {
     chain
       .tx(tx(1), 3_600)
       .fee()
@@ -574,14 +574,34 @@ describe('findPreviousOrder', () => {
     expect(await find()).to.equal(undefined)
   })
 
-  it('checks at most 50 candidates, each with at most two receipts', async () => {
-    // Orders anyone can place for the account, none usable or extendable.
+  it('takes the first OrderStarted for the account, past another contract’s for someone else', async () => {
+    chain
+      .tx(tx(1), 3_600)
+      .fee()
+      .started({ emitter: OTHER, consumer: OTHER, payer: OTHER })
+      .started()
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(1) })
+  })
+
+  it('checks at most 50 candidates', async () => {
+    // Orders anyone can place for the account, none usable or extendable; each costs one
+    // receipt read.
     for (let n = 1; n <= 80; n++)
-      chain.started(tx(n), 100 + n, { serviceIndex: 1 })
+      chain.started(tx(n), 100 + n * BLOCK_TIME, { serviceIndex: 1 })
 
     expect(await find()).to.equal(undefined)
-    expect(chain.getTransactionReceipt.mock.calls.length).to.be.at.most(100)
-    expect(chain.getTransactionReceipt).not.toHaveBeenCalledWith(tx(80))
+    expect(chain.getTransactionReceipt).toHaveBeenCalledTimes(50)
+    expect(chain.getTransactionReceipt).toHaveBeenCalledWith(tx(50))
+    expect(chain.getTransactionReceipt).not.toHaveBeenCalledWith(tx(51))
+  })
+
+  it('extends the best order found before the cap', async () => {
+    chain.started(tx(1), 100, { fee: { address: OTHER } })
+    for (let n = 2; n <= 61; n++)
+      chain.started(tx(n), 100 + n * BLOCK_TIME, { serviceIndex: 1 })
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1) })
   })
 })
 

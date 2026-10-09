@@ -5,21 +5,22 @@
  * only its compute `initialize` checks a previous order. This module looks the account's
  * orders up in the datatoken's events and checks each candidate transaction the way the
  * node checks the `transferTxId` of a download (`validateOrderTransaction` and
- * `verifyProviderFees`), from the transaction receipts. ocean-node 4.2.0 and
- * OceanProtocolEnterprise ocean-node 4.2.2 check it differently, and a candidate counts
+ * `verifyProviderFees`), from the transaction receipts. Upstream ocean-node (4.2.0) and
+ * OceanProtocolEnterprise ocean-node (4.2) check it differently, and a candidate counts
  * only when both would accept it, so `access()` never skips a payment the node then
  * refuses:
  *
- *   - 4.2.0 reads the datatoken from the given transaction's `to`, before following a
- *     reuse; 4.2.2 does not read `to`. A candidate is used as it stands only when its
+ *   - upstream reads the datatoken from the given transaction's `to`, before following a
+ *     reuse; enterprise does not read `to`. A candidate is used as it stands only when its
  *     transaction was sent to the datatoken itself; one sent through another contract (the
  *     factory's `startMultipleTokenOrder`, a contract wallet, a relayer) is only extended,
  *     with a `reuseOrder` nautilus sends to the datatoken;
  *   - when the transaction holds an `OrderReused`, the node follows the first one in log
  *     order, from any contract, to the transaction it names; nautilus also requires that
  *     reuse's `caller` to be the account;
- *   - in that transaction, 4.2.0 takes the first `OrderStarted`, from any contract, whose
- *     consumer or payer is the account, 4.2.2 the first such one this datatoken emitted.
+ *   - in that transaction, upstream takes the first `OrderStarted`, from any contract,
+ *     whose consumer or payer is the account, enterprise the first such one this datatoken
+ *     emitted.
  *     The order counts only when that first one is this datatoken's, and the node rejects
  *     it when its service index is not the service's;
  *   - the order is inside the service's `timeout`, counted from the block of the
@@ -59,9 +60,10 @@ const MAX_BLOCKS = 100_000
 const MAX_READS = 100
 
 /**
- * Candidates checked at most, each costing up to two receipt reads: anyone can emit orders
- * naming the account, so the lookup gives up after this many and `access()` uses the best
- * one found, or places a new order.
+ * Candidates checked at most, each costing up to two receipt reads: anyone can place an
+ * order with the account as consumer, and one of a free (dispenser) datatoken costs next to
+ * nothing, so the lookup gives up after this many and `access()` extends the best one found,
+ * or places a new order.
  */
 const MAX_CHECKS = 50
 
@@ -111,12 +113,13 @@ export interface PreviousOrder {
 }
 
 /**
- * The account's newest order for the service that the node would accept for a download,
+ * The account's newest order for the service that both nodes would accept for a download,
  * or `undefined` when there is none within the lookup's bounds.
  *
  * The events are read newest first, in chunks of blocks, from the newest block with
  * `CONFIRMATIONS` down to the first block still inside the service's timeout, and no
- * further than `MAX_BLOCKS` and `MAX_READS`. A chunk the RPC refuses as too large is read
+ * further than `MAX_BLOCKS` and `MAX_READS`; at most `MAX_CHECKS` candidates are checked,
+ * after which the best extendable order found is returned. A chunk the RPC refuses as too large is read
  * again in halves; any other error is thrown.
  */
 export async function findPreviousOrder(
@@ -170,11 +173,12 @@ export async function findPreviousOrder(
 
     for (const candidate of candidates) {
       // Every older candidate is older still, and so is the order it names.
-      if (candidate.timestamp < cutoff || checks++ === MAX_CHECKS) break scan
+      if (candidate.timestamp < cutoff) break scan
+      if (checks++ === MAX_CHECKS) break scan
 
       const verdict = await check(candidate)
 
-      if (verdict?.feeAccepted)
+      if (verdict?.usable)
         return { orderTxId: verdict.orderTxId, usableTxId: candidate.txId }
 
       if (verdict && verdict.timestamp > (extendable?.timestamp ?? -1))
@@ -256,8 +260,8 @@ async function readCandidates(
 
 /**
  * Checks a candidate the way the node checks a download's `transferTxId`: the order it
- * stands for, if the node accepts it with `lifetime` left, and whether the node keeps the
- * candidate's own provider fee.
+ * stands for, if both nodes accept it with `lifetime` left, and whether the candidate is
+ * usable as it stands: sent to the datatoken, with its own provider fee kept by the node.
  */
 function checker(query: PreviousOrderQuery, now: number, lifetime: number) {
   const datatoken = query.datatokenAddress.toLowerCase()
@@ -302,13 +306,13 @@ function checker(query: PreviousOrderQuery, now: number, lifetime: number) {
   return async (
     candidate: Candidate
   ): Promise<
-    { orderTxId: string; timestamp: number; feeAccepted: boolean } | undefined
+    { orderTxId: string; timestamp: number; usable: boolean } | undefined
   > => {
     const mined = await receipt(candidate.txId)
 
     if (!mined) return undefined
 
-    // ocean-node 4.2.0 reads the datatoken from here; a `reuseOrder` nautilus sends passes.
+    // Upstream ocean-node reads the datatoken from here; a `reuseOrder` nautilus sends passes.
     const direct = mined.to?.toLowerCase() === datatoken
 
     let ordered: TransactionReceipt | null = mined
@@ -320,8 +324,8 @@ function checker(query: PreviousOrderQuery, now: number, lifetime: number) {
       if (!ordered) return undefined
     }
 
-    // The first one from any contract, as 4.2.0 takes it: 4.2.2 takes the first one this
-    // datatoken emitted, the same one only when it comes first.
+    // The first one from any contract, as upstream takes it: enterprise takes the first one
+    // this datatoken emitted, the same one only when it comes first.
     const started = first(
       ordered,
       'OrderStarted',
@@ -339,7 +343,7 @@ function checker(query: PreviousOrderQuery, now: number, lifetime: number) {
     return {
       orderTxId: ordered.hash.toLowerCase(),
       timestamp: started.event.timestamp,
-      feeAccepted:
+      usable:
         direct &&
         mined.logs.some((log) => feeAccepted(decode(log), candidate.timestamp))
     }
