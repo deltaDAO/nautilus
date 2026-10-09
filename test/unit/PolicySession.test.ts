@@ -1599,7 +1599,7 @@ describe('compute() with a policy server', () => {
   function computeNode(
     initiate?: (
       request: PolicyVerificationRequest
-    ) => Promise<PolicyServerReply>
+    ) => Promise<PolicyServerReply | null>
   ) {
     const calls: string[] = []
     const initializeCompute: { policyServer?: unknown }[] = []
@@ -1733,6 +1733,24 @@ describe('compute() with a policy server', () => {
       `initiate:${ALGO_DID}`,
       'initializeCompute'
     ])
+  })
+
+  it('sends no sessions when initiate shows the node has no policy server, for compute and free compute', async () => {
+    for (const run of [compute, freeCompute]) {
+      const node = computeNode(async () => null)
+
+      await run(job, context(node.client))
+
+      expect(node.calls.slice(0, 2)).to.deep.equal([
+        `initiate:${ASSET_DID}`,
+        `initiate:${ALGO_DID}`
+      ])
+      const sent =
+        run === compute
+          ? [node.initializeCompute[0], node.computeStart[0]]
+          : [node.freeComputeStart[0]]
+      for (const params of sent) expect(params.policyServer).to.equal(undefined)
+    }
   })
 
   it('refuses the whole job when the algorithm is refused, before anything is asked or ordered', async () => {

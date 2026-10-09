@@ -45,8 +45,9 @@ const session = await policySessions.resolve({ // [!code focus]
 5. `initiate`, for `node.policySessionAddress(consumerAddress)`: the address the node
    forwards to the policy server (for a Signer, `consumerAddress` itself; for a JWT, the
    address in the token). A node without a policy server answers with a 404 and no body:
-   `null`, nothing cached. Otherwise the policy server checks it and opens a session, or
-   refuses (`PolicyDeniedError`). The session id is `message.sessionId`; the openid4vp
+   `null`; no session is cached, and `hasPolicyServer()` answers `false` for 10 minutes.
+   Otherwise the policy server checks it and opens a session, or refuses
+   (`PolicyDeniedError`). The session id is `message.sessionId`; the openid4vp
    request is `message.redirectUri`.
 6. Only when the `SSIpolicy` asks for credentials: the provider's `present()`, then
    `checkSessionId`, which must report `verificationResult: true` (else `PolicyDeniedError`).
