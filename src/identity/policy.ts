@@ -316,8 +316,8 @@ function dedupe<T>(values: T[]): T[] {
  * Address entries are left as stored: bare strings and `{ address }` objects are both read
  * by the policy server and OceanProtocolEnterprise ocean-node, but upstream ocean-node
  * 4.2.0's built-in check (no policy server) reads strings only, so rewriting a list the
- * edit does not touch could break its gate there. `addCredentialAddresses` and `removeCredentialAddresses` read
- * either form.
+ * edit does not touch could break its gate there. `addCredentialAddresses` and
+ * `removeCredentialAddresses` read either form.
  *
  * Unusable VC policies are dropped, as the policy server skips them. An unreadable VP
  * policy, request credential or per-credential policy throws instead: dropping it would
