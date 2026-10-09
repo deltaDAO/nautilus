@@ -27,8 +27,8 @@ credential-gated assets are indexed.
   asset whose address `values` are bare strings. An entry stored as bare strings only stays
   that way, a mixed one is written back as `{ address }`, and an edit leaves address entries
   it does not touch as stored, since upstream ocean-node 4.2.0 without a policy server
-  reads only bare strings. `AddressCredential.values` is typed `({ address: string } | string)[]`
-  accordingly.
+  reads only bare strings. `AddressCredential.values` is typed
+  `({ address: string } | string)[]` accordingly.
 - **`removeCredentialAddresses()` removes from every address entry of the list.** It
   changed only the first, so an address also held by a second entry stayed allowed by the
   policy server, which reads them as one list.
