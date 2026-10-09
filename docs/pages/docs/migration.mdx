@@ -47,9 +47,9 @@ or removed. Read each value as `typeof value === 'string' ? value : value.addres
 nautilus now opens the policy-server session itself, on every download and compute job that
 the node checks: whenever the node has a policy server and the asset or service has
 `credentials` (`{}` included). The node's status says whether it has one (`isPSConfigured`);
-ocean-node 4.2.0 does not report it, and there `initiate` tells (a 404 with no body). An
-asset gated by addresses only needs no wallet any more, and a refusal is reported before
-anything is ordered.
+upstream ocean-node 4.2.0 does not report it, and there `initiate` tells (a 404 with no
+body). An asset gated by addresses only needs no wallet any more, and a refusal is reported
+before anything is ordered.
 
 **A custom `CredentialProvider` implements `present()` instead of `resolve()`.** nautilus
 opens the session, reads its id and checks the result (`checkSessionId`); the provider only
@@ -737,9 +737,10 @@ const { url } = await nautilus.access({ assetDid: 'did:ope:…' })
   access lists, while an `SSIpolicy` entry is a type it does not know, which denies everyone
   under the default `match_allow: 'all'`. nautilus opens no session there.
 - Address values are written as `{ address }`, the form the enterprise market writes and
-  reads. An edit leaves an address entry it does not change as stored. ocean-node 4.2.2 and
-  the policy server read both forms; ocean-node 4.2.0 without a policy server reads only
-  bare strings, and fails a request on `{ address }` with an error.
+  reads. An edit leaves an address entry it does not change as stored. OceanProtocolEnterprise
+  ocean-node and the policy server read both forms; upstream ocean-node 4.2.0 without a
+  policy server reads only bare strings, and fails a request on `{ address }` with an
+  error.
 - On a node with a policy server, an asset needs an address allow list: the policy server
   refuses every address that is not on it. It checks consume time (`initiate`, `download`,
   `startCompute`); its publish-time actions (`newDDO`, `updateDDO`, `validateDDO`,

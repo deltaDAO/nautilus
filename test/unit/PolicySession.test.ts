@@ -272,8 +272,8 @@ describe('OceanNodeClient policy server', () => {
   })
 
   it('reads an empty 404 as a node without a policy server, and remembers it', async () => {
-    // ocean-node 4.2.0 does not report `isPSConfigured`; without `POLICY_SERVER_URL` its
-    // `initiate` answers 404 with no body.
+    // Upstream ocean-node 4.2.0 does not report `isPSConfigured`; without
+    // `POLICY_SERVER_URL` its `initiate` answers 404 with no body.
     const getNodeStatus = status(undefined)
     answer(404, '')
     const node = client('a-session-token')

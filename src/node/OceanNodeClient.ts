@@ -640,9 +640,10 @@ const NO_POLICY_SERVER_TTL_MS = 10 * 60 * 1000
 
 /**
  * Whether an `initiate` failure over P2P is a node without a policy server. ocean-node
- * (4.2.0 and 4.2.2 alike) answers `initiate` with a bare `{"httpStatus":404}` status frame
- * when `POLICY_SERVER_URL` is unset, which ocean.js 9.2 throws as exactly this message,
- * wrapped in `P2P command error: …` with it as the `cause`. The node's own 404 (an asset
+ * (upstream and OceanProtocolEnterprise 4.2 alike) answers `initiate` with a bare
+ * `{"httpStatus":404}` status frame when `POLICY_SERVER_URL` is unset or empty, which
+ * ocean.js 9.2 throws as exactly this message, wrapped in `P2P command error: …` with it as
+ * the `cause`. The node's own 404 (an asset
  * it has not indexed) carries its text instead, `Not found`.
  */
 function isP2pNoPolicyServer(error: unknown): boolean {
@@ -2101,8 +2102,8 @@ export class OceanNodeClient {
   /**
    * Whether the node has a policy server: `isPSConfigured` from its status, or what an
    * `initiate` through this client showed. `undefined` when neither has said: the status
-   * cannot be read, or does not say, as on ocean-node 4.2.0, which does not report
-   * `isPSConfigured`.
+   * cannot be read, or does not say, as on upstream ocean-node 4.2.0, which does not
+   * report `isPSConfigured`.
    *
    * A "yes" is kept for the lifetime of this client (the node reads its `POLICY_SERVER_URL`
    * once, at startup), a "no" for 10 minutes, so a node restarted with a policy server is
@@ -2209,8 +2210,8 @@ export class OceanNodeClient {
    * `initiate` with a 404 and no body (over P2P, a bare `{"httpStatus":404}`) when its
    * `POLICY_SERVER_URL` is unset or empty, and neither the node's own errors nor the policy
    * server's answer that way. `hasPolicyServer` remembers it, as it remembers an opened
-   * session's "yes": ocean-node 4.2.0 does not report `isPSConfigured`, so this is how a
-   * node like it is told apart.
+   * session's "yes": upstream ocean-node 4.2.0 does not report `isPSConfigured`, so this is
+   * how a node like it is told apart.
    *
    * Throws a `PolicyDeniedError` only for the policy server's own refusal: a reply with
    * `success: false` and a 4xx `httpStatus`. Everything else throws an `OceanNodeError` with

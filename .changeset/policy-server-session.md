@@ -27,8 +27,8 @@ was found out only after the order.
   refused before anything is signed or ordered when no provider is set.
 - **`skipCredentials` is removed** from `access()`, `compute()` and `freeCompute()`. A node
   without a policy server is read from its status (`isPSConfigured`) or, where the status
-  does not say (ocean-node 4.2.0), from its answer to `initiate`, so there is nothing to
-  skip.
+  does not say (upstream ocean-node 4.2.0), from its answer to `initiate`, so there is
+  nothing to skip.
 - **`WaltIdCredentialProvider`** implements `present()`: it no longer calls `initiate`, takes
   no `sessionStore`, and has no `clearSessions()` or `explainFailure()`. The session cache is
   `Nautilus.create`'s new `sessionStore` option; the failed policies are on

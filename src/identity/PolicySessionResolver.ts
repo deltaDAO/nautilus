@@ -212,8 +212,8 @@ export class PolicySessionResolver {
       policyServer: emptyPolicyServerPayload('')
     })
 
-    // The node has no policy server after all (ocean-node 4.2.0 does not report
-    // `isPSConfigured`): it checks the credentials itself.
+    // The node has no policy server after all (upstream ocean-node 4.2.0 does not report
+    // `isPSConfigured`, and an empty `POLICY_SERVER_URL` reports one): no session.
     if (!reply) return null
 
     const { sessionId, redirectUri } = readInitiateReply(reply)

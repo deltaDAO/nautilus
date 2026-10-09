@@ -39,15 +39,15 @@ const session = await policySessions.resolve({ // [!code focus]
    below run again.
 3. The node is known to have no policy server (`hasPolicyServer()` is `false`: its status
    says `isPSConfigured: false`, or an earlier `initiate` showed it): `null`. When the
-   status does not say, as on ocean-node 4.2.0, step 5 tells.
+   status does not say, as on upstream ocean-node 4.2.0, step 5 tells.
 4. The service asks for a verifiable presentation and no credential provider is set: throws,
    before anything is signed.
 5. `initiate`, for `node.policySessionAddress(consumerAddress)`: the address the node
    forwards to the policy server (for a Signer, `consumerAddress` itself; for a JWT, the
    address in the token). A node without a policy server answers with a 404 and no body:
    `null`, nothing cached. Otherwise the policy server checks it and opens a session, or
-   refuses (`PolicyDeniedError`). The session id is `message.sessionId`; the openid4vp request is
-   `message.redirectUri`.
+   refuses (`PolicyDeniedError`). The session id is `message.sessionId`; the openid4vp
+   request is `message.redirectUri`.
 6. Only when the `SSIpolicy` asks for credentials: the provider's `present()`, then
    `checkSessionId`, which must report `verificationResult: true` (else `PolicyDeniedError`).
 7. The session is cached and returned as the payload for the node's `policyServer` slot: a
