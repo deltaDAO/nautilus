@@ -39,6 +39,11 @@ and leaving the asset open under the remaining policies. Removing the last addre
 allow list now keeps the entry as `values: []`, which denies everyone, as the node and the
 policy server read it.
 
+**`AddressCredential.values` is `({ address: string } | string)[]`.** Assets from other
+producers can store bare strings, and an edit keeps them: an entry nautilus does not change
+stays as stored, and one stored as bare strings only stays that way when addresses are added
+or removed. Read each value as `typeof value === 'string' ? value : value.address`.
+
 ## Upgrading from 2.0.0-beta.0
 
 2.0.0-beta.1 makes published and edited assets indexable by an unmodified

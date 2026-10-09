@@ -24,9 +24,11 @@ credential-gated assets are indexed.
   names (deduplicated).
 - **The address helpers read bare-string addresses.** `addCredentialAddresses()` no longer
   writes `{ address: undefined }` and `removeCredentialAddresses()` no longer throws on an
-  asset whose address `values` are bare strings; they write the entry they change back as
-  `{ address }`. An edit leaves address entries it does not touch as stored, since
-  ocean-node 4.2.0 without a policy server reads only bare strings.
+  asset whose address `values` are bare strings. An entry stored as bare strings only stays
+  that way, a mixed one is written back as `{ address }`, and an edit leaves address entries
+  it does not touch as stored, since ocean-node 4.2.0 without a policy server reads only bare
+  strings. `AddressCredential.values` is typed `({ address: string } | string)[]`
+  accordingly.
 - **Loading reads every stored shape the policy server accepts.** A single policy or request
   credential stored without its array is wrapped in one, and list entries that are not
   objects are skipped, so even a metadata-only edit of such an asset no longer throws.
