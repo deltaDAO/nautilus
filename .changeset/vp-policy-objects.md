@@ -29,6 +29,9 @@ credential-gated assets are indexed.
   it does not touch as stored, since ocean-node 4.2.0 without a policy server reads only bare
   strings. `AddressCredential.values` is typed `({ address: string } | string)[]`
   accordingly.
+- **`removeCredentialAddresses()` removes from every address entry of the list.** It
+  changed only the first, so an address also held by a second entry stayed allowed by the
+  policy server, which reads them as one list.
 - **Loading reads every stored shape the policy server accepts.** A single policy or request
   credential stored without its array is wrapped in one, and list entries that are not
   objects are skipped, so even a metadata-only edit of such an asset no longer throws.
