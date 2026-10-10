@@ -166,6 +166,22 @@ npm start -- ssi:round-trip      # the credential-gated round trip
 | `identity.ts` | Credential-gated publishing (access and compute) and consuming with walt.id. |
 | `scenarios/e2e.ts` | Runs every non-SSI command in order and reports what passed. |
 
+## Logging
+
+nautilus prints its own warnings to stderr, whatever the command prints on stdout: for
+example `publish.preflight.denies_all` when the node's policy server would refuse every
+consumer of the asset you publish. Every line names a stable event; secrets (RPC tokens,
+session ids, signatures, JWTs, S3 keys) are redacted at every level.
+
+| Variable | Values |
+| --- | --- |
+| `NAUTILUS_LOG_LEVEL` | `silent`, `error`, `warn` (the default), `info`, `debug`, `trace`. `VERBOSE=true` is `debug`. |
+| `NAUTILUS_LOG_FORMAT` | `pretty` (the default on a terminal) or `json` (one object per line, the default when stderr is redirected). |
+
+`setup()` in `nautilus.ts` applies them with `Nautilus.configureLogging`, since `.env` is
+loaded after nautilus is imported. In your own code, call `Nautilus.configureLogging({ level,
+format, sink })`, or give one instance its own with `Nautilus.create(signer, { logger })`.
+
 ## Choosing your nautilus
 
 The examples can run against either the nautilus in this checkout or the one on npm.
