@@ -379,6 +379,8 @@ is one value — a policy-server session id — which it then carries into the d
 5. Run `npm start -- ssi:round-trip` to publish a gated dataset and consume it in one go.
    Against the local dev stack, also set `SSI_ALLOW_INSECURE_TRANSPORT=true`: its policy
    server answers on plain http at `host.docker.internal`, which nautilus otherwise refuses.
+   Use it for a local stack only, never over a network others can read: a presentation is a
+   bearer token, and the verifier accepts one replayed from an earlier session.
 
 **On the publishing side**, declare what you require:
 
@@ -427,7 +429,13 @@ set `identity.ts` uses, and why:
 
 Gating also works per service, so an asset can offer a preview that needs no credential
 (allow-listed accounts only) and a full service that also requires a credential — see
-`npm start -- ssi:publish-partial`.
+`npm start -- ssi:publish-partial`. `ServiceBuilder.addRequestCredentials` takes no VC or VP
+policies today, so that service-level gate runs only with the policy server's
+`DEFAULT_VC_POLICIES`/`DEFAULT_VP_POLICIES` (set by its operator; a deployment's values are
+unknown). Don't add `setVcPolicies`/`setVpPolicies` to such an asset: an asset-level
+`SSIpolicy` without `request_credentials` makes the policy server refuse the preview ("SSIpolicy
+was found, but failed to fetch request credentials"). Per-service VC and VP policies are a
+planned SDK change.
 
 Gating applies to compute too: `npm start -- ssi:publish-gated-compute <algorithmDid>`
 publishes a gated compute dataset that trusts that algorithm, and

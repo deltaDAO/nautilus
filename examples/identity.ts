@@ -162,6 +162,20 @@ export async function connectSsiWallet(role: Role = 'publisher') {
  * the wallet's first DID, so this works unattended in a script or in CI. Pass the callbacks
  * to drive a UI instead.
  */
+let insecureTransportWarned = false
+
+/** `SSI_ALLOW_INSECURE_TRANSPORT=true`, with one warning per process when it is on. */
+function allowInsecureTransport(): boolean {
+  const allow = process.env.SSI_ALLOW_INSECURE_TRANSPORT === 'true'
+  if (allow && !insecureTransportWarned) {
+    insecureTransportWarned = true
+    console.warn(
+      '  ⚠ SSI_ALLOW_INSECURE_TRANSPORT is on: presentations may travel over plain http. Use it for a local stack only, never over a network others can read: a presentation is a bearer token, and the verifier accepts one replayed from an earlier session.'
+    )
+  }
+  return allow
+}
+
 export function createCredentialProvider(
   nautilus: Nautilus,
   options: {
@@ -176,8 +190,9 @@ export function createCredentialProvider(
     walletId,
     did,
     // Local stacks only: a policy-server proxy reached over plain http on a host other
-    // than a loopback one (e.g. host.docker.internal in the dev stack).
-    allowInsecureTransport: process.env.SSI_ALLOW_INSECURE_TRANSPORT === 'true',
+    // than a loopback one (e.g. host.docker.internal in the dev stack). Never over a network
+    // others can read: presentations are bearer tokens, and a replayed one is accepted.
+    allowInsecureTransport: allowInsecureTransport(),
 
     ...(options.interactive
       ? {
@@ -598,6 +613,14 @@ export async function publishWithDidIssuer(
  *
  * Gating is per service as well as per asset in DDO v5, and the policy server merges both
  * when deciding whether a presentation is needed.
+ *
+ * Limitation: `ServiceBuilder.addRequestCredentials` takes no VC or VP policies today, so the
+ * full service's gate runs only with the policy server's `DEFAULT_VC_POLICIES` and
+ * `DEFAULT_VP_POLICIES` (set by its operator; a deployment's values are unknown). The VP
+ * `signature` check of the recommended set may not run. Don't add `setVcPolicies` /
+ * `setVpPolicies` to this asset: an asset-level `SSIpolicy` without `request_credentials` makes
+ * the policy server refuse the preview ("SSIpolicy was found, but failed to fetch request
+ * credentials"). Per-service VC and VP policies are a planned SDK change.
  */
 export async function publishPartiallyGatedDataset(
   nautilus: Nautilus,
@@ -609,6 +632,9 @@ export async function publishPartiallyGatedDataset(
 
   console.log(
     'Publishing a dataset with a preview that needs no credential (allow-listed accounts only) and a full service that also requires a credential...'
+  )
+  console.log(
+    "  Note: the full service's gate runs with the policy server's default VC/VP policies only (set by its operator); per-service VC/VP policies are not supported yet."
   )
 
   const file = {
