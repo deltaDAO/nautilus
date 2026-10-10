@@ -28,6 +28,8 @@ import {
   getService,
   getServiceCredentials
 } from '../ddo/read.js'
+import { debugEnabled, debugRaw } from '../log/debug.js'
+import { sanitize } from '../node/messages.js'
 import {
   type OceanNodeClient,
   PolicyServerAction
@@ -45,6 +47,9 @@ import {
   type WaltIdSession,
   type WaltIdWallet
 } from './waltid/client.js'
+
+/** How much of the wallet's rejection goes into a `CredentialPresentationError`. */
+const MAX_PRESENTATION_ERROR_LENGTH = 500
 
 export interface WaltIdCredentialProviderOptions {
   /** Base URL of the walt.id wallet API. Ignored if `wallet` is supplied. */
@@ -230,6 +235,9 @@ export class WaltIdCredentialProvider implements CredentialProvider {
       token
     )
 
+    if (debugEnabled('sensitive', 'wallet'))
+      debugRaw('wallet', 'resolved presentation request', resolved)
+
     const result = await this.wallet.usePresentationRequest(
       walletId,
       did,
@@ -238,11 +246,25 @@ export class WaltIdCredentialProvider implements CredentialProvider {
       token
     )
 
-    if (result.errorMessage || result.redirectUri?.includes('error'))
+    if (debugEnabled('sensitive', 'wallet'))
+      debugRaw('wallet', 'presentation answer', result)
+
+    if (result.errorMessage || result.redirectUri?.includes('error')) {
+      // The raw answer went to the debug channel; the error keeps it redacted (an error
+      // redirect carries the policy-server session id).
+      const errorMessage = result.errorMessage
+        ? sanitize(result.errorMessage, MAX_PRESENTATION_ERROR_LENGTH, null)
+        : undefined
       throw new CredentialPresentationError(
-        result.errorMessage || 'The verifier rejected the presentation.',
-        result
+        errorMessage || 'The verifier rejected the presentation.',
+        {
+          ...(errorMessage ? { errorMessage } : {}),
+          ...(result.redirectUri
+            ? { redirectUri: sanitize(result.redirectUri, 200, null) }
+            : {})
+        }
       )
+    }
   }
 
   private async getWalletSession(signer: Signer): Promise<WaltIdSession> {
