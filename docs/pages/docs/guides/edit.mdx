@@ -242,8 +242,9 @@ unlisting the asset keeps it unlisted.
 
 :::warning[DEPRECATED and REVOKED are one-way]
 Moving an active asset to `DEPRECATED` (2) or `REVOKED_BY_PUBLISHER` (3) cannot be undone.
-What the node serves afterwards depends on its version: **ocean-node 4.2.x drops the DDO**,
-so `getAsset` answers 404 (a node that keeps a short document keeps only the NFT state).
+What the node serves afterwards depends on the node's version and database: **ocean-node
+4.2.x with Elasticsearch drops the DDO**, so `getAsset` answers 404; with Typesense it keeps a
+short document holding only the NFT state.
 Setting `ACTIVE` again does not bring it back, and the node will not decrypt or index new
 metadata for it either, so `edit()` refuses such an asset before spending anything. Use `END_OF_LIFE` (1), `ORDERING_DISABLED_TEMPORARILY` (4) or `ASSET_UNLISTED` (5)
 for anything you may want to undo.

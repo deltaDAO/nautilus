@@ -343,7 +343,8 @@ export const COMMANDS: Record<string, Command> = {
     run: (ctx, did) => unlistAsset(ctx.nautilus, did)
   },
   'asset:revoke': {
-    summary: 'Revoke an asset',
+    summary:
+      'Revoke an asset (one-way; ocean-node 4.2.x with Elasticsearch then drops the DDO)',
     args: ['did'],
     run: (ctx, did) => revokeAsset(ctx.nautilus, did)
   },

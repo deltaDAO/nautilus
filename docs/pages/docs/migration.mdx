@@ -584,9 +584,10 @@ drops it from the index when that envelope is gone. See
 [cleaning up](/docs/guides/remote-stores#cleaning-up).
 
 **Know:** `DEPRECATED` and `REVOKED_BY_PUBLISHER` are one-way, so `publish()` and `edit()`
-refuse to write metadata in either state. What the node serves afterwards depends on its
-version: ocean-node 4.2.x drops the DDO (`getAsset` answers 404), so read the state from the
-chain, not from the node. See
+refuse to write metadata in either state. What the node serves afterwards depends on the
+node's version and database: ocean-node 4.2.x with Elasticsearch drops the DDO (`getAsset`
+answers 404); with Typesense it keeps a short document holding only the NFT state. Either
+way, read the state from the chain, not from the node. See
 [lifecycle states](/docs/api/nautilus/setAssetLifecycleState#states).
 
 ## 1. Dependencies

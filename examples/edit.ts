@@ -53,8 +53,10 @@ import { publishedResult, publishSession } from './publish'
  *     replays the asset from its creation event and drops it without that envelope. An edit
  *     that fails before its transaction is sent removes the envelope it stored itself.
  *   - **DEPRECATED and REVOKED are final.** `edit()` refuses an asset in either state before
- *     sending anything. What the node serves afterwards depends on its version: ocean-node
- *     4.2.x drops the DDO (`getAsset` answers 404), so read the state from the chain.
+ *     sending anything. What the node serves afterwards depends on the node's version and
+ *     database: ocean-node 4.2.x with Elasticsearch drops the DDO (`getAsset` answers 404);
+ *     with Typesense it keeps a short document holding only the NFT state. Either way, read
+ *     the state from the chain.
  *   - **`waitForIndexer` throws** on failure or timeout instead of returning `undefined`.
  */
 
@@ -457,9 +459,10 @@ export async function removeService(
  * sending anything if the asset is already in that state.
  *
  * **One-way.** nautilus refuses to write metadata for a revoked asset again: no edit, no
- * `completePublish`. What the node serves afterwards depends on its version: ocean-node 4.2.x
- * drops the DDO, so `getAsset` answers 404 from then on. That is why the wait below reads the
- * state from the chain.
+ * `completePublish`. What the node serves afterwards depends on the node's version and
+ * database: ocean-node 4.2.x with Elasticsearch drops the DDO, so `getAsset` answers 404 from
+ * then on; with Typesense it keeps a short document holding only the NFT state. That is why
+ * the wait below reads the state from the chain.
  */
 export async function revokeAsset(nautilus: Nautilus, did: string) {
   const asset = await nautilus.getAsset(did)
@@ -484,7 +487,7 @@ export async function revokeAsset(nautilus: Nautilus, did: string) {
     LifecycleStates.REVOKED_BY_PUBLISHER
   )
   console.log(
-    '  the node may no longer serve this DDO: ocean-node 4.2.x drops it on revoke'
+    '  the node may no longer serve this DDO: ocean-node 4.2.x with Elasticsearch drops it on revoke'
   )
 }
 
@@ -496,8 +499,9 @@ const NFT_METADATA_ABI = [
 /**
  * Polls the NFT on chain until it holds the new lifecycle state.
  *
- * The chain, not the node: on ocean-node 4.2.x a DEPRECATED or REVOKED asset's DDO is gone,
- * so `getAsset` answers 404 and would never show the state. And not
+ * The chain, not the node: on ocean-node 4.2.x with Elasticsearch a DEPRECATED or REVOKED
+ * asset's DDO is gone, so `getAsset` answers 404 and would never show the state (with
+ * Typesense the node keeps a short document holding only the NFT state). And not
  * `waitForIndexer(did, receipt.hash)`: the indexer records a transaction id only for
  * MetadataCreated/Updated, so a MetadataState change never ends that wait.
  *
@@ -537,8 +541,9 @@ async function waitForLifecycleState(
 /**
  * Unlists an asset. Reversible: set the state back to ACTIVE to list it again.
  *
- * Unlisting hides nothing by itself. The node still resolves the asset by DID and returns it
- * in searches, with `indexedMetadata.nft.state` 5: a market has to filter on that state.
+ * Unlisting hides nothing by itself. Once the node indexes the change, it still resolves the
+ * asset by DID and returns it in searches, with `indexedMetadata.nft.state` 5: a market has
+ * to filter on that state. The wait below confirms the state on chain, not on the node.
  */
 export async function unlistAsset(nautilus: Nautilus, did: string) {
   const asset = await nautilus.getAsset(did)
@@ -563,7 +568,7 @@ export async function unlistAsset(nautilus: Nautilus, did: string) {
     LifecycleStates.ASSET_UNLISTED
   )
   console.log(
-    '  still resolvable by DID and searchable; markets filter on indexedMetadata.nft.state'
+    '  once the node indexes it: still resolvable and searchable, flagged nft.state 5 for markets'
   )
 }
 

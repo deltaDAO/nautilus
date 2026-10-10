@@ -42,14 +42,14 @@ you are changing metadata anyway, and this when the state is all you want to cha
 
 :::warning[DEPRECATED and REVOKED are one-way]
 Once an active asset moves to `DEPRECATED` or `REVOKED_BY_PUBLISHER`, it does not come back.
-What the node serves afterwards depends on its version:
+What the node serves afterwards depends on the node's version and database:
 
-- **ocean-node 4.2.x drops the DDO.** The indexer deletes the full document, then fails to
-  write the short one it means to keep, so [`getAsset`](/docs/api/nautilus/getAsset) answers
-  404 and the node's indexing state for the DID (`GET /api/aquarius/state/ddo?did=…`)
-  records "Schema for version deprecated not found".
-- A node that writes the short document keeps only the NFT state, without metadata or
-  services.
+- **ocean-node 4.2.x with Elasticsearch drops the DDO.** The indexer deletes the full
+  document, then fails to write the short one it means to keep, so
+  [`getAsset`](/docs/api/nautilus/getAsset) answers 404 and the node's indexing state for the
+  DID (`GET /api/aquarius/state/ddo?did=…`) records "Schema for version deprecated not found".
+- **With Typesense, it keeps a short document** holding only the NFT state, without metadata
+  or services.
 
 Setting `ACTIVE` again does not restore it: only a new metadata write could, and
 [`edit`](/docs/api/nautilus/edit) refuses an NFT in either state and needs the full published
@@ -70,18 +70,22 @@ leave it out.
 ### Reading the state
 
 **Read the state from the chain, not from the node.** After a `DEPRECATED` or
-`REVOKED_BY_PUBLISHER` change, a 4.2.x node has no document to read it from. The NFT's
-`getMetaData()` holds it as its third value; keep the NFT address from the publish, since
-the node may no longer have it either:
+`REVOKED_BY_PUBLISHER` change, a 4.2.x node with Elasticsearch has no document to read it
+from. The NFT's `getMetaData()` holds it as its third value. Start from the NFT address you
+stored from the publish result, not from `getAsset()`: the node may no longer have the
+document to look it up in:
 
 ```ts twoslash
 import { Nft } from '@oceanprotocol/lib'
-import { getChainId, getNftAddress, Nautilus } from '@deltadao/nautilus'
+import { getChainId, Nautilus, type NautilusAsset } from '@deltadao/nautilus'
 import { Wallet } from 'ethers'
 const nautilus = await Nautilus.create(new Wallet('0x1234'))
-const asset = await nautilus.getAsset('did:ope:2a6ebce0af...')
+declare const asset: NautilusAsset
 // ---cut---
-const nftAddress = getNftAddress(asset)
+// at publish time: store the NFT address with your own records
+const { nftAddress } = await nautilus.publish(asset)
+
+// later, after the state change
 const signer = nautilus.getSigner()
 const nft = new Nft(signer, await getChainId(signer))
 

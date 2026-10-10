@@ -538,8 +538,9 @@ clear. It does not stop someone from reading it: unless the operator sets
 `AUTHORIZED_DECRYPTERS`, an ocean-node 4.2 decrypts for any caller, and its decrypt handler
 does not tie the ciphertext to the asset it checks the lifecycle state of. So:
 
-- **Revoking does not make a DDO unreadable.** The node stops serving the indexed copy (4.2.x
-  drops it), but the stored envelope can still be decrypted as long as it exists.
+- **Revoking does not make a DDO unreadable.** The node stops serving the indexed copy
+  (ocean-node 4.2.x with Elasticsearch drops it; with Typesense it keeps a short document
+  holding only the NFT state), but the stored envelope can still be decrypted as long as it exists.
 - **Every superseded version stays readable** the same way, since an edit stores a new
   envelope and leaves the old one.
 
@@ -555,8 +556,9 @@ confidentiality should set `AUTHORIZED_DECRYPTERS`.
 When the indexer sees a `MetadataCreated` or `MetadataUpdated` event:
 
 1. **Lifecycle state.** If the NFT is DEPRECATED (2) or REVOKED_BY_PUBLISHER (3), the node
-   does not index the new metadata: it drops the stored DDO (4.2.x; a node that keeps a short
-   document keeps only the NFT state) and stops. This is one-way — see
+   does not index the new metadata and stops. What it keeps depends on the node's version
+   and database: ocean-node 4.2.x with Elasticsearch drops the stored DDO (404); with
+   Typesense it keeps a short document holding only the NFT state. This is one-way — see
    [lifecycle states](/docs/api/nautilus/setAssetLifecycleState#states).
 2. **Pointer.** Flags must be `0x02`. The node asks the node named in the event (`nodeUri`)
    to decrypt the pointer, and the plaintext must be `{ "remote": <StorageObject> }` with
