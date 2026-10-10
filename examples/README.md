@@ -187,6 +187,28 @@ unknown value is ignored with a `config.env.invalid` warning. In your own code, 
 ocean.js still prints its own lines, unredacted, at its own level (errors only by default)
 until a later release routes them through nautilus; see `configureLogging` in the docs.
 
+### Debugging a failure
+
+No log level prints unredacted data. When the redacted error does not say enough (a
+credential-gated download refused with `Presentation failed`, a node answer cut to one
+sentence), rerun the command with the sensitive debug channel on:
+
+```sh
+NAUTILUS_DEBUG=sensitive NAUTILUS_DEBUG_TOPICS=policy,wallet npm start -- ssi:consume <did> 2> debug.log
+```
+
+| Variable | Values |
+| --- | --- |
+| `NAUTILUS_DEBUG` | `off` (the default), `sensitive` (raw node, wallet, verifier and RPC answers, session ids, signatures, presented credentials), `secrets` (also credentials: the RPC URL's token, S3 secret keys, the IPFS JWT). |
+| `NAUTILUS_DEBUG_TOPICS` | a comma-separated list of `node`, `wallet`, `policy`, `rpc`, `order`, `nonce`, `store`, `compute`. Default: all. |
+
+Each event is one stderr line starting with `[nautilus:debug:sensitive]` or
+`[nautilus:debug:SECRETS]`; a warning says the channel is on. Errors and the command's own
+output stay redacted. Sharing rules: never use it in production; keep only the lines you
+need, scan them for secrets and replace session ids, signatures and JWTs before sharing; never
+share `secrets` output, and rotate every credential it printed. See the debugging guide in
+the docs.
+
 ## Choosing your nautilus
 
 The examples can run against either the nautilus in this checkout or the one on npm.
