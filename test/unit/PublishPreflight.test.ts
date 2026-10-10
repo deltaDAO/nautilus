@@ -11,7 +11,7 @@
  * also pin the thing that makes it affordable: it costs no extra node round trip.
  */
 import type { StorageObject } from '@oceanprotocol/lib'
-import { Wallet } from 'ethers'
+import { FetchRequest, FetchResponse, makeError, Wallet } from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PublishedNotIndexed } from '../../src/@types/Publish.js'
 import { CredentialListTypes } from '../../src/ddo/types.js'
@@ -1398,10 +1398,25 @@ describe('one asset, one metadata transaction at a time', () => {
 
   it('warns, with the RPC error redacted, and goes on when the block cannot be read', async () => {
     const log = captureLog()
+    // The error ethers' JsonRpcProvider throws for a failed request: the URL with its
+    // token in `info` and in the message, and the ethers code in the message.
+    const request = new FetchRequest(FAKE.rpcUrl)
     vi.mocked(getMetadataEventsInBlock).mockRejectedValueOnce(
-      new Error(
-        `server response 500 Internal Server Error (requestUrl="${FAKE.rpcUrl}", code=SERVER_ERROR)`
-      )
+      makeError('server response 500 Internal Server Error', 'SERVER_ERROR', {
+        request,
+        response: new FetchResponse(
+          500,
+          'Internal Server Error',
+          {},
+          null,
+          request
+        ),
+        info: {
+          requestUrl: FAKE.rpcUrl,
+          responseBody: '',
+          responseStatus: '500 Internal Server Error'
+        }
+      })
     )
     const { nautilus } = await createNautilus()
 
@@ -1412,6 +1427,7 @@ describe('one asset, one metadata transaction at a time', () => {
     expect(warning.level).to.equal('warn')
     expect(warning.fields.blockNumber).to.equal(100)
     expect(warning.fields.error).to.contain('https://rpc.example.org')
+    expect(warning.fields.error).to.contain('code=SERVER_ERROR')
     expect(JSON.stringify(warning)).not.to.contain(FAKE.rpcPathToken)
     expect(JSON.stringify(warning)).not.to.contain(FAKE.rpcQueryToken)
   })
