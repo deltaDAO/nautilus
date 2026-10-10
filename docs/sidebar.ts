@@ -122,6 +122,10 @@ export const sidebar = {
           text: 'Static',
           items: [
             { text: 'create', link: '/docs/api/nautilus/create' },
+            {
+              text: 'configureLogging',
+              link: '/docs/api/nautilus/configureLogging'
+            },
             { text: 'setLogLevel', link: '/docs/api/nautilus/setLogLevel' }
           ]
         },

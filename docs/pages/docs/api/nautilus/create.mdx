@@ -206,6 +206,29 @@ a rejected nonce. Over HTTP it also bounds an `initialize` request, and the sign
 timeout (pass `signal` to stop it). Passed to the node clients `create` builds; see
 [`OceanNodeClient`](/docs/api/node/OceanNodeClient).
 
+##### logger
+
+- Type: `LoggingOptions`: `{ level?, format?, components?, sink? }`
+- Default: the process-wide configuration
+
+This instance's own logging, e.g. one sink per tenant in a multi-tenant server. Options you
+leave out follow [`configureLogging`](/docs/api/nautilus/configureLogging); the events of
+other instances are not affected. The instance passes it to its node clients, its
+policy-session resolver and every call it makes.
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { type LogEvent, Nautilus } from '@deltadao/nautilus'
+const signer = new Wallet('0x1234', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const config = { oceanNodeUri: 'https://node.example.org' }
+declare const tenantLog: (event: LogEvent) => void
+// ---cut---
+const nautilus = await Nautilus.create(signer, {
+  config,
+  logger: { level: 'info', sink: tenantLog } // [!code focus]
+})
+```
+
 ##### maxProviderFee
 
 - Type: `TokenAmount | TokenAmount[]`, where `TokenAmount` is
