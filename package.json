@@ -20,6 +20,7 @@
     "docs:build": "cd docs && npm run build",
     "docs:dev": "cd docs && npm run dev",
     "docs:preview": "cd docs && npm run preview",
+    "examples:smoke": "tsc --noEmit -p examples/smoke && vitest run --config examples/smoke/vitest.config.ts",
     "format": "biome format . --write",
     "lint": "biome check .",
     "lint:fix": "biome check . --fix",

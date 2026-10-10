@@ -1,0 +1,7 @@
+{
+  // Type-checks the smoke run with the examples' own settings. Kept out of the examples'
+  // tsconfig because it imports the unit suite's mocks from ../../test, which a copy of
+  // examples/ on its own does not have.
+  "extends": "../tsconfig.json",
+  "include": ["*.ts"]
+}
