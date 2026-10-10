@@ -22,13 +22,22 @@ through `JSON.stringify`. ocean-node 4.2.x did not index an asset whose `vp_poli
 name with an object, so publish such an asset again.
 
 ```diff
- builder.setVpPolicies(CredentialListTypes.ALLOW, [
--  'holder-binding',
--  { policy: 'minimum-credentials', args: 1 }
-+  { policy: 'holder-binding' },
+-builder.setVpPolicies(CredentialListTypes.ALLOW, ['minimum-credentials'])
++builder.setVpPolicies(CredentialListTypes.ALLOW, [
 +  { policy: 'minimum-credentials', args: '1' }
- ])
++])
 ```
+
+`minimum-credentials` needs its argument: without one it fails in the walt.id verifier for
+every presentation.
+
+**Leave out `holder-binding` for `vc+jwt` credentials.** The beta.1 docs and examples required
+it. walt.id's `holder-binding` reads the credential JWT's `sub` and fails for credentials
+without one, such as VCDM 2.0 `vc+jwt` and URL-subject credentials like Gaia-X
+`gx:LegalPerson`, so an asset that requires it refuses every holder of such a credential.
+Edit such assets with `setVpPolicies()`, and put issuer trust on the credential
+(`{ policy: 'allowed-issuer', args: [...] }` in the `policies` of a requested credential).
+See [publishing a gated asset](/docs/guides/identity#publishing-a-gated-asset).
 
 **Stored request credentials hold JSON strings.** `SsiPolicyValue.request_credentials` is
 now `StoredRequestCredential[]`, whose `policies` are JSON-encoded (`'signature'` is stored
@@ -574,9 +583,10 @@ asset that should stay indexed. A node reindex replays the asset from its creati
 drops it from the index when that envelope is gone. See
 [cleaning up](/docs/guides/remote-stores#cleaning-up).
 
-**Know:** `DEPRECATED` and `REVOKED_BY_PUBLISHER` are one-way on ocean-node — the indexer
-replaces the DDO with a stub — so `publish()` and `edit()` refuse to write metadata in either
-state. See
+**Know:** `DEPRECATED` and `REVOKED_BY_PUBLISHER` are one-way, so `publish()` and `edit()`
+refuse to write metadata in either state. What the node serves afterwards depends on its
+version: ocean-node 4.2.x drops the DDO (`getAsset` answers 404), so read the state from the
+chain, not from the node. See
 [lifecycle states](/docs/api/nautilus/setAssetLifecycleState#states).
 
 ## 1. Dependencies
