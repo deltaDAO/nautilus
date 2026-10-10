@@ -270,9 +270,12 @@ For the calls that go through ocean.js, a JSON string or `{ error }` answer is u
 no status, and nothing of a plain-text answer.
 
 The node's text is sanitized before it goes into a message: ANSI escapes and control
-characters (CR and LF included) are removed; signatures, tokens (`vp_token`, `id_token`,
-JWTs, bearer credentials), `request_uri`, `code`, `nonce`, passwords and API keys are
-replaced by `<redacted>`, in a query, a JSON field or `key: value` prose; a URL keeps its
+characters (CR and LF included) are removed; the value of every key the log redaction
+treats as secret (signatures, tokens such as `vp_token` and `id_token`, `request_uri`, a
+`code` that is not an error code, `nonce`, session ids, passwords, API keys, …; see
+[`configureLogging`](/docs/api/nautilus/configureLogging)) is replaced by `<redacted>`, in a
+query, a JSON field, escaped JSON or `key: value` prose, and so are JWTs and `Bearer` and
+`Basic` credentials anywhere; a URL keeps its
 origin only, so a policy server's redirect URI or an internal path is not relayed; and the
 text is cut at 200 characters. An error answer's body is read up to 64 KB.
 

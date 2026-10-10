@@ -104,7 +104,7 @@ export function configureLogging(options: LoggingConfig): void {
   if ('sink' in options) settings.sink = options.sink
   if ('oceanjs' in options) {
     settings.oceanjs = options.oceanjs
-    if (options.oceanjs && options.oceanjs !== 'capture')
+    if (options.oceanjs)
       log.emit(
         'config.oceanjs.not_active',
         `oceanjs: '${options.oceanjs}' is not active yet: ocean.js still prints its own lines, unredacted, at its own level (errors only by default). To silence them now, call LoggerInstance.setLevel(LogLevel.None) from @oceanprotocol/lib.`,

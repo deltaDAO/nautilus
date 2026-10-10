@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { LoggerInstance, LogLevel } from '@oceanprotocol/lib'
+import { makeError } from 'ethers'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PolicySessionResolver } from '../../src/identity/PolicySessionResolver.js'
 import { MemorySessionStore } from '../../src/identity/session.js'
@@ -77,6 +78,9 @@ function leakyFields() {
   }
 }
 
+/** A token contract's address, which a `…Token` key keeps. */
+const PAYMENT_TOKEN = '0x1B3fC2A9e4d5E6f708192a3b4C5d6E7f80912a3B'
+
 const LEAKY_MESSAGE = `Failed at ${FAKE.rpcUrl}: signature=${FAKE.signature} sessionId=${FAKE.sessionId} ${FAKE.jwt}`
 
 afterEach(() => {
@@ -101,7 +105,7 @@ describe('secret scan (V b)', () => {
       { format: 'pretty' as const },
       { sink: (event: LogEvent) => sunk.push(event) }
     ]) {
-      resetLogging()
+      resetLogging({})
       configureLogging({ level: 'trace', ...output })
       for (const name of names) log.emit(name, LEAKY_MESSAGE, leakyFields())
     }
@@ -463,7 +467,7 @@ describe('regressions (V f)', () => {
         Authorization: 'Bearer x',
         secretAccessKey: FAKE.s3Secret,
         nested: { consumerSignature: '0x12', apiKey: 'k' },
-        paymentToken: '0xToken',
+        paymentToken: PAYMENT_TOKEN,
         accessKeyId: 'AKIDEXAMPLE'
       })
 
@@ -476,7 +480,7 @@ describe('regressions (V f)', () => {
         Authorization: '<redacted>',
         secretAccessKey: '<redacted>',
         nested: { consumerSignature: '<redacted>', apiKey: '<redacted>' },
-        paymentToken: '0xToken',
+        paymentToken: PAYMENT_TOKEN,
         accessKeyId: 'AKIDEXAMPLE'
       })
     })
@@ -582,10 +586,11 @@ describe('regressions (V f)', () => {
       )
     })
 
-    it('keeps nonce, token and sid exact, so ids and addresses stay readable', () => {
+    it('keeps nonce and sid exact, and a token address, so ids and addresses stay readable', () => {
       const kept = {
         decryptNonce: 7,
-        paymentToken: '0xToken',
+        paymentToken: PAYMENT_TOKEN,
+        baseToken: PAYMENT_TOKEN.toLowerCase(),
         datatokenAddress: '0xdt',
         orderTxId: '0xorder',
         accessKeyId: 'AKIDEXAMPLE',
@@ -599,13 +604,13 @@ describe('regressions (V f)', () => {
       expect(
         redacted({
           code: 'SERVER_ERROR',
-          errorCode: 'abc',
+          errorCode: 'ECONNREFUSED',
           nested: { code: -32005 },
           list: [{ code: 'CALL_EXCEPTION' }]
         })
       ).to.deep.equal({
         code: 'SERVER_ERROR',
-        errorCode: 'abc',
+        errorCode: 'ECONNREFUSED',
         nested: { code: -32005 },
         list: [{ code: 'CALL_EXCEPTION' }]
       })
@@ -650,10 +655,10 @@ describe('regressions (V f)', () => {
 
       expect(Object.keys(fields)).to.deep.equal([
         'a b',
-        'session Id',
+        'sessionId',
         `${'k'.repeat(100)}…`
       ])
-      expect(fields['session Id']).to.equal('<redacted>')
+      expect(fields.sessionId).to.equal('<redacted>')
       const line = formatPretty({
         time: '',
         level: 'warn',
@@ -664,6 +669,187 @@ describe('regressions (V f)', () => {
       })
       expect([...line].some((char) => char.charCodeAt(0) < 0x20)).to.equal(
         false
+      )
+    })
+  })
+
+  describe('redaction by key, round 3', () => {
+    function redacted(fields: Record<string, unknown>) {
+      allowMadeUpFields()
+      const log = captureLog({ level: 'trace' })
+      createLogger().emit('publish.tokens.created', 'm', fields)
+      return log.events[0].fields
+    }
+
+    it('redacts the exact keys and the credential suffixes of round 2', () => {
+      const keys = [
+        'auth',
+        'Bearer',
+        'seed',
+        'pk',
+        'privkey',
+        'otp',
+        'PIN',
+        'hmac',
+        'sid',
+        'requestUri',
+        'seedPhrase',
+        'walletMnemonic',
+        'privKey',
+        'sessionToken',
+        'securityToken',
+        'x-amz-security-token',
+        'authorizationCode',
+        'preAuthorizedCode',
+        'pre-authorized_code',
+        'authCode',
+        'csrfToken',
+        'apiToken',
+        'secretToken',
+        'basicAuth',
+        'pinataGatewayToken',
+        'aws_session_token'
+      ]
+      const fields = redacted(
+        Object.fromEntries(keys.map((key) => [key, 'value-that-must-not-show']))
+      )
+
+      expect(fields).to.deep.equal(
+        Object.fromEntries(keys.map((key) => [key, '<redacted>']))
+      )
+    })
+
+    it('redacts a …token key unless it holds an EVM address', () => {
+      expect(
+        redacted({
+          paymentToken: PAYMENT_TOKEN,
+          datatoken: PAYMENT_TOKEN.toLowerCase(),
+          feeToken: '0xabc',
+          token: PAYMENT_TOKEN.slice(0, 41),
+          baseToken: { address: PAYMENT_TOKEN },
+          gatewayToken: 42
+        })
+      ).to.deep.equal({
+        paymentToken: PAYMENT_TOKEN,
+        datatoken: PAYMENT_TOKEN.toLowerCase(),
+        feeToken: '<redacted>',
+        token: '<redacted>',
+        baseToken: '<redacted>',
+        gatewayToken: '<redacted>'
+      })
+    })
+
+    it('applies the code rule to every …code key, keeping an HTTP status for statusCode', () => {
+      expect(
+        redacted({
+          errorCode: 'ECONNREFUSED',
+          reasonCode: 'TIMEOUT',
+          rpcCode: -32603,
+          statusCode: 404,
+          httpStatusCode: '503',
+          authCode: 'SERVER_ERROR',
+          otherCode: 404,
+          code: 'JBSWY3DPEHPK3PXP',
+          verifyCode: 'abc',
+          bigStatusCode: 999
+        })
+      ).to.deep.equal({
+        errorCode: 'ECONNREFUSED',
+        reasonCode: 'TIMEOUT',
+        rpcCode: -32603,
+        statusCode: 404,
+        httpStatusCode: '503',
+        // Every suffix rule wins over the code rule.
+        authCode: '<redacted>',
+        otherCode: '<redacted>',
+        code: '<redacted>',
+        verifyCode: '<redacted>',
+        bigStatusCode: '<redacted>'
+      })
+    })
+
+    it('matches a key longer than it is printed, whole', () => {
+      const long = `${'x'.repeat(150)}SessionId`
+      const fields = redacted({
+        [long]: 'value-that-must-not-show',
+        ['y'.repeat(150)]: 'kept'
+      })
+
+      expect(Object.values(fields)).to.deep.equal(['<redacted>', 'kept'])
+      expect(Object.keys(fields).every((key) => key.length === 101)).to.equal(
+        true
+      )
+    })
+
+    it('prints a byte array as its length', () => {
+      expect(
+        redacted({
+          bytes: new Uint8Array(32),
+          buffer: Buffer.from('a secret in bytes'),
+          raw: new ArrayBuffer(4),
+          nested: { list: [new Uint8Array(2)] }
+        })
+      ).to.deep.equal({
+        bytes: '[32 bytes]',
+        buffer: '[17 bytes]',
+        raw: '[4 bytes]',
+        nested: { list: ['[2 bytes]'] }
+      })
+    })
+
+    it("redacts an ethers SERVER_ERROR's response body on an error's cause, in every output", () => {
+      // ethers quotes `info` into its message: the body ends up as JSON in a JSON string.
+      const rpc = makeError(
+        'server response 500 Internal Server Error',
+        'SERVER_ERROR',
+        {
+          request: FAKE.rpcUrl,
+          info: {
+            requestUrl: FAKE.rpcUrl,
+            responseBody: `{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"accessToken":"rb-access-1","refresh_token":"rb-refresh-2","sid":"rb-sid-3","cookie":"rb-cookie-4","Authorization":"Basic cmItYmFzaWM6NQ==","sessionId":"${FAKE.sessionId}"}}`,
+            responseStatus: '500 Internal Server Error'
+          }
+        }
+      )
+      const error = new Error('could not look up the order', { cause: rpc })
+      const secrets = [
+        'rb-access-1',
+        'rb-refresh-2',
+        'rb-sid-3',
+        'rb-cookie-4',
+        'cmItYmFzaWM6NQ==',
+        FAKE.sessionId,
+        FAKE.rpcPathToken,
+        FAKE.rpcQueryToken
+      ]
+      // The raw message carries them all: the test would prove nothing otherwise.
+      for (const secret of secrets) expect(rpc.message).to.contain(secret)
+
+      const sunk: LogEvent[] = []
+      const lines = stderrLines()
+      for (const output of [
+        { format: 'json' as const },
+        { format: 'pretty' as const },
+        { sink: (event: LogEvent) => sunk.push(event) }
+      ]) {
+        resetLogging({})
+        configureLogging({ level: 'trace', ...output })
+        log.emit('access.order.lookup_failed', 'm', {
+          datatokenAddress: PAYMENT_TOKEN,
+          error
+        })
+      }
+      const outputs = [...lines, ...sunk.map((event) => JSON.stringify(event))]
+
+      expect(outputs).to.have.length(3)
+      for (const output of outputs) {
+        for (const secret of secrets) expect(output).not.to.contain(secret)
+        expect(output).to.contain('SERVER_ERROR')
+        expect(output).to.contain('https://rpc.example.org')
+        expect(findSecrets(output)).to.deep.equal([])
+      }
+      expect(String(sunk[0].fields.error)).to.contain(
+        '\\"accessToken\\":\\"<redacted>\\"'
       )
     })
   })
@@ -756,7 +942,7 @@ describe('regressions (V f)', () => {
   })
 
   describe("configureLogging's oceanjs option (not active yet)", () => {
-    it("warns once for 'passthrough' or 'silent', and not for 'capture'", () => {
+    it("warns once per mode, 'capture' included", () => {
       const log = captureLog()
 
       configureLogging({ oceanjs: 'capture' })
@@ -767,6 +953,7 @@ describe('regressions (V f)', () => {
       expect(
         log.events.map((event) => [event.event, event.fields.mode])
       ).to.deep.equal([
+        ['config.oceanjs.not_active', 'capture'],
         ['config.oceanjs.not_active', 'silent'],
         ['config.oceanjs.not_active', 'passthrough']
       ])

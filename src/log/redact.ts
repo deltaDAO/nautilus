@@ -4,28 +4,38 @@
  *
  * Call sites pass structured fields, never pre-formatted secrets, and this module decides
  * by the field's key, compared lower-cased and without `-`, `_` and whitespace (so
- * `session_id`, `Session-Id` and `sessionId` are one key):
+ * `session_id`, `Session-Id` and `sessionId` are one key; see `keys.ts`, which the free-text
+ * redaction of `src/node/messages.ts` shares):
  *
  * - a credential or a one-time value is replaced by `<redacted>`: the exact keys `nonce`,
- *   `token`, `sid`, `mnemonic` and `code`, and any key ending in a credential name
- *   (`secret`, `secretKey`, `password`, `apiKey`, `privateKey`, `sessionId`, `signature`,
- *   `cookie`, `jwt`, `authorization`, `accessToken`, `refreshToken`, `idToken`, `vpToken`,
- *   `credentials`, `presentation`, `signedTx`, `rawTx`, …). `nonce` and `token` match only
- *   exactly, so `decryptNonce`, `paymentToken` and `datatokenAddress` stay readable. A
- *   `code` whose value reads as an error code (`SERVER_ERROR`, `-32005`) is kept;
+ *   `sid`, `auth`, `bearer`, `seed`, `pk`, `privkey`, `otp`, `pin`, `hmac` and `requestUri`,
+ *   and any key ending in a credential name (`secret`, `secretKey`, `password`, `apiKey`,
+ *   `privateKey`, `sessionId`, `signature`, `cookie`, `jwt`, `authorization`, `accessToken`,
+ *   `sessionToken`, `authorizationCode`, `credentials`, `presentation`, `signedTx`, `rawTx`,
+ *   …). A key ending in `token` is redacted unless its value is an EVM address, so
+ *   `paymentToken` stays readable; a key ending in `code` unless its value reads as an
+ *   error code (`SERVER_ERROR`, `-32005`) or, for a `statusCode`, an HTTP status. A key
+ *   is matched whole, before it is cut to the 100 characters it may be printed with;
  * - a URL (`url`, `uri`, `endpoint`, or a key ending in `Url`/`Uri`) is reduced to its
  *   origin, without user info;
  * - an `error`, and any `Error` value, goes through `sanitize` (`src/node/messages.ts`):
  *   its name, its message and the messages of up to two `cause`s, control characters
  *   stripped, credentials redacted, bounded. A thrown non-`Error` with a string `message`
- *   (and `code`) shows those.
+ *   (and `code`) shows those;
+ * - a byte array (`Uint8Array`, `Buffer`, `ArrayBuffer`) is shown as `[N bytes]`.
  *
  * Nested objects, class instances included, are redacted the same way, key by key (own
  * enumerable properties only). Keys are stripped of control characters and bounded. Every
  * other string goes through `sanitize` too, so a URL or a token inside free text is
  * redacted as well. The message of the event goes through `sanitize`.
  */
-import { isErrorCode, sanitize } from '../node/messages.js'
+
+import {
+  isErrorCode,
+  sanitize,
+  stripControlCharacters
+} from '../node/messages.js'
+import { isSecretKey, normalizeKey, redactsValue } from './keys.js'
 
 export const REDACTED = '<redacted>'
 
@@ -48,29 +58,10 @@ const MAX_DEPTH = 4
 /** How many entries of an array or object are kept. */
 const MAX_ENTRIES = 50
 
-/**
- * Normalised keys (lower case, no `-` or `_`) redacted only when they match exactly: as a
- * suffix they would hide readable fields (`decryptNonce`, `paymentToken`).
- */
-const EXACT_SECRET_KEYS = new Set(['nonce', 'token', 'sid', 'mnemonic'])
-
-/** Normalised keys ending in a credential name. */
-const SECRET_SUFFIX =
-  /(?:secret|secretkey|secretaccesskey|password|passphrase|apikey|privatekey|sessionid|signature|cookie|jwt|authorization|(?:access|refresh|auth|id|vp|bearer)token|credentials?|presentation|signedtx|rawtx)$/
-
 /** Normalised `url`, `uri`, `endpoint`, `nodeUri`, `requestUrl`, `redirect_uri`, … */
 const URL_KEY = /^endpoint$|(?:url|uri)$/
 
-/** `key` lower-cased, without `-`, `_` and whitespace. */
-export function normalizeKey(key: string): string {
-  return key.toLowerCase().replace(/[-_\s]/g, '')
-}
-
-/** Whether the value of `key` is a credential, a session secret or a one-time value. */
-export function isSecretKey(key: string): boolean {
-  const normalized = normalizeKey(key)
-  return EXACT_SECRET_KEYS.has(normalized) || SECRET_SUFFIX.test(normalized)
-}
+export { isSecretKey, normalizeKey }
 
 /** The message of an event, made safe to print. */
 export function redactMessage(message: string): string {
@@ -169,12 +160,7 @@ function redactValue(key: string, value: unknown, depth: number): unknown {
   if (value === undefined || value === null) return value
 
   const normalized = normalizeKey(key)
-  if (normalized === 'code')
-    return (typeof value === 'string' || typeof value === 'number') &&
-      isErrorCode(String(value))
-      ? value
-      : REDACTED
-  if (isSecretKey(key)) return REDACTED
+  if (isSecretKey(key)) return redactsValue(key, value) ? REDACTED : value
   if (normalized === 'error' || value instanceof Error)
     return redactError(value)
   if (
@@ -201,6 +187,8 @@ function redactPlain(value: unknown, depth: number): unknown {
   }
 
   if (value instanceof Date) return value.toISOString()
+  if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer)
+    return `[${value.byteLength} bytes]`
   if (value instanceof URL) return originOf(value.href)
   if (depth >= MAX_DEPTH) return '[…]'
 
@@ -228,10 +216,10 @@ function redactObject(
   const keys = Object.keys(object)
 
   for (const key of keys.slice(0, MAX_ENTRIES)) {
-    // The key as printed, and as matched: a control character can't split `sessionId`.
-    const clean = sanitize(key, MAX_KEY_LENGTH)
-    const value = redactValue(clean, object[key], depth)
-    if (value !== undefined) out[clean] = value
+    // Matched whole, before the cut to `MAX_KEY_LENGTH`, and without control characters
+    // and escapes, so neither a long key nor a `session\u0000Id` hides a credential.
+    const value = redactValue(stripControlCharacters(key), object[key], depth)
+    if (value !== undefined) out[sanitize(key, MAX_KEY_LENGTH)] = value
   }
   if (keys.length > MAX_ENTRIES) out['…'] = `${keys.length - MAX_ENTRIES} more`
 

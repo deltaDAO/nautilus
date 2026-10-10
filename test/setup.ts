@@ -63,6 +63,9 @@ function scanText(channel: string, text: string): void {
   for (const found of findSecrets(text)) leaks.push(`${channel}: ${found}`)
 }
 
+/** Puts back what `passThrough` replaced, when the file's tests are done. */
+const restores: (() => void)[] = []
+
 /** Replaces `target[method]` with a spy that scans its text and calls the original. */
 function passThrough(
   target: object,
@@ -74,6 +77,9 @@ function passThrough(
   const original = methods[method]
   if (typeof original !== 'function') return
 
+  restores.push(() => {
+    methods[method] = original
+  })
   methods[method] = function (this: unknown, ...args: unknown[]) {
     try {
       scanText(channel, toText(args))
@@ -92,13 +98,18 @@ passThrough(process.stderr, 'write', 'process.stderr', ([chunk]) =>
 for (const method of ['warn', 'error', 'log'])
   passThrough(console, method, `console.${method}`, (args) => format(...args))
 
-/** Each test starts from the default logging configuration. */
+/**
+ * Each test starts from the default logging configuration, without the `NAUTILUS_LOG_*`
+ * variables of the developer's shell.
+ */
 beforeEach(() => {
-  resetLogging()
+  resetLogging({})
   catalogueCheck.fields = true
 })
 
 afterAll(() => {
+  for (const restore of restores.splice(0)) restore()
+  setLogTap(undefined)
   if (leaks.length)
     throw new Error(
       `The suite's log output carried secrets, or events that do not match the catalogue:\n${[...new Set(leaks)].join('\n')}`
