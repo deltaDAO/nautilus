@@ -20,8 +20,41 @@ export const FAKE = {
   /** An S3 secret access key (AWS's documented example key). */
   s3Secret: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
   /** A signed-request nonce. */
-  nonce: '1760090000123'
+  nonce: '1760090000123',
+  /** A drpc key, as drpc puts it in the query (`dkey=`). */
+  drpcKey: 'drpc-dkey-Q7m2Lx9pVt4sRw8nYc3b',
+  /** A Pinata gateway access token (`pinataGatewayToken=`). */
+  pinataGatewayToken: 'pinata-gw-token-H4k9Zq2Wm7Xr5Tn8',
+  /** A Pinata API JWT, other than `jwt` above. */
+  pinataJwt:
+    'eyJhbGciOiJIUzI1NiJ9.eyJwaW5hdGEiOiJmYWtlIn0.cGluYXRhLWZha2Utc2lnbmF0dXJl',
+  /** A secret key from an environment file (`S3_SECRET_KEY=`). */
+  envSecretKey: 'minio-secret-key-Fk29Lq7Xw3Rt',
+  /** A session cookie, not the first cookie of its header. */
+  cookie: 'cookie-session-Vb81Nc5Qe2Hy',
+  /** An API token inside a JSON body quoted inside JSON. */
+  nestedApiToken: 'nested-api-token-Ju64Pz0Ko9Ls'
 } as const
+
+/**
+ * The long-lived fixture credentials in the shapes the `sensitive` tier must still hide:
+ * a drpc URL, a Pinata gateway token as a query parameter and as a key, `PINATA_JWT=` and
+ * `S3_SECRET_KEY=` in an environment dump, a second cookie, and a credential in JSON inside
+ * a JSON string (with a JSON-escaped URL).
+ */
+export const CREDENTIAL_SHAPES = [
+  `https://lb.drpc.org/ogrpc?network=optimism-sepolia&dkey=${FAKE.drpcKey}`,
+  `https://gw.mypinata.cloud/ipfs/QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG?pinataGatewayToken=${FAKE.pinataGatewayToken}`,
+  `{"pinataGatewayToken":"${FAKE.pinataGatewayToken}"}`,
+  `PINATA_JWT=${FAKE.pinataJwt}\nS3_SECRET_KEY=${FAKE.envSecretKey}`,
+  `Cookie: theme=dark; session=${FAKE.cookie}`,
+  JSON.stringify({
+    body: JSON.stringify({
+      apiToken: FAKE.nestedApiToken,
+      rpc: FAKE.rpcUrl.replace(/\//g, '\\/')
+    })
+  })
+].join('\n')
 
 /** Fixture secrets the unit suite itself uses, which no log line may contain either. */
 const SUITE_SECRETS = [
@@ -31,7 +64,13 @@ const SUITE_SECRETS = [
   FAKE.jwt,
   FAKE.s3Secret,
   'read-secret',
-  'session-token'
+  'session-token',
+  FAKE.drpcKey,
+  FAKE.pinataGatewayToken,
+  FAKE.pinataJwt,
+  FAKE.envSecretKey,
+  FAKE.cookie,
+  FAKE.nestedApiToken
 ]
 
 const URL_PATTERN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>\\]*/gi
@@ -67,7 +106,13 @@ const CREDENTIALS: [string, string][] = [
   ['RPC URL path token', FAKE.rpcPathToken],
   ['RPC URL query token', FAKE.rpcQueryToken],
   ['S3 secret key', FAKE.s3Secret],
-  ['S3 secret key', 'read-secret']
+  ['S3 secret key', 'read-secret'],
+  ['drpc key', FAKE.drpcKey],
+  ['Pinata gateway token', FAKE.pinataGatewayToken],
+  ['Pinata JWT', FAKE.pinataJwt],
+  ['secret key from an environment file', FAKE.envSecretKey],
+  ['session cookie', FAKE.cookie],
+  ['API token in nested JSON', FAKE.nestedApiToken]
 ]
 
 /** The long-lived fixture credentials `text` holds; empty when it has none. */

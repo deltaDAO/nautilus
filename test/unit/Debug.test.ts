@@ -20,7 +20,12 @@ import {
   WaltIdHttpWallet,
   type WaltIdWallet
 } from '../../src/identity/waltid/client.js'
-import { maskText, maskUrl } from '../../src/log/credentials.js'
+import {
+  maskCredentials,
+  maskNeverShown,
+  maskText,
+  maskUrl
+} from '../../src/log/credentials.js'
 import {
   debug,
   debugBanner,
@@ -29,7 +34,8 @@ import {
   formatDebugLine,
   getDebugLevel,
   resetDebug,
-  setDebug
+  setDebug,
+  toPlain
 } from '../../src/log/debug.js'
 import { processEnv, readDebugEnv } from '../../src/log/env.js'
 import type { DebugEvent, DebugTopic } from '../../src/log/index.js'
@@ -43,6 +49,7 @@ import {
 } from '../../src/node/OceanNodeClient.js'
 import { IpfsRemoteStore } from '../../src/remote/IpfsRemoteStore.js'
 import { redactPointer } from '../../src/remote/redact.js'
+import { S3RemoteStore } from '../../src/remote/S3RemoteStore.js'
 import {
   CHAIN_ID,
   getAssetFixture,
@@ -51,7 +58,13 @@ import {
   SERVICE_ID
 } from '../fixtures/Asset.js'
 import { captureLog } from '../helpers.js'
-import { FAKE, findSecrets } from '../secretScan.js'
+import {
+  allowMadeUpFields,
+  CREDENTIAL_SHAPES,
+  FAKE,
+  findCredentials,
+  findSecrets
+} from '../secretScan.js'
 
 const NODE = 'https://node.test.invalid'
 const SID = FAKE.sessionId
@@ -286,12 +299,15 @@ describe('default safety: off', () => {
 
 describe("sensitive: the raw value in the channel, never in the caller's error", () => {
   it('a wallet 400 with error?id=<sid>: the sid reaches the sink, not the error message, details or cause', async () => {
+    const off = await walletRejecting(400, WALLET_400)().catch((error) => error)
     const events = captureDebug()
 
     const thrown = await walletRejecting(400, WALLET_400)().catch(
       (error) => error
     )
 
+    // The same error, all of it, with the channel on or off.
+    expect(toPlain(thrown)).to.deep.equal(toPlain(off))
     expect(thrown).to.be.instanceOf(CredentialPresentationError)
     expect(thrown.message).to.contain('Presentation failed')
     expect(errorText(thrown)).not.to.contain(SID)
@@ -315,7 +331,8 @@ describe("sensitive: the raw value in the channel, never in the caller's error",
       .initialize('did:op:abc', SERVICE_ID)
       .catch((error) => error)) as OceanNodeError
 
-    expect(on.message).to.equal(off.message)
+    // The same error, all of it (own properties and causes), with the channel on or off.
+    expect(toPlain(on)).to.deep.equal(toPlain(off))
     expect(on.message).to.equal(
       '[ocean-node] initialize: HTTP 400 Bad Request: Invalid fileIndex'
     )
@@ -824,5 +841,385 @@ describe('what the sensitive tier still hides', () => {
     expect(masked).to.contain(`"vp_token":"${FAKE.jwt}"`)
     expect(masked).to.contain(SID)
     expect(masked).to.contain(FAKE.signature)
+  })
+})
+
+describe('the same error, the same result, with the channel on or off', () => {
+  /** A resolver whose presentation passes and whose verifier record has a failed policy. */
+  function deniedByVerifier() {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              success: false,
+              httpStatus: 400,
+              message: {
+                verificationResult: false,
+                tokenResponse: { vp_token: FAKE.jwt },
+                policyResults: {
+                  results: [
+                    {
+                      credential: 'VerifiablePresentation',
+                      policyResults: [
+                        {
+                          policy: 'holder-binding',
+                          is_success: false,
+                          error: 'java.lang.NullPointerException'
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }),
+            { status: 400 }
+          )
+      )
+    )
+    const real = nodeClient()
+    const node = {
+      nodeUri: NODE,
+      policySessionAddress: (address: string) => address,
+      hasPolicyServer: async () => true,
+      initializePolicyVerification: async () => ({
+        success: true,
+        httpStatus: 200,
+        message: { sessionId: SID, redirectUri: 'openid4vp://authorize' }
+      }),
+      checkPolicySession: (sessionId: string) =>
+        real.checkPolicySession(sessionId)
+    } as unknown as OceanNodeClient
+    const asset = getAssetFixture()
+    asset.credentialSubject.credentials = addRequestCredentials(
+      asset.credentialSubject.credentials as never,
+      'allow' as never,
+      [{ type: 'VerifiableId', format: 'jwt_vc_json' }]
+    ) as never
+    return new PolicySessionResolver({
+      credentials: { present: async () => undefined }
+    })
+      .resolve({
+        node,
+        asset,
+        serviceId: SERVICE_ID,
+        consumerAddress: OWNER_ADDRESS
+      })
+      .catch((error) => error)
+  }
+
+  it('PolicyDeniedError: deep-equal on and off, the record in the channel only', async () => {
+    const off = await deniedByVerifier()
+    const events = captureDebug('sensitive', ['policy'])
+    const on = await deniedByVerifier()
+
+    expect(on.name).to.equal('PolicyDeniedError')
+    expect(toPlain(on)).to.deep.equal(toPlain(off))
+    expect(JSON.stringify(toPlain(on))).not.to.contain(FAKE.jwt)
+    expect(JSON.stringify(events)).to.contain(FAKE.jwt)
+  })
+
+  it('a redacted storage pointer (PublishResponse.stored): deep-equal on and off', () => {
+    const pointer = {
+      type: 'url',
+      url: `https://files.test.invalid/a?token=${FAKE.rpcQueryToken}`,
+      method: 'GET',
+      headers: { Authorization: `Bearer ${FAKE.jwt}` }
+    }
+    const off = redactPointer(pointer as never)
+    captureDebug('secrets')
+    expect(redactPointer(pointer as never)).to.deep.equal(off)
+    expect(redactPointer(S3_POINTER as never)).to.deep.equal(
+      (() => {
+        resetDebug({})
+        return redactPointer(S3_POINTER as never)
+      })()
+    )
+  })
+})
+
+describe('what the sensitive tier still hides: by name and shape', () => {
+  it('hides every credential fixture shape, in text, objects, sanitised text and log events', () => {
+    const events = captureDebug('sensitive')
+    captureLog({ level: 'trace' })
+
+    debugRaw('store', 'shapes as text', CREDENTIAL_SHAPES)
+    debugRaw('node', 'shapes as fields', {
+      pinataGatewayToken: FAKE.pinataGatewayToken,
+      apiToken: FAKE.nestedApiToken,
+      dkey: FAKE.drpcKey,
+      auth: FAKE.cookie,
+      credentials: FAKE.envSecretKey,
+      githubToken: FAKE.pinataJwt,
+      body: CREDENTIAL_SHAPES
+    })
+    sanitize(CREDENTIAL_SHAPES, 5000, 'rpc')
+    log.emit('publish.metadata.events_unchecked', 'Could not read', {
+      nftAddress: NFT_ADDRESS,
+      blockNumber: 1,
+      error: new Error(CREDENTIAL_SHAPES)
+    })
+
+    expect(events.length).to.be.greaterThan(3)
+    for (const event of events) {
+      expect(event.tier).to.equal('sensitive')
+      expect(
+        findCredentials(JSON.stringify(event)),
+        event.message
+      ).to.deep.equal([])
+    }
+  })
+
+  it('shows them at secrets', () => {
+    const events = captureDebug('secrets')
+    debugRaw('store', 'shapes', CREDENTIAL_SHAPES)
+    expect(events[0].tier).to.equal('secrets')
+    expect(findCredentials(JSON.stringify(events[0]))).to.include.members([
+      'drpc key',
+      'Pinata gateway token',
+      'Pinata JWT',
+      'session cookie'
+    ])
+  })
+
+  it('keeps session-scoped and public values: vp_token, state, sessionId, nonce, signature, id, a token address', () => {
+    const shown = {
+      vp_token: FAKE.jwt,
+      state: 'state-value-1234',
+      sessionId: SID,
+      nonce: FAKE.nonce,
+      signature: FAKE.signature,
+      id: 'definition-id',
+      presentation_submission: { id: 'submission-id' },
+      paymentToken: NFT_ADDRESS,
+      publicKey: 'public-key-value',
+      key: 'ddo/abc.json',
+      code: 'SERVER_ERROR'
+    }
+    expect(maskCredentials(shown)).to.deep.equal(shown)
+    const text = `vp_token=${FAKE.jwt}&state=s1 "sessionId": "${SID}", nonce: ${FAKE.nonce}`
+    expect(maskText(text)).to.equal(text)
+    // A URL signature that is `0x` hex is a session signature, shown; any other is masked.
+    expect(maskUrl(`https://n.test/d?signature=${FAKE.signature}`)).to.contain(
+      FAKE.signature
+    )
+    expect(
+      maskUrl('https://cdn.test/k?Signature=abc~def&key=AIzaKey')
+    ).to.equal('https://cdn.test/k?Signature=<redacted>&key=<redacted>')
+  })
+
+  it('masks a credential that straddles the 32,768-character cut, before cutting', () => {
+    const events = captureDebug('sensitive')
+    const token = 'Zx9Qw8Er7Ty6Ui5Op4As3Df2Gh1Jk0Lm'
+    // The token starts 10 characters before the cut; the URL is glued to the text before it.
+    const text = `${'a'.repeat(32_731)}https://rpc.example.org/v3/${token} ${'b'.repeat(100)}`
+    expect(text.indexOf(token)).to.equal(32_758)
+    debugRaw('rpc', 'long', text)
+
+    const data = events[0].data as string
+    expect(data).not.to.contain(token.slice(0, 6))
+    expect(data).to.match(/…\(cut at 32768 characters\)$/)
+  })
+
+  it('bounds one event to about 256 KB, with a marker', () => {
+    const events = captureDebug('sensitive')
+    const big = Object.fromEntries(
+      Array.from({ length: 200 }, (_, row) => [
+        `row${row}`,
+        Object.fromEntries(
+          Array.from({ length: 200 }, (_, column) => [
+            `c${column}`,
+            'x'.repeat(1000)
+          ])
+        )
+      ])
+    )
+    debugRaw('node', 'big', big)
+
+    const line = formatDebugLine(events[0])
+    expect(line.length).to.be.lessThan(300_000)
+    expect(line).to.contain('event cut at 262144 characters')
+  })
+
+  it('replaces a known credential also percent-encoded and in base64, and the URL secrets of an IPFS store', async () => {
+    const secret = 'known/secret+value=1'
+    const events = captureDebug('sensitive', ['store'])
+    debugRaw(
+      'store',
+      'encoded',
+      `a ${encodeURIComponent(secret)} b ${btoa(secret)} c ${secret}`,
+      [secret]
+    )
+    expect(JSON.stringify(events[0].data)).not.to.match(
+      /known|a25vd25|known%2Fsecret/
+    )
+
+    const gatewayToken = 'gw-tok-7Hq2Lm9Xp4Vr'
+    const store = new IpfsRemoteStore({
+      uploadUrl: 'https://ipfs.test.invalid/add',
+      gatewayUrl: `https://gw.test.invalid/?pinataGatewayToken=${gatewayToken}`,
+      fetchImpl: (async () =>
+        new Response(`bad gateway token ${gatewayToken}`, {
+          status: 401
+        })) as typeof fetch
+    })
+    const thrown = await store
+      .put('{}', { did: 'did:ope:1' })
+      .catch((error) => error)
+    expect(errorText(thrown)).not.to.contain(gatewayToken)
+    expect(JSON.stringify(events)).to.contain('bad gateway token')
+    expect(JSON.stringify(events)).not.to.contain(gatewayToken)
+  })
+
+  it('hides the S3 secret keys an S3 error answer echoes, also percent-encoded', async () => {
+    const write = 'S3writeSecret/Key+1234'
+    const events = captureDebug('sensitive', ['store'])
+    const store = new S3RemoteStore({
+      endpoint: 'https://s3.test.invalid',
+      bucket: 'ddos',
+      prefix: 'ddo/',
+      forcePathStyle: true,
+      writeCredentials: { accessKeyId: 'WRITEKEY', secretAccessKey: write },
+      readCredentials: {
+        accessKeyId: 'READKEY',
+        secretAccessKey: 'read-secret'
+      },
+      fetchImpl: (async () =>
+        new Response(
+          `<Error><Code>AccessDenied</Code><Message>${encodeURIComponent(write)} ${write}</Message></Error>`,
+          { status: 403 }
+        )) as typeof fetch
+    })
+    await store.put('{}', { did: 'did:ope:1' }).catch(() => undefined)
+
+    const text = JSON.stringify(events)
+    expect(text).to.contain('AccessDenied')
+    expect(text).not.to.contain(write)
+    expect(text).not.to.contain(encodeURIComponent(write))
+  })
+
+  it('a url pointer: credential header values hidden, plain ones (Content-Type) shown', () => {
+    const events = captureDebug('sensitive', ['store'])
+    redactPointer({
+      type: 'url',
+      url: 'https://files.test.invalid/a',
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Custom-Auth': 'custom-credential-value'
+      }
+    } as never)
+    const text = JSON.stringify(events[0].data)
+    expect(text).to.contain('application/json')
+    expect(text).not.to.contain('custom-credential-value')
+  })
+
+  it('keeps a __proto__ key (from JSON.parse) as a key, masked by its name like any other', () => {
+    const parsed = JSON.parse(
+      '{"__proto__":{"apiToken":"proto-token-1234"},"a":1}'
+    )
+    const masked = maskCredentials(parsed) as Record<string, unknown>
+    expect(Object.getPrototypeOf(masked)).to.equal(Object.prototype)
+    expect(JSON.stringify(masked)).to.equal(
+      '{"__proto__":{"apiToken":"<redacted>"},"a":1}'
+    )
+  })
+
+  it('at secrets still hides a private key or mnemonic given in text', () => {
+    const masked = JSON.stringify(
+      maskNeverShown(
+        `privateKey=0x${'22'.repeat(32)} mnemonic: test test test junk\n{"private_key":"abc-key"}`
+      )
+    )
+    expect(masked).not.to.contain('22'.repeat(32))
+    expect(masked).not.to.contain('test test')
+    expect(masked).not.to.contain('abc-key')
+  })
+})
+
+describe('fix-round controls', () => {
+  it('NAUTILUS_DEBUG_TOPICS with no known topic turns on no topic, never all', () => {
+    const output = captureOutput()
+    const env = { NAUTILUS_DEBUG: 'sensitive', NAUTILUS_DEBUG_TOPICS: 'bogus' }
+    expect(readDebugEnv(env).settings).to.deep.equal({
+      level: 'sensitive',
+      topics: []
+    })
+    resetLogging(env)
+    resetDebug(env)
+    for (const topic of ['node', 'wallet', 'policy', 'rpc'] as const)
+      expect(debugEnabled('sensitive', topic), topic).to.equal(false)
+    expect(output.join('')).to.contain("NAUTILUS_DEBUG_TOPICS='bogus'")
+  })
+
+  it('hands a log event over only when the redaction changed it', () => {
+    allowMadeUpFields()
+    const events = captureDebug('sensitive', ['order'])
+    captureLog({ level: 'trace' })
+    log.emit('access.order.lookup_failed', 'plain', {
+      did: 'did:op:abc',
+      list: [null, 1, 'two']
+    } as never)
+    expect(events).to.deep.equal([])
+
+    log.emit('access.order.lookup_failed', 'nested secret', {
+      did: 'did:op:abc',
+      detail: { inner: { accessToken: 'tok-123456' } }
+    } as never)
+    expect(events.map((event) => event.message)).to.deep.equal([
+      'log event access.order.lookup_failed before redaction'
+    ])
+  })
+
+  it('cuts the verifier read after a failed presentation, whatever the transport', async () => {
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation(() =>
+      AbortSignal.abort(new Error('timed out'))
+    )
+    const failure = new Error('Presentation failed')
+    const signals: unknown[] = []
+    const node = {
+      nodeUri: NODE,
+      policySessionAddress: (address: string) => address,
+      hasPolicyServer: async () => true,
+      initializePolicyVerification: async () => ({
+        success: true,
+        httpStatus: 200,
+        message: { sessionId: SID, redirectUri: 'openid4vp://authorize' }
+      }),
+      // A P2P read that never answers and ignores its signal.
+      checkPolicySession: (_sessionId: string, signal: unknown) => {
+        signals.push(signal)
+        return new Promise(() => undefined)
+      }
+    } as unknown as OceanNodeClient
+    const asset = getAssetFixture()
+    asset.credentialSubject.credentials = addRequestCredentials(
+      asset.credentialSubject.credentials as never,
+      'allow' as never,
+      [{ type: 'VerifiableId', format: 'jwt_vc_json' }]
+    ) as never
+    const events = captureDebug('sensitive', ['policy'])
+
+    const thrown = await new PolicySessionResolver({
+      credentials: {
+        present: async () => {
+          throw failure
+        }
+      }
+    })
+      .resolve({
+        node,
+        asset,
+        serviceId: SERVICE_ID,
+        consumerAddress: OWNER_ADDRESS
+      })
+      .catch((error) => error)
+
+    expect(thrown).to.equal(failure)
+    expect(signals[0]).to.be.instanceOf(AbortSignal)
+    expect(events.map((event) => event.message)).to.include(
+      'checkSessionId after the failed presentation failed'
+    )
   })
 })

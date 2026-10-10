@@ -37,8 +37,9 @@ try {
  * - every event any test makes nautilus build, at every level, printed or not, in both
  *   output formats. An event that is not in the catalogue, a field the catalogue does not
  *   list for it, or a `once` that does not match the catalogue's flag fails too;
- * - everything written to `process.stderr` and through `console.warn`, `console.error` and
- *   `console.log` while the suite runs, whoever wrote it (ocean.js, a stray `console.*`).
+ * - everything written to `process.stderr`, `process.stdout` and through `console.warn`,
+ *   `console.error`, `console.log`, `console.info` and `console.debug` while the suite runs,
+ *   whoever wrote it (ocean.js, a stray `console.*` or `write`).
  *   The spies pass the text on unchanged; a test's own spy replaces them while it runs.
  *
  * And the default safety of the sensitive debug channel (`src/log/debug.ts`): each test
@@ -134,11 +135,12 @@ function passThrough(
   }
 }
 
-passThrough(process.stderr, 'write', 'process.stderr', ([chunk]) =>
-  typeof chunk === 'string'
-    ? chunk
-    : Buffer.from(chunk as Uint8Array).toString()
-)
+for (const stream of ['stderr', 'stdout'] as const)
+  passThrough(process[stream], 'write', `process.${stream}`, ([chunk]) =>
+    typeof chunk === 'string'
+      ? chunk
+      : Buffer.from(chunk as Uint8Array).toString()
+  )
 for (const method of ['warn', 'error', 'log', 'info', 'debug'])
   passThrough(console, method, `console.${method}`, (args) => format(...args))
 
