@@ -27,10 +27,12 @@ the walt.id verifier for every presentation.
 Neither belongs in the default set:
 
 - `holder-binding` reads the credential JWT's `sub` and fails (a `NullPointerException` in
-  walt.id) for credentials without one, such as VCDM 2.0 `vc+jwt` and URL-subject credentials
-  like Gaia-X `gx:LegalPerson`. Where it does work, it binds a credential to its presenter;
-  without it a copied credential can be presented from any wallet, so bind access to an
-  account with the address allow list.
+  walt.id) for credentials without `sub` (common for VCDM 2.0 `vc+jwt`) and URL-subject
+  credentials such as Gaia-X `gx:LegalPerson`. Where it does work, it binds a credential to
+  its presenter only with the presentation's signature verified (the VP policy `signature`),
+  since it compares `sub` with the DID the presentation claims. Without it a copied
+  credential can be presented from any wallet, so bind access to an account with the address
+  allow list.
 - `presentation-definition` refuses VCDM 2.0 `vc+jwt` credentials, because the definition
   walt.id generates for `jwt_vc_json` matches the type at `$.vc.type`, which they do not have.
 

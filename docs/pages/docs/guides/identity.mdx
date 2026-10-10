@@ -246,7 +246,7 @@ import { AssetBuilder, CredentialListTypes } from '@deltadao/nautilus'
 const assetBuilder = new AssetBuilder()
 // ---cut---
 assetBuilder
-  // The gate that binds access to an account: see the limitations below.
+  // The gate that holds: list addresses explicitly, never '*' (see the limitation below).
   .addCredentialAddresses(CredentialListTypes.ALLOW, ['0x0DB823218e337a...'])
   .addRequestCredentials(CredentialListTypes.ALLOW, [ // [!code focus]
     { // [!code focus]
@@ -292,10 +292,13 @@ argument-bearing checks such as walt.id's `schema` go on the credential, as abov
 presentation. What it gives and what it costs:
 
 - It binds a credential to its presenter **only** when the credential JWT's `sub` is the
-  presenter's DID. walt.id reads `sub` and nothing else.
-- It fails, with a `NullPointerException` in the verifier, for credentials that have no
-  `sub`: VCDM 2.0 `vc+jwt` credentials and credentials whose subject is a URL, such as the
-  Gaia-X `gx:LegalPerson` credential. An asset that requires it refuses every holder of such a
+  presenter's DID, and only when the presentation's signature is verified as well (the VP
+  policy `signature`): it compares `sub` with the DID the presentation claims, which proves
+  nothing unless that presentation's signature is checked. walt.id reads `sub` and nothing
+  else.
+- It fails, with a `NullPointerException` in the verifier, for credentials without `sub`
+  (common for VCDM 2.0 `vc+jwt`) and URL-subject credentials such as the Gaia-X
+  `gx:LegalPerson` credential. An asset that requires it refuses every holder of such a
   credential.
 - Without it, a copied credential JWT can be presented from any wallet: the credential is a
   bearer credential. Assets that need access bound to an account must rely on the address
@@ -320,14 +323,30 @@ walt.id applies per-credential policies by the type of the presented credential,
 the **last** entry of its `type` array against `request_credentials`. A presented credential
 of any other type runs only the asset-level VC policies, and `minimum-credentials` counts it.
 So a presentation holding a self-issued credential of another type passes a gate whose issuer
-trust is per credential. Closing that needs the policy server to refuse credentials of a type
-the asset did not ask for; nautilus cannot do it on its own. Until then, the address allow list
-is the gate that binds access to an account: treat the credential checks as a further
-condition on the addresses you allow, not as the only gate.
+trust is per credential: any credential that passes `signature` will do.
+
+Put plainly: until the policy server enforces the requested credential type, the credential
+check stops only consumers who use a normal wallet, which presents a credential of the
+requested type or nothing. Anyone who builds their own presentation passes it with a
+self-issued credential of another type. nautilus cannot close that on its own.
+
+What holds is the address allow list: the consumer signs the download with their Ethereum key,
+and the policy server checks that address independently of the credential.
+
+| Address allow list | Against a consumer with a normal wallet | Against a consumer who builds their own presentation |
+| --- | --- | --- |
+| Explicit addresses | Address **and** credential required | Address only |
+| Contains `'*'` | Credential required | **No gate at all** |
+
+So **list the allowed addresses explicitly**, and never combine a credential gate with `'*'`
+in the allow list: the policy server lets every address through it, which leaves no gate at
+all. Treat issuer trust and attribute checks as a filter for honest consumers, not as the only
+protection.
 
 Gating also works per service, via
 [`ServiceBuilder.addRequestCredentials`](/docs/api/servicebuilder/addRequestCredentials) —
-useful when an asset offers both an open preview and a restricted full dataset.
+useful when an asset offers both a preview that needs no credential (allow-listed accounts
+only) and a full service that also requires a credential.
 
 ### Issuing from a real DID
 

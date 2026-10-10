@@ -135,7 +135,11 @@ gated
 ```
 
 On a node with a policy server the address allow list is required, and it is the check that
-binds access to an account; the credential is a further condition.
+holds. Until the policy server enforces the requested credential type, the credential check
+stops only consumers who use a normal wallet: anyone who builds their own presentation passes
+it with a self-issued credential of another type. An allow list containing `'*'` therefore
+leaves no gate at all, so list the allowed addresses explicitly.
+See the [known limitation](/docs/guides/identity#known-limitation-credentials-of-another-type).
 
 See [Credential-gated assets](/docs/guides/identity) for the whole picture, including the
 consumer side.
