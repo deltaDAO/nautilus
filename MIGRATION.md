@@ -17,10 +17,11 @@ through `JSON.stringify`. ocean-node 4.2.x did not index an asset whose `vp_poli
 name with an object, so publish such an asset again.
 
 ```diff
--builder.setVpPolicies(CredentialListTypes.ALLOW, ['minimum-credentials'])
-+builder.setVpPolicies(CredentialListTypes.ALLOW, [
+ builder.setVpPolicies(CredentialListTypes.ALLOW, [
+-  'holder-binding',
+-  { policy: 'minimum-credentials', args: 1 }
 +  { policy: 'minimum-credentials', args: '1' }
-+])
+ ])
 ```
 
 `minimum-credentials` needs its argument: without one it fails in the walt.id verifier for
@@ -28,7 +29,7 @@ every presentation.
 
 **Leave out `holder-binding` for `vc+jwt` credentials.** The beta.1 docs and examples required
 it. walt.id's `holder-binding` reads the credential JWT's `sub` and fails for credentials
-without one, such as VCDM 2.0 `vc+jwt` and URL-subject credentials like Gaia-X
+without `sub` (common for VCDM 2.0 `vc+jwt`) and URL-subject credentials such as Gaia-X
 `gx:LegalPerson`, so an asset that requires it refuses every holder of such a credential.
 Edit such assets with `setVpPolicies()`, and put issuer trust on the credential
 (`{ policy: 'allowed-issuer', args: [...] }` in the `policies` of a requested credential).
