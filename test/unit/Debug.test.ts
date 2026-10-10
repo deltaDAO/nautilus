@@ -758,7 +758,7 @@ describe('controls', () => {
     vi.spyOn(console, 'warn').mockImplementation((...args) => {
       warnings.push(args)
     })
-    vi.spyOn(console, 'debug').mockImplementation((...args) => {
+    vi.spyOn(console, 'info').mockImplementation((...args) => {
       lines.push(args)
     })
     const saved = globalThis.process
