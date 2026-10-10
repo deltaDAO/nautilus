@@ -87,6 +87,7 @@ import {
   boundedNodeMessage,
   describeAnswer,
   describeError,
+  endSentence,
   sanitizedError
 } from './messages.js'
 
@@ -298,7 +299,7 @@ export class PolicyDeniedError extends Error {
       boundedNodeMessage(params.reason, 'policy') || 'no reason given'
 
     super(
-      `The policy server of ${params.nodeUri} refused service ${params.serviceId} of ${params.did} for ${params.consumerAddress}${params.code ? ` (${params.code})` : ''}: ${reason}. Nothing was ordered or paid. Check the asset's credentials (its address allow list and SSIpolicy) with the publisher.`
+      `The policy server of ${params.nodeUri} refused service ${params.serviceId} of ${params.did} for ${params.consumerAddress}${params.code ? ` (${params.code})` : ''}: ${endSentence(reason)} Nothing was ordered or paid. Check the asset's credentials (its address allow list and SSIpolicy) with the publisher.`
     )
     this.name = 'PolicyDeniedError'
     this.did = params.did
@@ -1423,7 +1424,7 @@ export class OceanNodeClient {
         if (failures >= maxFailures)
           throw new OceanNodeError(
             'waitForIndexer',
-            `${failures} lookups of ${what} in a row failed; the last one: ${errorMessage(lookup.error)}. Check the node URI and that the node is up.`,
+            `${failures} lookups of ${what} in a row failed; the last one: ${endSentence(errorMessage(lookup.error))} Check the node URI and that the node is up.`,
             lookup.error
           )
       } else if (lookup.kind === 'pending') {

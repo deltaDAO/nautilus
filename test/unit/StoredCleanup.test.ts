@@ -259,6 +259,26 @@ describe('PublishIncompleteError', () => {
     expect(plain.stored).to.equal(undefined)
     expect(plain.message).to.match(/has no metadata yet/)
   })
+
+  it('puts one period after the cause, whether or not it ends in one', () => {
+    // nautilus's own errors end in a period, ethers' do not.
+    const own = new PublishIncompleteError(
+      NFT_ADDRESS,
+      [],
+      new Error('The pricing transaction reverted. Nothing was sent.')
+    )
+    const ethers = new PublishIncompleteError(
+      NFT_ADDRESS,
+      [],
+      new Error('could not coalesce error')
+    )
+
+    expect(own.message).not.to.contain('..')
+    expect(own.message).to.contain('Nothing was sent. Call completePublish()')
+    expect(ethers.message).to.contain(
+      'could not coalesce error. Call completePublish()'
+    )
+  })
 })
 
 describe('prepareMetadataForWrite', () => {

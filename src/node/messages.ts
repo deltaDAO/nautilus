@@ -195,6 +195,16 @@ function bounded(text: string, maxLength: number): string {
 }
 
 /**
+ * `text` as the end of a sentence, for a message that goes on after it: a period appended
+ * unless it ends in `.`, `!`, `?` or `…` already (a node's reason often has its own, and a
+ * bounded one ends in `…`), so no message reads `..`.
+ */
+export function endSentence(text: string): string {
+  const trimmed = text.trimEnd()
+  return /[.!?…]$/.test(trimmed) ? trimmed : `${trimmed}.`
+}
+
+/**
  * `HTTP 400 Bad Request: <the node's text>`. The whole answer (status and raw body) goes to
  * the debug channel under `topic`.
  */

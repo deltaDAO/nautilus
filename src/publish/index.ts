@@ -39,6 +39,7 @@ import type {
   NautilusService,
   ServiceTypes
 } from '../Nautilus/Asset/Service/NautilusService.js'
+import { endSentence } from '../node/messages.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
 import type { RemoteStore, toRemotePointer } from '../remote/RemoteStore.js'
 import { redactPointer } from '../remote/redact.js'
@@ -317,8 +318,8 @@ export class PublishIncompleteError extends Error {
 
     super(
       stored?.cleanup === 'kept'
-        ? `Publishing NFT ${nftAddress} failed after its metadata transaction${stored.txHash ? ` ${stored.txHash}` : ''} was sent: ${reason}. The transaction may still be mined. Wait until it is mined or dropped before calling completePublish() with this nftAddress and the same asset${stored.txHash ? ' (pass { metadataTxHash: error.stored.txHash })' : ''}: it refuses an NFT that already has metadata, and while that transaction or any other transaction of the signer is still pending.`
-        : `Publishing stopped after NFT ${nftAddress} was created, so it has no metadata yet: ${reason}. Call completePublish() with this nftAddress and the same asset to finish it.`,
+        ? `Publishing NFT ${nftAddress} failed after its metadata transaction${stored.txHash ? ` ${stored.txHash}` : ''} was sent: ${endSentence(reason)} The transaction may still be mined. Wait until it is mined or dropped before calling completePublish() with this nftAddress and the same asset${stored.txHash ? ' (pass { metadataTxHash: error.stored.txHash })' : ''}: it refuses an NFT that already has metadata, and while that transaction or any other transaction of the signer is still pending.`
+        : `Publishing stopped after NFT ${nftAddress} was created, so it has no metadata yet: ${endSentence(reason)} Call completePublish() with this nftAddress and the same asset to finish it.`,
       { cause }
     )
     this.name = 'PublishIncompleteError'
