@@ -95,9 +95,16 @@ export function stripControlCharacters(text: string): string {
     .trim()
 }
 
-/** Text from the node, or from an error carrying it, made safe for an error message. */
-function sanitize(text: string): string {
-  return bounded(redactSecrets(stripControlCharacters(text)))
+/**
+ * Text from the node, or from an error carrying it, made safe for an error message or a
+ * log line: control characters stripped, credentials redacted (`redactSecrets`), and at
+ * most `maxLength` characters (200 by default, an ellipsis marking the cut).
+ */
+export function sanitize(
+  text: string,
+  maxLength = MAX_NODE_MESSAGE_LENGTH
+): string {
+  return bounded(redactSecrets(stripControlCharacters(text)), maxLength)
 }
 
 /**
@@ -134,10 +141,8 @@ export function boundedNodeMessage(value: unknown): string {
     : sanitize(JSON.stringify(value) ?? String(value))
 }
 
-function bounded(text: string): string {
-  return text.length > MAX_NODE_MESSAGE_LENGTH
-    ? `${text.slice(0, MAX_NODE_MESSAGE_LENGTH)}…`
-    : text
+function bounded(text: string, maxLength: number): string {
+  return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text
 }
 
 /** `HTTP 400 Bad Request: <the node's text>`. */
