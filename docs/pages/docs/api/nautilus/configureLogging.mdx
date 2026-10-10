@@ -1,0 +1,147 @@
+# configureLogging
+
+Configures nautilus's logging for the whole process: how much is printed, in which format,
+and where it goes.
+
+## Usage
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+
+Nautilus.configureLogging({ level: 'debug', format: 'json' }) // [!code focus]
+```
+
+nautilus has its own logger. It prints **structured, catalogued events**: each has a stable
+name such as `publish.preflight.denies_all`, a level, a component and a message, and its data
+is redacted before it is printed or handed to you. ocean.js's `LoggerInstance` is no longer
+used for nautilus's own lines.
+
+By default only warnings and errors print, to stderr: a readable line on a terminal, one JSON
+object per line otherwise.
+
+```
+[nautilus] [publish] warn: https://node.example.org has a policy server, and this asset's credentials have no address allow list … (publish.preflight.denies_all endpoint=https://node.example.org)
+```
+
+:::info
+Up to 2.0.0-beta.2, nautilus's warnings went to ocean.js's logger, whose default level is
+errors only, so most of them were never printed. They now print by default. To silence
+them, set `level: 'silent'` or `'error'`.
+:::
+
+## Returns
+
+`void`
+
+## Parameters
+
+### options
+
+- Type: `LoggingConfig`
+
+Only the options you pass change; an option passed as `undefined` goes back to its default.
+An unknown level, format or component throws a `TypeError`. An instance created with its own
+[`logger`](/docs/api/nautilus/create#logger) uses those options over these.
+
+#### level
+
+- Type: `'silent' | 'error' | 'warn' | 'info' | 'debug' | 'trace'`
+- Default: `'warn'`, or `NAUTILUS_LOG_LEVEL`
+
+The lowest level that prints.
+
+| Level | What it prints |
+|-------|----------------|
+| `error` | A failure that is not thrown to you, e.g. in a background task. |
+| `warn` | Something you must act on or know about: an asset nobody can consume, a node that checks no credentials, a capped job duration, an order lookup that failed. |
+| `info` | One line per operation milestone, with tx hashes, DIDs and durations. |
+| `debug` | Step detail: requests, retries, decisions, the transactions sent. |
+| `trace` | Per-request detail. |
+| `silent` | Nothing. |
+
+#### format
+
+- Type: `'pretty' | 'json'`
+- Default: `'pretty'` when stderr is a terminal, `'json'` otherwise, or `NAUTILUS_LOG_FORMAT`
+
+How the default stderr output is written. Ignored when a `sink` is set. In a browser,
+events go to the console (`console.warn`, `console.error`, …) as pretty lines.
+
+#### components
+
+- Type: `LogComponent[]`, of `'publish' | 'edit' | 'access' | 'compute' | 'lifecycle' | 'node' | 'chain' | 'store' | 'identity' | 'config' | 'oceanjs'`
+- Default: all, or `NAUTILUS_LOG_COMPONENTS`
+
+Only these components print their `info`, `debug` and `trace` events. Warnings and errors of
+every component always print.
+
+#### sink
+
+- Type: `(event: LogEvent) => void`
+
+Receives every event that passes the level and component filters, instead of stderr. Use
+it to hand nautilus's events to your own logger. A sink that throws is ignored.
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+declare const appLogger: Record<string, (data: object, msg: string) => void>
+// ---cut---
+Nautilus.configureLogging({
+  level: 'info',
+  sink: ({ level, event, msg, fields }) => // [!code focus]
+    appLogger[level]({ event, ...fields }, msg) // [!code focus]
+})
+```
+
+Each event is a `LogEvent`:
+
+| Property | Type | |
+|----------|------|-|
+| `time` | `string` | ISO 8601 timestamp. |
+| `level` | `'error' \| 'warn' \| 'info' \| 'debug' \| 'trace'` | |
+| `event` | `string` | The catalogued name, `component.step.outcome`. Stable: filter and alert on it, not on `msg`. |
+| `component` | `LogComponent` | |
+| `msg` | `string` | A readable sentence. It may change between versions. |
+| `did`, `txHash`, `durationMs` | | Set when the event is about an asset, a transaction or a timed step. |
+| `fields` | `Record<string, unknown>` | The event's own data. |
+
+The catalogue of every event, with its level, component and fields, is exported as
+`LOG_EVENTS`.
+
+**Redaction.** Before any sink or stderr sees an event, its fields are redacted by key:
+`sessionId`, `signature`, `nonce`, `jwt`, `token`, `authorization`, `secretAccessKey` and
+similar credentials become `<redacted>`; any `url` or `uri` (and `endpoint`, `nodeUri`, …) is
+reduced to its origin; an `error` is reduced to its name and message, with control characters
+stripped and credentials redacted. Every other text, the message included, has URLs reduced
+to their origin and credentials redacted too. No level prints an RPC token, a session id, a
+signature or a JWT.
+
+#### oceanjs
+
+- Type: `'capture' | 'passthrough' | 'silent'`
+
+What to do with ocean.js's own log output. **Accepted, but not acted on yet**: ocean.js still
+prints its own lines as before, at the level [`setLogLevel`](/docs/api/nautilus/setLogLevel)
+sets on its `LoggerInstance` (its default is errors only).
+
+## Environment variables
+
+Read once, when nautilus is imported. `configureLogging` overrides them. In a browser there is
+no environment; use `configureLogging`.
+
+| Variable | Values |
+|----------|--------|
+| `NAUTILUS_LOG_LEVEL` | `silent`, `error`, `warn`, `info`, `debug`, `trace` |
+| `NAUTILUS_LOG_FORMAT` | `pretty`, `json` |
+| `NAUTILUS_LOG_COMPONENTS` | a comma-separated list, e.g. `publish,access` |
+
+Case does not matter. An unknown value is ignored, and a `config.env.invalid` warning says so.
+
+```bash
+NAUTILUS_LOG_LEVEL=debug NAUTILUS_LOG_FORMAT=json node publish.js 2> nautilus.log
+```
+
+## One logger per instance
+
+Pass [`logger`](/docs/api/nautilus/create#logger) to `Nautilus.create` to give one instance
+its own level, components or sink, e.g. one sink per tenant in a multi-tenant server.

@@ -42,6 +42,7 @@ const node = new OceanNodeClient({
 | `consumerAddress` | `string` | For a JWT `auth`: the address to name when a call needs one. Optional: by default it is read from the token's `address` claim, as ocean.js reads it (decoded, not verified). Required for a token without that claim. |
 | `allowInsecureTransport` | `boolean` | Accept a plain `http://` `nodeUri` on a host other than `localhost`, `127.0.0.0/8`, `::1` or `*.localhost`. Default `false`: the constructor throws an `OceanNodeError`, the same rule as `Nautilus.create`. It also applies to the `nodeUri` argument of `encrypt` and `getFileInfo`. Carried over to `forEndpoint` clients. |
 | `requestTimeoutMs` | `number` | How long one `encrypt` call may run, its nonce retry included; over HTTP also an `initialize` request, and the signing of a `getComputeLogs` request (the log request waits for the job's first output with no timeout; abort its `signal` to stop). Default `120000` (2 minutes, room for a wallet's signature prompt). Must be a positive finite number. Carried over to `forEndpoint` clients. |
+| `logger` | `Logger` | Where this client's log events go, e.g. one from `createLogger({ sink })`. Default: the process-wide logger ([`configureLogging`](/docs/api/nautilus/configureLogging)); `Nautilus` passes its instance's. Carried over to `forEndpoint` clients. |
 
 ## Selected methods
 
@@ -154,8 +155,8 @@ node operator advances the stored nonce of the node's address.
 `{ checkIndexerNonce: false }` to skip that. When the check fails (P2P, a node without the
 nonce endpoint, a network error) they go on silently.
 
-They also read `getNodeAddress()` once per instance and `console.warn` once when the
-publisher is that same address: the node's decrypt calls then collide with the publisher's
+They also read `getNodeAddress()` once per instance and warn once
+(`publish.preflight.publisher_is_node`) when the publisher is that same address: the node's decrypt calls then collide with the publisher's
 nonces and fail with 401, so the asset goes on chain but is never indexed. Publish with a
 different key than the node's.
 

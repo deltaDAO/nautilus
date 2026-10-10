@@ -175,6 +175,7 @@ indexed transaction id, so `waitForIndexer(did, receipt.hash)` cannot wait for i
 through their `waitForIndexer` option.
 
 The 2.0.0-beta.0 options `interval` and `maxRetries` still work for now: they are mapped to
-`intervalMs = interval` and `timeoutMs = interval × maxRetries`, with a one-time
-`console.warn`, and will be removed. Rename them. `maxRetries` without `interval` counts
+`intervalMs = interval` and `timeoutMs = interval × maxRetries`, with a one-time warning
+(`node.indexer_wait.legacy_options`, see [logging](/docs/api/nautilus/configureLogging)), and
+will be removed. Rename them. `maxRetries` without `interval` counts
 beta.0's default 30 s interval, so `{ maxRetries: 10 }` waits 5 minutes, polling every 7 s.
