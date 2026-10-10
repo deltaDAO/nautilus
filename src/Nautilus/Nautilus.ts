@@ -300,11 +300,13 @@ export interface NautilusOptions
    */
   requestTimeoutMs?: number
   /**
-   * This instance's own logging: level, format, components and sink, e.g. one sink per
-   * tenant in a multi-tenant server. Options left out follow `Nautilus.configureLogging`.
-   * Without it, the instance logs through the process-wide configuration.
+   * This instance's own logging, e.g. one sink per tenant in a multi-tenant server: either
+   * options (level, format, components, sink; those left out follow
+   * `Nautilus.configureLogging`), or a logger made with `createLogger(options)`, which
+   * several instances can share. Without it, the instance logs through the process-wide
+   * configuration.
    */
-  logger?: LoggingOptions
+  logger?: LoggingOptions | Logger
 }
 
 export interface PublishOptions {
