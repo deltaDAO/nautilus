@@ -270,9 +270,12 @@ assetBuilder
 ```
 
 **VC policies** check each presented credential; **VP policies** check the presentation as a
-whole. The policy server's defaults are `signature`, `not-before` and
-`revoked-status-list`. Valid names can be listed from the verifier's
-`/openid4vc/policy-list` endpoint.
+whole. The policy server puts its own `DEFAULT_VC_POLICIES` and `DEFAULT_VP_POLICIES` in
+front of the asset's lists. Its operator sets them: the local dev stack uses
+`signature,not-before,revoked-status-list`, the policy server's shipped `.env.example` lists
+`expired,signature,revoked-status-list,not-before`, and the values of a deployed policy server
+are unknown. So write every policy you rely on into the asset. Valid names can be listed from
+the verifier's `/openid4vc/policy-list` endpoint.
 
 VC policies are names, while every VP policy is an object, `{ policy }` or
 `{ policy, args }` with `args` as a string, as the enterprise market writes them: an asset
@@ -355,7 +358,15 @@ protection.
 Gating also works per service, via
 [`ServiceBuilder.addRequestCredentials`](/docs/api/servicebuilder/addRequestCredentials) —
 useful when an asset offers both a preview that needs no credential (allow-listed accounts
-only) and a full service that also requires a credential.
+only) and a full service that also requires a credential. Two limits apply today:
+
+- `ServiceBuilder.addRequestCredentials` takes no VC or VP policies, so a service-level gate
+  runs only with the policy server's `DEFAULT_VC_POLICIES` and `DEFAULT_VP_POLICIES`, which
+  its operator sets and whose deployed values are unknown. The presentation's own `signature`,
+  for one, may not be checked. Per-service VC and VP policies are a planned SDK change.
+- Don't add `setVcPolicies` or `setVpPolicies` to such an asset. They write an asset-level
+  `SSIpolicy` without `request_credentials`, and the policy server then refuses every service
+  that needs no credential ("SSIpolicy was found, but failed to fetch request credentials").
 
 ### Issuing from a real DID
 
