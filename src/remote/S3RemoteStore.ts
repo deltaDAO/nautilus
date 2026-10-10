@@ -46,6 +46,7 @@
  * Node ≥ 22 and in the browser.
  */
 import type { StorageObject } from '@oceanprotocol/lib'
+import { debugEnabled, debugRaw } from '../log/debug.js'
 import { log } from '../log/logger.js'
 import {
   errorMessage,
@@ -612,6 +613,11 @@ export class S3RemoteStore implements RemoteStore {
     response: FetchedText
   ): string {
     const { status, body } = response
+    if (debugEnabled('sensitive', 'store'))
+      debugRaw('store', `S3 answer HTTP ${status} to ${method}`, {
+        status,
+        body
+      })
     const code = s3ErrorCode(body)
     const where = `${method} s3://${this.options.bucket}/${key} with the ${role} key`
 

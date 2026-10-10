@@ -63,6 +63,7 @@ import {
   withQualifiedJobId
 } from '../compute/jobs.js'
 import type { PolicyServerPayload } from '../ddo/types.js'
+import { debugEnabled, debugRaw } from '../log/debug.js'
 import { type Logger, log } from '../log/logger.js'
 import {
   errorMessage,
@@ -175,7 +176,8 @@ export class OceanNodeError extends Error {
     return new OceanNodeError(
       operation,
       describeError(error),
-      sanitizedError(error)
+      // describeError handed the raw error to the debug channel already.
+      sanitizedError(error, null)
     )
   }
 }
@@ -292,7 +294,8 @@ export class PolicyDeniedError extends Error {
     reason: string
     policyResults?: PolicyCheckResult[]
   }) {
-    const reason = boundedNodeMessage(params.reason) || 'no reason given'
+    const reason =
+      boundedNodeMessage(params.reason, 'policy') || 'no reason given'
 
     super(
       `The policy server of ${params.nodeUri} refused service ${params.serviceId} of ${params.did} for ${params.consumerAddress}${params.code ? ` (${params.code})` : ''}: ${reason}. Nothing was ordered or paid. Check the asset's credentials (its address allow list and SSIpolicy) with the publisher.`
@@ -876,7 +879,8 @@ function readPolicyResults(record: unknown): PolicyCheckResult[] {
           : boundedNodeMessage(
               typeof error === 'string'
                 ? error.split('\n')[0]
-                : ((error as { message?: unknown }).message ?? error)
+                : ((error as { message?: unknown }).message ?? error),
+              'policy'
             )
 
       read.push({
@@ -889,6 +893,55 @@ function readPolicyResults(record: unknown): PolicyCheckResult[] {
   }
 
   return read
+}
+
+/**
+ * The verifier's session record on the debug channel: one line naming each policy and its
+ * outcome (`holder-binding: failed (java.lang.NullPointerException…)`), then the whole
+ * reply, raw.
+ */
+function debugPolicySession(
+  sessionId: string,
+  failed: string | undefined,
+  reply: PolicyServerReply | undefined
+): void {
+  const record = reply?.message
+  const results = (
+    record as { policyResults?: { results?: unknown } } | null | undefined
+  )?.policyResults?.results
+  const summary: string[] = []
+
+  if (Array.isArray(results))
+    for (const entry of results) {
+      const { credential, policyResults } = (entry ?? {}) as {
+        credential?: unknown
+        policyResults?: unknown
+      }
+      if (!Array.isArray(policyResults)) continue
+      for (const raw of policyResults) {
+        const { policy, is_success, error } = (raw ?? {}) as {
+          policy?: unknown
+          is_success?: unknown
+          error?: unknown
+        }
+        const why =
+          error === undefined || error === null
+            ? ''
+            : ` (${typeof error === 'string' ? error : JSON.stringify(error)})`
+        summary.push(
+          `${typeof credential === 'string' ? `${credential} ` : ''}${String(policy)}: ${is_success === true ? 'ok' : `failed${why}`}`
+        )
+      }
+    }
+
+  debugRaw('policy', 'verifier per-policy results (checkSessionId)', {
+    sessionId,
+    verificationResult: (record as { verificationResult?: unknown } | null)
+      ?.verificationResult,
+    ...(failed ? { answer: failed } : {}),
+    policies: summary
+  })
+  debugRaw('policy', 'verifier session record (checkSessionId), raw', reply)
 }
 
 /** Resolves once `promise` settles; rejects with `signal.reason` if `signal` aborts first. */
@@ -2854,6 +2907,10 @@ export class OceanNodeClient {
     }
 
     const record = reply?.message
+    // The verifier's whole record (per-policy results with their full errors, the
+    // presentation): what `readPolicyResults` drops, for the debug channel.
+    if (debugEnabled('sensitive', 'policy'))
+      debugPolicySession(sessionId, failed, reply)
 
     if (isSessionRecord(record))
       return {
