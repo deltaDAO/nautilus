@@ -377,6 +377,8 @@ is one value — a policy-server session id — which it then carries into the d
    (`ssi:publish-gated`, `ssi:publish-gated-compute`, `ssi:publish-partial`, `ssi:round-trip`)
    refuse to run without it, or with an entry that is not a DID (`did:<method>:<id>`).
 5. Run `npm start -- ssi:round-trip` to publish a gated dataset and consume it in one go.
+   Against the local dev stack, also set `SSI_ALLOW_INSECURE_TRANSPORT=true`: its policy
+   server answers on plain http at `host.docker.internal`, which nautilus otherwise refuses.
 
 **On the publishing side**, declare what you require:
 

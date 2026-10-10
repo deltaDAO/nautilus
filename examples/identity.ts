@@ -175,6 +175,9 @@ export function createCredentialProvider(
     walletApi: getWalletApi(),
     walletId,
     did,
+    // Local stacks only: a policy-server proxy reached over plain http on a host other
+    // than a loopback one (e.g. host.docker.internal in the dev stack).
+    allowInsecureTransport: process.env.SSI_ALLOW_INSECURE_TRANSPORT === 'true',
 
     ...(options.interactive
       ? {
