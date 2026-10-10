@@ -25,12 +25,15 @@ name with an object, so publish such an asset again.
  builder.setVpPolicies(CredentialListTypes.ALLOW, [
 -  'holder-binding',
 -  { policy: 'minimum-credentials', args: 1 }
++  { policy: 'signature' },
 +  { policy: 'minimum-credentials', args: '1' }
  ])
 ```
 
 `minimum-credentials` needs its argument: without one it fails in the walt.id verifier for
-every presentation.
+every presentation. Add `{ policy: 'signature' }`: walt.id checks the presentation's own
+signature only when a VP policy asks for it, and whether the policy server adds it is up to
+its operator.
 
 **Leave out `holder-binding` for `vc+jwt` credentials.** The beta.1 docs and examples required
 it. walt.id's `holder-binding` reads the credential JWT's `sub` and fails for credentials
@@ -742,7 +745,10 @@ builder
     { type: 'VerifiableId', format: 'jwt_vc_json' }
   ])
   .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'not-before'])
-  .setVpPolicies(CredentialListTypes.ALLOW, [{ policy: 'minimum-credentials', args: '1' }])
+  .setVpPolicies(CredentialListTypes.ALLOW, [
+    { policy: 'signature' },
+    { policy: 'minimum-credentials', args: '1' }
+  ])
   .setCredentialMatchRules({ match_allow: 'all', match_deny: 'any' })
 ```
 

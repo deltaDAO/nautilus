@@ -16,6 +16,7 @@ const assetBuilder = new AssetBuilder()
 import { CredentialListTypes } from '@deltadao/nautilus'
 
 assetBuilder.setVpPolicies(CredentialListTypes.ALLOW, [ // [!code focus]
+  { policy: 'signature' }, // [!code focus]
   { policy: 'minimum-credentials', args: '1' } // [!code focus]
 ]) // [!code focus]
 ```
@@ -23,14 +24,22 @@ assetBuilder.setVpPolicies(CredentialListTypes.ALLOW, [ // [!code focus]
 `minimum-credentials` needs its argument: a bare `{ policy: 'minimum-credentials' }` fails in
 the walt.id verifier for every presentation.
 
+**Check the presentation's own signature** with `{ policy: 'signature' }` among the VP
+policies. walt.id runs only the VP policies the session lists, so without it nothing checks
+that the presentation was signed by the DID it names, unless the policy server's operator adds
+it through `DEFAULT_VP_POLICIES`, which nautilus cannot see. Listed on the asset, the check
+holds whatever that setting is; when the policy server adds it too, it simply runs twice. It
+does not bind the credential to the presenter, which is `holder-binding`'s job, and it does not
+stop a presentation replayed from an earlier session: the verifier accepts it.
+
 :::warning[`holder-binding` and `presentation-definition`]
 Neither belongs in the default set:
 
 - `holder-binding` reads the credential JWT's `sub` and fails (a `NullPointerException` in
   walt.id) for credentials without `sub` (common for VCDM 2.0 `vc+jwt`) and URL-subject
   credentials such as Gaia-X `gx:LegalPerson`. Where it does work, it binds a credential to
-  its presenter only with the presentation's signature verified (the VP policy `signature`),
-  since it compares `sub` with the DID the presentation claims. Without it a copied
+  its presenter only with the presentation's signature verified (the VP policy `signature`
+  above), since it compares `sub` with the DID the presentation claims. Without it a copied
   credential can be presented from any wallet, so bind access to an account with the address
   allow list.
 - `presentation-definition` refuses VCDM 2.0 `vc+jwt` credentials, because the definition

@@ -264,6 +264,7 @@ assetBuilder
     'revoked-status-list' // [!code focus]
   ]) // [!code focus]
   .setVpPolicies(CredentialListTypes.ALLOW, [ // [!code focus]
+    { policy: 'signature' }, // [!code focus]
     { policy: 'minimum-credentials', args: '1' } // [!code focus]
   ]) // [!code focus]
 ```
@@ -280,6 +281,14 @@ verifier as the number `1`; pass structured arguments through `JSON.stringify`.
 `minimum-credentials` needs its argument: walt.id reads it as a number, and a bare
 `{ policy: 'minimum-credentials' }` fails in the verifier for every presentation.
 
+**Check the presentation's own signature** with `{ policy: 'signature' }` among the VP
+policies. walt.id runs only the VP policies the session lists, so without it nothing checks
+that the presentation was signed by the DID it names, unless the policy server's operator adds
+it through `DEFAULT_VP_POLICIES`, which nautilus cannot see. Listed on the asset, the check
+holds whatever that setting is; when the policy server adds it too, it simply runs twice. It
+does not bind the credential to the presenter, which is `holder-binding`'s job, and it does not
+stop a presentation replayed from an earlier session: the verifier accepts it.
+
 **Put policies that take arguments on the credential.** The policy server keeps only the
 *name* of an asset- or service-level VC policy and drops its arguments. `allowed-issuer`
 without its list of issuers throws "Invalid argument" in walt.id, which fails the
@@ -293,9 +302,9 @@ presentation. What it gives and what it costs:
 
 - It binds a credential to its presenter **only** when the credential JWT's `sub` is the
   presenter's DID, and only when the presentation's signature is verified as well (the VP
-  policy `signature`): it compares `sub` with the DID the presentation claims, which proves
-  nothing unless that presentation's signature is checked. walt.id reads `sub` and nothing
-  else.
+  policy `signature`, part of the set above): it compares `sub` with the DID the presentation
+  claims, which proves nothing unless that presentation's signature is checked. walt.id reads
+  `sub` and nothing else.
 - It fails, with a `NullPointerException` in the verifier, for credentials without `sub`
   (common for VCDM 2.0 `vc+jwt`) and URL-subject credentials such as the Gaia-X
   `gx:LegalPerson` credential. An asset that requires it refuses every holder of such a

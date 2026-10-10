@@ -430,7 +430,9 @@ describe('example commands', () => {
 
     expect(out).toContain('allowed-issuer')
     expect(out).toContain('did:web:issuer.example')
-    expect(out).toContain('minimum-credentials')
+    expect(out).toMatch(
+      /"vp_policies": \[\s*\{\s*"policy": "signature"\s*\},\s*\{\s*"policy": "minimum-credentials",\s*"args": "1"\s*\}\s*\]/
+    )
     expect(out).not.toContain('holder-binding')
   })
 

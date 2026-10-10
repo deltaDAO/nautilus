@@ -132,6 +132,11 @@ gated
     } // [!code focus]
   ]) // [!code focus]
   .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'not-before']) // [!code focus]
+  // And: a presentation signed by the DID it names, holding at least one credential.
+  .setVpPolicies(CredentialListTypes.ALLOW, [ // [!code focus]
+    { policy: 'signature' }, // [!code focus]
+    { policy: 'minimum-credentials', args: '1' } // [!code focus]
+  ]) // [!code focus]
 ```
 
 On a node with a policy server the address allow list is required, and it is the check that

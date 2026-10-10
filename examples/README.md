@@ -394,7 +394,10 @@ assetBuilder
     }
   ])
   .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'not-before', 'revoked-status-list'])
-  .setVpPolicies(CredentialListTypes.ALLOW, [{ policy: 'minimum-credentials', args: '1' }])
+  .setVpPolicies(CredentialListTypes.ALLOW, [
+    { policy: 'signature' },
+    { policy: 'minimum-credentials', args: '1' }
+  ])
 ```
 
 VC policies check each credential; VP policies check the presentation as a whole. This is the
@@ -404,6 +407,9 @@ set `identity.ts` uses, and why:
   service-level VC policies, and `allowed-issuer` without its issuers throws in walt.id, which
   denies every consumer. Per-credential `policies` keep their arguments.
 - **`minimum-credentials` needs its argument** (`args: '1'`): a bare name fails in the verifier.
+- **`signature` checks the presentation's own signature.** walt.id runs only the VP policies
+  the session lists; whether the policy server adds `signature` itself is up to its operator
+  (`DEFAULT_VP_POLICIES`). It does not stop a presentation replayed from an earlier session.
 - **No `holder-binding`.** It binds a credential to its presenter only when the credential
   JWT's `sub` is the presenter's DID (and the presentation's signature is verified), and it
   fails (a NullPointerException in walt.id) for credentials without `sub` (common for VCDM 2.0

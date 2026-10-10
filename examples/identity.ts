@@ -365,8 +365,11 @@ const GATE_VC_POLICIES: VcPolicy[] = [
 ]
 
 /**
- * Checked on the presentation as a whole. `minimum-credentials` needs its argument; a bare
- * name fails in the verifier for every presentation.
+ * Checked on the presentation as a whole. `signature` checks the presentation's own
+ * signature: walt.id runs only the VP policies the session lists, and whether the policy
+ * server adds it (`DEFAULT_VP_POLICIES`) is up to its operator. It does not stop a
+ * presentation replayed from an earlier session. `minimum-credentials` needs its argument; a
+ * bare name fails in the verifier for every presentation.
  *
  * No `holder-binding`: it reads the credential JWT's `sub`, and fails for credentials without
  * `sub` (common for VCDM 2.0 `vc+jwt`) and URL-subject credentials such as Gaia-X
@@ -377,6 +380,7 @@ const GATE_VC_POLICIES: VcPolicy[] = [
  * have. See the identity guide in the docs.
  */
 const GATE_VP_POLICIES: VpPolicy[] = [
+  { policy: 'signature' },
   { policy: 'minimum-credentials', args: '1' }
 ]
 
