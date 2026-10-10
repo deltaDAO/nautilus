@@ -126,6 +126,7 @@ export const sidebar = {
               text: 'configureLogging',
               link: '/docs/api/nautilus/configureLogging'
             },
+            { text: 'setDebug', link: '/docs/api/nautilus/setDebug' },
             { text: 'setLogLevel', link: '/docs/api/nautilus/setLogLevel' }
           ]
         },
@@ -538,7 +539,10 @@ export const sidebar = {
     },
     {
       text: 'Advanced',
-      items: [{ text: 'Custom configuration', link: '/docs/guides/config' }]
+      items: [
+        { text: 'Custom configuration', link: '/docs/guides/config' },
+        { text: 'Debugging', link: '/docs/guides/debugging' }
+      ]
     },
     {
       text: 'Legal',

@@ -126,7 +126,9 @@ nested objects too. Keys are compared without case, `-` or `_`, so `session_id`,
 
 Every other text, the message included, has URLs reduced to their origin and credentials
 redacted too. No level of nautilus's own events prints an RPC token, a session id, a
-signature or a JWT.
+signature or a JWT. When a failure needs the raw values, turn on the separate debug channel
+with [`setDebug`](/docs/api/nautilus/setDebug) or `NAUTILUS_DEBUG` (see the
+[debugging guide](/docs/guides/debugging)); it leaves these events as they are.
 
 :::warning[ocean.js still prints its own lines]
 This covers nautilus's events only. Until a later release routes ocean.js's logger through
