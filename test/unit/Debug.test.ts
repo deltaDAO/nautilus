@@ -8,7 +8,7 @@
  * long-lived fixture credential.
  */
 import { FetchRequest, makeError } from 'ethers'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CredentialProvider } from '../../src/identity/CredentialProvider.js'
 import { PolicySessionResolver } from '../../src/identity/PolicySessionResolver.js'
 import { addRequestCredentials } from '../../src/identity/policy.js'
@@ -238,6 +238,11 @@ function walletRejecting(status: number, body: string) {
       redirectUri
     })
 }
+
+// These tests set the channel themselves: off, also under NAUTILUS_TEST_DEBUG.
+beforeEach(() => {
+  resetDebug({})
+})
 
 afterEach(() => {
   vi.unstubAllGlobals()
