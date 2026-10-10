@@ -395,7 +395,6 @@ describe('writeMetadata', () => {
     for (const code of [
       'ACTION_REJECTED',
       'INSUFFICIENT_FUNDS',
-      'REPLACEMENT_UNDERPRICED',
       'INVALID_ARGUMENT',
       'UNSUPPORTED_OPERATION'
     ] as const) {
@@ -646,6 +645,110 @@ describe('writeMetadata', () => {
     const none = await write(sent(async () => null))
     expect(none.progress).to.deep.equal(['sent'])
     expect(none.error?.message).to.match(/submitted but never confirmed/)
+  })
+
+  /**
+   * A refusal for the nonce (PR 4): "nonce too low" also answers a transaction that was
+   * already mined, so the envelope goes only with three proofs: (a) the signed
+   * transaction unknown on two reads, (b) the account's mined count past its nonce, and
+   * (c) no metadata event of the NFT carrying this metadataHash.
+   */
+  describe('after a refusal for the nonce', () => {
+    const METADATA_REQUEST = {
+      to: NFT_ADDRESS,
+      data: `0x1aa3adf9${'00'.repeat(32)}`,
+      gasLimit: 100000n,
+      maxFeePerGas: 2n,
+      maxPriorityFeePerGas: 1n
+    }
+
+    function refusingChain(options: {
+      code?: 'NONCE_EXPIRED' | 'REPLACEMENT_UNDERPRICED'
+      latest?: number
+      known?: boolean
+      eventWithHash?: boolean
+      withRaw?: boolean
+    }) {
+      let metadataHash = ''
+      let signedHash = ''
+      chain.setMetadataTx = async (...args: unknown[]) => {
+        metadataHash = String(args[7])
+        return METADATA_REQUEST
+      }
+      const provider = {
+        getNetwork: async () => ({ chainId: 32456n }),
+        getBlockNumber: async () => 100,
+        getTransactionCount: async () => options.latest ?? 818,
+        getTransaction: async (hash: string) =>
+          options.known && hash === signedHash ? { hash } : null,
+        getTransactionReceipt: async () => null,
+        getLogs: vi.fn(async () =>
+          options.eventWithHash
+            ? [{ data: `0x${'00'.repeat(64)}${metadataHash.slice(2)}` }]
+            : []
+        ),
+        broadcastTransaction: async (raw: string) => {
+          signedHash = (await import('ethers')).Transaction.from(raw)
+            .hash as string
+          throw makeError(
+            'nonce has already been used',
+            options.code ?? 'NONCE_EXPIRED',
+            {
+              ...(options.withRaw === false ? {} : { transaction: raw }),
+              info: { error: { code: -32003, message: 'nonce too low' } }
+            } as never
+          )
+        }
+      }
+      const signer = new Wallet(PRIVATE_KEY).connect(provider as never)
+      // A nonce read 53 below the truth, as in the beta.2 run (765 vs 818).
+      signer.getNonce = async () => 765
+      return { signer, provider }
+    }
+
+    it('removes the envelope when all three proofs hold, with no signed transaction in the message', async () => {
+      const { signer } = refusingChain({})
+
+      const { error, progress } = await writeWith(signer)
+
+      expect(progress).to.deep.equal([])
+      expect(isError(error, 'NONCE_EXPIRED')).to.equal(true)
+      expect(error?.message).not.to.match(/0x[0-9a-f]{130,}/i)
+      expect(error?.message).to.match(/<signed transaction 0x[0-9a-f]{64}>/)
+    })
+
+    it('keeps it when the RPC knows the transaction (it may be the one mined)', async () => {
+      const { signer } = refusingChain({ known: true })
+
+      const { progress, hashes } = await writeWith(signer)
+
+      expect(progress).to.deep.equal(['sent'])
+      expect(hashes[0]).to.match(/^0x[0-9a-f]{64}$/)
+    })
+
+    it('keeps it when the mined count does not prove the nonce used by another transaction', async () => {
+      const { signer } = refusingChain({ latest: 765 })
+
+      expect((await writeWith(signer)).progress).to.deep.equal(['sent'])
+    })
+
+    it('keeps it when a metadata event carries this metadataHash', async () => {
+      const { signer, provider } = refusingChain({ eventWithHash: true })
+
+      expect((await writeWith(signer)).progress).to.deep.equal(['sent'])
+      expect(provider.getLogs).toHaveBeenCalledWith(
+        expect.objectContaining({ address: NFT_ADDRESS, fromBlock: 100 })
+      )
+    })
+
+    it('keeps it for REPLACEMENT_UNDERPRICED without a signed transaction to check', async () => {
+      const { signer } = refusingChain({
+        code: 'REPLACEMENT_UNDERPRICED',
+        withRaw: false
+      })
+
+      expect((await writeWith(signer)).progress).to.deep.equal(['sent'])
+    })
   })
 
   it('sends through ocean.js on a confidential chain, whose null it cannot tell apart', async () => {

@@ -30,6 +30,7 @@ import {
   type TransactionResponse
 } from 'ethers'
 import { type Logger, log } from '../log/logger.js'
+import { guardOf, withSendFailure } from './nonceGuard.js'
 import {
   assertProviderFeesAllowed,
   type ProviderFeeLimits,
@@ -152,7 +153,7 @@ export async function reuseOrder(
     params.providerFees
   )
 
-  const receipt = await confirm('reuseOrder', response)
+  const receipt = await confirm('reuseOrder', response, params.signer)
 
   return { transferTxId: receipt.hash, reused: true }
 }
@@ -496,7 +497,8 @@ async function orderFixed(
         pricing.datatokenAddress,
         orderParams,
         freParams
-      )
+      ),
+      signer
     )
 
     return { transferTxId: receipt.hash, reused: false }
@@ -517,7 +519,8 @@ async function orderFixed(
       price.total,
       route.consumeMarket.address,
       route.consumeMarket.fee
-    )
+    ),
+    signer
   )
 
   return startOrder(datatoken, pricing.datatokenAddress, orderParams)
@@ -540,7 +543,8 @@ async function orderFree(
         pricing.datatokenAddress,
         orderParams,
         route.dispenserAddress
-      )
+      ),
+      signer
     )
 
     return { transferTxId: receipt.hash, reused: false }
@@ -555,7 +559,8 @@ async function orderFree(
 
   await confirm(
     'dispense',
-    await dispenser.dispense(pricing.datatokenAddress, '1', payer)
+    await dispenser.dispense(pricing.datatokenAddress, '1', payer),
+    signer
   )
 
   return startOrder(datatoken, pricing.datatokenAddress, orderParams)
@@ -594,7 +599,8 @@ async function startOrder(
       orderParams.serviceIndex,
       orderParams._providerFee,
       orderParams._consumeMarketFee
-    )
+    ),
+    datatoken.signer
   )
 
   return { transferTxId: receipt.hash, reused: false }
@@ -642,8 +648,11 @@ export async function approveFeeWei(params: {
   // ocean.js waits for the approval itself but swallows a failed send and returns null;
   // surface that here rather than letting the order revert on a missing allowance.
   if (!response)
-    throw new Error(
-      `Could not approve the ${params.what} of ${amount} wei on token ${token} for ${spender}.`
+    throw withSendFailure(
+      signer,
+      new Error(
+        `Could not approve the ${params.what} of ${amount} wei on token ${token} for ${spender}.`
+      )
     )
 }
 
@@ -735,7 +744,11 @@ async function approveSpend(params: {
   // `approve` returns a number when the existing allowance already suffices.
   if (typeof response === 'number') return
 
-  await confirm('approve', response as unknown as TransactionResponse)
+  await confirm(
+    'approve',
+    response as unknown as TransactionResponse,
+    params.signer
+  )
 }
 
 /**
@@ -745,15 +758,29 @@ async function approveSpend(params: {
  * without this a failed transaction looks like a successful call returning nothing. It
  * awaits the receipt inside the same `try`, so `null` can also mean the transaction was
  * broadcast and then reverted or timed out.
+ *
+ * With the signer the transaction was sent with, and when that is the nonce guard
+ * `Nautilus.create()` installs, a `null` names the send failure the guard recorded (the
+ * wallet's or RPC's refusal, or the guard's `NonceGuardError`), which is also the error's
+ * `cause`.
  */
 async function confirm(
   operation: string,
-  response: TransactionResponse | unknown
+  response: TransactionResponse | unknown,
+  signer?: Signer
 ): Promise<TransactionReceipt> {
-  if (!response)
+  if (!response) {
+    const failure = guardOf(signer)?.takeLastFailure()
+
+    if (failure)
+      throw new Error(`${operation} failed: ${failure.text}`, {
+        cause: failure.error
+      })
+
     throw new Error(
       `${operation} failed: ocean.js returned no transaction. The wallet or RPC rejected it, or it was sent and then reverted or timed out; ocean.js does not say which, so check the account's latest transactions before retrying.`
     )
+  }
 
   const tx = response as TransactionResponse
 

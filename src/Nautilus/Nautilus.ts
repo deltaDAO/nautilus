@@ -15,6 +15,7 @@ import {
   getAddress,
   isAddress,
   isHexString,
+  type Provider,
   type Signer,
   type TransactionReceipt
 } from 'ethers'
@@ -98,6 +99,7 @@ import { resolvePublisherTrustedAlgorithms } from '../utils/helpers/trusted-algo
 import { errorMessage } from '../utils/http.js'
 import { getChainId } from '../utils/index.js'
 import { createKeyedLock } from '../utils/keyedLock.js'
+import { guardSigner, type NonceManagement } from '../utils/nonceGuard.js'
 import {
   assertValidLimits,
   type EscrowPaymentLimits,
@@ -315,6 +317,35 @@ export interface NautilusOptions
    * configuration.
    */
   logger?: LoggingOptions | Logger
+  /**
+   * Who chooses transaction nonces. nautilus sends every transaction through a nonce guard
+   * wrapped around the signer (`getSigner()` returns it):
+   *
+   * - `'auto'` (default): for a signer that signs locally (an ethers `Wallet`), nautilus
+   *   sends one transaction at a time per chain and address (only the broadcast, not the
+   *   wait for mining), with the nonce `max(its own counter, the RPC's pending count)`, so
+   *   concurrent publishes and orders of one key in this process do not collide. A
+   *   transaction refused for its nonce (`NONCE_EXPIRED`, `REPLACEMENT_UNDERPRICED`,
+   *   "already known") that the chain already has is waited for, never sent again; one it
+   *   does not have is sent again with a fresh nonce, at most three times. An order, a
+   *   purchase, an approval or an escrow payment is sent again only with proof that the
+   *   first transaction can never be mined; otherwise it stops with a `NonceGuardError`
+   *   ("may have been sent"). Wallet-managed signers (`JsonRpcSigner`, browser wallets)
+   *   keep choosing their own nonces.
+   * - `'off'`: nautilus never sets a nonce and never sends a transaction again.
+   *
+   * Either way, a transaction the chain already has is returned instead of failing, and a
+   * failed send is named in the error (ocean.js itself reports only that it returned no
+   * transaction). The guard covers this process only: use one key per process.
+   */
+  nonceManagement?: NonceManagement
+  /**
+   * A second RPC provider for the chain, asked for the second read before nautilus decides
+   * a transaction was never sent: before an order, purchase, approval or escrow payment is
+   * sent again after a nonce refusal, and before a stored envelope is removed after a
+   * failed metadata transaction. Default: the signer's own provider, read twice.
+   */
+  verificationProvider?: Provider
 }
 
 export interface PublishOptions {
@@ -476,9 +507,13 @@ export class Nautilus {
   private readonly log: Logger
 
   private constructor(signer: Signer, options: NautilusOptions) {
-    this.signer = signer
     this.options = options
     this.log = loggerFor(options.logger)
+    this.signer = guardSigner(signer, {
+      nonceManagement: options.nonceManagement,
+      verificationProvider: options.verificationProvider,
+      logger: this.log
+    })
     this.policySessions = new PolicySessionResolver({
       credentials: options.credentials,
       sessionStore: options.sessionStore,
@@ -495,6 +530,15 @@ export class Nautilus {
   ): Promise<Nautilus> {
     // A malformed ceiling fails here, not at the first paid call.
     assertValidLimits(options)
+
+    if (
+      options.nonceManagement !== undefined &&
+      options.nonceManagement !== 'auto' &&
+      options.nonceManagement !== 'off'
+    )
+      throw new Error(
+        `Nautilus.create: nonceManagement must be 'auto' or 'off', got ${JSON.stringify(options.nonceManagement)}.`
+      )
 
     const instance = new Nautilus(signer, options)
 
@@ -667,6 +711,11 @@ export class Nautilus {
     return this.node
   }
 
+  /**
+   * The signer nautilus sends with: the one given to `create()`, wrapped in the nonce guard
+   * (see `NautilusOptions.nonceManagement`). Transactions sent through it share the
+   * guard's per-address order and nonce counter with nautilus's own.
+   */
   getSigner(): Signer {
     return this.signer
   }

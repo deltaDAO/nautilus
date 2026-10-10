@@ -37,6 +37,12 @@ export {
   getOceanConfig
 } from './utils/index.js'
 export {
+  NonceGuardError,
+  type NonceGuardReason,
+  type NonceManagement,
+  type SentAttempt
+} from './utils/nonceGuard.js'
+export {
   confirmTransaction,
   type OrderRequest,
   type OrderResult,
