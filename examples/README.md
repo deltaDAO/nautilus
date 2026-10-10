@@ -130,7 +130,7 @@ usage and requirements without connecting to anything. The groups are:
 | --- | --- |
 | `check:` | Diagnostics. `check:node` is the one to run first. |
 | `store:` | `store:check` — the DDO store's preflight, without a transaction. `store:remove <cid\|objectKey> [force]` — unpin or delete one stored envelope: an intermediate version, a revoked asset's, or one a failed write left. Refuses the creation or latest envelope `PUBLISH_LOG` lists unless `force`. |
-| `publish:` | Datasets, algorithms, SaaS offers, multi-service assets, local validation, and `publish:resume` for a publish that stopped after the mint. |
+| `publish:` | Datasets, algorithms, SaaS offers, multi-service assets, local validation, `publish:parallel` (three publishes at once from one key), and `publish:resume` for a publish that stopped after the mint. |
 | `asset:` | Inspecting, unlisting and revoking a published asset, and `asset:indexing-state` — why the node did or did not index it. |
 | `edit:` | Metadata, descriptions, a service's name/description/timeout, files, endpoint and allowlist, prices, trusted algorithms. |
 | `access:` | Price checks, ordering, downloading, service selection, consumer parameters. |
@@ -384,6 +384,20 @@ that says why:
 npm start -- asset:indexing-state 0xTxHash…   # failures are filed by transaction
 npm start -- asset:indexing-state did:ope:…   # successes by DID
 ```
+
+### Several transactions at once from one key
+
+`npm start -- publish:parallel` publishes three datasets with `Promise.all` from one key and
+prints the nonce of each metadata transaction. `Nautilus.create` wraps your key in a nonce
+guard: its transactions go out one at a time with consecutive nonces, a transaction refused
+for its nonce is waited for when the chain already has it and sent again when that is
+provably safe, and a failed send says why instead of "ocean.js returned no transaction". An
+order that cannot be proven unsent stops with a `NonceGuardError` ("may have been sent"):
+check the account's transactions before you retry it. The guard covers **one process**: give
+each process (a server, a script, a CI job) its own key. To watch its decisions, run with
+`NAUTILUS_DEBUG=sensitive NAUTILUS_DEBUG_TOPICS=nonce` (the output holds signed
+transactions: keep it to yourself). `nonceManagement: 'off'` in `Nautilus.create` turns the
+nonce choice off.
 
 Two rules on edits. ocean-node indexes only the **first** metadata event of an asset in a
 block: one `Nautilus` instance runs its writes to an asset one after the other, and when a
