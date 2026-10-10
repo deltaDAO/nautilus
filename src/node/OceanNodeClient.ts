@@ -896,9 +896,9 @@ function readPolicyResults(record: unknown): PolicyCheckResult[] {
 }
 
 /**
- * The verifier's session record on the debug channel: one line naming each policy and its
- * outcome (`holder-binding: failed (java.lang.NullPointerException…)`), then the whole
- * reply, raw.
+ * The verifier's session record on the debug channel: one event naming each policy and its
+ * outcome with the first line of its error (`holder-binding: failed
+ * (java.lang.NullPointerException)`), then the whole reply, raw, stack traces included.
  */
 function debugPolicySession(
   sessionId: string,
@@ -924,10 +924,11 @@ function debugPolicySession(
           is_success?: unknown
           error?: unknown
         }
+        // The first line; the whole error, its stack trace included, is in the record.
         const why =
           error === undefined || error === null
             ? ''
-            : ` (${typeof error === 'string' ? error : JSON.stringify(error)})`
+            : ` (${(typeof error === 'string' ? error : JSON.stringify(error)).split('\n')[0]})`
         summary.push(
           `${typeof credential === 'string' ? `${credential} ` : ''}${String(policy)}: ${is_success === true ? 'ok' : `failed${why}`}`
         )

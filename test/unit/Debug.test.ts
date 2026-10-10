@@ -429,11 +429,14 @@ describe("sensitive: the raw value in the channel, never in the caller's error",
       'verifier per-policy results (checkSessionId)'
     )
     expect((summary.data as { policies: string[] }).policies).to.deep.equal([
-      'VerifiablePresentation holder-binding: failed (java.lang.NullPointerException\n\tat HolderBindingPolicy.kt:42)',
+      'VerifiablePresentation holder-binding: failed (java.lang.NullPointerException)',
       'VerifiablePresentation signature: ok'
     ])
     expect(formatDebugLine(summary)).to.contain(
-      'holder-binding: failed (java.lang.NullPointerException\\n\\tat HolderBindingPolicy.kt:42)'
+      'holder-binding: failed (java.lang.NullPointerException)'
+    )
+    expect(formatDebugLine(record)).to.contain(
+      'java.lang.NullPointerException\\n\\tat HolderBindingPolicy.kt:42'
     )
     // The presented VP is sensitive data: shown at this tier.
     expect(JSON.stringify(record.data)).to.contain(FAKE.jwt)
