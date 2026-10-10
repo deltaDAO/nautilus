@@ -614,10 +614,17 @@ export class S3RemoteStore implements RemoteStore {
   ): string {
     const { status, body } = response
     if (debugEnabled('sensitive', 'store'))
-      debugRaw('store', `S3 answer HTTP ${status} to ${method}`, {
-        status,
-        body
-      })
+      debugRaw(
+        'store',
+        `S3 answer HTTP ${status} to ${method}`,
+        { status, body },
+        // An S3 error answer can quote what was sent; the secret keys never show below
+        // the `secrets` tier, also percent-encoded or in base64.
+        [
+          this.options.writeCredentials.secretAccessKey,
+          this.options.readCredentials.secretAccessKey
+        ]
+      )
     const code = s3ErrorCode(body)
     const where = `${method} s3://${this.options.bucket}/${key} with the ${role} key`
 

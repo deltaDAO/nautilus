@@ -1,144 +1,250 @@
 /**
- * What the `sensitive` debug tier still hides: long-lived credentials. Kept out of the
- * package's exports.
+ * What the `sensitive` debug tier still hides: long-lived credentials. Best effort, by name
+ * and shape: a credential under a name nothing here knows, or without any name, prints.
+ * Kept out of the package's exports.
  *
  * The `sensitive` tier shows the raw data nautilus redacts elsewhere (session ids,
  * signatures, nonces, presented VP/VC JWTs, node and wallet bodies, redirect URIs), but not
- * the credentials that stay valid after the run: those need `secrets`. Replaced by
- * `<redacted>`:
+ * the credentials that stay valid after the run: those need `secrets`. Which names are
+ * credentials is `isLongLivedCredential` (`keys.ts`, next to the rule of the log
+ * redaction): any key or parameter ending in `token`, `key`, `secret`, `password`, `auth`,
+ * `cookie`, `jwt`, `credential(s)`, …, and `dkey`, except session-scoped and public names
+ * (`vp_token`, `state`, `sessionId`, `nonce`, `signature`, `id`, `publicKey`, …).
+ * Replaced by `<redacted>`:
  *
  * - in a URL: the user info, the value of a query (or fragment) parameter named like a
- *   credential (`apikey`, `key`, `token`, `access_token`, `secret`, `password`, `sig`,
- *   `X-Amz-Signature`, `X-Amz-Credential`, `X-Amz-Security-Token`, …) and a path segment
- *   that looks like an API key (20 or more letters, digits, `-` and `_`, with both letters
- *   and digits; a UUID, a `0x` hex value or an IPFS CID is kept): the token of an RPC URL
- *   such as `https://…/v3/<key>`;
- * - `Bearer`, `Basic` and `Token` credentials, and `Authorization` and `Cookie` headers;
- * - a credential given as `key=value`, `key: value` or a JSON field: S3 secret keys, OAuth
- *   client secrets and access and refresh tokens, passwords, API keys, JWT fields (a
- *   Pinata JWT), node auth tokens;
- * - in an object, the value of a key named like one of those;
- * - any string the caller names as a credential (a store's configured header values).
+ *   credential (also `key`, `sig` and a `Signature` that is not `0x` hex: a Google API key,
+ *   an Azure SAS or CloudFront signature), a query value holding a URL (plain or
+ *   percent-encoded) masked as a URL in turn, and a path segment that looks like an API key
+ *   (20 or more letters, digits, `-` and `_`, with both letters and digits; a UUID, a `0x`
+ *   hex value or an IPFS CID is kept): the token of an RPC URL such as `https://…/v3/<key>`.
+ *   That heuristic also masks other long ids in a path (a 64-hex compute job id without
+ *   `0x`, an Arweave id, an S3 object key segment);
+ * - `Bearer`, `Basic` and `Token` credentials, and provider tokens known by their prefix
+ *   (`ghp_…`, `glpat-…`, `xoxb-…`, `sk-…`, `AIza…`) wherever they stand;
+ * - in free text, the value of a credential named before it, as `key=value`, `key: value`,
+ *   a JSON field or a JSON field inside a JSON string (the scanner of the log redaction,
+ *   `keyValues.ts`); an `Authorization` or `Cookie` header to the end of its line. The text
+ *   is also read with its JSON escapes undone (`https:\/\/…`, `\\\"apiToken\\\"`), and when
+ *   that finds more, the unescaped text, masked, is what is shown;
+ * - in an object, the value of a key named like a credential;
+ * - any string the caller names as a credential (a store's configured header values and
+ *   secret keys), also percent-encoded and in base64.
  *
  * The signer's private key and mnemonic are never shown at any tier (nautilus never holds
- * them; a key named so is still replaced, also at `secrets`).
+ * them; a key named so is still replaced, in objects and in text, also at `secrets`).
  */
+import {
+  isLongLivedCredential,
+  isNeverShownKey,
+  LONG_LIVED_CREDENTIALS,
+  NEVER_SHOWN_KEYS
+} from './keys.js'
+import { redactKeyValues } from './keyValues.js'
 
 export const REDACTED = '<redacted>'
 
-/** Normalised (lower case, no `-`, `_`, whitespace) keys whose value is never shown. */
-const NEVER_KEYS = /(?:privatekey|mnemonic|seedphrase)$/
-
-/** Normalised keys whose value is a long-lived credential: shown at `secrets` only. */
-const CREDENTIAL_KEY =
-  /^token$|(?:secret|secretkey|secretaccesskey|password|passwd|passphrase|apikey|authorization|cookie|refreshtoken|accesstoken|authtoken|bearertoken|jwt|securitytoken|sessiontoken|privatekey|mnemonic|seedphrase|xamzsignature|xamzcredential|xgoogsignature|xgoogcredential)$/
-
-/** Normalised query parameter names that carry a credential, besides `CREDENTIAL_KEY`. */
-const CREDENTIAL_PARAMETER = /^(?:auth|key|sig|apitoken|accesskey)$/
-
-/** The same names as they are written in free text (`key=value`, `"key": value`). */
-const CREDENTIAL_NAMES =
-  'secretAccessKey|secret_access_key|aws_secret_access_key|secretKey|secret_key|client_secret|clientSecret|password|passwd|apiKey|api_key|api-key|x-api-key|privateKey|private_key|mnemonic|refresh_token|refreshToken|access_token|accessToken|authorization|proxy-authorization|cookie|set-cookie|jwt|pinata_api_key|pinata_secret_api_key|x-amz-security-token|sessionToken|session_token|token'
-
-/** `"key": "value"`, `key=value`, `key: value`, also inside escaped JSON (`\"key\":\"v\"`). */
-const CREDENTIAL_ASSIGNMENT = new RegExp(
-  `((?:\\\\?["'])?\\b(?:${CREDENTIAL_NAMES})(?:\\\\?["'])?\\s*[:=]\\s*)(\\\\"(?:[^"\\\\]|\\\\[^"])*\\\\"|"(?:[^"\\\\]|\\\\.)*"|'[^']*'|[^\\s,;&)}\\]"'\\\\]+)`,
-  'gi'
-)
-
 const AUTH_SCHEME = /\b(Bearer|Basic|Token)\s+[^\s"',;\\]+/gi
+
+/**
+ * Provider tokens recognisable by their prefix, with or without a name before them: GitHub
+ * (`ghp_…`, `github_pat_…`), GitLab (`glpat-…`), Slack (`xoxb-…`), OpenAI-style `sk-…`
+ * and Google API keys (`AIza…`).
+ */
+const PREFIXED_TOKEN =
+  /(?<![A-Za-z0-9])(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|glpat-[\w-]{20,}|xox[abprs]-[\w-]{10,}|sk-[\w-]{20,}|AIza[\w-]{35})/g
 
 /**
  * `scheme://authority/path?query#fragment`, up to whitespace, a quote or a backslash. The
  * scheme is bounded, so a hostile body of letters and dots is scanned in linear time.
  */
-const URL_PATTERN = /\b[a-z][a-z0-9+.-]{0,31}:\/\/[^\s"'<>\\]*/gi
+const URL_PATTERN = /[a-z][a-z0-9+.-]{0,31}:\/\/[^\s"'<>\\]*/gi
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const IPFS_CID = /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{50,})$/
 const TOKEN_LIKE = /^[A-Za-z0-9_-]{20,}$/
 
-/** `key` lower-cased, without `-`, `_` and whitespace. */
-function normalize(key: string): string {
-  return key.toLowerCase().replace(/[-_\s]/g, '')
-}
+/** How many levels of JSON escaping are undone before scanning. */
+const MAX_UNESCAPE_LEVELS = 4
+/** How many levels of URLs nested in query values are masked. */
+const MAX_URL_NESTING = 3
 
-/** Whether the value of `key` is never shown, at any tier. */
-export function isNeverShownKey(key: string): boolean {
-  return NEVER_KEYS.test(normalize(key))
-}
+export { isNeverShownKey }
 
-/** Whether the value of `key` is a long-lived credential (or never shown). */
+/** Whether the value of `key` is a long-lived credential (or never shown), at any value. */
 export function isCredentialKey(key: string): boolean {
-  const normalized = normalize(key)
-  return CREDENTIAL_KEY.test(normalized) || NEVER_KEYS.test(normalized)
+  return isLongLivedCredential(key, '')
 }
 
 /**
  * `value` (plain data: strings, numbers, arrays, plain objects) with long-lived credentials
  * replaced, for the `sensitive` tier. `credentials` are strings to replace wherever they
- * appear.
+ * appear, also percent-encoded and in base64.
  */
 export function maskCredentials(
   value: unknown,
   credentials: readonly string[] = []
 ): unknown {
-  const known = credentials.filter(
-    (credential) => typeof credential === 'string' && credential.length >= 4
+  return mask(value, knownForms(credentials), (key, entry) =>
+    isLongLivedCredential(key, entry)
   )
-  return mask(value, known, isCredentialKey, true)
 }
 
-/** `value` with only the never-shown keys replaced, for the `secrets` tier. */
+/** `value` with only the never-shown keys replaced, in objects and text, for `secrets`. */
 export function maskNeverShown(value: unknown): unknown {
-  return mask(value, [], isNeverShownKey, false)
+  return mask(value, undefined, isNeverShownKey)
 }
 
+/**
+ * `known` undefined: the `secrets` tier, where strings are scanned for never-shown keys
+ * only.
+ */
 function mask(
   value: unknown,
-  credentials: readonly string[],
-  hidden: (key: string) => boolean,
-  text: boolean
+  known: readonly string[] | undefined,
+  hidden: (key: string, value: unknown) => boolean
 ): unknown {
   if (typeof value === 'string')
-    return text ? maskText(value, credentials) : value
+    return known ? maskText(value, known) : maskNeverShownText(value)
   if (Array.isArray(value))
-    return value.map((entry) => mask(entry, credentials, hidden, text))
+    return value.map((entry) => mask(entry, known, hidden))
   if (!value || typeof value !== 'object') return value
 
   const out: Record<string, unknown> = {}
-  for (const [key, entry] of Object.entries(value))
-    out[key] =
-      hidden(key) && entry !== undefined && entry !== null && entry !== ''
+  for (const [key, entry] of Object.entries(value)) {
+    const masked =
+      hidden(key, entry) &&
+      entry !== undefined &&
+      entry !== null &&
+      entry !== ''
         ? REDACTED
-        : mask(entry, credentials, hidden, text)
+        : mask(entry, known, hidden)
+    // A `__proto__` own key (from `JSON.parse`) is kept as a key, not as the prototype.
+    Object.defineProperty(out, key, {
+      value: masked,
+      enumerable: true,
+      writable: true,
+      configurable: true
+    })
+  }
   return out
 }
 
-/** `text` with long-lived credentials replaced (see the module comment). */
+/** `text` with the values of never-shown keys replaced (`privateKey=0x…`, `mnemonic: …`). */
+function maskNeverShownText(text: string): string {
+  const once = redactKeyValues(text, NEVER_SHOWN_KEYS)
+  const unescaped = unescapeJson(text)
+  if (unescaped === text) return once
+  const deep = redactKeyValues(unescaped, NEVER_SHOWN_KEYS)
+  return unescapeJson(once) === deep ? once : deep
+}
+
+/**
+ * `text` with long-lived credentials replaced (see the module comment). `credentials` are
+ * replaced as they are given (callers pass them through `knownForms`, or plain).
+ */
 export function maskText(
   text: string,
   credentials: readonly string[] = []
 ): string {
+  const known = credentials.filter(
+    (credential) => typeof credential === 'string' && credential.length >= 4
+  )
+  const once = maskOnce(text, known)
+  const unescaped = unescapeJson(text)
+  if (unescaped === text) return once
+
+  // JSON escapes hide a URL (`https:\/\/…`) or a key (`\\\"apiToken\\\"`) from the
+  // patterns: the unescaped text is masked too, and shown when it hides more.
+  const deep = maskOnce(unescaped, known)
+  return unescapeJson(once) === deep ? once : deep
+}
+
+function maskOnce(text: string, known: readonly string[]): string {
   let masked = text
-  for (const credential of credentials)
+  for (const credential of known)
     masked = masked.split(credential).join(REDACTED)
 
-  return masked
-    .replace(URL_PATTERN, maskUrl)
-    .replace(AUTH_SCHEME, `$1 ${REDACTED}`)
-    .replace(CREDENTIAL_ASSIGNMENT, (_match, key: string, value: string) => {
-      const quote = /^\\"/.test(value)
-        ? '\\"'
-        : /^["']/.test(value)
-          ? value[0]
-          : ''
-      return `${key}${quote}${REDACTED}${quote}`
-    })
+  return redactKeyValues(
+    masked
+      .replace(URL_PATTERN, (url) => maskUrl(url))
+      .replace(AUTH_SCHEME, `$1 ${REDACTED}`)
+      .replace(PREFIXED_TOKEN, REDACTED),
+    LONG_LIVED_CREDENTIALS
+  )
+}
+
+/** `text` with up to four levels of JSON string escaping undone (`\"`, `\\`, `\/`). */
+function unescapeJson(text: string): string {
+  let current = text
+  for (let level = 0; level < MAX_UNESCAPE_LEVELS; level++) {
+    const next = current.replace(/\\(["\\/])/g, '$1')
+    if (next === current) break
+    current = next
+  }
+  return current
+}
+
+/**
+ * Each known credential as given, percent-encoded, and in base64 and base64url, so an
+ * encoded copy is replaced too. Shorter than 4 characters: left out.
+ */
+export function knownForms(credentials: readonly string[]): string[] {
+  const forms = new Set<string>()
+  for (const credential of credentials) {
+    if (typeof credential !== 'string' || credential.length < 4) continue
+    forms.add(credential)
+    forms.add(encodeURIComponent(credential))
+    const base64 = toBase64(credential)
+    if (base64) {
+      forms.add(base64)
+      forms.add(base64.replace(/=+$/, ''))
+      forms.add(
+        base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+      )
+    }
+  }
+  // Longest first, so a form inside another is not replaced first and splits it.
+  return [...forms]
+    .filter((form) => form.length >= 4)
+    .sort((a, b) => b.length - a.length)
+}
+
+function toBase64(text: string): string | undefined {
+  try {
+    const bytes = new TextEncoder().encode(text)
+    return btoa(String.fromCharCode(...bytes))
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The credentials in a configured URL: its user info and the values `maskUrl` would
+ * replace (credential-named query parameters, API-key path segments). For stores, which
+ * pass them to the debug channel as known credentials.
+ */
+export function credentialsInUrl(url: string | undefined): string[] {
+  if (!url) return []
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return []
+  }
+  const found: string[] = []
+  if (parsed.username) found.push(decodePart(parsed.username))
+  if (parsed.password) found.push(decodePart(parsed.password))
+  for (const segment of parsed.pathname.split('/'))
+    if (isTokenLike(segment)) found.push(segment)
+  parsed.searchParams.forEach((value, name) => {
+    if (value && isLongLivedCredential(name, value, 'query')) found.push(value)
+  })
+  return found
 }
 
 /** A URL with its credentials replaced and everything else kept (see the module comment). */
-export function maskUrl(url: string): string {
+export function maskUrl(url: string, nesting = 0): string {
   // Punctuation that ended the sentence is not part of the URL.
   const trailing = /[.,;:!?)\]}]*$/.exec(url)?.[0] ?? ''
   const core = url.slice(0, url.length - trailing.length)
@@ -157,11 +263,14 @@ export function maskUrl(url: string): string {
     .map((segment) => (isTokenLike(segment) ? REDACTED : segment))
     .join('/')
 
-  return `${scheme}${host}${maskedPath}${maskParameters(query)}${maskParameters(fragment)}${trailing}`
+  return `${scheme}${host}${maskedPath}${maskParameters(query, nesting)}${maskParameters(fragment, nesting)}${trailing}`
 }
 
-/** `?a=1&key=…` or `#…` with the values of credential-named parameters replaced. */
-function maskParameters(part: string): string {
+/**
+ * `?a=1&key=…` or `#…` with the values of credential-named parameters replaced, and a value
+ * holding a URL (`?redirect=https://…`, `?u=https%3A%2F%2F…`) masked as a URL, decoded.
+ */
+function maskParameters(part: string, nesting: number): string {
   if (!part) return part
   const [lead, rest] = [part[0], part.slice(1)]
 
@@ -170,19 +279,27 @@ function maskParameters(part: string): string {
     .map((pair) => {
       const separator = pair.indexOf('=')
       if (separator === -1) return isTokenLike(pair) ? REDACTED : pair
-      const name = decodeName(pair.slice(0, separator))
-      return isCredentialKey(name) || CREDENTIAL_PARAMETER.test(normalize(name))
-        ? `${pair.slice(0, separator)}=${REDACTED}`
-        : pair
+      const rawName = pair.slice(0, separator)
+      const rawValue = pair.slice(separator + 1)
+      const value = decodePart(rawValue)
+      if (value && isLongLivedCredential(decodePart(rawName), value, 'query'))
+        return `${rawName}=${REDACTED}`
+      if (value.includes('://') && nesting < MAX_URL_NESTING) {
+        const masked = value.replace(URL_PATTERN, (url) =>
+          maskUrl(url, nesting + 1)
+        )
+        if (masked !== value) return `${rawName}=${masked}`
+      }
+      return pair
     })
     .join('&')}`
 }
 
-function decodeName(name: string): string {
+function decodePart(part: string): string {
   try {
-    return decodeURIComponent(name)
+    return decodeURIComponent(part.replace(/\+/g, ' '))
   } catch {
-    return name
+    return part
   }
 }
 

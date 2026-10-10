@@ -563,14 +563,17 @@ export async function prepareMetadataForWrite(params: {
     })
   }
 
+  // Redacted once (one debug event), and copied, so the two fields stay independent.
+  const redacted = redactPointer(pointer.remote)
+
   return {
     written: {
       metadata,
       metadataHash,
       flags: ENCRYPTED_METADATA_FLAGS,
       credential,
-      pointer: { remote: redactPointer(pointer.remote) },
-      stored: { pointer: redactPointer(pointer.remote), metadataHash },
+      pointer: { remote: redacted },
+      stored: { pointer: structuredClone(redacted), metadataHash },
       encryptedBy: node.nodeUri
     },
     // The snapshot that was validated and encrypted, not the store's live object.
