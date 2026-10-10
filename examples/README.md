@@ -520,7 +520,11 @@ npm run typecheck              # tsc --noEmit, from this directory
 npm --prefix .. run lint       # biome, from the repo root — it covers examples/ too
 npm start -- help              # offline: no key, no chain, no node
 npm start -- <command> --help  # offline as well
+npm --prefix .. run examples:smoke  # runs a fixed set of commands against mocks, offline
 ```
 
-CI runs both on every pull request, building the library first so the examples typecheck
-against a real `_types` output.
+CI runs the typecheck, the lint and the smoke run on every pull request, building the
+library first so the examples typecheck against a real `_types` output. The smoke run
+(`smoke/smoke.test.ts`) runs a publish, a download, two compute commands, the gated SSI
+publish and a revoke in-process against the unit suite's node mock and chain stubs; it does
+not replace a run on a real stack.
