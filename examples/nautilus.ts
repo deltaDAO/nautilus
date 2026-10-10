@@ -442,11 +442,19 @@ export async function removeStoredEnvelope(
  * `NAUTILUS_LOG_FORMAT` and `NAUTILUS_LOG_COMPONENTS` itself when it is imported; the entry
  * points (`index.ts`, `scenarios/e2e.ts`) load `.env` before that, with
  * `import 'dotenv/config'`. `VERBOSE=true` is the `debug` level, unless `NAUTILUS_LOG_LEVEL`
- * sets one.
+ * sets a valid one (nautilus ignores an invalid one, with a warning).
  */
 function configureLogging(verbose?: boolean): void {
-  if (verbose && !process.env.NAUTILUS_LOG_LEVEL?.trim())
-    Nautilus.configureLogging({ level: 'debug' })
+  const level = process.env.NAUTILUS_LOG_LEVEL?.trim().toLowerCase() ?? ''
+  const levelSet = [
+    'silent',
+    'error',
+    'warn',
+    'info',
+    'debug',
+    'trace'
+  ].includes(level)
+  if (verbose && !levelSet) Nautilus.configureLogging({ level: 'debug' })
 }
 
 export interface SetupOptions {

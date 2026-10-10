@@ -470,7 +470,8 @@ export class Nautilus {
    * An instance created with `logger` options uses those over these.
    *
    * `oceanjs` (`'capture' | 'passthrough' | 'silent'`) is accepted and stored, but not
-   * acted on yet: ocean.js still prints its own lines as it always did.
+   * acted on yet, whichever the mode: ocean.js still prints its own lines as it always did,
+   * and setting it warns once (`config.oceanjs.not_active`).
    */
   static configureLogging(options: LoggingConfig): void {
     configureLogging(options)

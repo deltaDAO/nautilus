@@ -106,7 +106,8 @@ describe('OceanNodeClient.encrypt', () => {
 
     await expectThrowsAsync(
       () => signerClient().encrypt({ a: 1 }),
-      `[ocean-node] encrypt: the node did not return ciphertext: ${NONCE_ERROR}`
+      // The node's `nonce: 1` is a `key: value` nonce, redacted like any other.
+      '[ocean-node] encrypt: the node did not return ciphertext: nonce: <redacted> is not a valid nonce'
     )
     expect(spy).toHaveBeenCalledTimes(2)
   })

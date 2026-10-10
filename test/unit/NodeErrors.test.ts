@@ -945,6 +945,102 @@ describe("the node's text in a message", () => {
     }
   })
 
+  it('redacts every key the field redaction does, in every form (round 3)', () => {
+    // Keys from both round-2 reviews; the value is never kept.
+    const keys = [
+      'accessToken',
+      'refreshToken',
+      'clientSecret',
+      'sid',
+      'cookie',
+      'Set-Cookie',
+      'sessionToken',
+      'aws_session_token',
+      'X-Amz-Security-Token',
+      'passphrase',
+      'mnemonic',
+      'credential',
+      'presentation',
+      'signedTx',
+      'rawTx',
+      'pre-authorized_code',
+      'authorization_code',
+      'x-api-key',
+      'apiToken',
+      'csrfToken',
+      'privKey',
+      'seedPhrase',
+      'hmac',
+      'sessionId',
+      'nonce',
+      'signature',
+      'authorization'
+    ]
+    for (const key of keys) {
+      const value = `val-${key.length}-x9`
+      for (const text of [
+        `${key}=${value}`,
+        `failed: ${key}: ${value}, retry`,
+        `{ ${key}: '${value}' }`,
+        `{ '${key}': "${value}" }`,
+        `{"${key}":"${value}","ok":1}`,
+        `{"${key}": 123456}`,
+        `body="{\\"${key}\\":\\"${value}\\"}"`
+      ]) {
+        const out = redactSecrets(text)
+        expect(out, text).not.to.contain(value)
+        expect(out, text).not.to.contain('123456')
+        expect(out, text).to.contain('<redacted>')
+      }
+    }
+  })
+
+  it('redacts Basic credentials, and an authorization value after its scheme', () => {
+    for (const [text, kept] of [
+      ['Authorization: Basic dXNlcjpwYXNz', 'Authorization: Basic <redacted>'],
+      ['authorization=Basic dXNlcjpwYXNz', 'authorization=Basic <redacted>'],
+      ['sent Basic dXNlcjpwYXNz to it', 'sent Basic <redacted> to it'],
+      ['proxy-authorization: Bearer abc.def', 'Bearer <redacted>']
+    ]) {
+      expect(redactSecrets(text), text).to.contain(kept)
+      expect(redactSecrets(text), text).not.to.match(/dXNlcjpwYXNz|abc\.def/)
+    }
+  })
+
+  it('keeps a token address, an error code and an HTTP status, and redacts the rest', () => {
+    const address = '0x1B3fC2A9e4d5E6f708192a3b4C5d6E7f80912a3B'
+    for (const [text, expected] of [
+      [`paymentToken=${address}`, `paymentToken=${address}`],
+      [`{"baseToken":"${address}"}`, `{"baseToken":"${address}"}`],
+      ['paymentToken=0xabc', 'paymentToken=<redacted>'],
+      ['code=TIMEOUT code=CANCELLED', 'code=TIMEOUT code=CANCELLED'],
+      ['errorCode: ECONNREFUSED', 'errorCode: ECONNREFUSED'],
+      ['statusCode: 503', 'statusCode: 503'],
+      ['statusCode: 777', 'statusCode: <redacted>'],
+      // An upper-case base32 one-time code is not an error code.
+      ['code=JBSWY3DPEHPK3PXP', 'code=<redacted>'],
+      ['otp: 123456, pin: 1234', 'otp: <redacted>, pin: <redacted>'],
+      // Readable keys stay readable, also when a secret key is part of a longer word.
+      ['decryptNonce=7 consideration: x', 'decryptNonce=7 consideration: x']
+    ]) {
+      expect(redactSecrets(text), text).to.equal(expected)
+    }
+  })
+
+  it('catches a key split by a control character, an escape or a line break', () => {
+    for (const text of [
+      'session\u0000Id=val-sid-x9',
+      'session\u001b[0mId: val-sid-x9',
+      'session​Id: val-sid-x9',
+      '{"access\u0000Token":"val-sid-x9"}',
+      'password\n=\nval-sid-x9'
+    ]) {
+      const out = nodeText(text)
+      expect(out, JSON.stringify(text)).not.to.contain('val-sid-x9')
+      expect(out, JSON.stringify(text)).to.contain('<redacted>')
+    }
+  })
+
   it('redacts a bare JWT and a bare 65-byte signature', () => {
     const token = jwt({ address: NFT_ADDRESS })
     const signature = `0x${'ab'.repeat(65)}`

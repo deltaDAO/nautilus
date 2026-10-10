@@ -109,24 +109,39 @@ The catalogue of every event, with its level, component and fields, is exported 
 `LOG_EVENTS`.
 
 **Redaction.** Before any sink or stderr sees an event, its fields are redacted by key, in
-nested objects too. Keys are compared without case, `-` or `_`, so `session_id`,
+nested objects and class instances too. Keys are compared without case, `-`, `_`,
+whitespace or invisible characters, and matched whole, however long, so `session_id`,
 `Session-Id` and `sessionId` are one key:
 
-- `nonce`, `token`, `sid` and `code`, and any key ending in a credential name (`secret`,
-  `secretAccessKey`, `password`, `apiKey`, `privateKey`, `sessionId`, `signature`, `cookie`,
-  `jwt`, `authorization`, `accessToken`, `refreshToken`, `idToken`, `vpToken`,
-  `credentials`, `presentation`, `signedTx`, `rawTx`, …) become `<redacted>`. `nonce` and
-  `token` match only as the whole key, so `decryptNonce` and `paymentToken` stay readable. A
-  `code` that reads as an error code (an upper-case constant such as `SERVER_ERROR`, or a
-  negative JSON-RPC code such as `-32005`) is kept, in fields and in text alike; any other
-  `code` (an OAuth authorization code) is redacted;
+- the keys `nonce`, `sid`, `auth`, `bearer`, `seed`, `pk`, `privkey`, `otp`, `pin`, `hmac`
+  and `requestUri`, and any key ending in a credential name (`secret`, `secretAccessKey`,
+  `password`, `passphrase`, `mnemonic`, `seedPhrase`, `apiKey`, `privateKey`, `sessionId`,
+  `signature`, `cookie`, `jwt`, `authorization`, `basicAuth`, `authorizationCode`,
+  `preAuthorizedCode`, `credentials`, `presentation`, `signedTx`, `rawTx`, …) become
+  `<redacted>`. The first group matches only as the whole key, so `decryptNonce` stays
+  readable;
+- any key ending in `token` (`token`, `accessToken`, `sessionToken`, `X-Amz-Security-Token`,
+  `csrfToken`, …) becomes `<redacted>` unless its value is an EVM address, so
+  `paymentToken` stays readable;
+- any key ending in `code` becomes `<redacted>` unless its value reads as an error code: an
+  upper-case constant with an underscore (`SERVER_ERROR`), a Node system error
+  (`ECONNREFUSED`), a negative JSON-RPC code (`-32005`) or ethers' `TIMEOUT` and `CANCELLED`;
+  a `statusCode` also keeps an HTTP status (100-599). An OAuth or openid4vp authorization
+  code is redacted;
 - any `url` or `uri` (and `endpoint`, `nodeUri`, …) is reduced to its origin;
 - an `error` is reduced to its name and message, followed by up to two levels of its
-  `cause` (`… (cause: …)`), each with control characters stripped and credentials redacted.
+  `cause` (`… (cause: …)`), each with control characters stripped and credentials redacted;
+- a byte array (`Uint8Array`, `Buffer`, `ArrayBuffer`) is shown as `[N bytes]`.
 
-Every other text, the message included, has URLs reduced to their origin and credentials
-redacted too. No level of nautilus's own events prints an RPC token, a session id, a
-signature or a JWT.
+Every other text, the message and error messages included, has URLs reduced to their origin,
+and the value of every key the rules above redact is redacted there too when the text gives
+it as `key=value`, `key: value`, `'key': 'value'`, a JSON field `"key": value` or a JSON
+field inside a JSON string (`\"key\":\"value\"`, as ethers quotes a response body);
+`Bearer` and `Basic` credentials, JWTs and 65-byte hex signatures are redacted wherever
+they stand. Text is redacted before and after control characters are stripped, so a key
+split by one is still caught. Free text is matched by pattern, not parsed: a credential
+in prose without a key in front of it (`my password is hunter2`) is not recognised. No
+level of nautilus's own events prints an RPC token, a session id, a signature or a JWT.
 
 :::warning[ocean.js still prints its own lines]
 This covers nautilus's events only. Until a later release routes ocean.js's logger through
@@ -155,8 +170,8 @@ redacted; `'passthrough'` leaves it as ocean.js prints it; `'silent'` drops it.
 **Not active yet.** The value is accepted and stored, but a later release implements it.
 Until then ocean.js prints its own lines as before, unredacted, at the level
 [`setLogLevel`](/docs/api/nautilus/setLogLevel) (or `LoggerInstance.setLevel`) sets on its
-`LoggerInstance`; its default is errors only. Passing `'passthrough'` or `'silent'` prints a
-`config.oceanjs.not_active` warning once. For the interim workaround, see
+`LoggerInstance`; its default is errors only. Passing any mode, `'capture'` included,
+prints a `config.oceanjs.not_active` warning once. For the interim workaround, see
 the warning under [`sink`](#sink) above.
 
 ## Environment variables

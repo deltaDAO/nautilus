@@ -77,8 +77,8 @@ export interface LoggingConfig extends LoggingOptions {
    * What to do with ocean.js's own log output. Accepted and stored, but **not active
    * yet**: until a later release implements it, ocean.js prints as it always did,
    * unredacted, at the level `Nautilus.setLogLevel` (or ocean.js's
-   * `LoggerInstance.setLevel`) sets; its default is errors only. `'passthrough'` and
-   * `'silent'` warn once (`config.oceanjs.not_active`). To silence ocean.js now, call
+   * `LoggerInstance.setLevel`) sets; its default is errors only. Every mode warns once
+   * (`config.oceanjs.not_active`). To silence ocean.js now, call
    * `LoggerInstance.setLevel(LogLevel.None)`.
    */
   oceanjs?: OceanJsLogMode

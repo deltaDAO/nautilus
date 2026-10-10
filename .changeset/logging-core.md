@@ -29,14 +29,24 @@ nautilus has its own logger, and its warnings are now visible by default.
   every other warning, security warnings included. Keep the level at `warn` or above (or a
   `sink`) where you rely on them.
 - **Redacted by field.** Before any output, fields are redacted by key, compared without
-  case, `-` or `_` and matched as a suffix (`session_id`, `client_secret`,
-  `aws_secret_access_key`, `refreshToken`, `x-api-key`, `vpToken`, `rawTx`, …), in nested
-  objects and class instances too: credentials become `<redacted>`, URLs are reduced to their
-  origin, errors are sanitised with up to two levels of their `cause`. Messages and other
-  text are sanitised too. Node text in error messages now also has `sessionId`, S3 secret
-  keys, OAuth client secrets and refresh tokens, and private keys redacted; a `code` is kept
-  when it reads as an error code (`code=SERVER_ERROR`, `"code": -32005`) and redacted
-  otherwise.
+  case, `-`, `_` or invisible characters and matched whole, in nested objects and class
+  instances too: the exact keys `nonce`, `sid`, `auth`, `bearer`, `seed`, `pk`, `privkey`,
+  `otp`, `pin`, `hmac`, `requestUri`; any key ending in a credential name (`session_id`,
+  `client_secret`, `aws_secret_access_key`, `x-api-key`, `passphrase`, `mnemonic`,
+  `authorizationCode`, `presentation`, `rawTx`, …); any key ending in `token` unless its
+  value is an EVM address (`paymentToken` stays readable); any key ending in `code` unless
+  its value reads as an error code (`SERVER_ERROR`, `ECONNREFUSED`, `-32005`, ethers'
+  `TIMEOUT`/`CANCELLED`) or, for a `statusCode`, an HTTP status. Credentials become
+  `<redacted>`, URLs are reduced to their origin, errors are sanitised with up to two levels
+  of their `cause`, byte arrays print as `[N bytes]`.
+- **The same keys in text.** Messages, error messages (node answers, ethers errors and their
+  `cause`s, e.g. an RPC response body) and other text have the value of every such key
+  redacted when it is written as `key=value`, `key: value`, `'key': 'value'`, a JSON field or
+  a JSON field inside a JSON string; `Bearer` and `Basic` credentials, JWTs and 65-byte hex
+  signatures are redacted anywhere, URLs reduced to their origin. Before, only a short list
+  of keys was redacted in text. Error messages thrown by nautilus change accordingly (e.g. a
+  node's `nonce: 1 is not a valid nonce` now reads `nonce: <redacted> …`). Text is matched by
+  pattern: a credential without a key in front of it is not recognised.
 
 **New API**
 
@@ -45,7 +55,7 @@ nautilus has its own logger, and its warnings are now visible by default.
   `'json'`; `components` to narrow `info`/`debug`/`trace` output; `sink(event)` to hand the
   redacted events to your own logger (pino, winston, the browser console) instead of stderr.
   `oceanjs` is accepted but not active yet: ocean.js prints as before, unredacted, at its own
-  level, and `'passthrough'`/`'silent'` warn once. To silence ocean.js now, call
+  level, and every mode (`'capture'` included) warns once. To silence ocean.js now, call
   `LoggerInstance.setLevel(LogLevel.None)`.
 - `Nautilus.create(signer, { logger })`: one instance's own level, format, components or
   sink, e.g. per tenant, as options or as a logger from `createLogger(options)` that several
@@ -54,8 +64,10 @@ nautilus has its own logger, and its warnings are now visible by default.
   `NAUTILUS_LOG_LEVEL`, `NAUTILUS_LOG_FORMAT` (`json` or `pretty`) and
   `NAUTILUS_LOG_COMPONENTS` (e.g. `publish,access`). An unknown value is ignored, with a
   warning. In a browser there is no environment; the console is the output.
-- `createLogger(options)`, `LOG_EVENTS` and the `Logger`, `LogEvent`, `LogSink`,
-  `LoggingOptions`, `LoggingConfig` types. The node client takes a `logger` option.
+- `createLogger(options)`, `LOG_EVENTS` and the types `Logger`, `LogEvent`, `LogFields`,
+  `LogSink`, `LogFormat`, `LoggingLevel`, `LogLevelName`, `LogComponent`, `LogEventName`,
+  `LogEventSpec`, `LoggingOptions`, `LoggingConfig` and `OceanJsLogMode`. The node client
+  takes a `logger` option.
 
 **Deprecated**
 
