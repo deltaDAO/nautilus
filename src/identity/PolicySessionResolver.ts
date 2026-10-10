@@ -326,12 +326,15 @@ export class PolicySessionResolver {
   }
 }
 
+/** How long the debug read after a failed presentation may take. */
+const FAILED_PRESENTATION_READ_TIMEOUT_MS = 15_000
+
 /**
  * With the `policy` debug topic on: the presentation failed, so ask the verifier for its
  * record of the session (one `checkSessionId` read through the node, as after a successful
  * presentation), which `checkPolicySession` hands to the debug channel with its per-policy
- * results. Best effort: a failing read is only reported there. The error thrown stays the
- * same.
+ * results. Best effort: a failing read is only reported there, and the read is cut after
+ * 15 s. The error thrown stays the same.
  */
 async function debugFailedPresentation(
   node: OceanNodeClient,
@@ -340,7 +343,18 @@ async function debugFailedPresentation(
 ): Promise<void> {
   debugRaw('policy', 'presentation failed', { sessionId, error })
   try {
-    await node.checkPolicySession(sessionId)
+    // Bounded over P2P too, where ocean.js applies no timeout of its own, and whether or
+    // not the transport honours the signal: the caller's error waits for this read.
+    const signal = AbortSignal.timeout(FAILED_PRESENTATION_READ_TIMEOUT_MS)
+    await Promise.race([
+      node.checkPolicySession(sessionId, signal),
+      new Promise((_, reject) => {
+        if (signal.aborted) reject(signal.reason)
+        signal.addEventListener('abort', () => reject(signal.reason), {
+          once: true
+        })
+      })
+    ])
   } catch (checkError) {
     debugRaw('policy', 'checkSessionId after the failed presentation failed', {
       sessionId,

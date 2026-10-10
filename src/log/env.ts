@@ -135,7 +135,9 @@ export interface DebugEnv {
 /**
  * The debug settings in `env`, and the values that were not understood. Only the exact
  * tier names count: `NAUTILUS_DEBUG=1`, `true` or `all` turn nothing on, so `secrets` is
- * reached only by naming it. `NAUTILUS_DEBUG_TOPICS` alone turns nothing on either.
+ * reached only by naming it. `NAUTILUS_DEBUG_TOPICS` alone turns nothing on either. An
+ * unknown topic is ignored with a problem reported; when none of the topics given is known,
+ * no topic prints (the filter never falls back to all topics).
  */
 export function readDebugEnv(
   env: Record<string, string | undefined> | undefined
@@ -176,7 +178,8 @@ export function readDebugEnv(
         value: unknown.join(','),
         allowed: DEBUG_TOPICS.join(', ')
       })
-    if (known.length) settings.topics = known
+    // Topics given but none known: no topic, never all of them.
+    if (names.length) settings.topics = known
   }
 
   return { settings, problems }
