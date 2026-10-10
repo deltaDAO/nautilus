@@ -208,13 +208,21 @@ timeout (pass `signal` to stop it). Passed to the node clients `create` builds; 
 
 ##### logger
 
-- Type: `LoggingOptions`: `{ level?, format?, components?, sink? }`
+- Type: `LoggingOptions | Logger`, where `LoggingOptions` is `{ level?, format?, components?, sink? }`
 - Default: the process-wide configuration
 
-This instance's own logging, e.g. one sink per tenant in a multi-tenant server. Options you
-leave out follow [`configureLogging`](/docs/api/nautilus/configureLogging); the events of
-other instances are not affected. The instance passes it to its node clients, its
-policy-session resolver and every call it makes.
+This instance's own logging, e.g. one sink per tenant in a multi-tenant server. Pass either:
+
+- **options**: the instance gets a logger of its own. Options you leave out follow
+  [`configureLogging`](/docs/api/nautilus/configureLogging);
+- **a `Logger`** made with `createLogger(options)`: the same rules, but several instances
+  (e.g. one tenant's instances on several chains) can share it, and with it the memory of
+  which once-only warnings were already printed.
+
+The events of other instances are not affected. The instance passes its logger to its node
+clients, its policy-session resolver and every call it makes. An
+[`S3RemoteStore`](/docs/api/remote/S3RemoteStore) has no logger of its own: its warnings go to
+the process-wide configuration, so give that a `sink` too.
 
 ```ts twoslash
 import { JsonRpcProvider, Wallet } from 'ethers'
@@ -227,6 +235,17 @@ const nautilus = await Nautilus.create(signer, {
   config,
   logger: { level: 'info', sink: tenantLog } // [!code focus]
 })
+```
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { createLogger, type LogEvent, Nautilus } from '@deltadao/nautilus'
+const signer = new Wallet('0x1234', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const config = { oceanNodeUri: 'https://node.example.org' }
+declare const tenantLog: (event: LogEvent) => void
+// ---cut---
+const logger = createLogger({ level: 'info', sink: tenantLog }) // [!code focus]
+const nautilus = await Nautilus.create(signer, { config, logger }) // [!code focus]
 ```
 
 ##### maxProviderFee
