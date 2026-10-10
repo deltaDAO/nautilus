@@ -375,7 +375,7 @@ is one value — a policy-server session id — which it then carries into the d
 4. Set `SSI_TRUSTED_ISSUERS` to the DIDs of the issuers whose credentials your gates accept,
    comma-separated (e.g. `did:web:delta-dao.com`). The commands that publish a gate
    (`ssi:publish-gated`, `ssi:publish-gated-compute`, `ssi:publish-partial`, `ssi:round-trip`)
-   refuse to run without it.
+   refuse to run without it, or with an entry that is not a DID (`did:<method>:<id>`).
 5. Run `npm start -- ssi:round-trip` to publish a gated dataset and consume it in one go.
 
 **On the publishing side**, declare what you require:
@@ -403,18 +403,23 @@ set `identity.ts` uses, and why:
   denies every consumer. Per-credential `policies` keep their arguments.
 - **`minimum-credentials` needs its argument** (`args: '1'`): a bare name fails in the verifier.
 - **No `holder-binding`.** It binds a credential to its presenter only when the credential
-  JWT's `sub` is the presenter's DID, and it fails (a NullPointerException in walt.id) for
-  credentials without `sub`: VCDM 2.0 `vc+jwt` and URL-subject credentials such as Gaia-X
-  `gx:LegalPerson`. Without it a copied credential JWT can be presented from any wallet, so
+  JWT's `sub` is the presenter's DID (and the presentation's signature is verified), and it
+  fails (a NullPointerException in walt.id) for credentials without `sub` (common for VCDM 2.0
+  `vc+jwt`) and URL-subject credentials such as Gaia-X `gx:LegalPerson`. Without it a copied credential JWT can be presented from any wallet, so
   the address allow list is what binds access to an account.
 - **No `presentation-definition` with `jwt_vc_json`.** The definition walt.id generates matches
   the type at `$.vc.type`, which a VCDM 2.0 `vc+jwt` credential does not have, so it is refused.
 - **Known limitation:** walt.id applies per-credential policies by credential type (the last
   entry of its `type` array). A presented credential of another type runs only the asset-level
-  VC policies, so it passes without issuer trust. Keep the address allow list.
+  VC policies, so it passes without issuer trust. Until the policy server enforces the
+  requested type, the credential check stops only consumers who use a normal wallet: anyone
+  who builds their own presentation passes it with a self-issued credential of another type.
+  The address allow list is the gate that holds, so list the allowed addresses explicitly; an
+  allow list containing `'*'` leaves no gate at all.
 
-Gating also works per service, so an asset can offer an open preview alongside a gated full
-dataset — see `npm start -- ssi:publish-partial`.
+Gating also works per service, so an asset can offer a preview that needs no credential
+(allow-listed accounts only) and a full service that also requires a credential — see
+`npm start -- ssi:publish-partial`.
 
 Gating applies to compute too: `npm start -- ssi:publish-gated-compute <algorithmDid>`
 publishes a gated compute dataset that trusts that algorithm, and

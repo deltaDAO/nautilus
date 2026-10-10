@@ -57,7 +57,8 @@ import {
   publishPartiallyGatedDataset,
   publishWithDidIssuer,
   runGatedPublishAndConsume,
-  setupWithIdentity
+  setupWithIdentity,
+  trustedIssuers
 } from './identity'
 import { showIndexingState } from './indexing'
 import {
@@ -474,6 +475,8 @@ export const COMMANDS: Record<string, Command> = {
     requires: 'none',
     identity: true,
     run: async (_ctx, credentialType = 'VerifiableId') => {
+      // Before anything is sent: a gate with a malformed issuer would refuse everyone.
+      trustedIssuers()
       const identity = await setupWithIdentity({ withRemoteStore: true })
 
       return publishGatedDataset(
@@ -493,6 +496,8 @@ export const COMMANDS: Record<string, Command> = {
     requires: 'none',
     identity: true,
     run: async (_ctx, algorithmDid, credentialType = 'VerifiableId') => {
+      // Before anything is sent: a gate with a malformed issuer would refuse everyone.
+      trustedIssuers()
       const identity = await setupWithIdentity({ withRemoteStore: true })
 
       return publishGatedComputeDataset(
@@ -507,10 +512,13 @@ export const COMMANDS: Record<string, Command> = {
   },
   'ssi:publish-partial': {
     usesStore: true,
-    summary: 'Publish an asset with an open preview and a gated full service',
+    summary:
+      'Publish an asset with a credential-free preview (allow-listed accounts only) and a gated full service',
     requires: 'none',
     identity: true,
     run: async () => {
+      // Before anything is sent: a gate with a malformed issuer would refuse everyone.
+      trustedIssuers()
       const identity = await setupWithIdentity({ withRemoteStore: true })
 
       return publishPartiallyGatedDataset(

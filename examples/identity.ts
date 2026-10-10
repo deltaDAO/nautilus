@@ -305,13 +305,18 @@ export async function setupWithIdentity(
   return { nautilus, signer, owner, networkConfig, pricingConfig }
 }
 
+/** A DID: `did:<method>:<method-specific id>`, without a fragment, query or whitespace. */
+const ISSUER_DID = /^did:[a-z0-9]+:[^\s#?]+$/
+
 /**
  * The issuers whose credentials a gate accepts: `SSI_TRUSTED_ISSUERS`, comma-separated DIDs.
  *
  * Required. Without issuer trust a gate accepts any credential of the requested type whose
- * signature checks out, including one the consumer issued to themselves.
+ * signature checks out, including one the consumer issued to themselves. Checked before
+ * anything is sent: an entry that is not a DID would be published into the gate, and the
+ * verifier would then refuse every consumer.
  */
-function trustedIssuers(): string[] {
+export function trustedIssuers(): string[] {
   const issuers = (process.env.SSI_TRUSTED_ISSUERS ?? '')
     .split(',')
     .map((issuer) => issuer.trim())
@@ -321,6 +326,12 @@ function trustedIssuers(): string[] {
     throw new Error(
       'Set SSI_TRUSTED_ISSUERS in your .env file: the DIDs of the issuers whose credentials the gate accepts, comma-separated (e.g. did:web:delta-dao.com).'
     )
+
+  for (const issuer of issuers)
+    if (!ISSUER_DID.test(issuer))
+      throw new Error(
+        `SSI_TRUSTED_ISSUERS contains '${issuer}', which is not a DID (expected did:<method>:<id>, e.g. did:web:delta-dao.com).`
+      )
 
   return issuers
 }
@@ -355,7 +366,8 @@ const GATE_VC_POLICIES: VcPolicy[] = [
  * name fails in the verifier for every presentation.
  *
  * No `holder-binding`: it reads the credential JWT's `sub`, and fails for credentials without
- * one, such as VCDM 2.0 `vc+jwt` and URL-subject credentials like Gaia-X `gx:LegalPerson`.
+ * `sub` (common for VCDM 2.0 `vc+jwt`) and URL-subject credentials such as Gaia-X
+ * `gx:LegalPerson`.
  * Without it a copied credential can be presented from any wallet, so the address allow list
  * is what binds access to an account. No `presentation-definition` either: the definition
  * walt.id generates for `jwt_vc_json` matches `$.vc.type`, which VCDM 2.0 credentials do not
@@ -381,7 +393,11 @@ const GATE_VP_POLICIES: VpPolicy[] = [
  *
  * Known limitation: walt.id applies per-credential policies by credential type (the last
  * entry of its `type` array), so a presented credential of another type skips the issuer
- * check. The address allow list is the gate that binds access to an account.
+ * check. Until the policy server enforces the requested type, the credential check stops only
+ * consumers who use a normal wallet: anyone who builds their own presentation passes it with a
+ * self-issued credential of another type. The address allow list is the gate that holds, so
+ * it lists addresses explicitly (`allowlist()` takes no `'*'`); an allow list containing `'*'`
+ * would leave no gate at all.
  */
 export async function publishGatedDataset(
   nautilus: Nautilus,
@@ -570,8 +586,8 @@ export async function publishWithDidIssuer(
 }
 
 /**
- * Publishes an asset whose *services* are gated differently: an open preview alongside a
- * credential-gated full dataset.
+ * Publishes an asset whose *services* are gated differently: a preview that needs no
+ * credential (allow-listed accounts only) and a full service that also requires a credential.
  *
  * Gating is per service as well as per asset in DDO v5, and the policy server merges both
  * when deciding whether a presentation is needed.
@@ -585,7 +601,7 @@ export async function publishPartiallyGatedDataset(
   const issuers = trustedIssuers()
 
   console.log(
-    'Publishing a dataset with an open preview and a gated full service...'
+    'Publishing a dataset with a preview that needs no credential (allow-listed accounts only) and a full service that also requires a credential...'
   )
 
   const file = {
@@ -598,7 +614,7 @@ export async function publishPartiallyGatedDataset(
     serviceType: ServiceTypes.ACCESS
   })
     .setServiceEndpoint(networkConfig.oceanNodeUri)
-    .setName('Open Preview')
+    .setName('Preview')
     .setTimeout(600)
     .addFile(file)
     .setPricing(pricingConfig.FREE)
@@ -624,7 +640,7 @@ export async function publishPartiallyGatedDataset(
     .setType('dataset')
     .setName('Nautilus-Example: Preview and Gated Access')
     .setDescription(
-      'The preview is open; the full dataset requires a credential.'
+      'The preview needs no credential (allow-listed accounts only); the full dataset also requires a credential.'
     )
     .setProvidedBy('Company Name')
     .setAuthor('Company Name')
@@ -632,7 +648,8 @@ export async function publishPartiallyGatedDataset(
     .addService(preview)
     .addService(full)
     .setOwner(owner)
-    // The asset-level allow list, which the policy server checks for both services.
+    // The asset-level allow list, which the policy server checks for both services: the
+    // preview needs no credential, but it is not open to everyone.
     .addCredentialAddresses(CredentialListTypes.ALLOW, allowlist(owner))
     .build()
 
@@ -800,6 +817,9 @@ export async function explainCredentialFailure(
 export async function runGatedPublishAndConsume(
   credentialType = 'VerifiableId'
 ) {
+  // Before anything is sent: a gate with a malformed issuer would refuse everyone.
+  trustedIssuers()
+
   const { nautilus, networkConfig, pricingConfig, owner } =
     await setupWithIdentity({ withRemoteStore: true })
 

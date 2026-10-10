@@ -150,6 +150,8 @@ let baseUrl: string
 const output: string[] = []
 /** RPC calls the stub does not answer. Any of them fails the command's test. */
 const unstubbed: string[] = []
+/** Every request the mock server received, as `METHOD url`. */
+const received: string[] = []
 
 /** `getMetaData()`'s selector. */
 const GET_METADATA = id('getMetaData()').slice(0, 10)
@@ -220,6 +222,7 @@ function startServer(): Promise<string> {
   }
 
   server = createServer((request, response) => {
+    received.push(`${request.method} ${request.url}`)
     let body = ''
     request.on('data', (chunk) => {
       body += chunk
@@ -361,6 +364,7 @@ afterAll(() => {
 })
 
 beforeEach(() => {
+  received.length = 0
   chain.state = 0
   chain.owner = new Wallet(PUBLISHER_KEY).address
 
@@ -436,6 +440,18 @@ describe('example commands', () => {
     await expect(run('ssi:publish-gated')).rejects.toThrow(
       /SSI_TRUSTED_ISSUERS/
     )
+  })
+
+  it('ssi:publish-gated refuses an issuer that is not a DID before sending anything', async () => {
+    vi.stubEnv(
+      'SSI_TRUSTED_ISSUERS',
+      'did:web:issuer.example, https://issuer.example'
+    )
+
+    await expect(run('ssi:publish-gated')).rejects.toThrow(
+      /SSI_TRUSTED_ISSUERS contains 'https:\/\/issuer\.example', which is not a DID/
+    )
+    expect(received).toEqual([])
   })
 
   it('asset:revoke reads the new state from the chain', async () => {
