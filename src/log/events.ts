@@ -55,7 +55,7 @@ export const LOG_EVENTS = {
     level: 'warn',
     component: 'config',
     description:
-      'A NAUTILUS_LOG_* environment variable has a value nautilus does not know. It is ignored, and the default (or the configured value) stays.',
+      'A NAUTILUS_LOG_* or NAUTILUS_DEBUG* environment variable has a value nautilus does not know. It is ignored, and the default (or the configured value) stays.',
     fields: ['variable', 'value', 'allowed'],
     once: true
   },
