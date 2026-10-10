@@ -1053,6 +1053,29 @@ describe("the node's text in a message", () => {
     )
   })
 
+  it('redacts a raw signed transaction, as ethers quotes it in a failed send', () => {
+    // A signed EIP-1559 transaction and a legacy one: whoever holds one that was never
+    // mined can still send it.
+    const typed = `0x02f8${'5a'.repeat(110)}`
+    const legacy = `0xf86c${'0b'.repeat(108)}`
+    const hash = `0x${'ab'.repeat(32)}`
+
+    expect(
+      redactSecrets(
+        `insufficient funds for intrinsic transaction cost (transaction="${typed}", info={ "error": { "code": -32000 } }, code=INSUFFICIENT_FUNDS, version=6.16.0)`
+      )
+    ).to.equal(
+      'insufficient funds for intrinsic transaction cost (transaction="<redacted>", info={ "error": { "code": -32000 } }, code=INSUFFICIENT_FUNDS, version=6.16.0)'
+    )
+    expect(
+      redactSecrets(
+        `{"method":"eth_sendRawTransaction","params":["${legacy}"]}`
+      )
+    ).to.equal('{"method":"eth_sendRawTransaction","params":["<redacted>"]}')
+    // A transaction hash stays.
+    expect(redactSecrets(`tx ${hash} reverted`)).to.equal(`tx ${hash} reverted`)
+  })
+
   it("keeps a URL's origin only", () => {
     expect(
       nodeText(
