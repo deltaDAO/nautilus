@@ -84,6 +84,14 @@ export const LOG_EVENTS = {
     fields: ['chainId']
   },
 
+  'node.indexer_nonce.zero_byte_accepted': {
+    level: 'debug',
+    component: 'node',
+    description:
+      "The node's next indexer nonce hashes to a zero byte, which ocean-node before 4.2.2 refuses (a stuck indexer); this node's version accepts it, so the publish preflight does not refuse it.",
+    fields: ['nodeUri', 'nodeVersion', 'nextNonce']
+  },
+
   // publish (also edit and completePublish, which write metadata the same way)
   'publish.preflight.publisher_is_node': {
     level: 'warn',

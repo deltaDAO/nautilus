@@ -139,7 +139,8 @@ a body that is not JSON throws an `OceanNodeError` (operation `getNodeAddress`);
 
 ```ts
 const state = await node.getIndexerNonceState()
-// { nodeAddress: '0x…', storedNonce: 264, nextNonce: 265, stuck: true }, or undefined over P2P
+// { nodeAddress: '0x…', storedNonce: 264, nextNonce: 265, nodeVersion: '4.2.0', stuck: true },
+// or undefined over P2P
 ```
 
 A read-only check (two `GET`s, nothing signed) of whether the node will accept its
@@ -148,7 +149,11 @@ next nonce, and the stored nonce advances only when a call succeeds. `stuck: tru
 node will not accept a call signed with `nextNonce` (`401 consumer address and nonce
 signature mismatch`): a publish or edit would go on chain without being indexed until the
 node operator advances the stored nonce of the node's address.
-`isIndexerNonceSignable(nodeAddress, nonce)` is the underlying check.
+`isIndexerNonceSignable(nodeAddress, nonce, nodeVersion?)` is the underlying check: before
+ocean-node 4.2.2 a call whose signed message hash starts with a zero byte is refused; 4.2.2
+and later accept it (`nodeAcceptsZeroByteNonce(version)`). `nodeVersion` is the `version`
+the node reports in `GET /`; without one, or for a pre-release of 4.2.2, the zero-byte rule
+applies.
 
 `publish`, `completePublish` and `edit` call it before their first transaction and throw an
 `IndexerNonceStuckError` (an `OceanNodeError` carrying this `state`) when `stuck`; pass

@@ -367,14 +367,36 @@ const STUCK_INDEXER_NONCE_HINT =
   "If the node logs 'consumer address and nonce signature mismatch' for its own address, its indexer nonce is stuck and later assets fail the same way until the operator advances the stored nonce of the node's address; OceanNodeClient.getIndexerNonceState() reports it"
 
 /**
- * Whether the node accepts its indexer's decrypt call signed with `nonce`, i.e. whether
- * `keccak256(address + nonce + "decryptDDO")` does not start with a zero byte. See
- * `STUCK_INDEXER_NONCE_HINT`. The address is the checksummed form the node signs with.
+ * Whether an ocean-node of this version accepts a decrypt call whose signed message hash
+ * starts with a zero byte: 4.2.2 and later verify that signature form too
+ * (`nonceHandler.ts`, oe-ocean-node c69ddd4e). An unknown or unparsable version, and a
+ * pre-release of 4.2.2, count as older.
+ */
+export function nodeAcceptsZeroByteNonce(version: string | undefined): boolean {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(-\S*)?$/.exec(version?.trim() ?? '')
+  if (!match) return false
+
+  const [major, minor, patch] = match.slice(1, 4).map(Number)
+  const prerelease = Boolean(match[4])
+  const compared = major !== 4 ? major - 4 : minor !== 2 ? minor - 2 : patch - 2
+
+  return compared > 0 || (compared === 0 && !prerelease)
+}
+
+/**
+ * Whether the node accepts its indexer's decrypt call signed with `nonce`. Before 4.2.2 it
+ * does not when `keccak256(address + nonce + "decryptDDO")` starts with a zero byte (see
+ * `STUCK_INDEXER_NONCE_HINT`); a node of 4.2.2 or later (`nodeVersion`, the `version` of
+ * `GET /`) accepts every nonce. Without a version the zero-byte rule applies. The address
+ * is the checksummed form the node signs with.
  */
 export function isIndexerNonceSignable(
   nodeAddress: string,
-  nonce: number | bigint | string
+  nonce: number | bigint | string,
+  nodeVersion?: string
 ): boolean {
+  if (nodeAcceptsZeroByteNonce(nodeVersion)) return true
+
   const message = `${getAddress(nodeAddress)}${String(nonce)}decryptDDO`
 
   return !keccak256(toUtf8Bytes(message)).startsWith('0x00')
@@ -388,6 +410,11 @@ export interface IndexerNonceState {
   storedNonce: number
   /** The nonce the indexer signs its next decrypt call with: `storedNonce + 1`. */
   nextNonce: number
+  /**
+   * The node's software version (`version` in `GET /`), when it reports one. From 4.2.2 a
+   * zero-byte nonce hash no longer sticks the indexer (`isIndexerNonceSignable`).
+   */
+  nodeVersion?: string
   /**
    * `true` when the node will not accept that call (`401 consumer address and nonce
    * signature mismatch`). Since the stored nonce only advances on success, encrypted DDOs
@@ -1691,6 +1718,17 @@ export class OceanNodeClient {
    * status) or the body is not JSON. Rejects with the signal's reason when `signal` aborts.
    */
   async getNodeAddress(signal?: AbortSignal): Promise<string | undefined> {
+    return (await this.readNodeRoot(signal))?.address
+  }
+
+  /**
+   * The node's address and software version from `GET /` (`providerAddress`, `version`),
+   * each `undefined` when the node does not report it; `undefined` over P2P. Throws like
+   * `getNodeAddress()`.
+   */
+  private async readNodeRoot(
+    signal?: AbortSignal
+  ): Promise<{ address?: string; version?: string } | undefined> {
     if (!isHttpUri(this.nodeUri)) return undefined
 
     const response = await this.get('getNodeAddress', '/', { signal })
@@ -1714,14 +1752,21 @@ export class OceanNodeClient {
       )
     }
 
-    const address =
+    const { providerAddress: address, version } =
       info && typeof info === 'object'
-        ? (info as { providerAddress?: unknown }).providerAddress
-        : undefined
+        ? (info as { providerAddress?: unknown; version?: unknown })
+        : {}
 
-    return typeof address === 'string' && isAddress(address)
-      ? getAddress(address)
-      : undefined
+    return {
+      address:
+        typeof address === 'string' && isAddress(address)
+          ? getAddress(address)
+          : undefined,
+      version:
+        typeof version === 'string' && version.length <= 64
+          ? version
+          : undefined
+    }
   }
 
   /**
@@ -1735,7 +1780,8 @@ export class OceanNodeClient {
   async getIndexerNonceState(
     signal?: AbortSignal
   ): Promise<IndexerNonceState | undefined> {
-    const nodeAddress = await this.getNodeAddress(signal)
+    const root = await this.readNodeRoot(signal)
+    const nodeAddress = root?.address
     if (!nodeAddress) return undefined
 
     const response = await this.get(
@@ -1774,12 +1820,24 @@ export class OceanNodeClient {
       )
 
     const nextNonce = storedNonce + 1
+    const nodeVersion = root.version
+
+    if (
+      nodeAcceptsZeroByteNonce(nodeVersion) &&
+      !isIndexerNonceSignable(nodeAddress, nextNonce)
+    )
+      this.log.emit(
+        'node.indexer_nonce.zero_byte_accepted',
+        `The next indexer nonce ${nextNonce} of ${this.nodeUri} hashes to a zero byte, which older nodes refuse; this node reports version ${nodeVersion}, which accepts it, so it is not reported as stuck.`,
+        { nodeUri: this.nodeUri, nodeVersion, nextNonce }
+      )
 
     return {
       nodeAddress,
       storedNonce,
       nextNonce,
-      stuck: !isIndexerNonceSignable(nodeAddress, nextNonce)
+      ...(nodeVersion ? { nodeVersion } : {}),
+      stuck: !isIndexerNonceSignable(nodeAddress, nextNonce, nodeVersion)
     }
   }
 

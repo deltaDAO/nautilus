@@ -1534,7 +1534,13 @@ export class Nautilus {
     if (!state) return
     if (state.stuck) throw new IndexerNonceStuckError(state)
 
-    if (!isIndexerNonceSignable(state.nodeAddress, state.nextNonce + 1))
+    if (
+      !isIndexerNonceSignable(
+        state.nodeAddress,
+        state.nextNonce + 1,
+        state.nodeVersion
+      )
+    )
       this.log.emit(
         'publish.preflight.indexer_nonce_will_stick',
         `The indexer of ${this.node.nodeUri} will sign its second decrypt call for this asset with nonce ${state.nextNonce + 1}, which the node does not accept: unless another decrypt moves the nonce first, this asset will not be indexed and the indexer nonce will be stuck until the operator advances it.`,
