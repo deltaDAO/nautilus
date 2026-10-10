@@ -75,3 +75,17 @@ function urlsBeyondOrigin(text: string): boolean {
   }
   return false
 }
+
+/**
+ * Whether the tap of `test/setup.ts` checks each event's fields against the catalogue. Set
+ * back to `true` before each test.
+ */
+export const catalogueCheck = { fields: true }
+
+/**
+ * For the rest of the current test, events may carry fields the catalogue does not list:
+ * for tests of the redaction itself, which feed catalogued events made-up fields.
+ */
+export function allowMadeUpFields(): void {
+  catalogueCheck.fields = false
+}
