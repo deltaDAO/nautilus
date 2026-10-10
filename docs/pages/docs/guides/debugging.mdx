@@ -1,0 +1,99 @@
+# Debugging
+
+nautilus redacts what it passes on from the node, the wallet, the verifier and the RPC: error
+messages, warnings and log events never carry an RPC token, a session id, a signature or a
+JWT, at any [log level](/docs/api/nautilus/configureLogging). That keeps them safe to log and
+to show, but sometimes the redacted text is not enough to find out what went wrong. The
+**sensitive debug channel** shows the raw values, on a separate channel, only when you turn
+it on.
+
+## When to use it
+
+- A credential-gated download fails with `Presentation failed`, and you need the verifier's
+  per-policy results (which policy failed, and why).
+- The node refuses a request, and its full answer would explain more than the one sentence in
+  the error.
+- An RPC call fails, and you need its response body (and, at `secrets`, which URL it went
+  to).
+- A store refuses an upload, and you need its answer.
+
+## Turning it on
+
+In Node, without changing code:
+
+```bash
+NAUTILUS_DEBUG=sensitive node download.js 2> debug.log
+```
+
+Or in code, also in a browser:
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+
+Nautilus.setDebug({ level: 'sensitive', topics: ['policy', 'wallet'] }) // [!code focus]
+// … reproduce the failure …
+Nautilus.setDebug({ level: 'off' }) // [!code focus]
+```
+
+`setDebug` overrides the environment variables. See
+[`setDebug`](/docs/api/nautilus/setDebug) for every option.
+
+## The two tiers
+
+| Tier | Adds | Typical use |
+|------|------|-------------|
+| `off` (default) | nothing | production |
+| `sensitive` | raw node, wallet, verifier and RPC answers; session ids and redirect URIs; the verifier's per-policy results with full errors; request payloads with their signatures and nonces; raw signed transactions; presented VP/VC JWTs; storage pointers without their credentials | access, SSI, ordering and indexing problems |
+| `secrets` | everything in `sensitive`, plus long-lived credentials: the RPC URL's token, S3 secret keys, IPFS (Pinata) JWTs, `Authorization` headers | store or RPC authentication problems |
+
+`sensitive` still hides long-lived credentials: an RPC URL reads
+`https://rpc.example.org/v3/<redacted>`. `secrets` must be named explicitly: no other value of
+`NAUTILUS_DEBUG` reaches it.
+
+nautilus never holds the signer's private key or mnemonic (your signer does), so neither is
+printed at any tier.
+
+## Topics
+
+`node`, `wallet`, `policy`, `rpc`, `order`, `nonce`, `store` and `compute`. Narrow the output
+with `NAUTILUS_DEBUG_TOPICS=policy,wallet` or `topics: ['policy', 'wallet']`.
+
+## What you see
+
+Each event is one line on stderr, prefixed with its tier and topic, so the lines are easy to
+find, split off and delete:
+
+```
+[nautilus] WARNING: sensitive debug logging is ON: the output contains session ids, signatures and request data. Don't use it in production, and don't share the output.
+[nautilus:debug:sensitive] [policy] 2026-10-10T13:36:58.561Z policy-server session opened (initiate) {…}
+[nautilus:debug:sensitive] [wallet] 2026-10-10T13:36:58.759Z answer HTTP 400 to wallet/…/exchange/usePresentationRequest {"status":400,"statusText":"Bad Request","body":"{\"redirectUri\":\"…/error?id=…\",…}"}
+[nautilus:debug:sensitive] [policy] 2026-10-10T13:36:58.772Z verifier per-policy results (checkSessionId) {…,"policies":[…,"VerifiablePresentation holder-binding: failed (java.lang.NullPointerException)"]}
+```
+
+The error your code catches is unchanged: here a `CredentialPresentationError` whose message
+names the wallet's answer with the verifier's URL reduced to its origin and the session id
+removed. With the `policy` topic on, nautilus reads the verifier's record of a rejected
+presentation once more (`checkSessionId`) to show its per-policy results; nothing else
+changes in what nautilus sends.
+
+To route the events elsewhere, pass a `sink`; it receives `{ time, tier, topic, message,
+data }`.
+
+## The warnings
+
+Turning a tier on prints a warning on stderr, once per tier, that no log level or log sink
+suppresses. Under `NODE_ENV=production` it is stronger. Treat either as a reminder to turn the
+channel off again.
+
+## Sharing debug output
+
+The output is meant for you, on your machine. Before you share any of it, e.g. in a bug
+report:
+
+1. Keep only the lines you need (`grep '^\[nautilus:debug:'` finds them).
+2. Run a secret scan over them, and replace session ids, signatures, nonces and JWTs with
+   `<redacted>`. A session id lets anyone read the presentation through the node's passthrough
+   until the verifier forgets it.
+3. Never share `secrets` output. If you captured any, rotate every credential it printed: the
+   RPC URL's token, the S3 keys, the IPFS JWT.
+4. Delete the files when you are done.

@@ -137,11 +137,15 @@ Every other text, the message and error messages included, has URLs reduced to t
 and the value of every key the rules above redact is redacted there too when the text gives
 it as `key=value`, `key: value`, `'key': 'value'`, a JSON field `"key": value` or a JSON
 field inside a JSON string (`\"key\":\"value\"`, as ethers quotes a response body);
-`Bearer` and `Basic` credentials, JWTs and 65-byte hex signatures are redacted wherever
-they stand. Text is redacted before and after control characters are stripped, so a key
-split by one is still caught. Free text is matched by pattern, not parsed: a credential
-in prose without a key in front of it (`my password is hunter2`) is not recognised. No
-level of nautilus's own events prints an RPC token, a session id, a signature or a JWT.
+`Bearer` and `Basic` credentials, JWTs, 65-byte hex signatures and raw signed transactions
+are redacted wherever they stand. Text is redacted before and after control characters are
+stripped, so a key split by one is still caught. Free text is matched by pattern, not
+parsed: a credential in prose without a key in front of it (`my password is hunter2`) is
+not recognised. No level of nautilus's own events prints an RPC token, a session id, a
+signature or a JWT.
+When a failure needs the raw values, turn on the separate debug channel with
+[`setDebug`](/docs/api/nautilus/setDebug) or `NAUTILUS_DEBUG` (see the
+[debugging guide](/docs/guides/debugging)); it leaves these events as they are.
 
 :::warning[ocean.js still prints its own lines]
 This covers nautilus's events only. Until a later release routes ocean.js's logger through
