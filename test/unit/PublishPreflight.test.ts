@@ -19,7 +19,12 @@ import {
   addCredentialAddresses,
   addRequestCredentials
 } from '../../src/identity/policy.js'
-import type { LogEvent, LoggingOptions } from '../../src/log/index.js'
+import {
+  createLogger,
+  type LogEvent,
+  type Logger,
+  type LoggingOptions
+} from '../../src/log/index.js'
 import { AssetBuilder } from '../../src/Nautilus/Asset/AssetBuilder.js'
 import { PLACEHOLDER_ADDRESS } from '../../src/Nautilus/Asset/NautilusDDO.js'
 import {
@@ -260,7 +265,7 @@ async function createNautilus(
     remoteStore?: RemoteStore
     node?: NodeMockOptions
     config?: Record<string, unknown>
-    logger?: LoggingOptions
+    logger?: LoggingOptions | Logger
   } = {}
 ): Promise<{
   nautilus: Nautilus
@@ -1592,6 +1597,32 @@ describe('policy server that denies every consumer', () => {
     expect(global.events.map((event) => event.event)).to.deep.equal([
       'publish.preflight.denies_all'
     ])
+  })
+
+  it('accepts a logger made with createLogger, which several instances can share', async () => {
+    const global = captureLog()
+    const tenant: LogEvent[] = []
+    const logger = createLogger({
+      level: 'debug',
+      sink: (event) => tenant.push(event)
+    })
+    const { nautilus: first } = await createNautilus({
+      node: { policyServer: true },
+      logger
+    })
+    const { nautilus: second } = await createNautilus({
+      node: { policyServer: true },
+      logger
+    })
+
+    await first.publish(validAsset())
+    await second.publish(validAsset())
+
+    expect(
+      tenant.filter((event) => event.event === 'publish.preflight.denies_all')
+    ).to.have.length(2)
+    expect(tenant.map((event) => event.event)).to.include('chain.config.ready')
+    expect(global.events).to.deep.equal([])
   })
 
   it('does not warn when no node has a policy server, or says', async () => {

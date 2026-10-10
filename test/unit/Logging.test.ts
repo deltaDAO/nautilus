@@ -5,18 +5,21 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PolicySessionResolver } from '../../src/identity/PolicySessionResolver.js'
 import { MemorySessionStore } from '../../src/identity/session.js'
 import { processEnv, readLoggingEnv } from '../../src/log/env.js'
-import { isLogEventName } from '../../src/log/events.js'
+import { isLogEventName, LOG_COMPONENTS } from '../../src/log/events.js'
 import {
-  configureLogging,
   createLogger,
-  getLoggingConfig,
-  LOG_COMPONENTS,
   LOG_EVENTS,
-  LOG_LEVELS,
   type LogEvent,
   type LogEventName
 } from '../../src/log/index.js'
-import { log, resetLogging, setLogTap } from '../../src/log/logger.js'
+import { LOG_LEVELS } from '../../src/log/levels.js'
+import {
+  configureLogging,
+  getLoggingConfig,
+  log,
+  resetLogging,
+  setLogTap
+} from '../../src/log/logger.js'
 import { Nautilus } from '../../src/Nautilus/Nautilus.js'
 import { captureLog } from '../helpers.js'
 import { FAKE, findSecrets } from '../secretScan.js'
