@@ -2,8 +2,6 @@ import {
   type CredentialProvider,
   type DdoSigner,
   IpfsRemoteStore,
-  type LogFormat,
-  type LoggingLevel,
   Nautilus,
   type RemoteStore,
   S3RemoteStore,
@@ -440,20 +438,15 @@ export async function removeStoredEnvelope(
 }
 
 /**
- * nautilus prints warnings to stderr by default. It reads `NAUTILUS_LOG_LEVEL` and
- * `NAUTILUS_LOG_FORMAT` itself, but when it is imported, before dotenv has loaded `.env`,
- * so the values from `.env` are applied here. `VERBOSE=true` is the `debug` level.
+ * nautilus prints warnings to stderr by default, and reads `NAUTILUS_LOG_LEVEL`,
+ * `NAUTILUS_LOG_FORMAT` and `NAUTILUS_LOG_COMPONENTS` itself when it is imported; the entry
+ * points (`index.ts`, `scenarios/e2e.ts`) load `.env` before that, with
+ * `import 'dotenv/config'`. `VERBOSE=true` is the `debug` level, unless `NAUTILUS_LOG_LEVEL`
+ * sets one.
  */
 function configureLogging(verbose?: boolean): void {
-  const level =
-    process.env.NAUTILUS_LOG_LEVEL?.trim().toLowerCase() ||
-    (verbose ? 'debug' : undefined)
-  const format = process.env.NAUTILUS_LOG_FORMAT?.trim().toLowerCase()
-
-  Nautilus.configureLogging({
-    ...(level ? { level: level as LoggingLevel } : {}),
-    ...(format ? { format: format as LogFormat } : {})
-  })
+  if (verbose && !process.env.NAUTILUS_LOG_LEVEL?.trim())
+    Nautilus.configureLogging({ level: 'debug' })
 }
 
 export interface SetupOptions {

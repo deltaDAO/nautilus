@@ -1,4 +1,7 @@
-import * as dotenv from 'dotenv'
+// Loads .env first, before nautilus is imported, so nautilus reads NAUTILUS_LOG_* from it.
+// Variables already exported into the environment win, so a locally sourced env file
+// overrides the file.
+import 'dotenv/config'
 import {
   COMMANDS,
   formatCommandHelp,
@@ -29,10 +32,6 @@ import {
  * `npm start -- <command> --help` prints what a command needs without connecting
  * to anything.
  */
-
-// Loads .env if present. Variables already exported into the environment win,
-// so a locally sourced env file overrides the file.
-dotenv.config()
 
 async function main() {
   const [name, ...args] = process.argv.slice(2)
