@@ -267,6 +267,21 @@ npm run use:npm          # switch to the published package
 
 Full details, including the environment variables and the credential-gated setup, are in the [examples README](https://github.com/deltaDAO/nautilus/blob/main/examples/README.md) and on the [Examples](https://nautilus.delta-dao.com/docs/examples) docs page.
 
+## Troubleshooting
+
+Errors, warnings and log events are redacted: no RPC token, session id, signature or JWT. When
+that hides why something failed, rerun with the sensitive debug channel on:
+
+```sh
+NAUTILUS_DEBUG=sensitive node app.js 2> debug.log
+```
+
+It prints the raw node, wallet, verifier and RPC answers (e.g. which SSI policy rejected a
+presentation) as lines starting with `[nautilus:debug:`. `NAUTILUS_DEBUG=secrets` adds
+credentials such as the RPC URL's token. The output is for you only: never use it in
+production, and scan it for secrets before sharing any of it. See the
+[debugging guide](https://nautilus.delta-dao.com/docs/guides/debugging).
+
 ## Next Steps
 
 Find dedicated feature documentation by following one of the links below:
