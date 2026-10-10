@@ -205,7 +205,9 @@ NAUTILUS_DEBUG=sensitive NAUTILUS_DEBUG_TOPICS=policy,wallet npm start -- ssi:co
 Each event is one stderr line starting with `[nautilus:debug:sensitive]` or
 `[nautilus:debug:SECRETS]`; a warning says the channel is on. Errors and the command's own
 output stay redacted. Sharing rules: never use it in production; keep only the lines you
-need, scan them for secrets and replace session ids, signatures and JWTs before sharing; never
+need, scan them for secrets (`sensitive` hides credentials best effort, by name and shape)
+and replace session ids, signatures, JWTs (presented credentials carry personal data) and raw
+signed transactions (anyone can broadcast one that was never mined) before sharing; never
 share `secrets` output, and rotate every credential it printed. See the debugging guide in
 the docs.
 

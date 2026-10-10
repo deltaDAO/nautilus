@@ -45,6 +45,9 @@ environment variables. An unknown level or topic throws a `TypeError`.
 | `sensitive` | Raw node, wallet, verifier and RPC answers; policy-server session ids and verifier redirect URIs; the verifier's per-policy results with their full errors; request payloads (download URLs with `signature`, `nonce` and the session id); raw signed transactions; presented VP/VC JWTs; storage pointers without their credentials. |
 | `secrets` | Everything in `sensitive`, plus long-lived credentials: the RPC URL with its token, S3 secret keys, IPFS (Pinata) JWTs, `Authorization` headers. |
 
+`sensitive` hides long-lived credentials best effort, by name and shape (see the
+[debugging guide](/docs/guides/debugging#the-two-tiers)): scan its output before sharing it.
+
 The signer's private key or mnemonic is never printed, at any tier: nautilus never holds
 them, the signer does.
 
@@ -53,7 +56,10 @@ them, the signer does.
 - Type: `DebugTopic[]`, of `'node' | 'wallet' | 'policy' | 'rpc' | 'order' | 'nonce' | 'store' | 'compute'`
 - Default: all
 
-Only events about these topics print.
+Only events about these topics print. Every topic also carries the raw fields of
+nautilus's own [log events](/docs/api/nautilus/configureLogging) of its component, but only of
+events printed at the current log level: pair the channel with `NAUTILUS_LOG_LEVEL=debug` (or
+`configureLogging({ level: 'debug' })`) to see them all.
 
 | Topic | Events |
 |-------|--------|
@@ -61,10 +67,10 @@ Only events about these topics print.
 | `wallet` | The walt.id wallet: its error answers, the resolved presentation request, the presentation result. |
 | `policy` | Policy-server sessions (the `initiate` reply), the verifier's session record and per-policy results. |
 | `rpc` | The chain RPC: errors with their request URL and response. |
-| `order` | Orders and the previous-order lookup. |
-| `nonce` | Nonce reads. |
+| `order` | The raw fields of the access log events. Events of their own for orders and the previous-order lookup: not emitted yet (from PRs 9 and 7). |
+| `nonce` | The raw fields of the publish preflight's nonce warnings. Raw nonce reads: not emitted yet (from PR 4). |
 | `store` | Remote stores: storage pointers, store answers. |
-| `compute` | Compute jobs. |
+| `compute` | The raw fields of the compute log events. Events of their own for compute jobs: not emitted yet (from PR 10d). |
 
 #### sink
 
@@ -93,11 +99,11 @@ Each event is a `DebugEvent`:
 | `tier` | `'sensitive' \| 'secrets'` | `secrets` when the data holds a long-lived credential (only with `level: 'secrets'`). |
 | `topic` | `DebugTopic` | |
 | `message` | `string` | What the data is, e.g. `answer HTTP 400 Bad Request`. |
-| `data` | `unknown` | The raw value as plain data. An error becomes `{ name, message, …, cause }`; strings are cut at 32,768 characters. |
+| `data` | `unknown` | The raw value as plain data. An error becomes `{ name, message, …, cause }`. After masking, strings are cut at 32,768 characters and the event at about 256 KB, each cut marked. |
 
 ## Output
 
-Without a sink, each event is **one line** on stderr (the console in a browser), prefixed
+Without a sink, each event is **one line** on stderr (`console.info` in a browser), prefixed
 with its tier and topic. Line breaks and control characters in the data are written as JSON
 escapes, so an event never spans two lines:
 
@@ -133,7 +139,8 @@ environment; use `setDebug`.
 
 Case does not matter. Only the tier names count: `NAUTILUS_DEBUG=1` or `true` turns nothing on,
 so `secrets` is reached only by naming it, and `NAUTILUS_DEBUG_TOPICS` alone turns nothing on.
-An unknown value is ignored, and a `config.env.invalid` warning says so.
+An unknown value is ignored, and a `config.env.invalid` warning says so. An unknown topic is
+dropped from the list; a list with no known topic turns on no topic, never all of them.
 
 ```bash
 NAUTILUS_DEBUG=sensitive NAUTILUS_DEBUG_TOPICS=policy,wallet node download.js 2> debug.log
