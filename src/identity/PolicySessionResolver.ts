@@ -29,6 +29,7 @@ import {
   hasCredentials
 } from '../ddo/read.js'
 import type { PolicyServerPayload } from '../ddo/types.js'
+import { debugEnabled, debugRaw } from '../log/debug.js'
 import { type Logger, log } from '../log/logger.js'
 import {
   type OceanNodeClient,
@@ -221,6 +222,8 @@ export class PolicySessionResolver {
     if (!reply) return null
 
     const { sessionId, redirectUri } = readInitiateReply(reply)
+    if (debugEnabled('sensitive', 'policy'))
+      debugRaw('policy', 'policy-server session opened (initiate)', reply)
 
     if (!sessionId)
       throw new OceanNodeError(
@@ -237,14 +240,20 @@ export class PolicySessionResolver {
           `the policy server asked for a presentation for service ${serviceId} of ${asset.id}, but sent no openid4vp request`
         )
 
-      await (this.credentials as CredentialProvider).present({
-        asset,
-        serviceId,
-        consumerAddress,
-        node,
-        sessionId,
-        redirectUri
-      })
+      try {
+        await (this.credentials as CredentialProvider).present({
+          asset,
+          serviceId,
+          consumerAddress,
+          node,
+          sessionId,
+          redirectUri
+        })
+      } catch (error) {
+        if (debugEnabled('sensitive', 'policy'))
+          await debugFailedPresentation(node, sessionId, error)
+        throw error
+      }
 
       const check = await node.checkPolicySession(sessionId)
 
@@ -314,6 +323,29 @@ export class PolicySessionResolver {
     const age = Date.now() - createdAt
 
     return age >= 0 && age < this.sessionTtlMs
+  }
+}
+
+/**
+ * With the `policy` debug topic on: the presentation failed, so ask the verifier for its
+ * record of the session (one `checkSessionId` read through the node, as after a successful
+ * presentation), which `checkPolicySession` hands to the debug channel with its per-policy
+ * results. Best effort: a failing read is only reported there. The error thrown stays the
+ * same.
+ */
+async function debugFailedPresentation(
+  node: OceanNodeClient,
+  sessionId: string,
+  error: unknown
+): Promise<void> {
+  debugRaw('policy', 'presentation failed', { sessionId, error })
+  try {
+    await node.checkPolicySession(sessionId)
+  } catch (checkError) {
+    debugRaw('policy', 'checkSessionId after the failed presentation failed', {
+      sessionId,
+      error: checkError
+    })
   }
 }
 
