@@ -92,6 +92,15 @@ node's key can read them, and they can never be removed.
 
 Both credential options are `S3Credentials`, `{ accessKeyId: string; secretAccessKey: string }`.
 
+The two warnings (`store.s3.shared_credentials`, `store.s3.writable_read_key`, `warn` level)
+go to the **process-wide** logger, set with
+[`Nautilus.configureLogging`](/docs/api/nautilus/configureLogging), not to the `logger` of the
+`Nautilus` instance the store is passed to: an `S3RemoteStore` has no logger of its own. In a
+multi-tenant server, where each tenant's instance has its own
+[`logger`](/docs/api/nautilus/create#logger), give the process-wide configuration a `sink`
+too, so these warnings reach your logs rather than stderr. They name the access key id or
+the bucket, never a secret key.
+
 The constructor throws when:
 
 - a required option is missing or blank (naming it);

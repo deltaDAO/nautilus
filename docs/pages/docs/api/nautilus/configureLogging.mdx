@@ -108,21 +108,56 @@ Each event is a `LogEvent`:
 The catalogue of every event, with its level, component and fields, is exported as
 `LOG_EVENTS`.
 
-**Redaction.** Before any sink or stderr sees an event, its fields are redacted by key:
-`sessionId`, `signature`, `nonce`, `jwt`, `token`, `authorization`, `secretAccessKey` and
-similar credentials become `<redacted>`; any `url` or `uri` (and `endpoint`, `nodeUri`, …) is
-reduced to its origin; an `error` is reduced to its name and message, with control characters
-stripped and credentials redacted. Every other text, the message included, has URLs reduced
-to their origin and credentials redacted too. No level prints an RPC token, a session id, a
+**Redaction.** Before any sink or stderr sees an event, its fields are redacted by key, in
+nested objects too. Keys are compared without case, `-` or `_`, so `session_id`,
+`Session-Id` and `sessionId` are one key:
+
+- `nonce`, `token`, `sid` and `code`, and any key ending in a credential name (`secret`,
+  `secretAccessKey`, `password`, `apiKey`, `privateKey`, `sessionId`, `signature`, `cookie`,
+  `jwt`, `authorization`, `accessToken`, `refreshToken`, `idToken`, `vpToken`,
+  `credentials`, `presentation`, `signedTx`, `rawTx`, …) become `<redacted>`. `nonce` and
+  `token` match only as the whole key, so `decryptNonce` and `paymentToken` stay readable. A
+  `code` that reads as an error code (an upper-case constant such as `SERVER_ERROR`, or a
+  negative JSON-RPC code such as `-32005`) is kept, in fields and in text alike; any other
+  `code` (an OAuth authorization code) is redacted;
+- any `url` or `uri` (and `endpoint`, `nodeUri`, …) is reduced to its origin;
+- an `error` is reduced to its name and message, followed by up to two levels of its
+  `cause` (`… (cause: …)`), each with control characters stripped and credentials redacted.
+
+Every other text, the message included, has URLs reduced to their origin and credentials
+redacted too. No level of nautilus's own events prints an RPC token, a session id, a
 signature or a JWT.
+
+:::warning[ocean.js still prints its own lines]
+This covers nautilus's events only. Until a later release routes ocean.js's logger through
+nautilus (the [`oceanjs`](#oceanjs) option), ocean.js prints its own lines unredacted, at its
+own level: by default errors only, and a refused compute start is such an error, printed with
+its request payload (the signature, the nonce and the policy-server session id). To silence
+ocean.js now:
+
+```ts twoslash
+import { LoggerInstance, LogLevel } from '@oceanprotocol/lib'
+
+LoggerInstance.setLevel(LogLevel.None) // [!code focus]
+```
+
+[`setLogLevel`](/docs/api/nautilus/setLogLevel) sets the same level, and nautilus's own
+level with it.
+:::
 
 #### oceanjs
 
 - Type: `'capture' | 'passthrough' | 'silent'`
 
-What to do with ocean.js's own log output. **Accepted, but not acted on yet**: ocean.js still
-prints its own lines as before, at the level [`setLogLevel`](/docs/api/nautilus/setLogLevel)
-sets on its `LoggerInstance` (its default is errors only).
+What to do with ocean.js's own log output: `'capture'` routes it through nautilus's logger,
+redacted; `'passthrough'` leaves it as ocean.js prints it; `'silent'` drops it.
+
+**Not active yet.** The value is accepted and stored, but a later release implements it.
+Until then ocean.js prints its own lines as before, unredacted, at the level
+[`setLogLevel`](/docs/api/nautilus/setLogLevel) (or `LoggerInstance.setLevel`) sets on its
+`LoggerInstance`; its default is errors only. Passing `'passthrough'` or `'silent'` prints a
+`config.oceanjs.not_active` warning once. For the interim workaround, see
+the warning under [`sink`](#sink) above.
 
 ## Environment variables
 
@@ -144,4 +179,7 @@ NAUTILUS_LOG_LEVEL=debug NAUTILUS_LOG_FORMAT=json node publish.js 2> nautilus.lo
 ## One logger per instance
 
 Pass [`logger`](/docs/api/nautilus/create#logger) to `Nautilus.create` to give one instance
-its own level, components or sink, e.g. one sink per tenant in a multi-tenant server.
+its own level, components or sink, e.g. one sink per tenant in a multi-tenant server. Pass
+options, or a logger made with `createLogger(options)` to share one between instances.
+Warnings of an [`S3RemoteStore`](/docs/api/remote/S3RemoteStore) always go to the
+process-wide configuration set here.
