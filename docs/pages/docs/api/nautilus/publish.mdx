@@ -169,6 +169,12 @@ that does not answer the check (P2P, an older node, a network error) is not an e
 check is skipped. It also logs a warning when this publish's own second decrypt call would
 use a nonce the node does not accept. `false` skips the check.
 
+Which nonces a node does not accept depends on its version (the `version` of its `GET /`):
+before 4.2.2 it refuses a decrypt call whose signed message hash starts with a zero byte,
+so a next nonce with such a hash sticks the indexer; 4.2.2 and later accept it, so it is
+neither refused nor warned about. A node that reports no version, or a pre-release of
+4.2.2, is treated as older.
+
 :::info
 There is no `encrypt` option any more. The pointer and the stored envelope are always
 node-encrypted, and passing `encrypt: false` throws.
@@ -215,6 +221,12 @@ or handle them in your own `sink`.
   store could not remove it, or
   kept because the transaction was sent and may still be mined — then wait for it before
   completing, and pass `stored.txHash` to `completePublish` as `metadataTxHash`. See [when a write fails](/docs/guides/remote-stores#when-a-write-fails-after-the-envelope-is-stored).
+  A transaction that failed to send is named in the error: the RPC's refusal, or a
+  `NonceGuardError` when it was refused for its nonce and nautilus did not, or could not
+  safely, send it again (see
+  [Concurrency and nonces](/docs/guides/config#concurrency-and-nonces)), on `cause`. A
+  metadata transaction refused for its nonce leaves the envelope only when it is proven
+  never mined (`cleanup: 'removed'`); otherwise `'kept'`.
 - **`MetadataConflictError`**, when another metadata transaction for the NFT landed in the
   same block, and **`IndexingError`** / **`OceanNodeError`**, from `waitForIndexer`, when the
   node could not index the asset or did not within the timeout. These are not wrapped in a

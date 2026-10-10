@@ -11,6 +11,28 @@ New to nautilus rather than upgrading? Start with
 [Getting Started](/docs/getting-started) instead — this page assumes you know v1.
 :::
 
+## Upgrading from 2.0.0-beta.2
+
+### The signer is wrapped in a nonce guard
+
+`Nautilus.create` wraps your signer in a nonce guard that serialises sends per address and
+recovers from nonce collisions (see [Concurrency and nonces](/docs/guides/config#concurrency-and-nonces)).
+`getSigner()` returns that wrapper, not the object you passed in:
+
+```ts
+// before
+const wallet = nautilus.getSigner() as Wallet
+wallet.privateKey
+
+// after: keep your own reference
+const wallet = new Wallet(key, provider)
+const nautilus = await Nautilus.create(wallet, { config })
+```
+
+`confirmTransaction(operation, response)` takes the signer as an optional third argument, so
+its error can name why the send failed. To keep nautilus from setting nonces, pass
+`nonceManagement: 'off'`.
+
 ## Upgrading from 2.0.0-beta.1
 
 ### VP policies

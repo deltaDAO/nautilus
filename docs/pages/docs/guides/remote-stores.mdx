@@ -372,8 +372,10 @@ depends on whether that transaction may exist:
 
 | The failure | The transaction | The stored object | `error.stored.cleanup` |
 | --- | --- | --- | --- |
-| encrypting the pointer, `verify()`, building the transaction (permission, gas estimate), a wallet or RPC refusal (`ACTION_REJECTED`, `INSUFFICIENT_FUNDS`…) whose error carries no transaction hash, a mined revert (also of a sped-up replacement), a cancelled or replaced transaction | never sent, or changed nothing | removed with the store's `remove()` | `'removed'` |
+| encrypting the pointer, `verify()`, building the transaction (permission, gas estimate), a wallet or RPC refusal (`ACTION_REJECTED`, `INSUFFICIENT_FUNDS`…, not a nonce refusal) whose error carries no transaction hash, a mined revert (also of a sped-up replacement), a cancelled or replaced transaction | never sent, or changed nothing | removed with the store's `remove()` | `'removed'` |
 | the same, but the store has no `remove()` or it failed | nothing points at it | left | `'not-removed'`, with `removeError` |
+| refused for its nonce (`NONCE_EXPIRED` "nonce too low", `REPLACEMENT_UNDERPRICED`, "already known") and not got through by the [nonce guard](/docs/guides/config#concurrency-and-nonces), **proven never mined**: none of its signed transactions known on two reads, the account's mined count past their nonces, and no `MetadataCreated`/`MetadataUpdated` of the NFT with this `metadataHash` | never mined | removed with the store's `remove()` | `'removed'` |
+| refused for its nonce, not proven (the RPC knows it, the slot may still be free, an event matches, a read failed, or the refusal carries no signed transaction) | may be mined: "nonce too low" also answers a transaction already mined | kept | `'kept'`, with `txHash` of the last attempt |
 | sent, then no receipt (timeout, network error, any send error that carries the transaction hash, such as ethers' `info.sendTransactionHash`; on `sdk: 'oasis'` also a rejection or revert, which ocean.js does not tell apart) | may be mined | kept | `'kept'`, with `txHash` when known |
 | after the receipt (`waitForIndexer`, `MetadataConflictError`) | mined | kept, it is the live version | — (the error carries `published`) |
 
