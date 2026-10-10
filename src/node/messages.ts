@@ -18,29 +18,42 @@ export interface NodeAnswer {
 /** How much of a node's text goes into an error message. */
 const MAX_NODE_MESSAGE_LENGTH = 200
 
-/** Keys whose value is a credential, a session secret or a one-time value. */
+/**
+ * Keys whose value is a credential, a session secret or a one-time value. `code` is one
+ * too (an OAuth or openid4vp authorization code), but a value that reads as an error code
+ * (`SERVER_ERROR`, `-32005`) is kept: see `isErrorCode`.
+ */
 const SECRET_KEYS =
-  'signature|consumerSignature|token|authorization|jwt|access_token|vp_token|id_token|request_uri|code|nonce|password|apiKey|api_key|sessionId|session_id'
+  'signature|consumerSignature|token|authorization|jwt|access_token|vp_token|id_token|refresh_token|client_secret|request_uri|code|nonce|password|apiKey|api_key|api-key|secretAccessKey|secret_access_key|aws_secret_access_key|secretKey|secret_key|privateKey|private_key|sessionId|session_id'
+
+/** The names, among `SECRET_KEYS`, that are also written unquoted as `name: value`. */
+const BARE_SECRET_KEYS =
+  'password|apiKey|api_key|api-key|jwt|access_token|vp_token|id_token|refresh_token|client_secret|secretAccessKey|secret_access_key|aws_secret_access_key|secretKey|secret_key|privateKey|private_key'
 
 /** `scheme://authority/path?query#fragment`, up to whitespace or a quote. */
 const URL_PATTERN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>\\]*/gi
 /** `key=value` in a query, a form body or prose: `?signature=…`, `nonce=…`. */
-const SECRET_ASSIGNMENT = new RegExp(`\\b(${SECRET_KEYS})=[^&\\s"'#,;)]*`, 'gi')
+const SECRET_ASSIGNMENT = new RegExp(
+  `\\b(${SECRET_KEYS})=([^&\\s"'#,;)]*)`,
+  'gi'
+)
 /** `"key": "value"` or `"key": 123` in JSON. */
 const SECRET_FIELD = new RegExp(
-  `("(?:${SECRET_KEYS})"\\s*:\\s*)(?:"(?:[^"\\\\]|\\\\.)*"|[^\\s,}\\]]+)`,
+  `("(?:${SECRET_KEYS})"\\s*:\\s*)("(?:[^"\\\\]|\\\\.)*"|[^\\s,}\\]]+)`,
   'gi'
 )
 /** The same in JSON that is itself inside a JSON string: `\"key\":\"value\"`. */
 const ESCAPED_SECRET_FIELD = new RegExp(
-  `(\\\\"(?:${SECRET_KEYS})\\\\"\\s*:\\s*)(?:\\\\"(?:[^"\\\\]|\\\\[^"])*\\\\"|[^\\s,}\\]\\\\]+)`,
+  `(\\\\"(?:${SECRET_KEYS})\\\\"\\s*:\\s*)(\\\\"(?:[^"\\\\]|\\\\[^"])*\\\\"|[^\\s,}\\]\\\\]+)`,
   'gi'
 )
 /** `signature: 0x…` without quotes. */
 const BARE_SIGNATURE = /\b((?:consumer)?signature\s*:\s*)0x[0-9a-f]+/gi
-/** `password: …`, `apiKey: …`, `access_token: …` without quotes. */
-const BARE_SECRET =
-  /\b((?:password|apiKey|api_key|jwt|access_token|vp_token|id_token)\s*:\s*)[^\s,;"'&)}\]]+/gi
+/** `password: …`, `apiKey: …`, `secretAccessKey: …`, `refresh_token: …` without quotes. */
+const BARE_SECRET = new RegExp(
+  `\\b((?:${BARE_SECRET_KEYS})\\s*:\\s*)[^\\s,;"'&)}\\]]+`,
+  'gi'
+)
 const BEARER = /(Bearer\s+)[\w.~+/=-]+/gi
 /** A JWT (`eyJ…` header, payload and signature, base64url). */
 const JWT = /\beyJ[\w-]*\.[\w-]+\.[\w-]*/g
@@ -57,23 +70,50 @@ const CONTROL_CHARACTERS =
   /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]+/g
 
 /**
- * `text` with credentials replaced by `<redacted>`: signatures, tokens, nonces, codes and
- * passwords given as `key=value`, as JSON fields or (signatures, passwords, API keys,
- * tokens) as `key: value`; bearer credentials, JWTs and 65-byte hex signatures anywhere.
+ * `text` with credentials replaced by `<redacted>`: signatures, tokens, nonces, codes,
+ * passwords, S3 secret keys, OAuth client secrets and private keys given as `key=value`, as
+ * JSON fields or (passwords, API keys, OAuth and VP tokens, secret and private keys, hex
+ * signatures) as `key: value`; bearer credentials, JWTs and 65-byte hex signatures
+ * anywhere. A `code` that reads as an error
+ * code (`code=SERVER_ERROR`, `"code": -32005`) is kept, so RPC failures stay legible.
  * A URL keeps its origin only: its path and query (an openid4vp `request_uri`, a policy
  * server's redirect URI, an internal path) are dropped, and so are its user and password.
  */
 export function redactSecrets(text: string): string {
   return text
     .replace(URL_PATTERN, originOnly)
-    .replace(SECRET_FIELD, '$1"<redacted>"')
-    .replace(ESCAPED_SECRET_FIELD, '$1\\"<redacted>\\"')
-    .replace(SECRET_ASSIGNMENT, '$1=<redacted>')
+    .replace(SECRET_FIELD, (match: string, key: string, value: string) =>
+      keepsCode(key, value) ? match : `${key}"<redacted>"`
+    )
+    .replace(
+      ESCAPED_SECRET_FIELD,
+      (match: string, key: string, value: string) =>
+        keepsCode(key, value) ? match : `${key}\\"<redacted>\\"`
+    )
+    .replace(SECRET_ASSIGNMENT, (match: string, key: string, value: string) =>
+      keepsCode(key, value) ? match : `${key}=<redacted>`
+    )
     .replace(BARE_SIGNATURE, '$1<redacted>')
     .replace(BARE_SECRET, '$1<redacted>')
     .replace(BEARER, '$1<redacted>')
     .replace(JWT, '<redacted>')
     .replace(HEX_SIGNATURE, '<redacted>')
+}
+
+/**
+ * Whether a credential match is a `code` whose value reads as an error code, which is kept:
+ * an upper-case constant (`SERVER_ERROR`, `CALL_EXCEPTION`, `ECONNREFUSED`) or a negative
+ * number (a JSON-RPC code, `-32005`). An OAuth or openid4vp authorization code, which is
+ * neither, stays redacted, and so does every other credential key.
+ */
+function keepsCode(prefix: string, value: string): boolean {
+  if (prefix.replace(/[^a-z]/gi, '').toLowerCase() !== 'code') return false
+  return isErrorCode(value.replace(/^(?:\\?")|(?:\\?")$/g, ''))
+}
+
+/** An upper-case error-code constant (`SERVER_ERROR`) or a negative number (`-32005`). */
+export function isErrorCode(value: string): boolean {
+  return /^(?:[A-Z][A-Z0-9_]{1,63}|-\d{1,6})$/.test(value)
 }
 
 /** A URL as `scheme://host[:port]`, with the punctuation that ended its sentence kept. */

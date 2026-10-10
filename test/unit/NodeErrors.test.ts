@@ -24,7 +24,7 @@ import {
 } from 'ethers'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NodeAuth } from '../../src/node/auth.js'
-import { nodeText } from '../../src/node/messages.js'
+import { nodeText, redactSecrets } from '../../src/node/messages.js'
 import {
   AssetNotFoundError,
   OceanNodeClient,
@@ -882,6 +882,66 @@ describe("the node's text in a message", () => {
       ['Authorization: Bearer abc.def', 'Authorization: Bearer <redacted>']
     ]) {
       expect(nodeText(text), text).to.contain(kept)
+    }
+  })
+
+  it('redacts S3 secret keys, OAuth client secrets and refresh tokens, and private keys', () => {
+    for (const [text, kept] of [
+      [
+        'secretAccessKey=wJalr/K7MDENG secret_access_key=s2',
+        'secretAccessKey=<redacted> secret_access_key=<redacted>'
+      ],
+      ['aws_secret_access_key=s3x', 'aws_secret_access_key=<redacted>'],
+      [
+        'secretKey=minio1 secret_key=minio2',
+        'secretKey=<redacted> secret_key=<redacted>'
+      ],
+      [
+        'client_secret=cs1&refresh_token=rt1',
+        'client_secret=<redacted>&refresh_token=<redacted>'
+      ],
+      [
+        'privateKey=0x12 private_key=0x34',
+        'privateKey=<redacted> private_key=<redacted>'
+      ],
+      [
+        '{"secretAccessKey":"wJalr","client_secret":"cs1","private_key":"0x12"}',
+        '{"secretAccessKey":"<redacted>","client_secret":"<redacted>","private_key":"<redacted>"}'
+      ],
+      [
+        'secretAccessKey: wJalr, aws_secret_access_key: s3x, client_secret: cs1',
+        'secretAccessKey: <redacted>, aws_secret_access_key: <redacted>, client_secret: <redacted>'
+      ],
+      [
+        'refresh_token: rt1 privateKey: 0x12 x-api-key: k9',
+        'refresh_token: <redacted> privateKey: <redacted> x-api-key: <redacted>'
+      ]
+    ]) {
+      expect(nodeText(text), text).to.contain(kept)
+    }
+  })
+
+  it('keeps a code that reads as an error code, and redacts an authorization code', () => {
+    for (const [text, kept] of [
+      [
+        'server response 500 (code=SERVER_ERROR, version=6.16.0)',
+        'code=SERVER_ERROR'
+      ],
+      [
+        'could not coalesce error (error={ "code": -32005, "message": "range" })',
+        '"code": -32005,'
+      ],
+      [
+        'raw {\\"code\\":\\"SERVER_ERROR\\"}',
+        '{\\"code\\":\\"SERVER_ERROR\\"}'
+      ],
+      ['raw {\\"code\\":\\"s3cr3t\\"}', '{\\"code\\":\\"<redacted>\\"}'],
+      ['{"code":"CALL_EXCEPTION"}', '{"code":"CALL_EXCEPTION"}'],
+      ['callback?x code=SplxlOBeZQQYbYS6WxSbIA', 'code=<redacted>'],
+      ['code=123', 'code=<redacted>'],
+      ['{"code":"abc-def"}', '{"code":"<redacted>"}']
+    ]) {
+      expect(redactSecrets(text), text).to.contain(kept)
     }
   })
 
