@@ -244,7 +244,8 @@ function deliver(
   }
 
   try {
-    writeLine(formatDebugLine(event), 'debug')
+    // `info`: without stderr (a browser), `console.info`, which consoles show by default.
+    writeLine(formatDebugLine(event), 'info')
   } catch {
     // stderr refused the line.
   }
