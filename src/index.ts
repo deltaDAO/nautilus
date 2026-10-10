@@ -3,6 +3,7 @@ export * from './access/index.js'
 export * from './compute/index.js'
 export * from './ddo/index.js'
 export * from './identity/index.js'
+export * from './log/index.js'
 export * from './Nautilus/index.js'
 export * from './node/index.js'
 // `writeMetadata`, `prepareMetadataForWrite` and `createPricingForDatatoken` stay
