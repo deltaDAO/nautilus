@@ -25,7 +25,10 @@ export interface LogEvent {
   txHash?: string
   /** How long the step took, for milestones. */
   durationMs?: number
-  /** The event's own data: see the catalogue for each event's fields. */
+  /**
+   * The event's own data: see the catalogue for each event's fields. When they could not
+   * be read (a getter or a fields function threw), only `fieldsError`, the redacted error.
+   */
   fields: Record<string, unknown>
 }
 
@@ -71,9 +74,12 @@ export type OceanJsLogMode = 'capture' | 'passthrough' | 'silent'
 /** The process-wide logging configuration, see `Nautilus.configureLogging`. */
 export interface LoggingConfig extends LoggingOptions {
   /**
-   * What to do with ocean.js's own log output. Accepted and stored, but **not acted on
-   * yet**: until a later release implements it, ocean.js prints as it always did, at the
-   * level `Nautilus.setLogLevel` sets (its default is errors only).
+   * What to do with ocean.js's own log output. Accepted and stored, but **not active
+   * yet**: until a later release implements it, ocean.js prints as it always did,
+   * unredacted, at the level `Nautilus.setLogLevel` (or ocean.js's
+   * `LoggerInstance.setLevel`) sets; its default is errors only. `'passthrough'` and
+   * `'silent'` warn once (`config.oceanjs.not_active`). To silence ocean.js now, call
+   * `LoggerInstance.setLevel(LogLevel.None)`.
    */
   oceanjs?: OceanJsLogMode
 }
