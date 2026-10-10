@@ -27,12 +27,11 @@
  * login issues, so nautilus can authenticate and then not read its wallet —
  * run `npm start -- ssi:round-trip` by hand against a verifier you trust.
  */
-import * as dotenv from 'dotenv'
+// Loads .env first, before nautilus is imported, so nautilus reads NAUTILUS_LOG_* from it.
+import 'dotenv/config'
 import { COMMANDS, type Context } from '../commands'
 import { setup } from '../nautilus'
 import { publishedResult, publishSession } from '../publish'
-
-dotenv.config()
 
 const CYAN = '[36m'
 const GREEN = '[32m'
