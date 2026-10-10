@@ -5,7 +5,10 @@
  * - `NAUTILUS_LOG_LEVEL`: `silent`, `error`, `warn` (the default), `info`, `debug` or
  *   `trace`;
  * - `NAUTILUS_LOG_FORMAT`: `json` or `pretty`;
- * - `NAUTILUS_LOG_COMPONENTS`: a comma-separated list of components (`publish,access`).
+ * - `NAUTILUS_LOG_COMPONENTS`: a comma-separated list of components (`publish,access`);
+ * - `NAUTILUS_DEBUG`: the sensitive debug tier, `off`, `sensitive` or `secrets` (see
+ *   `debug.ts`);
+ * - `NAUTILUS_DEBUG_TOPICS`: a comma-separated list of debug topics (`node,wallet`).
  *
  * Case and surrounding spaces do not matter. An unknown value is ignored, with a warning.
  * Without `process` (a browser bundle) nothing is read.
@@ -90,6 +93,90 @@ export function readLoggingEnv(
         allowed: LOG_COMPONENTS.join(', ')
       })
     if (known.length) settings.components = known
+  }
+
+  problems.push(...readDebugEnv(env).problems)
+
+  return { settings, problems }
+}
+
+/** The debug tiers, from the least to the most revealing. */
+export const DEBUG_LEVELS = ['off', 'sensitive', 'secrets'] as const
+
+/** `off`, or the tier of unredacted data the debug channel shows. */
+export type DebugLevel = (typeof DEBUG_LEVELS)[number]
+
+/** Where a debug event comes from. */
+export const DEBUG_TOPICS = [
+  'node',
+  'wallet',
+  'policy',
+  'rpc',
+  'order',
+  'nonce',
+  'store',
+  'compute'
+] as const
+
+/**
+ * What a debug event is about: `node` (ocean-node answers), `wallet` (the walt.id wallet),
+ * `policy` (policy-server sessions and the verifier's records), `rpc` (the chain RPC),
+ * `order` (orders and the previous-order lookup), `nonce` (nonce reads), `store` (remote
+ * stores and storage pointers) and `compute` (compute jobs).
+ */
+export type DebugTopic = (typeof DEBUG_TOPICS)[number]
+
+/** What `NAUTILUS_DEBUG` and `NAUTILUS_DEBUG_TOPICS` set. */
+export interface DebugEnv {
+  level?: DebugLevel
+  topics?: DebugTopic[]
+}
+
+/**
+ * The debug settings in `env`, and the values that were not understood. Only the exact
+ * tier names count: `NAUTILUS_DEBUG=1`, `true` or `all` turn nothing on, so `secrets` is
+ * reached only by naming it. `NAUTILUS_DEBUG_TOPICS` alone turns nothing on either.
+ */
+export function readDebugEnv(
+  env: Record<string, string | undefined> | undefined
+): {
+  settings: DebugEnv
+  problems: LoggingEnvProblem[]
+} {
+  const settings: DebugEnv = {}
+  const problems: LoggingEnvProblem[] = []
+  if (!env) return { settings, problems }
+
+  const level = value(env.NAUTILUS_DEBUG)
+  if (level !== undefined) {
+    if ((DEBUG_LEVELS as readonly string[]).includes(level))
+      settings.level = level as DebugLevel
+    else
+      problems.push({
+        variable: 'NAUTILUS_DEBUG',
+        value: level,
+        allowed: DEBUG_LEVELS.join(', ')
+      })
+  }
+
+  const topics = value(env.NAUTILUS_DEBUG_TOPICS)
+  if (topics !== undefined) {
+    const names = topics
+      .split(',')
+      .map((name) => name.trim())
+      .filter(Boolean)
+    const known = names.filter((name): name is DebugTopic =>
+      (DEBUG_TOPICS as readonly string[]).includes(name)
+    )
+    const unknown = names.filter((name) => !known.includes(name as never))
+
+    if (unknown.length)
+      problems.push({
+        variable: 'NAUTILUS_DEBUG_TOPICS',
+        value: unknown.join(','),
+        allowed: DEBUG_TOPICS.join(', ')
+      })
+    if (known.length) settings.topics = known
   }
 
   return { settings, problems }

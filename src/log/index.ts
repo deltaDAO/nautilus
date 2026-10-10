@@ -1,3 +1,11 @@
+export type {
+  DebugEvent,
+  DebugLevel,
+  DebugOptions,
+  DebugSink,
+  DebugTier,
+  DebugTopic
+} from './debug.js'
 export {
   LOG_EVENTS,
   type LogComponent,
