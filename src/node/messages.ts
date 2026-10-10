@@ -20,7 +20,7 @@ const MAX_NODE_MESSAGE_LENGTH = 200
 
 /** Keys whose value is a credential, a session secret or a one-time value. */
 const SECRET_KEYS =
-  'signature|consumerSignature|token|authorization|jwt|access_token|vp_token|id_token|request_uri|code|nonce|password|apiKey|api_key'
+  'signature|consumerSignature|token|authorization|jwt|access_token|vp_token|id_token|request_uri|code|nonce|password|apiKey|api_key|sessionId|session_id'
 
 /** `scheme://authority/path?query#fragment`, up to whitespace or a quote. */
 const URL_PATTERN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>\\]*/gi
