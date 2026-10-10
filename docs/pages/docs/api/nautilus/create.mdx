@@ -248,6 +248,34 @@ const logger = createLogger({ level: 'info', sink: tenantLog }) // [!code focus]
 const nautilus = await Nautilus.create(signer, { config, logger }) // [!code focus]
 ```
 
+##### nonceManagement
+
+- Type: `'auto' | 'off'`
+- Default: `'auto'`
+
+Who chooses transaction nonces. nautilus wraps the signer in a nonce guard
+([`getSigner`](/docs/api/nautilus/getSigner) returns it). With `'auto'` and a signer that
+signs locally (an ethers `Wallet`), it sends one transaction at a time per chain and
+address, with the nonce `max(its counter, the pending count)`, and recovers from a nonce
+refusal: a transaction the chain already has is waited for, never sent again; one it does
+not have is sent again with a fresh nonce, at most three times; an order, purchase,
+approval or escrow payment only with proof the first can never be mined, otherwise it
+stops with a `NonceGuardError` ("may have been sent"). Wallet-managed signers
+(`JsonRpcSigner`, browser wallets) keep choosing their own nonces. `'off'`: nautilus never
+sets a nonce and never resends. Either way a refused transaction the chain already has is
+returned, and the cause of a failed send is named. In-process only: use one key per
+process. See [Concurrency and nonces](/docs/guides/config#concurrency-and-nonces).
+
+##### verificationProvider
+
+- Type: `Provider` (ethers)
+- Default: the signer's provider, read twice
+
+A second RPC provider for the same chain, asked for the second read before nautilus decides
+a transaction was never sent: before an order, purchase, approval or escrow payment is sent
+again after a nonce refusal, and before an envelope is removed after a metadata transaction
+refused for its nonce.
+
 ##### maxProviderFee
 
 - Type: `TokenAmount | TokenAmount[]`, where `TokenAmount` is
@@ -334,6 +362,7 @@ other's escrow authorisation. Jobs from another instance or process are not cove
   `allowInsecureTransport`.
 - When `nftFactoryAddress`, `fixedRateExchangeAddress` or `dispenserAddress` is missing or not
   an address, or `escrow` is set but is not an address.
+- When `nonceManagement` is neither `'auto'` nor `'off'`.
 - When `maxProviderFee` or `maxEscrowPayment` has an entry whose `token` is not an address,
   whose `amount` is not a non-negative integer, or whose token is listed twice, or when
   `confirmProviderFees` or `confirmEscrowPayment` is not a function.
