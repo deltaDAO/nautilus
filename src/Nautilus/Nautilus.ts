@@ -47,6 +47,7 @@ import type { CredentialProvider } from '../identity/CredentialProvider.js'
 import { PolicySessionResolver } from '../identity/PolicySessionResolver.js'
 import { isAddressCredential } from '../identity/policy.js'
 import type { SessionStore } from '../identity/session.js'
+import { type DebugOptions, setDebug } from '../log/debug.js'
 import { fromOceanLogLevel } from '../log/levels.js'
 import { configureLogging, type Logger, loggerFor } from '../log/logger.js'
 import type { LoggingConfig, LoggingOptions } from '../log/types.js'
@@ -475,6 +476,30 @@ export class Nautilus {
    */
   static configureLogging(options: LoggingConfig): void {
     configureLogging(options)
+  }
+
+  /**
+   * Turns the sensitive debug channel on or off for the whole process: the raw data
+   * nautilus redacts everywhere else (node, wallet, verifier and RPC answers, session ids,
+   * signatures, request payloads, storage pointers), so a failure the redacted error does
+   * not explain can be diagnosed. Errors, return values, warnings and log events stay
+   * exactly as redacted as without it.
+   *
+   * - `level`: `'off'` (the default), `'sensitive'`, or `'secrets'`, which also prints
+   *   long-lived credentials (the RPC URL with its token, S3 secret keys, IPFS JWTs, auth
+   *   headers). The signer's private key or mnemonic is never printed: nautilus never holds
+   *   them;
+   * - `topics`: only these (`node`, `wallet`, `policy`, `rpc`, `order`, `nonce`, `store`,
+   *   `compute`). Default: all;
+   * - `sink`: receives each `DebugEvent` instead of stderr, where each event is one line
+   *   prefixed `[nautilus:debug:sensitive]` or `[nautilus:debug:SECRETS]`.
+   *
+   * Replaces the whole setting, and overrides `NAUTILUS_DEBUG` and `NAUTILUS_DEBUG_TOPICS`.
+   * Turning it on prints a warning on stderr that no log setting suppresses. Never use it
+   * in production, and don't share the output unchecked.
+   */
+  static setDebug(options: DebugOptions): void {
+    setDebug(options)
   }
 
   /**
