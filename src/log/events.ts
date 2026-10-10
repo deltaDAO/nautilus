@@ -59,6 +59,14 @@ export const LOG_EVENTS = {
     fields: ['variable', 'value', 'allowed'],
     once: true
   },
+  'config.oceanjs.not_active': {
+    level: 'warn',
+    component: 'config',
+    description:
+      "configureLogging() was given oceanjs 'passthrough' or 'silent', which a later release implements: until then ocean.js prints its own lines, unredacted, at the level LoggerInstance.setLevel() sets (errors only by default).",
+    fields: ['mode'],
+    once: true
+  },
 
   // chain
   'chain.config.ready': {

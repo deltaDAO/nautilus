@@ -66,10 +66,15 @@ function fromEnvironment(): Settings {
 }
 
 /**
- * Receives every event built, printed or not, with every level on. Only for tests (the
- * secret scan of the unit suite); kept out of the package's exports.
+ * Receives every event built, printed or not, with every level on, and whether the call
+ * site asked for it `once`. Only for tests (the secret scan of the unit suite); kept out of
+ * the package's exports. Unlike a sink, a tap that throws fails the call it logs.
  */
-export type LogTap = (event: LogEvent, printed: boolean) => void
+export type LogTap = (
+  event: LogEvent,
+  printed: boolean,
+  call: { once: boolean }
+) => void
 
 let tap: LogTap | undefined
 
@@ -97,7 +102,16 @@ export function configureLogging(options: LoggingConfig): void {
       ? [...options.components]
       : defaults.components
   if ('sink' in options) settings.sink = options.sink
-  if ('oceanjs' in options) settings.oceanjs = options.oceanjs
+  if ('oceanjs' in options) {
+    settings.oceanjs = options.oceanjs
+    if (options.oceanjs && options.oceanjs !== 'capture')
+      log.emit(
+        'config.oceanjs.not_active',
+        `oceanjs: '${options.oceanjs}' is not active yet: ocean.js still prints its own lines, unredacted, at its own level (errors only by default). To silence them now, call LoggerInstance.setLevel(LogLevel.None) from @oceanprotocol/lib.`,
+        { mode: options.oceanjs },
+        { once: options.oceanjs }
+      )
+  }
 }
 
 /** The process-wide logging configuration in force. */
@@ -162,6 +176,12 @@ export class Logger {
    * Logs the catalogued event `name` at its level. `fields` (and `msg`) may be functions,
    * called only when the event is printed. `did`, `txHash` and `durationMs` in `fields` go
    * to the event's own properties.
+   *
+   * Never throws: fields that cannot be read (a throwing getter, a throwing `fields()`)
+   * become one `fieldsError` field, and an event that cannot be built or written at all is
+   * dropped, so logging never fails the operation it logs.
+   *
+   * @internal
    */
   emit(
     name: LogEventName,
@@ -177,15 +197,20 @@ export class Logger {
       options.once === undefined ? undefined : `${name}\u0000${options.once}`
     if (onceKey !== undefined && this.shown.has(onceKey)) return
 
-    const event = build(name, msg, fields)
-    tap?.(event, printed)
+    const event = safeBuild(name, msg, fields)
+    if (!event) return
+    tap?.(event, printed, { once: options.once !== undefined })
     if (!printed) return
 
     if (onceKey !== undefined) this.remember(onceKey)
-    this.deliver(event)
+    try {
+      this.deliver(event)
+    } catch {
+      // stderr (or the console) refused the line: logging must not fail the operation.
+    }
   }
 
-  /** Forgets which `once` events were printed. */
+  /** Forgets which `once` events were printed. @internal */
   forget(): void {
     this.shown.clear()
   }
@@ -229,6 +254,25 @@ export const log = new Logger()
 export function loggerFor(options?: LoggingOptions | Logger): Logger {
   if (options instanceof Logger) return options
   return options ? new Logger(options) : log
+}
+
+/** `build`, else the event with its fields replaced by `fieldsError`, else nothing. */
+function safeBuild(
+  name: LogEventName,
+  msg: string | (() => string),
+  fields: LogFields | undefined
+): LogEvent | undefined {
+  try {
+    return build(name, msg, fields)
+  } catch (error) {
+    try {
+      return build(name, typeof msg === 'string' ? msg : name, {
+        fieldsError: redactError(error)
+      })
+    } catch {
+      return undefined
+    }
+  }
 }
 
 function build(
