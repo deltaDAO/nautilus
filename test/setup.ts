@@ -1,13 +1,21 @@
 import { format } from 'node:util'
 import { afterAll, beforeEach } from 'vitest'
 import {
+  type DebugLevel,
+  formatDebugLine,
+  getDebugLevel,
+  resetDebug,
+  setDebug,
+  setDebugTap
+} from '../src/log/debug.js'
+import {
   isLogEventName,
   LOG_EVENTS,
   type LogEventSpec
 } from '../src/log/events.js'
 import { resetLogging, setLogTap } from '../src/log/logger.js'
 import { formatJson, formatPretty } from '../src/log/sinks.js'
-import { catalogueCheck, findSecrets } from './secretScan.js'
+import { catalogueCheck, findCredentials, findSecrets } from './secretScan.js'
 
 /**
  * Loads `.env` for the integration suite, which needs PRIVATE_KEY_TESTS_1/2, NODE_URL
@@ -32,8 +40,43 @@ try {
  * - everything written to `process.stderr` and through `console.warn`, `console.error` and
  *   `console.log` while the suite runs, whoever wrote it (ocean.js, a stray `console.*`).
  *   The spies pass the text on unchanged; a test's own spy replaces them while it runs.
+ *
+ * And the default safety of the sensitive debug channel (`src/log/debug.ts`): each test
+ * starts with it off, whatever `NAUTILUS_DEBUG` the suite runs with, and
+ *
+ * - a debug line or the debug banner on stderr or the console while it is off fails the
+ *   suite, and so does a debug event delivered while it is off;
+ * - every debug event a test turns on is one line, and a `sensitive` one holds no
+ *   long-lived credential of the fixtures (RPC URL token, S3 secret).
+ *
+ * `NAUTILUS_TEST_DEBUG=sensitive` (or `secrets`) runs the whole suite with the channel on,
+ * into a sink that keeps nothing: every test must pass unchanged (errors and return values
+ * do not depend on it), and the scan above still applies to everything else.
  */
 const leaks: string[] = []
+
+const suiteDebug = process.env.NAUTILUS_TEST_DEBUG?.trim().toLowerCase() as
+  | DebugLevel
+  | undefined
+
+setDebugTap((event) => {
+  if (getDebugLevel() === 'off')
+    leaks.push(`debug event '${event.message}' delivered while debug is off`)
+
+  const line = formatDebugLine(event)
+  if (/[\n\r\u2028\u2029]/.test(line))
+    leaks.push(`debug event '${event.message}' is not one line`)
+  if (event.tier === 'sensitive')
+    for (const found of findCredentials(JSON.stringify(event)))
+      leaks.push(`sensitive debug event '${event.message}': ${found}`)
+})
+
+/** A debug line or banner written while the debug channel is off. */
+function scanDebugOutput(channel: string, text: string): void {
+  if (getDebugLevel() !== 'off') return
+  if (/\[nautilus:debug:|debug logging is ON/.test(text))
+    leaks.push(`${channel}: debug output while debug is off`)
+}
 
 setLogTap((event, _printed, call) => {
   if (!isLogEventName(event.event)) {
@@ -60,6 +103,7 @@ setLogTap((event, _printed, call) => {
 })
 
 function scanText(channel: string, text: string): void {
+  scanDebugOutput(channel, text)
   for (const found of findSecrets(text)) leaks.push(`${channel}: ${found}`)
 }
 
@@ -95,21 +139,26 @@ passThrough(process.stderr, 'write', 'process.stderr', ([chunk]) =>
     ? chunk
     : Buffer.from(chunk as Uint8Array).toString()
 )
-for (const method of ['warn', 'error', 'log'])
+for (const method of ['warn', 'error', 'log', 'info', 'debug'])
   passThrough(console, method, `console.${method}`, (args) => format(...args))
 
 /**
  * Each test starts from the default logging configuration, without the `NAUTILUS_LOG_*`
- * variables of the developer's shell.
+ * variables of the developer's shell, and with the debug channel off (or, under
+ * `NAUTILUS_TEST_DEBUG`, on into a sink that keeps nothing).
  */
 beforeEach(() => {
   resetLogging({})
+  resetDebug({})
+  if (suiteDebug === 'sensitive' || suiteDebug === 'secrets')
+    setDebug({ level: suiteDebug, sink: () => undefined })
   catalogueCheck.fields = true
 })
 
 afterAll(() => {
   for (const restore of restores.splice(0)) restore()
   setLogTap(undefined)
+  setDebugTap(undefined)
   if (leaks.length)
     throw new Error(
       `The suite's log output carried secrets, or events that do not match the catalogue:\n${[...new Set(leaks)].join('\n')}`
