@@ -55,7 +55,7 @@ export interface DebugEvent {
   /**
    * The raw value, as plain data (strings, numbers, booleans, `null`, arrays, objects):
    * an error becomes `{ name, message, code, …, cause }`. Long strings are cut at 32,768
-   * characters.
+   * characters, and the whole event at about 256 KB of text, after masking.
    */
   data?: unknown
 }
@@ -79,8 +79,17 @@ interface State {
   sink?: DebugSink
 }
 
-/** How long a string in an event's data may be. */
+/** How long a string in an event's data may be, as printed. */
 const MAX_STRING_LENGTH = 32_768
+/**
+ * How much of a string is read before masking: more than is printed, so a credential that
+ * straddles the cut is masked whole before the cut is made.
+ */
+const RAW_STRING_LENGTH = 2 * MAX_STRING_LENGTH
+/** How many characters of strings and keys one event prints, at most. */
+const MAX_EVENT_SIZE = 262_144
+/** How many characters of strings and keys are read for one event, before masking. */
+const RAW_EVENT_SIZE = 2 * MAX_EVENT_SIZE
 /** How deep an event's data is kept. */
 const MAX_DEPTH = 8
 /** How many entries of an array or object are kept. */
@@ -166,12 +175,14 @@ export function debug(
 ): void {
   if (!debugEnabled(tier, topic)) return
   try {
-    const plain = toPlain(typeof data === 'function' ? data() : data)
+    const plain = readRaw(typeof data === 'function' ? data() : data)
     deliver(
       tier,
       topic,
       message,
-      tier === 'secrets' ? maskNeverShown(plain) : maskCredentials(plain)
+      bounded(
+        tier === 'secrets' ? maskNeverShown(plain) : maskCredentials(plain)
+      )
     )
   } catch {
     // Debug output must never fail the operation it describes.
@@ -193,15 +204,15 @@ export function debugRaw(
 ): void {
   if (!debugEnabled('sensitive', topic)) return
   try {
-    const plain = toPlain(typeof raw === 'function' ? raw() : raw)
+    const plain = readRaw(typeof raw === 'function' ? raw() : raw)
     const masked = maskCredentials(plain, credentials)
 
     if (
       debugEnabled('secrets', topic) &&
       JSON.stringify(masked) !== JSON.stringify(plain)
     )
-      deliver('secrets', topic, message, maskNeverShown(plain))
-    else deliver('sensitive', topic, message, masked)
+      deliver('secrets', topic, message, bounded(maskNeverShown(plain)))
+    else deliver('sensitive', topic, message, bounded(masked))
   } catch {
     // Debug output must never fail the operation it describes.
   }
@@ -291,15 +302,96 @@ function escapeControls(text: string): string {
  * or large structures bounded, cycles marked.
  */
 export function toPlain(value: unknown): unknown {
-  return plain(value, 0, new WeakSet())
+  return bounded(readRaw(value))
 }
 
-function plain(value: unknown, depth: number, seen: WeakSet<object>): unknown {
+/** How much text an event may still take in. */
+interface Budget {
+  left: number
+  stringLength: number
+}
+
+/**
+ * `value` as plain data for masking: strings read up to twice what is printed, the whole
+ * up to twice the event's size. `bounded` makes the printed cut after masking.
+ */
+function readRaw(value: unknown): unknown {
+  return plain(value, 0, new WeakSet(), {
+    left: RAW_EVENT_SIZE,
+    stringLength: RAW_STRING_LENGTH
+  })
+}
+
+/** The marker of what an event left out once its size was used up. */
+const EVENT_CUT = `event cut at ${MAX_EVENT_SIZE} characters`
+
+/**
+ * Masked plain data as printed: strings cut at `MAX_STRING_LENGTH`, and the walk stopped,
+ * with a marker, once the event holds `MAX_EVENT_SIZE` characters of strings and keys.
+ */
+function bounded(data: unknown): unknown {
+  return cut(data, { left: MAX_EVENT_SIZE, stringLength: MAX_STRING_LENGTH })
+}
+
+function cut(value: unknown, budget: Budget): unknown {
+  if (typeof value === 'string') return cutString(value, budget)
+  if (!value || typeof value !== 'object') return value
+
+  if (Array.isArray(value)) {
+    const out: unknown[] = []
+    for (const entry of value) {
+      if (budget.left <= 0) {
+        out.push(`… ${EVENT_CUT}`)
+        break
+      }
+      out.push(cut(entry, budget))
+    }
+    return out
+  }
+
+  const out: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(value)) {
+    if (budget.left <= 0) {
+      out['…'] = EVENT_CUT
+      break
+    }
+    budget.left -= key.length
+    define(out, key, cut(entry, budget))
+  }
+  return out
+}
+
+function cutString(value: string, budget: Budget): string {
+  const limit = Math.max(0, Math.min(budget.stringLength, budget.left))
+  budget.left -= Math.min(value.length, limit)
+  return value.length > limit
+    ? `${value.slice(0, limit)}…(cut at ${limit} characters)`
+    : value
+}
+
+/** `out[key] = value`, also for a `__proto__` key, which stays a key. */
+function define(
+  out: Record<string, unknown>,
+  key: string,
+  value: unknown
+): void {
+  Object.defineProperty(out, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true
+  })
+}
+
+function plain(
+  value: unknown,
+  depth: number,
+  seen: WeakSet<object>,
+  budget: Budget
+): unknown {
   switch (typeof value) {
     case 'string':
-      return value.length > MAX_STRING_LENGTH
-        ? `${value.slice(0, MAX_STRING_LENGTH)}…(${value.length - MAX_STRING_LENGTH} more characters)`
-        : value
+      return cutString(value, budget)
     case 'number':
       return Number.isFinite(value) ? value : String(value)
     case 'boolean':
@@ -321,24 +413,27 @@ function plain(value: unknown, depth: number, seen: WeakSet<object>): unknown {
   if (value instanceof URL) return value.href
   if (value instanceof Uint8Array)
     return plain(
-      `0x${Array.from(value, (byte) => byte.toString(16).padStart(2, '0')).join('')}`,
+      `0x${Array.from(value.subarray(0, budget.stringLength), (byte) => byte.toString(16).padStart(2, '0')).join('')}`,
       depth,
-      seen
+      seen,
+      budget
     )
 
   seen.add(object)
   try {
     if (Array.isArray(value)) {
-      const kept = value
-        .slice(0, MAX_ENTRIES)
-        .map((entry) => plain(entry, depth + 1, seen) ?? null)
-      if (value.length > MAX_ENTRIES)
-        kept.push(`… ${value.length - MAX_ENTRIES} more`)
+      const kept: unknown[] = []
+      for (const entry of value.slice(0, MAX_ENTRIES)) {
+        if (budget.left <= 0) break
+        kept.push(plain(entry, depth + 1, seen, budget) ?? null)
+      }
+      if (value.length > kept.length)
+        kept.push(`… ${value.length - kept.length} more`)
       return kept
     }
     if (value instanceof Map)
-      return plain(Object.fromEntries(value), depth, seen)
-    if (value instanceof Set) return plain([...value], depth, seen)
+      return plain(Object.fromEntries(value), depth, seen, budget)
+    if (value instanceof Set) return plain([...value], depth, seen, budget)
     if (typeof Headers !== 'undefined' && value instanceof Headers) {
       const headers: Record<string, string> = {}
       value.forEach((entry, name) => {
@@ -349,28 +444,32 @@ function plain(value: unknown, depth: number, seen: WeakSet<object>): unknown {
 
     const out: Record<string, unknown> = {}
     if (value instanceof Error) {
-      out.name = value.name
-      out.message = value.message
+      out.name = cutString(String(value.name), budget)
+      out.message = cutString(String(value.message), budget)
     }
     const keys = Object.keys(object).filter((key) => key !== 'stack')
+    let read = 0
     for (const key of keys.slice(0, MAX_ENTRIES)) {
+      if (budget.left <= 0) break
+      read++
       let entry: unknown
       try {
         entry = (value as Record<string, unknown>)[key]
       } catch {
         entry = '[unreadable]'
       }
-      const converted = plain(entry, depth + 1, seen)
-      if (converted !== undefined) out[key] = converted
+      budget.left -= key.length
+      const converted = plain(entry, depth + 1, seen, budget)
+      if (converted !== undefined) define(out, key, converted)
     }
-    if (keys.length > MAX_ENTRIES)
-      out['…'] = `${keys.length - MAX_ENTRIES} more`
+    if (keys.length > read) out['…'] = `${keys.length - read} more`
     if (
       value instanceof Error &&
-      !('cause' in out) &&
-      value.cause !== undefined
+      !Object.hasOwn(out, 'cause') &&
+      value.cause !== undefined &&
+      budget.left > 0
     )
-      out.cause = plain(value.cause, depth + 1, seen)
+      out.cause = plain(value.cause, depth + 1, seen, budget)
     return out
   } finally {
     seen.delete(object)
