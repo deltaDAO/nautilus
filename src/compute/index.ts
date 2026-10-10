@@ -608,7 +608,7 @@ async function resolvePolicies(
   node: OceanNodeClient,
   inputs: ResolvedInput[],
   consumerAddress: string,
-  policySessions: PolicySessionResolver = new PolicySessionResolver()
+  policySessions: PolicySessionResolver
 ): Promise<PolicyServerComputePayload[] | undefined> {
   const payloads: PolicyServerComputePayload[] = []
 
