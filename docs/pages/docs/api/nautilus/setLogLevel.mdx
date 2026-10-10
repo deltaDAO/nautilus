@@ -1,32 +1,40 @@
 # setLogLevel
 
-Set the level for logs of all nautilus instances.
+Sets the log level of nautilus, and of ocean.js, for the whole process.
+
+:::warning[Deprecated]
+Use [`configureLogging`](/docs/api/nautilus/configureLogging) instead:
+`Nautilus.configureLogging({ level: 'debug' })`. It sets nautilus's level without touching
+ocean.js's, and also takes a format, components and a sink.
+:::
 
 ## Usage
 
 ```ts twoslash
 import { LogLevel, Nautilus } from '@deltadao/nautilus'
 
-const nautilus = await Nautilus.setLogLevel(LogLevel.Verbose) // [!code focus]
+Nautilus.setLogLevel(LogLevel.Verbose) // [!code focus]
 ```
 
 ## Returns
 
-`void` {/*link to type in docs if possible*/}
+`void`
 
 ## Parameters
 
 ### level
-- Type: `LogLevel`
 
-The log level to set the internal `LoggerInstance` to.
+- Type: `LogLevel` (ocean.js's)
 
-Possible values:
+The level, mapped to nautilus's own levels. For backward compatibility it is also set on
+ocean.js's `LoggerInstance`, which decides what ocean.js itself prints.
 
-|Level|Description|
-|-----|-----------|
-|None| |
-|Eror| |
-|Warn| |
-|Log| |
-|Verbose| |
+| Level | nautilus prints | ocean.js prints |
+|-------|-----------------|-----------------|
+| `None` | nothing (`'silent'`) | nothing |
+| `Error` | errors (`'error'`) | errors (ocean.js's default) |
+| `Warn` | warnings and errors (`'warn'`, nautilus's default) | warnings and errors |
+| `Log` | milestones too (`'info'`) | its log lines too |
+| `Verbose` | everything (`'trace'`) | everything, including its debug lines |
+
+Without a call, nautilus prints warnings and errors, and ocean.js errors only.
