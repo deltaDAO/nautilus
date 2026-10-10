@@ -9,7 +9,7 @@
  * keeps it. Everything but the chain runs for real.
  */
 import type { StorageObject } from '@oceanprotocol/lib'
-import { makeError, Wallet } from 'ethers'
+import { makeError, Transaction, Wallet } from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   FailedWithStoredObject,
@@ -64,9 +64,17 @@ vi.mock('../../src/utils/contracts.js', async (importOriginal) => {
 
 const RECEIPT = { hash: '0xmined', blockNumber: 7, status: 1 }
 
+/** Transactions the fake RPC knows by hash. */
+const knownByHash = new Map<string, unknown>()
+
 async function setup() {
+  knownByHash.clear()
   const wallet = new Wallet(PRIVATE_KEY).connect({
-    getNetwork: async () => ({ chainId: BigInt(CHAIN_ID) })
+    getNetwork: async () => ({ chainId: BigInt(CHAIN_ID) }),
+    // The nonce guard reads the pending count before each send.
+    getTransactionCount: async () => 0,
+    getTransaction: async (hash: string) => knownByHash.get(hash) ?? null,
+    getTransactionReceipt: async () => null
   } as never)
 
   const removed: StorageObject[] = []
@@ -108,7 +116,7 @@ async function setup() {
       error?: FailedWithStoredObject
     }>
 
-  return { send, edit, removed }
+  return { send, edit, removed, wallet }
 }
 
 beforeEach(() => {
@@ -221,6 +229,41 @@ describe('the stored envelope after the metadata transaction', () => {
     expect(response?.setMetadataTxReceipt).to.equal(RECEIPT)
     expect(response?.stored.pointer).to.deep.include({ type: 'url' })
     expect(chain.setMetadataTx).toHaveBeenCalledTimes(1)
+    expect(removed).to.have.length(0)
+  })
+
+  it('is the live one when the refused transaction was already mined: no resend, no failure', async () => {
+    // "nonce too low" for a metadata transaction that was mined while its response was lost
+    // (the beta.2 control). The nonce guard finds it by hash and waits for it.
+    const { send, edit, removed, wallet } = await setup()
+    const request = {
+      to: NFT_ADDRESS,
+      data: `0x1aa3adf9${'00'.repeat(32)}`,
+      gasLimit: 100000n,
+      maxFeePerGas: 2n,
+      maxPriorityFeePerGas: 1n
+    }
+    chain.setMetadataTx.mockResolvedValueOnce(request as never)
+    const raw = await new Wallet(PRIVATE_KEY).signTransaction({
+      ...request,
+      nonce: 0,
+      chainId: CHAIN_ID
+    })
+    const hash = Transaction.from(raw).hash as string
+    knownByHash.set(hash, { hash, wait: async () => RECEIPT })
+    send.mockRejectedValue(
+      makeError('nonce has already been used', 'NONCE_EXPIRED', {
+        transaction: raw,
+        info: { error: { code: -32003, message: 'nonce too low' } }
+      } as never)
+    )
+    void wallet
+
+    const { response, error } = await edit()
+
+    expect(error).to.equal(undefined)
+    expect(response?.setMetadataTxReceipt).to.equal(RECEIPT)
+    expect(send).toHaveBeenCalledTimes(1)
     expect(removed).to.have.length(0)
   })
 })

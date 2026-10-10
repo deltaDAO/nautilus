@@ -84,6 +84,42 @@ export const LOG_EVENTS = {
     fields: ['chainId']
   },
 
+  'chain.nonce.resending': {
+    level: 'warn',
+    component: 'chain',
+    description:
+      'A transaction was refused for its nonce (a collision with another send of the same key, or a stale nonce from the RPC) and the chain does not have it: the nonce guard sends the same transaction again with the nonce in nextNonce. A transaction that moves value is sent again only once it is proven it can never be mined.',
+    fields: ['address', 'txNonce', 'nextNonce', 'code']
+  },
+  'chain.nonce.already_sent': {
+    level: 'info',
+    component: 'chain',
+    description:
+      'A transaction was refused for its nonce, but the chain already has it by hash: the nonce guard waits for that one and sends nothing again.',
+    fields: ['address', 'txNonce', 'code']
+  },
+  'chain.nonce.gave_up': {
+    level: 'warn',
+    component: 'chain',
+    description:
+      "The nonce guard stopped after a refusal for the nonce: it could not prove the transaction was never sent (reason 'may-have-been-sent'), it was refused three times, the refusal named no transaction of this send, or the nonce was not nautilus's to set. The error says which.",
+    fields: ['reason', 'code', 'attempts', 'moneySend']
+  },
+  'chain.nonce.counter_reset': {
+    level: 'warn',
+    component: 'chain',
+    description:
+      "The nonce guard's counter was ahead of the RPC's pending count, and the RPC no longer knows the last transaction it counted (dropped): the counter falls back to the pending count.",
+    fields: ['address', 'txNonce', 'pending']
+  },
+  'chain.send.failed': {
+    level: 'debug',
+    component: 'chain',
+    description:
+      'A transaction was not sent, for a reason other than its nonce (a wallet rejection, insufficient funds, a timeout, a network error). Not retried: it may have landed. confirmTransaction() names this cause when ocean.js returns no transaction.',
+    fields: ['code']
+  },
+
   'node.indexer_nonce.zero_byte_accepted': {
     level: 'debug',
     component: 'node',
@@ -156,6 +192,13 @@ export const LOG_EVENTS = {
     component: 'publish',
     description: 'The metadata transaction is about to be sent.',
     fields: ['nftAddress', 'lifecycleState', 'flags']
+  },
+  'publish.metadata.nonce_refused': {
+    level: 'warn',
+    component: 'publish',
+    description:
+      'The metadata transaction was refused for its nonce and the nonce guard did not get it through. The stored envelope is removed only when proven is true: no transaction of the write is known on two reads, the account has mined past their nonces, and no metadata event carries this metadataHash; otherwise it is kept (cleanup: kept).',
+    fields: ['nftAddress', 'attempts', 'proven']
   },
   'publish.metadata.replaced': {
     level: 'debug',
