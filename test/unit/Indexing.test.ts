@@ -21,9 +21,8 @@ import {
   OceanNodeClient,
   OceanNodeError
 } from '../../src/node/OceanNodeClient.js'
-import { resetWarnings } from '../../src/utils/warn.js'
 import { ASSET_DID, CHAIN_ID, NFT_ADDRESS } from '../fixtures/Asset.js'
-import { expectThrowsAsync } from '../helpers.js'
+import { captureLog, expectThrowsAsync } from '../helpers.js'
 
 const NODE = 'https://node.test.invalid/'
 const TX = `0x${'12'.repeat(32)}`
@@ -144,10 +143,6 @@ function client(nodeUri = NODE) {
 
 const urls = (fetch: ReturnType<typeof stubNode>) =>
   fetch.mock.calls.map((call) => String(call[0]))
-
-beforeEach(() => {
-  resetWarnings()
-})
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -421,7 +416,7 @@ describe('waitForIndexer', () => {
   })
 
   it('maps the beta.0 options and warns about them', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const log = captureLog()
     stubNode()
 
     await expect(
@@ -431,8 +426,9 @@ describe('waitForIndexer', () => {
       } as never)
     ).rejects.toThrow(/not indexed within 0s/)
 
-    expect(warn).toHaveBeenCalledTimes(1)
-    expect(String(warn.mock.calls[0][0])).to.match(
+    expect(log.events).to.have.length(1)
+    expect(log.events[0].event).to.equal('node.indexer_wait.legacy_options')
+    expect(log.events[0].msg).to.match(
       /`interval` and `maxRetries` were replaced by `intervalMs` and `timeoutMs`/
     )
   })
@@ -443,7 +439,7 @@ describe('waitForIndexer', () => {
     })
 
     it("maps maxRetries alone to beta.0's 30 s polls, so the wait is as long as before", async () => {
-      vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      captureLog()
       stubNode()
 
       let thrown: Error | undefined

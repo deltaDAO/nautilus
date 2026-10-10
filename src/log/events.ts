@@ -243,14 +243,14 @@ export const LOG_EVENTS = {
     component: 'compute',
     description:
       'getComputeResult() found no result yet, but may later: the job has not finished or not listed its output.',
-    fields: ['jobId', 'reason']
+    fields: ['jobId']
   },
   'compute.result.unavailable': {
     level: 'warn',
     component: 'compute',
     description:
       'getComputeResult() found no result and will not: the node does not know the job, or the job has no such result.',
-    fields: ['jobId', 'reason']
+    fields: ['jobId']
   },
 
   // node
