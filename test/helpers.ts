@@ -1,10 +1,6 @@
 import { expect } from 'vitest'
-import {
-  configureLogging,
-  type LogEvent,
-  type LogEventName,
-  type LoggingLevel
-} from '../src/log/index.js'
+import type { LogEvent, LogEventName, LoggingLevel } from '../src/log/index.js'
+import { configureLogging } from '../src/log/logger.js'
 
 /** Asserts an async call rejects, optionally matching the message. */
 export async function expectThrowsAsync(

@@ -146,9 +146,10 @@ export interface EmitOptions {
 }
 
 /**
- * A logger. `Nautilus` uses the process-wide one unless it was created with `logger`
- * options, and passes its logger down to the node client, the policy-session resolver and
- * the functions it calls.
+ * A logger. `Nautilus` uses the process-wide one unless it was created with a `logger`, and
+ * passes its logger down to the node client, the policy-session resolver and the functions
+ * it calls. Exported as a type only: make one with `createLogger(options)`. Its methods are
+ * nautilus's own, not part of the public API.
  */
 export class Logger {
   private readonly options: LoggingOptions
@@ -163,7 +164,7 @@ export class Logger {
     }
   }
 
-  /** Whether an event of `level` from `component` is printed. */
+  /** Whether an event of `level` from `component` is printed. @internal */
   enabled(level: LogLevelName, component: LogComponent): boolean {
     if (!passes(level, this.options.level ?? settings.level)) return false
     if (level === 'error' || level === 'warn') return true
