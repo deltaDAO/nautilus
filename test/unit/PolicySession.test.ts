@@ -501,6 +501,37 @@ describe('OceanNodeClient policy server', () => {
     expect(thrown.message).not.to.match(/[\u0000-\u001f]/)
   })
 
+  it('ends the reason with one period: no "..", and one added where it has none', () => {
+    const denied = (reason: string) =>
+      new PolicyDeniedError({
+        nodeUri: 'https://node.example.org',
+        did: ASSET_DID,
+        serviceId: SERVICE_ID,
+        consumerAddress: CONSUMER,
+        code: 403,
+        reason
+      }).message
+
+    // The policy server's own wording, as on the beta.2 run.
+    const message = denied('Access denied: Address not allowed at asset level.')
+    expect(message).not.to.contain('..')
+    expect(message).to.contain(
+      ': Access denied: Address not allowed at asset level. Nothing was ordered or paid.'
+    )
+
+    expect(denied('Address not allowed')).to.contain(
+      ': Address not allowed. Nothing was ordered'
+    )
+    for (const end of ['!', '?', '…'])
+      expect(denied(`Address not allowed${end}`)).to.contain(
+        `: Address not allowed${end} Nothing was ordered`
+      )
+    // A reason cut to its bound ends in an ellipsis: no period after it either.
+    expect(denied(`denied ${'x'.repeat(500)}`)).to.match(
+      /x… Nothing was ordered/
+    )
+  })
+
   it('retries once when the node rejects the nonce, with a Signer', async () => {
     const wallet = Wallet.createRandom()
     const getNonce = vi
