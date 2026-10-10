@@ -49,8 +49,11 @@ interface Settings {
 }
 
 /** What the environment set at import. */
+const atImport = readLoggingEnv(processEnv())
+
+/** The environment in force: the one at import, unless a test replaced it. */
 let environment: { settings: LoggingEnv; problems: LoggingEnvProblem[] } =
-  readLoggingEnv(processEnv())
+  atImport
 
 let settings: Settings = fromEnvironment()
 
@@ -108,13 +111,12 @@ export function getLoggingConfig(): Readonly<LoggingConfig> & {
 }
 
 /**
- * Back to the state at import (the environment variables, else the defaults), and the
- * default logger forgets which `once` events it printed. Only for tests.
+ * Back to the state at import (the environment variables, else the defaults), or to the
+ * state `env` would give, and the default logger forgets which `once` events it printed.
+ * Only for tests.
  */
-export function resetLogging(
-  env: Record<string, string | undefined> | undefined = undefined
-): void {
-  if (env !== undefined) environment = readLoggingEnv(env)
+export function resetLogging(env?: Record<string, string | undefined>): void {
+  environment = env === undefined ? atImport : readLoggingEnv(env)
   settings = fromEnvironment()
   log.forget()
   reportEnvironment()
