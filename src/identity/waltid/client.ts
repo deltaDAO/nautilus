@@ -7,6 +7,15 @@
  * implementation of `WaltIdWallet`, not a rewrite of the exchange logic.
  */
 import type { Signer } from 'ethers'
+import { debugEnabled, debugRaw } from '../../log/debug.js'
+import { sanitize } from '../../node/messages.js'
+
+/**
+ * How much of the wallet's answer goes into a `WaltIdWalletError`. The answer is redacted
+ * (a rejected presentation's `redirectUri` carries the policy-server session id) and
+ * bounded; the raw answer goes to the sensitive debug channel (topic `wallet`).
+ */
+const MAX_WALLET_MESSAGE_LENGTH = 500
 
 export interface WaltIdSession {
   token: string
@@ -282,20 +291,34 @@ export class WaltIdHttpWallet implements WaltIdWallet {
     try {
       response = await this.fetchImpl(url, { ...init, headers })
     } catch (error) {
+      if (debugEnabled('sensitive', 'wallet'))
+        debugRaw('wallet', `request to ${path} failed`, error)
       throw new WaltIdWalletError(
         path,
-        error instanceof Error ? error.message : String(error)
+        sanitize(
+          error instanceof Error ? error.message : String(error),
+          MAX_WALLET_MESSAGE_LENGTH,
+          null
+        )
       )
     }
 
     const text = await response.text()
 
-    if (!response.ok)
+    if (!response.ok) {
+      if (debugEnabled('sensitive', 'wallet'))
+        debugRaw('wallet', `answer HTTP ${response.status} to ${path}`, {
+          status: response.status,
+          statusText: response.statusText,
+          body: text
+        })
       throw new WaltIdWalletError(
         path,
-        text || `${response.status} ${response.statusText}`,
+        sanitize(text, MAX_WALLET_MESSAGE_LENGTH, null) ||
+          `${response.status} ${response.statusText}`,
         response.status
       )
+    }
 
     if (options.raw) return text.trim() as unknown as T
 
