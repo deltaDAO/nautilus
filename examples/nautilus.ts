@@ -2,7 +2,8 @@ import {
   type CredentialProvider,
   type DdoSigner,
   IpfsRemoteStore,
-  LogLevel,
+  type LogFormat,
+  type LoggingLevel,
   Nautilus,
   type RemoteStore,
   S3RemoteStore,
@@ -438,8 +439,25 @@ export async function removeStoredEnvelope(
   console.log(`  ✓ removed ${value}`)
 }
 
+/**
+ * nautilus prints warnings to stderr by default. It reads `NAUTILUS_LOG_LEVEL` and
+ * `NAUTILUS_LOG_FORMAT` itself, but when it is imported, before dotenv has loaded `.env`,
+ * so the values from `.env` are applied here. `VERBOSE=true` is the `debug` level.
+ */
+function configureLogging(verbose?: boolean): void {
+  const level =
+    process.env.NAUTILUS_LOG_LEVEL?.trim().toLowerCase() ||
+    (verbose ? 'debug' : undefined)
+  const format = process.env.NAUTILUS_LOG_FORMAT?.trim().toLowerCase()
+
+  Nautilus.configureLogging({
+    ...(level ? { level: level as LoggingLevel } : {}),
+    ...(format ? { format: format as LogFormat } : {})
+  })
+}
+
 export interface SetupOptions {
-  /** Show nautilus's internal logs. */
+  /** Show nautilus's step-by-step (`debug`) log events. */
   verbose?: boolean
   /** Satisfies credential-gated assets. See identity.ts. */
   credentials?: CredentialProvider
@@ -485,7 +503,7 @@ export async function setup(options: SetupOptions = {}): Promise<Setup> {
   console.log(`RPC:        ${networkConfig.nodeUri}`)
   console.log(`ocean-node: ${networkConfig.oceanNodeUri}`)
 
-  if (options.verbose) Nautilus.setLogLevel(LogLevel.Verbose)
+  configureLogging(options.verbose)
 
   const signer = getSigner(networkConfig)
   const owner = await signer.getAddress()
