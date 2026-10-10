@@ -28,6 +28,9 @@
  * enumerable properties only). Keys are stripped of control characters and bounded. Every
  * other string goes through `sanitize` too, so a URL or a token inside free text is
  * redacted as well. The message of the event goes through `sanitize`.
+ *
+ * What the redaction removed is not lost: `debugUnredacted` hands the raw message and
+ * fields of a printed event to the sensitive debug channel (`debug.ts`), when it is on.
  */
 
 import {
@@ -35,6 +38,8 @@ import {
   sanitize,
   stripControlCharacters
 } from '../node/messages.js'
+import { type DebugTopic, debugEnabled, debugRaw } from './debug.js'
+import type { LogComponent, LogEventName } from './events.js'
 import { isSecretKey, normalizeKey, redactsValue } from './keys.js'
 
 export const REDACTED = '<redacted>'
@@ -63,9 +68,14 @@ const URL_KEY = /^endpoint$|(?:url|uri)$/
 
 export { isSecretKey, normalizeKey }
 
+/** `sanitize` without its own debug output: `debugUnredacted` hands over the whole event. */
+function scrub(text: string, maxLength: number): string {
+  return sanitize(text, maxLength, null)
+}
+
 /** The message of an event, made safe to print. */
 export function redactMessage(message: string): string {
-  return sanitize(message, MAX_MESSAGE_LENGTH)
+  return scrub(message, MAX_MESSAGE_LENGTH)
 }
 
 /** A copy of `fields` with every value redacted by its key, safe to serialise as JSON. */
@@ -104,30 +114,30 @@ export function redactError(error: unknown): string {
 function describeError(error: unknown): string {
   try {
     if (error instanceof Error) {
-      const name = sanitize(String(error.name), MAX_NAME_LENGTH)
-      const message = sanitize(String(error.message), MAX_ERROR_LENGTH)
+      const name = scrub(String(error.name), MAX_NAME_LENGTH)
+      const message = scrub(String(error.message), MAX_ERROR_LENGTH)
       return name && name !== 'Error' ? `${name}: ${message}` : message
     }
 
     if (error && typeof error === 'object') {
       const { message, code } = error as { message?: unknown; code?: unknown }
       if (typeof message === 'string') {
-        const text = sanitize(message, MAX_ERROR_LENGTH)
+        const text = scrub(message, MAX_ERROR_LENGTH)
         const shown =
           (typeof code === 'string' || typeof code === 'number') &&
           isErrorCode(String(code))
-            ? sanitize(String(code), MAX_NAME_LENGTH)
+            ? scrub(String(code), MAX_NAME_LENGTH)
             : undefined
         return shown ? `${shown}: ${text}` : text
       }
       // Some other object: its fields, redacted by key like any other.
-      return sanitize(
+      return scrub(
         JSON.stringify(redactPlain(error, MAX_DEPTH - 1)) ?? String(error),
         MAX_ERROR_LENGTH
       )
     }
 
-    return sanitize(String(error), MAX_ERROR_LENGTH)
+    return scrub(String(error), MAX_ERROR_LENGTH)
   } catch {
     return '[an error that cannot be read]'
   }
@@ -152,7 +162,7 @@ export function originOf(value: string): string {
     return `${url.protocol}//${url.host}`
   } catch {
     // A libp2p peer id or multiaddr, or not a URL at all: free text.
-    return sanitize(value, MAX_FIELD_LENGTH)
+    return scrub(value, MAX_FIELD_LENGTH)
   }
 }
 
@@ -175,7 +185,7 @@ function redactValue(key: string, value: unknown, depth: number): unknown {
 function redactPlain(value: unknown, depth: number): unknown {
   switch (typeof value) {
     case 'string':
-      return sanitize(value, MAX_FIELD_LENGTH)
+      return scrub(value, MAX_FIELD_LENGTH)
     case 'number':
     case 'boolean':
       return value
@@ -219,9 +229,94 @@ function redactObject(
     // Matched whole, before the cut to `MAX_KEY_LENGTH`, and without control characters
     // and escapes, so neither a long key nor a `session\u0000Id` hides a credential.
     const value = redactValue(stripControlCharacters(key), object[key], depth)
-    if (value !== undefined) out[sanitize(key, MAX_KEY_LENGTH)] = value
+    if (value !== undefined) out[scrub(key, MAX_KEY_LENGTH)] = value
   }
   if (keys.length > MAX_ENTRIES) out['…'] = `${keys.length - MAX_ENTRIES} more`
 
   return out
 }
+
+// #region debug channel
+
+/** The debug topic of a component's events; `config` has none (nothing to redact). */
+const COMPONENT_TOPIC: Partial<Record<LogComponent, DebugTopic>> = {
+  publish: 'rpc',
+  edit: 'rpc',
+  lifecycle: 'rpc',
+  chain: 'rpc',
+  access: 'order',
+  compute: 'compute',
+  node: 'node',
+  store: 'store',
+  identity: 'policy',
+  oceanjs: 'node'
+}
+
+/** Events whose topic is not their component's. */
+const EVENT_TOPIC: Partial<Record<LogEventName, DebugTopic>> = {
+  'publish.preflight.publisher_is_node': 'node',
+  'publish.preflight.node_address_unreadable': 'node',
+  'publish.preflight.denies_all': 'policy',
+  'publish.preflight.policy_server_unknown': 'policy',
+  'publish.preflight.indexer_nonce_unreadable': 'nonce',
+  'publish.preflight.indexer_nonce_will_stick': 'nonce',
+  'publish.preflight.pending_unreadable': 'nonce',
+  'node.policy_server.empty_url': 'policy'
+}
+
+/**
+ * Hands the raw message and fields of a printed log event to the sensitive debug channel,
+ * when its topic is on and the redaction changed something. Never throws.
+ */
+export function debugUnredacted(
+  name: LogEventName,
+  component: LogComponent,
+  msg: string,
+  fields: Record<string, unknown>,
+  printedMsg: string
+): void {
+  const topic = EVENT_TOPIC[name] ?? COMPONENT_TOPIC[component]
+  if (!topic || !debugEnabled('sensitive', topic)) return
+  try {
+    if (msg === printedMsg && !touches(fields, 0)) return
+    debugRaw(topic, `log event ${name} before redaction`, { msg, fields })
+  } catch {
+    // Debug output must never fail the operation it describes.
+  }
+}
+
+/** Whether the redaction of `fields` changes anything. */
+function touches(fields: Record<string, unknown>, depth: number): boolean {
+  if (depth >= MAX_DEPTH) return true
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === undefined || value === null) continue
+    const normalized = normalizeKey(key)
+    if (
+      value instanceof Error ||
+      normalized === 'error' ||
+      normalized === 'code' ||
+      isSecretKey(key) ||
+      value instanceof URL
+    )
+      return true
+    if (typeof value === 'string') {
+      if (URL_KEY.test(normalized) && originOf(value) !== value) return true
+      if (scrub(value, MAX_FIELD_LENGTH) !== value) return true
+    } else if (typeof value === 'object') {
+      if (
+        Array.isArray(value)
+          ? value.some((entry) =>
+              entry && typeof entry === 'object'
+                ? touches(entry as Record<string, unknown>, depth + 1)
+                : typeof entry === 'string' &&
+                  scrub(entry, MAX_FIELD_LENGTH) !== entry
+            )
+          : touches(value as Record<string, unknown>, depth + 1)
+      )
+        return true
+    }
+  }
+  return false
+}
+
+// #endregion

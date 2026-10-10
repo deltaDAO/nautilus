@@ -27,7 +27,12 @@ import {
   type LogLevelName,
   passes
 } from './levels.js'
-import { redactError, redactFields, redactMessage } from './redact.js'
+import {
+  debugUnredacted,
+  redactError,
+  redactFields,
+  redactMessage
+} from './redact.js'
 import { defaultFormat, formatJson, formatPretty, writeLine } from './sinks.js'
 import type {
   LogEvent,
@@ -198,7 +203,7 @@ export class Logger {
       options.once === undefined ? undefined : `${name}\u0000${options.once}`
     if (onceKey !== undefined && this.shown.has(onceKey)) return
 
-    const event = safeBuild(name, msg, fields)
+    const event = safeBuild(name, msg, fields, printed)
     if (!event) return
     tap?.(event, printed, { once: options.once !== undefined })
     if (!printed) return
@@ -261,25 +266,34 @@ export function loggerFor(options?: LoggingOptions | Logger): Logger {
 function safeBuild(
   name: LogEventName,
   msg: string | (() => string),
-  fields: LogFields | undefined
+  fields: LogFields | undefined,
+  printed: boolean
 ): LogEvent | undefined {
   try {
-    return build(name, msg, fields)
+    return build(name, msg, fields, printed)
   } catch (error) {
     try {
-      return build(name, typeof msg === 'string' ? msg : name, {
-        fieldsError: redactError(error)
-      })
+      return build(
+        name,
+        typeof msg === 'string' ? msg : name,
+        { fieldsError: redactError(error) },
+        false
+      )
     } catch {
       return undefined
     }
   }
 }
 
+/**
+ * The event, redacted. When it is `printed`, what the redaction removed goes to the
+ * sensitive debug channel (`debugUnredacted`), if that is on.
+ */
 function build(
   name: LogEventName,
   msg: string | (() => string),
-  fields: LogFields | undefined
+  fields: LogFields | undefined,
+  printed: boolean
 ): LogEvent {
   const spec = LOG_EVENTS[name]
   let text: string
@@ -307,6 +321,9 @@ function build(
   if (typeof top.txHash === 'string') event.txHash = top.txHash
   if (typeof durationMs === 'number' && Number.isFinite(durationMs))
     event.durationMs = durationMs
+
+  if (printed)
+    debugUnredacted(name, spec.component, String(text), raw, event.msg)
 
   return event
 }

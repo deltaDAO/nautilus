@@ -5,8 +5,14 @@
  * ocean-node answers errors in plain text (`Use the initializeCompute endpoint…`), as a JSON
  * string (`"Error: Access to asset … was denied"`) or as a JSON object (`{ "error": … }`).
  * `nodeText` turns each into the message itself.
+ *
+ * Every sanitiser here also hands the raw value to the sensitive debug channel
+ * (`log/debug.ts`), under a topic (`node` by default), so that redaction never makes a
+ * failure undiagnosable. That channel is off by default; when off, nothing is copied. The
+ * values returned here are the same with it on or off.
  */
 
+import { type DebugTopic, debugEnabled, debugRaw } from '../log/debug.js'
 import { isErrorCode, isSecretKey, redactsValue } from '../log/keys.js'
 
 /** A non-2xx answer of the node. A `FetchedText` is one. */
@@ -261,22 +267,33 @@ export function stripControlCharacters(text: string): string {
  * redacted again (a key split by a control character, `session\u0000Id=…`, or a value
  * split by a line break, is whole only once they are gone), and at most `maxLength`
  * characters (200 by default, an ellipsis marking the cut).
+ *
+ * When that changes the text, the raw text goes to the debug channel under `topic`
+ * (`null`: not, because the caller hands it over itself).
  */
 export function sanitize(
   text: string,
-  maxLength = MAX_NODE_MESSAGE_LENGTH
+  maxLength = MAX_NODE_MESSAGE_LENGTH,
+  topic: DebugTopic | null = 'node'
 ): string {
-  return bounded(
+  const clean = bounded(
     redactSecrets(stripControlCharacters(redactSecrets(text))),
     maxLength
   )
+  if (topic && debugEnabled('sensitive', topic) && clean !== text)
+    debugRaw(topic, 'text before redaction', text)
+  return clean
 }
 
 /**
  * The node's message in `text`: a JSON string unquoted, the `error` (or `message`) of a JSON
- * object, anything else as it is. Credentials are redacted and the result is bounded.
+ * object, anything else as it is. Credentials are redacted and the result is bounded. When
+ * that is not the whole text, the raw text goes to the debug channel under `topic`.
  */
-export function nodeText(text: string): string {
+export function nodeText(
+  text: string,
+  topic: DebugTopic | null = 'node'
+): string {
   const trimmed = text.trim()
   let message = trimmed
 
@@ -296,24 +313,49 @@ export function nodeText(text: string): string {
       // not JSON: the text as it is
     }
 
-  return sanitize(message)
+  const clean = sanitize(message, MAX_NODE_MESSAGE_LENGTH, null)
+  if (topic && clean !== trimmed && debugEnabled('sensitive', topic))
+    debugRaw(topic, 'node text before redaction', text)
+  return clean
 }
 
-/** A value the node returned in place of the expected one, as bounded text. */
-export function boundedNodeMessage(value: unknown): string {
-  return typeof value === 'string'
-    ? nodeText(value)
-    : sanitize(JSON.stringify(value) ?? String(value))
+/**
+ * A value the node returned in place of the expected one, as bounded text. The raw value
+ * goes to the debug channel under `topic` when the text is not all of it.
+ */
+export function boundedNodeMessage(
+  value: unknown,
+  topic: DebugTopic | null = 'node'
+): string {
+  if (typeof value === 'string') return nodeText(value, topic)
+
+  const text = JSON.stringify(value) ?? String(value)
+  const clean = sanitize(text, MAX_NODE_MESSAGE_LENGTH, null)
+  if (topic && clean !== text && debugEnabled('sensitive', topic))
+    debugRaw(topic, 'node value before redaction', value)
+  return clean
 }
 
 function bounded(text: string, maxLength: number): string {
   return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text
 }
 
-/** `HTTP 400 Bad Request: <the node's text>`. */
-export function describeAnswer(answer: NodeAnswer): string {
+/**
+ * `HTTP 400 Bad Request: <the node's text>`. The whole answer (status and raw body) goes to
+ * the debug channel under `topic`.
+ */
+export function describeAnswer(
+  answer: NodeAnswer,
+  topic: DebugTopic | null = 'node'
+): string {
   const status = `HTTP ${answer.status}${answer.statusText ? ` ${answer.statusText}` : ''}`
-  const text = nodeText(answer.body)
+  if (topic && debugEnabled('sensitive', topic))
+    debugRaw(topic, `answer ${status}`, {
+      status: answer.status,
+      statusText: answer.statusText,
+      body: answer.body
+    })
+  const text = nodeText(answer.body, null)
 
   return text ? `${status}: ${text}` : status
 }
@@ -324,24 +366,37 @@ export function describeAnswer(answer: NodeAnswer): string {
  * ocean.js reads error answers with `response.json()`, so a plain-text answer fails with a
  * JSON parse error that has neither the status nor more than the first characters of the
  * text. That fragment is not the node's message: it stays on `cause`.
+ *
+ * The whole error (its message, its own properties and its causes) goes to the debug
+ * channel under `topic`.
  */
-export function describeError(error: unknown): string {
+export function describeError(
+  error: unknown,
+  topic: DebugTopic | null = 'node'
+): string {
   const message = error instanceof Error ? error.message : String(error)
+  if (topic && debugEnabled('sensitive', topic))
+    debugRaw(topic, 'error before redaction', error)
 
   if (error instanceof SyntaxError && /JSON/.test(message))
     return "the node's error answer is not JSON, and ocean.js passes on neither its status nor its text (see cause)"
 
-  return nodeText(message)
+  return nodeText(message, null)
 }
 
 /**
  * A stand-in for an error that may carry the node's text, to keep on `cause`: its name and
- * its message sanitized as `nodeText` does, without its stack or its own `cause`.
+ * its message sanitized as `nodeText` does, without its stack or its own `cause`. The raw
+ * error goes to the debug channel under `topic` when its message changed.
  */
-export function sanitizedError(error: unknown): Error {
-  const copy = new Error(
-    sanitize(error instanceof Error ? error.message : String(error))
-  )
+export function sanitizedError(
+  error: unknown,
+  topic: DebugTopic | null = 'node'
+): Error {
+  const message = error instanceof Error ? error.message : String(error)
+  const copy = new Error(sanitize(message, MAX_NODE_MESSAGE_LENGTH, null))
+  if (topic && copy.message !== message && debugEnabled('sensitive', topic))
+    debugRaw(topic, 'error before redaction', error)
   if (error instanceof Error) copy.name = error.name
 
   return copy

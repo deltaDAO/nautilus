@@ -39,6 +39,7 @@
  * errors are rethrown without fetch's raw error as `cause`.
  */
 import type { StorageObject } from '@oceanprotocol/lib'
+import { debugEnabled, debugRaw } from '../log/debug.js'
 import {
   errorMessage,
   fetchText,
@@ -473,13 +474,33 @@ export class IpfsRemoteStore implements RemoteStore {
     }
   }
 
-  /** An upstream body, cut short and without anything that could be a credential. */
+  /**
+   * An upstream body, cut short and without anything that could be a credential. The raw
+   * text goes to the sensitive debug channel (topic `store`), with the configured header
+   * values hidden below the `secrets` tier.
+   */
   private scrub(
     text: string,
     secrets: (Record<string, string> | undefined)[] = [],
     maxLength = MAX_BODY_IN_ERROR
   ): string {
-    return scrubSecrets(text, [this.options.headers, ...secrets], maxLength)
+    const headerSets = [this.options.headers, ...secrets]
+    const scrubbed = scrubSecrets(text, headerSets, maxLength)
+    if (scrubbed !== text && debugEnabled('sensitive', 'store'))
+      debugRaw(
+        'store',
+        'IPFS answer before redaction',
+        text,
+        headerSets.flatMap((headers) =>
+          Object.values(headers ?? {}).flatMap((value) => [
+            String(value),
+            String(value)
+              .replace(/^(Bearer|Basic|Token)\s+/i, '')
+              .trim()
+          ])
+        )
+      )
+    return scrubbed
   }
 }
 

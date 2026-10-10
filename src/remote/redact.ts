@@ -9,9 +9,14 @@
  *   - every header value of a `url` pointer;
  *   - in a pointer's `url`, everything that can carry a credential (see `redactUrl`).
  *
+ * The unredacted pointer goes to the sensitive debug channel (topic `store`) when it is on:
+ * at `sensitive` without its credentials (the S3 secret key, header values, credentials in
+ * the URL), at `secrets` whole.
+ *
  * Kept out of the package's exports.
  */
 import type { StorageObject } from '@oceanprotocol/lib'
+import { debugEnabled, debugRaw } from '../log/debug.js'
 
 export const REDACTED = '<redacted>'
 
@@ -20,6 +25,14 @@ const REDACTED_IN_URL = encodeURIComponent(REDACTED)
 
 export function redactPointer<T extends StorageObject>(pointer: T): T {
   if (!pointer || typeof pointer !== 'object') return pointer
+
+  if (debugEnabled('sensitive', 'store'))
+    debugRaw(
+      'store',
+      'storage pointer before redaction',
+      pointer,
+      headerValues((pointer as { headers?: unknown }).headers)
+    )
 
   const copy = JSON.parse(JSON.stringify(pointer)) as Record<string, unknown>
 
@@ -30,9 +43,16 @@ export function redactPointer<T extends StorageObject>(pointer: T): T {
   if (copy.headers && typeof copy.headers === 'object')
     copy.headers = redactHeaders(copy.headers)
 
-  if (typeof copy.url === 'string') copy.url = redactUrl(copy.url)
+  if (typeof copy.url === 'string') copy.url = redactUrlQuietly(copy.url)
 
   return copy as T
+}
+
+/** The header values of a pointer: credentials, hidden below the `secrets` tier. */
+function headerValues(headers: unknown): string[] {
+  if (Array.isArray(headers)) return headers.flatMap(headerValues)
+  if (!headers || typeof headers !== 'object') return []
+  return Object.values(headers).map(String)
 }
 
 function redactHeaders(headers: unknown): unknown {
@@ -60,6 +80,14 @@ function redactHeaders(headers: unknown): unknown {
  * a string that does not parse as a URL is replaced whole.
  */
 export function redactUrl(url: string): string {
+  const redacted = redactUrlQuietly(url)
+  if (redacted !== url && debugEnabled('sensitive', 'store'))
+    debugRaw('store', 'URL before redaction', url)
+  return redacted
+}
+
+/** `redactUrl` without the debug output: `redactPointer` hands over the whole pointer. */
+function redactUrlQuietly(url: string): string {
   let parsed: URL
   try {
     parsed = new URL(url)
