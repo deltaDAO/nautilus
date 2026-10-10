@@ -59,6 +59,12 @@ const BEARER = /(Bearer\s+)[\w.~+/=-]+/gi
 const JWT = /\beyJ[\w-]*\.[\w-]+\.[\w-]*/g
 /** A 65-byte ECDSA signature in hex, wherever it stands. */
 const HEX_SIGNATURE = /\b0x[0-9a-f]{130}\b/gi
+/**
+ * A raw signed transaction (ethers quotes it in `transaction="0x02f8…"` of a failed
+ * `eth_sendRawTransaction`): an RLP list, typed (`0x01`-`0x04`) or legacy, of 100 bytes or
+ * more. Whoever holds one that was never mined can still send it.
+ */
+const SIGNED_TRANSACTION = /\b0x(?:0[1-4])?f[89a][0-9a-f]{196,}\b/gi
 
 /** ANSI escape sequences: CSI (`ESC [ … m`), OSC (`ESC ] … BEL`) and two-byte ones. */
 const ANSI_ESCAPE =
@@ -73,8 +79,8 @@ const CONTROL_CHARACTERS =
  * `text` with credentials replaced by `<redacted>`: signatures, tokens, nonces, codes,
  * passwords, S3 secret keys, OAuth client secrets and private keys given as `key=value`, as
  * JSON fields or (passwords, API keys, OAuth and VP tokens, secret and private keys, hex
- * signatures) as `key: value`; bearer credentials, JWTs and 65-byte hex signatures
- * anywhere. A `code` that reads as an error
+ * signatures) as `key: value`; bearer credentials, JWTs, 65-byte hex signatures and raw
+ * signed transactions anywhere. A `code` that reads as an error
  * code (`code=SERVER_ERROR`, `"code": -32005`) is kept, so RPC failures stay legible.
  * A URL keeps its origin only: its path and query (an openid4vp `request_uri`, a policy
  * server's redirect URI, an internal path) are dropped, and so are its user and password.
@@ -98,6 +104,7 @@ export function redactSecrets(text: string): string {
     .replace(BEARER, '$1<redacted>')
     .replace(JWT, '<redacted>')
     .replace(HEX_SIGNATURE, '<redacted>')
+    .replace(SIGNED_TRANSACTION, '<redacted>')
 }
 
 /**
