@@ -18,7 +18,6 @@ import {
   type DispenserCreationParams,
   type FreCreationParams,
   getEventFromTx,
-  LoggerInstance,
   Nft,
   type NftCreateData,
   NftFactory,
@@ -34,6 +33,7 @@ import {
   toBeHex
 } from 'ethers'
 import type { PublishResponse, StoredBeforeFailure } from '../@types/Publish.js'
+import { type Logger, log } from '../log/logger.js'
 import type {
   FileTypes,
   NautilusService,
@@ -79,6 +79,8 @@ export async function createNftWithService(params: {
   nftParams: NftCreateData
   service: NautilusService<ServiceTypes, FileTypes>
   owner: string
+  /** Where this call's log events go. Default: the process-wide logger. */
+  logger?: Logger
 }): Promise<CreatedTokens> {
   const { signer, chainConfig, nftParams, service, owner } = params
 
@@ -150,10 +152,11 @@ export async function createNftWithService(params: {
       'The bundle transaction confirmed but emitted no NFTCreated/TokenCreated events. Check that nftFactoryAddress points at a current ERC721Factory.'
     )
 
-  LoggerInstance.debug('[publish] created NFT and datatoken', {
-    nftAddress,
-    datatokenAddress
-  })
+  ;(params.logger ?? log).emit(
+    'publish.tokens.created',
+    'Created the NFT and its datatoken.',
+    { nftAddress, datatokenAddress, txHash: tx.hash }
+  )
 
   return { nftAddress, datatokenAddress, tx }
 }
@@ -676,6 +679,8 @@ export async function writeMetadata(params: {
   lifecycleState: number
   prepared: PreparedWrite
   onProgress?: (progress: MetadataWriteProgress, txHash?: string) => void
+  /** Where this call's log events go. Default: the process-wide logger. */
+  logger?: Logger
 }): Promise<TransactionReceipt> {
   const { signer, chainConfig, nftAddress, nodeUri, lifecycleState } = params
   const prepared = params.prepared.written
@@ -695,7 +700,8 @@ export async function writeMetadata(params: {
     `NFT ${nftAddress}`
   )
 
-  LoggerInstance.debug('[publish] writing metadata', {
+  const logger = params.logger ?? log
+  logger.emit('publish.metadata.sending', 'Sending the metadata transaction.', {
     nftAddress,
     lifecycleState,
     flags: prepared.flags
@@ -744,10 +750,11 @@ export async function writeMetadata(params: {
     sped = repricedReceipt(error)
 
     if (sped) {
-      LoggerInstance.debug('[publish] metadata transaction was sped up', {
-        sent: response.hash,
-        mined: sped.hash
-      })
+      logger.emit(
+        'publish.metadata.replaced',
+        'The metadata transaction was replaced in the wallet; the replacement was mined.',
+        { sent: response.hash, mined: sped.hash, txHash: sped.hash }
+      )
       receipt = sped
     } else {
       const unchanged = unchangedBy(error)

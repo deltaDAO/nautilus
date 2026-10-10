@@ -10,7 +10,7 @@
  * The pre-transaction pass runs on a projection with stand-in addresses, so these tests
  * also pin the thing that makes it affordable: it costs no extra node round trip.
  */
-import { LoggerInstance, type StorageObject } from '@oceanprotocol/lib'
+import type { StorageObject } from '@oceanprotocol/lib'
 import { Wallet } from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PublishedNotIndexed } from '../../src/@types/Publish.js'
@@ -50,9 +50,11 @@ import {
 import { readExistingPricing } from '../../src/publish/reuse.js'
 import { NodePersistentRemoteStore } from '../../src/remote/NodePersistentRemoteStore.js'
 import type { RemoteStore } from '../../src/remote/RemoteStore.js'
-import { setMetadataState } from '../../src/utils/contracts.js'
+import {
+  getMetadataEventsInBlock,
+  setMetadataState
+} from '../../src/utils/contracts.js'
 import { getPricingInfo } from '../../src/utils/pricing.js'
-import { resetWarnings } from '../../src/utils/warn.js'
 import {
   ASSET_DID,
   CHAIN_ID,
@@ -61,12 +63,13 @@ import {
   NFT_ADDRESS,
   OWNER_ADDRESS
 } from '../fixtures/Asset.js'
-import { expectThrowsAsync } from '../helpers.js'
+import { captureLog, expectThrowsAsync } from '../helpers.js'
 import {
   createNodeMock,
   type NodeMock,
   type NodeMockOptions
 } from '../mocks/node.js'
+import { FAKE } from '../secretScan.js'
 
 const PRIVATE_KEY =
   '0x0123456789012345678901234567890123456789012345678901234567890123'
@@ -289,6 +292,11 @@ async function createNautilus(
   return { nautilus, node }
 }
 
+/** A spy on stderr, where the default logger prints. */
+function stderrSpy() {
+  return vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+}
+
 function validAsset() {
   return new AssetBuilder()
     .setType('dataset')
@@ -302,14 +310,14 @@ function validAsset() {
 beforeEach(() => {
   vi.clearAllMocks()
   vi.restoreAllMocks()
-  resetWarnings()
   nftState.hasMetadata = false
   nftState.state = 0
   nftState.owner = SIGNER_ADDRESS
   nftState.factoryListed = ''
   nftState.datatokens = [DATATOKEN_ADDRESS]
   nftState.permissions = { updateMetadata: true, deployERC20: true }
-  nftState.blockEvents = undefined
+  // The metadata transaction is alone in its block, unless a test says otherwise.
+  nftState.blockEvents = []
   nftState.nonces = { pending: 4, latest: 4 }
   nftState.receipts = {}
   nftState.pendingTxs = []
@@ -763,17 +771,17 @@ describe('completePublish while an earlier metadata transaction may land', () =>
   })
 
   it('warns and goes on when the transaction counts cannot be read', async () => {
-    const warn = vi
-      .spyOn(LoggerInstance, 'warn')
-      .mockImplementation(() => undefined)
+    const log = captureLog()
     const { nautilus } = await createNautilus()
     nftState.nonces = undefined as never
 
     await nautilus.completePublish(NFT_ADDRESS, validAsset())
 
-    expect(String(warn.mock.calls[0]?.[0])).to.match(
+    const [warning] = log.named('publish.preflight.pending_unreadable')
+    expect(warning.msg).to.match(
       /could not read the signer's pending transaction count/
     )
+    expect(warning.fields.nftAddress).to.equal(NFT_ADDRESS)
     expect(vi.mocked(writeMetadata)).toHaveBeenCalledTimes(1)
   })
 })
@@ -1384,6 +1392,26 @@ describe('one asset, one metadata transaction at a time', () => {
 
     expect(response.setMetadataTxReceipt.hash).to.equal('0xsetmetadata')
   })
+
+  it('warns, with the RPC error redacted, and goes on when the block cannot be read', async () => {
+    const log = captureLog()
+    vi.mocked(getMetadataEventsInBlock).mockRejectedValueOnce(
+      new Error(
+        `server response 500 Internal Server Error (requestUrl="${FAKE.rpcUrl}", code=SERVER_ERROR)`
+      )
+    )
+    const { nautilus } = await createNautilus()
+
+    const response = await nautilus.publish(validAsset())
+
+    expect(response.setMetadataTxReceipt.hash).to.equal('0xsetmetadata')
+    const [warning] = log.named('publish.metadata.events_unchecked')
+    expect(warning.level).to.equal('warn')
+    expect(warning.fields.blockNumber).to.equal(100)
+    expect(warning.fields.error).to.contain('https://rpc.example.org')
+    expect(JSON.stringify(warning)).not.to.contain(FAKE.rpcPathToken)
+    expect(JSON.stringify(warning)).not.to.contain(FAKE.rpcQueryToken)
+  })
 })
 
 describe('setup', () => {
@@ -1413,7 +1441,7 @@ describe('setup', () => {
   })
 
   it("warns once when the publisher is the node's own key", async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const warn = stderrSpy()
     const { nautilus } = await createNautilus({
       node: { nodeAddress: SIGNER_ADDRESS }
     })
@@ -1421,21 +1449,28 @@ describe('setup', () => {
     await nautilus.publish(validAsset())
     await nautilus.publish(validAsset())
 
-    expect(warn).toHaveBeenCalledTimes(1)
-    expect(String(warn.mock.calls[0][0])).to.match(
+    const printed = warn.mock.calls
+      .map((call) => String(call[0]))
+      .filter((line) => line.includes('publish.preflight.publisher_is_node'))
+    expect(printed).to.have.length(1)
+    expect(printed[0]).to.match(
       /is the node's own address.*nonces collide.*401/
     )
   })
 
   it('does not warn for a different node key', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const warn = stderrSpy()
     const { nautilus } = await createNautilus({
       node: { nodeAddress: OWNER_ADDRESS }
     })
 
     await nautilus.publish(validAsset())
 
-    expect(warn).not.toHaveBeenCalled()
+    expect(
+      warn.mock.calls.filter((call) =>
+        String(call[0]).includes('publish.preflight.publisher_is_node')
+      )
+    ).to.deep.equal([])
   })
 })
 
@@ -1443,13 +1478,23 @@ describe('policy server that denies every consumer', () => {
   const DENIES_ALL =
     /has a policy server.*no address allow list.*denies every consumer/
 
-  function warnSpy() {
-    return vi.spyOn(LoggerInstance, 'warn').mockImplementation(() => undefined)
-  }
+  // What the user sees: the default logger's output on stderr, at the default level.
+  const warnSpy = stderrSpy
 
   function warnings(warn: ReturnType<typeof warnSpy>) {
     return warn.mock.calls.map((call) => String(call[0]))
   }
+
+  it('prints the warning on stderr at the default level, as a catalogued event', async () => {
+    const warn = warnSpy()
+    const { nautilus } = await createNautilus({ node: { policyServer: true } })
+
+    await nautilus.publish(validAsset())
+
+    const printed = warnings(warn).filter((text) => DENIES_ALL.test(text))
+    expect(printed).to.have.length(1)
+    expect(printed[0]).to.contain('publish.preflight.denies_all')
+  })
 
   it('warns on publish when the node has a policy server and credentials are {}', async () => {
     const warn = warnSpy()
@@ -1731,9 +1776,7 @@ describe('indexer nonce preflight', () => {
   })
 
   it('warns when this publish would be the one that gets it stuck', async () => {
-    const warn = vi
-      .spyOn(LoggerInstance, 'warn')
-      .mockImplementation(() => undefined)
+    const log = captureLog()
     const { nautilus } = await createNautilus({
       node: { indexerNonce: oneAwayState() }
     })
@@ -1741,10 +1784,7 @@ describe('indexer nonce preflight', () => {
     await nautilus.publish(validAsset())
 
     expect(vi.mocked(writeMetadata)).toHaveBeenCalledTimes(1)
-    expect(
-      warn.mock.calls.some((call) =>
-        /second decrypt call/.test(String(call[0]))
-      )
-    ).to.equal(true)
+    const [warning] = log.named('publish.preflight.indexer_nonce_will_stick')
+    expect(warning.msg).to.match(/second decrypt call/)
   })
 })

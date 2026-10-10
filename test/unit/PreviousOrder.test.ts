@@ -42,6 +42,8 @@ import {
   PROVIDER_FEE_WALLET,
   signedProviderFee
 } from '../fixtures/ProviderFee.js'
+import { captureLog } from '../helpers.js'
+import { FAKE } from '../secretScan.js'
 
 vi.mock('../../src/utils/order.js', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -703,14 +705,22 @@ describe('settleOrder with an order on chain', () => {
     expect(result).to.deep.equal({ transferTxId: '0xfresh', reused: false })
   })
 
-  it('orders anew when the lookup fails', async () => {
-    chain.getLogs.mockRejectedValueOnce(new Error('connection refused'))
+  it('orders anew when the lookup fails, and warns', async () => {
+    const log = captureLog()
+    chain.getLogs.mockRejectedValueOnce(
+      new Error(`connection refused (requestUrl="${FAKE.rpcUrl}")`)
+    )
 
     const result = await settle({
       providerFee: signedProviderFee({ providerData, providerFeeAmount: '0' })
     })
 
     expect(result.reused).to.equal(false)
+    const [warning] = log.named('access.order.lookup_failed')
+    expect(warning.level).to.equal('warn')
+    expect(warning.msg).to.match(/Could not look up a previous order.*anew/)
+    expect(warning.fields.error).to.match(/connection refused/)
+    expect(JSON.stringify(warning)).not.to.contain(FAKE.rpcPathToken)
   })
 
   it('follows the node’s validOrder without reading the chain', async () => {

@@ -19,10 +19,10 @@ import {
   type Config,
   EscrowContract,
   getOceanArtifactsAddressesByChainId,
-  LoggerInstance,
   sendTx
 } from '@oceanprotocol/lib'
 import { Contract, getAddress, isAddress, type Signer } from 'ethers'
+import { type Logger, log } from '../log/logger.js'
 import { approveFeeWei, confirmTransaction } from '../utils/order.js'
 import type { EscrowPaymentQuote } from '../utils/paymentLimits.js'
 
@@ -189,7 +189,8 @@ export async function planEscrow(
 export async function fundEscrow(
   signer: Signer,
   chainConfig: Config,
-  plan: EscrowPlan
+  plan: EscrowPlan,
+  logger: Logger = log
 ): Promise<void> {
   const { quote, deposit, authorize } = plan
   const escrow = escrowAt(signer, chainConfig, quote.escrowAddress)
@@ -206,8 +207,8 @@ export async function fundEscrow(
 
     await send(escrow, chainConfig, signer, 'deposit', [quote.token, deposit])
 
-    LoggerInstance.debug('[compute] escrow deposit', {
-      token: quote.token,
+    logger.emit('compute.escrow.deposited', 'Deposited into the escrow.', {
+      paymentToken: quote.token,
       amount: deposit.toString()
     })
   }

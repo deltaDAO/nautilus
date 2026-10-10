@@ -29,6 +29,7 @@ import {
   hasCredentials
 } from '../ddo/read.js'
 import type { PolicyServerPayload } from '../ddo/types.js'
+import { type Logger, log } from '../log/logger.js'
 import {
   type OceanNodeClient,
   OceanNodeError,
@@ -36,7 +37,6 @@ import {
   PolicyDeniedError,
   type PolicyServerReply
 } from '../node/OceanNodeClient.js'
-import { warnOnce } from '../utils/warn.js'
 import {
   type CredentialProvider,
   emptyPolicyServerPayload
@@ -89,6 +89,8 @@ export interface PolicySessionResolverOptions {
    * `DEFAULT_SESSION_TTL_MS` (2 minutes).
    */
   sessionTtlMs?: number
+  /** Where this resolver's log events go. Default: the process-wide logger. */
+  logger?: Logger
 }
 
 /** One service a session is needed for. */
@@ -137,9 +139,11 @@ export class PolicySessionResolver {
     this.sessionTtlMs = sessionTtlMs
 
     if (options.sessionStore && options.persistPresentedSessions)
-      warnOnce(
-        'persist-presented-sessions',
-        'persistPresentedSessions is on: presented policy-server sessions are kept in your sessionStore. Their ids let anyone read the presentation (vp_token) through the node until the verifier forgets them; keep that store private.'
+      (options.logger ?? log).emit(
+        'identity.sessions.presented_persisted',
+        'persistPresentedSessions is on: presented policy-server sessions are kept in your sessionStore. Their ids let anyone read the presentation (vp_token) through the node until the verifier forgets them; keep that store private.',
+        undefined,
+        { once: 'persist-presented-sessions' }
       )
   }
 

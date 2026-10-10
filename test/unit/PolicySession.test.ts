@@ -56,7 +56,7 @@ import {
   SERVICE_ID
 } from '../fixtures/Asset.js'
 import { signedProviderFee } from '../fixtures/ProviderFee.js'
-import { expectThrowsAsync } from '../helpers.js'
+import { captureLog, expectThrowsAsync } from '../helpers.js'
 
 // Orders run against the chain. Stubbed, so a test can see whether one was placed at all.
 vi.mock('../../src/access/settlement.js', () => ({
@@ -349,7 +349,7 @@ describe('OceanNodeClient policy server', () => {
     status(true)
     const fetch = vi.fn(async () => new Response('', { status: 404 }))
     vi.stubGlobal('fetch', fetch)
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const log = captureLog()
     const node = client('a-session-token')
     await node.hasPolicyServer()
 
@@ -359,8 +359,10 @@ describe('OceanNodeClient policy server', () => {
     // A policy server behind a proxy that failed for a moment opens sessions again.
     expect(await node.hasPolicyServer()).to.equal(true)
     expect(fetch).toHaveBeenCalledTimes(2)
-    expect(warn).toHaveBeenCalledOnce()
-    expect(String(warn.mock.calls[0]?.[0])).to.match(
+    const warnings = log.named('node.policy_server.empty_url')
+    expect(warnings).to.have.length(1)
+    expect(warnings[0].level).to.equal('warn')
+    expect(warnings[0].msg).to.match(
       /POLICY_SERVER_URL is likely set but empty/
     )
   })
@@ -1173,7 +1175,7 @@ describe('PolicySessionResolver', () => {
     }
 
     for (const persistPresentedSessions of [false, true]) {
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const log = captureLog()
       const { client, calls } = policyNode({
         initiate: async () => initiatedWithPresentation()
       })
@@ -1192,7 +1194,9 @@ describe('PolicySessionResolver', () => {
       )
       // Reused from memory either way.
       expect(calls.filter((call) => call === 'initiate')).to.have.length(1)
-      warn.mockRestore()
+      expect(
+        log.named('identity.sessions.presented_persisted').length
+      ).to.equal(persistPresentedSessions ? 1 : 0)
     }
   })
 

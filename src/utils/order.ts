@@ -18,7 +18,6 @@ import {
   Dispenser,
   FixedRateExchange,
   type FreOrderParams,
-  LoggerInstance,
   type OrderParams,
   type ProviderFees,
   ZERO_ADDRESS
@@ -30,6 +29,7 @@ import {
   type TransactionReceipt,
   type TransactionResponse
 } from 'ethers'
+import { type Logger, log } from '../log/logger.js'
 import {
   assertProviderFeesAllowed,
   type ProviderFeeLimits,
@@ -82,6 +82,8 @@ export interface OrderRequest extends ProviderFeeLimits {
    * no other account can pay.
    */
   payer?: string
+  /** Where this call's log events go. Default: the process-wide logger. */
+  logger?: Logger
 }
 
 export interface OrderResult {
@@ -185,12 +187,16 @@ export async function order(request: OrderRequest): Promise<OrderResult> {
     _consumeMarketFee: NO_CONSUME_MARKET_FEE
   }
 
-  LoggerInstance.debug('[order] ordering', {
-    schema: pricing.schema,
-    templateId: pricing.templateId,
-    datatoken: pricing.datatokenAddress,
-    total: price.total
-  })
+  ;(request.logger ?? log).emit(
+    'access.order.sending',
+    'Sending the datatoken order.',
+    () => ({
+      schema: pricing.schema,
+      templateId: pricing.templateId,
+      datatokenAddress: pricing.datatokenAddress,
+      total: price.total
+    })
+  )
 
   // 2. One approval per (token, spender), covering every amount it pulls.
   for (const allowance of allowances)

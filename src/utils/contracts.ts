@@ -1,12 +1,7 @@
 /**
  * Direct contract operations that sit outside the publish/access/compute flows.
  */
-import {
-  type Config,
-  FixedRateExchange,
-  LoggerInstance,
-  Nft
-} from '@oceanprotocol/lib'
+import { type Config, FixedRateExchange, Nft } from '@oceanprotocol/lib'
 import {
   Contract,
   getAddress,
@@ -15,6 +10,7 @@ import {
   type TransactionReceipt
 } from 'ethers'
 import { getDatatokenForService, getService } from '../ddo/read.js'
+import { type Logger, log } from '../log/logger.js'
 import { confirmTransaction } from './order.js'
 import { getPricingInfo } from './pricing.js'
 
@@ -30,6 +26,8 @@ export async function editPrice(params: {
   newPrice: string
   chainConfig: Config
   signer: Signer
+  /** Where this call's log events go. Default: the process-wide logger. */
+  logger?: Logger
 }): Promise<TransactionReceipt> {
   const { asset, serviceId, newPrice, chainConfig, signer } = params
 
@@ -50,10 +48,11 @@ export async function editPrice(params: {
       `Service ${serviceId} is not priced by a fixed-rate exchange (it is '${pricing.schema}'), so its rate cannot be set.`
     )
 
-  LoggerInstance.debug('[editPrice] setting rate', {
-    exchangeId: pricing.exchangeId,
-    newPrice
-  })
+  ;(params.logger ?? log).emit(
+    'edit.price.setting',
+    `Setting the rate of service ${serviceId}.`,
+    { exchangeId: pricing.exchangeId, newPrice }
+  )
 
   const exchange = new FixedRateExchange(
     chainConfig.fixedRateExchangeAddress as string,

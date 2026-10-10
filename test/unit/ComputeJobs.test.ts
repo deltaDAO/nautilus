@@ -15,7 +15,6 @@
 
 import {
   type ComputeResult,
-  LoggerInstance,
   type NodeComputeJob,
   ProviderInstance
 } from '@oceanprotocol/lib'
@@ -28,7 +27,7 @@ import {
 } from '../../src/compute/jobs.js'
 import { Nautilus } from '../../src/index.js'
 import { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
-import { expectThrowsAsync } from '../helpers.js'
+import { captureLog, expectThrowsAsync } from '../helpers.js'
 
 const ADDRESS = '0x0000000000000000000000000000000000000001'
 /** As ocean-node builds them: `0x` and a sha256 for the engine, a sha256 for the job. */
@@ -369,6 +368,7 @@ describe('Nautilus compute jobs', () => {
       [running({ results: RESULTS.slice(0, 1) })]
     )
     const url = vi.spyOn(ProviderInstance, 'getComputeResultUrl')
+    const log = captureLog({ level: 'info' })
 
     expect(await nautilus.getComputeResult({ jobId: JOB_ID })).to.equal(
       undefined
@@ -377,6 +377,11 @@ describe('Nautilus compute jobs', () => {
       undefined
     )
     expect(url).not.toHaveBeenCalled()
+    // The unknown job is a warning; the unfinished one may still finish.
+    expect(log.events.map((event) => event.event)).to.deep.equal([
+      'compute.result.unavailable',
+      'compute.result.not_ready'
+    ])
   })
 
   it('getComputeResult reads at 71 (JobSettle) once the output is listed', async () => {
@@ -391,16 +396,18 @@ describe('Nautilus compute jobs', () => {
     const nautilus = await createNautilus()
     statusAnswers([statusJob({ status: 71, results: RESULTS.slice(0, 3) })])
     const url = vi.spyOn(ProviderInstance, 'getComputeResultUrl')
-    const log = vi.spyOn(LoggerInstance, 'log').mockImplementation(() => {})
-    const warn = vi.spyOn(LoggerInstance, 'warn').mockImplementation(() => {})
+    const log = captureLog({ level: 'info' })
 
     expect(await nautilus.getComputeResult({ jobId: JOB_ID })).to.equal(
       undefined
     )
-    expect(log.mock.calls[0][0]).to.match(
+    const [pending] = log.named('compute.result.not_ready')
+    expect(pending.level).to.equal('info')
+    expect(pending.fields.jobId).to.equal(JOB_ID)
+    expect(pending.msg).to.match(
       /has not listed its 'output' result yet \(status 71/
     )
-    expect(warn).not.toHaveBeenCalled()
+    expect(log.named('compute.result.unavailable')).to.deep.equal([])
     expect(url).not.toHaveBeenCalled()
   })
 
@@ -424,16 +431,15 @@ describe('Nautilus compute jobs', () => {
       })
     ])
     const url = vi.spyOn(ProviderInstance, 'getComputeResultUrl')
-    const log = vi.spyOn(LoggerInstance, 'log').mockImplementation(() => {})
-    const warn = vi.spyOn(LoggerInstance, 'warn').mockImplementation(() => {})
+    const log = captureLog({ level: 'info' })
 
     expect(await nautilus.getComputeResult({ jobId: JOB_ID })).to.equal(
       undefined
     )
-    expect(warn.mock.calls[0][0]).to.match(
-      /the job has no 'output' result \(status 41/
-    )
-    expect(log).not.toHaveBeenCalled()
+    const [missing] = log.named('compute.result.unavailable')
+    expect(missing.level).to.equal('warn')
+    expect(missing.msg).to.match(/the job has no 'output' result \(status 41/)
+    expect(log.named('compute.result.not_ready')).to.deep.equal([])
     expect(url).not.toHaveBeenCalled()
   })
 
@@ -464,7 +470,7 @@ describe('Nautilus compute jobs', () => {
   it('names the node by its origin only', async () => {
     const nautilus = await createNautilus()
     statusAnswers([], [])
-    const warn = vi.spyOn(LoggerInstance, 'warn').mockImplementation(() => {})
+    const log = captureLog()
     const nodeUri = 'https://user:secret@other-node.test.invalid/path?token=t'
 
     await nautilus.getComputeResult({ jobId: JOB_ID, nodeUri })
@@ -473,9 +479,12 @@ describe('Nautilus compute jobs', () => {
       '[compute] node https://other-node.test.invalid does not know the job'
     )
 
-    expect(warn.mock.calls[0][0]).to.equal(
-      '[compute] node https://other-node.test.invalid does not know the job'
-    )
+    expect(log.events.map((event) => [event.event, event.msg])).to.deep.equal([
+      [
+        'compute.result.unavailable',
+        'node https://other-node.test.invalid does not know the job'
+      ]
+    ])
   })
 
   it('streamComputeResult streams the output, not the first result', async () => {

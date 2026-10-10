@@ -36,7 +36,6 @@ import {
   type ComputeResultStream,
   type DownloadResponse,
   type FileInfo,
-  LoggerInstance,
   type NodeComputeJob,
   type NodeStatus,
   type PersistentStorageFileEntry,
@@ -64,6 +63,7 @@ import {
   withQualifiedJobId
 } from '../compute/jobs.js'
 import type { PolicyServerPayload } from '../ddo/types.js'
+import { type Logger, log } from '../log/logger.js'
 import {
   errorMessage,
   type FetchedResponse,
@@ -74,7 +74,6 @@ import {
   RequestTimeoutError
 } from '../utils/http.js'
 import { assertSecureTransport, parseHttpUrl } from '../utils/transport.js'
-import { warnOnce } from '../utils/warn.js'
 import {
   authTokenAddress,
   isAuthToken,
@@ -127,6 +126,12 @@ export interface OceanNodeClientOptions {
    * clients.
    */
   requestTimeoutMs?: number
+  /**
+   * Where this client's log events go. Default: the process-wide logger
+   * (`configureLogging`); `Nautilus` passes its instance's. Carried over to `forEndpoint`
+   * clients.
+   */
+  logger?: Logger
 }
 
 /** The default of `OceanNodeClientOptions.requestTimeoutMs`. */
@@ -511,7 +516,8 @@ function assertDuration(operation: string, name: string, value: unknown): void {
  * beta.0's 30 s polls, so the wait is as long as it was; the polls themselves stay 7 s apart.
  */
 function resolveIndexerOptions(
-  options: WaitForIndexerOptions
+  options: WaitForIndexerOptions,
+  logger: Logger
 ): WaitForIndexerOptions {
   const legacy = options as WaitForIndexerOptions & {
     interval?: unknown
@@ -521,9 +527,11 @@ function resolveIndexerOptions(
   if (legacy.interval === undefined && legacy.maxRetries === undefined)
     return options
 
-  warnOnce(
-    'waitForIndexer-legacy-options',
-    "waitForIndexer: the options `interval` and `maxRetries` were replaced by `intervalMs` and `timeoutMs` in 2.0.0-beta.1. They are mapped for now (intervalMs = interval, timeoutMs = interval × maxRetries, with beta.0's 30 s when interval is absent) but will be removed; rename them."
+  logger.emit(
+    'node.indexer_wait.legacy_options',
+    "waitForIndexer: the options `interval` and `maxRetries` were replaced by `intervalMs` and `timeoutMs` in 2.0.0-beta.1. They are mapped for now (intervalMs = interval, timeoutMs = interval × maxRetries, with beta.0's 30 s when interval is absent) but will be removed; rename them.",
+    undefined,
+    { once: 'waitForIndexer-legacy-options' }
   )
 
   const interval =
@@ -949,6 +957,7 @@ export class OceanNodeClient {
   private consumerAddressOverride?: string
   private readonly allowInsecureTransport: boolean
   private readonly requestTimeoutMs: number
+  private readonly log: Logger
 
   /**
    * Tail of this client's signed commands, see `serializeSigned`. One client has one auth,
@@ -993,6 +1002,7 @@ export class OceanNodeClient {
 
     this.nodeUri = options.nodeUri
     this.chainId = options.chainId
+    this.log = options.logger ?? log
     this.auth = options.auth
     this.consumerAddressOverride = options.consumerAddress
     this.aquarius = new Aquarius(options.nodeUri)
@@ -1036,7 +1046,8 @@ export class OceanNodeClient {
       auth: this.auth,
       consumerAddress: this.consumerAddressOverride,
       allowInsecureTransport: this.allowInsecureTransport,
-      requestTimeoutMs: this.requestTimeoutMs
+      requestTimeoutMs: this.requestTimeoutMs,
+      logger: this.log
     })
     client.endpoints = this.endpoints
     this.endpoints.set(key, client)
@@ -1299,7 +1310,7 @@ export class OceanNodeClient {
     txid?: string,
     options: WaitForIndexerOptions = {}
   ): Promise<AssetV5> {
-    const resolved = resolveIndexerOptions(options)
+    const resolved = resolveIndexerOptions(options, this.log)
     const { signal } = resolved
 
     for (const name of [
@@ -1405,8 +1416,10 @@ export class OceanNodeClient {
               : 0
           )
         )
-        LoggerInstance.debug(
-          `[waitForIndexer] ${this.nodeUri} rate-limited the lookup of ${what}; next try in ${Math.round(delay / 1000)}s`
+        this.log.emit(
+          'node.indexer_wait.rate_limited',
+          `${this.nodeUri} rate-limited the lookup of ${what}; next try in ${Math.round(delay / 1000)}s.`,
+          { nodeUri: this.nodeUri, what, delayMs: delay }
         )
       } else rateLimits = 0
 
@@ -2525,8 +2538,10 @@ export class OceanNodeClient {
       status = await this.getNodeStatus(signal)
     } catch (error) {
       if (signal?.aborted) throw signal.reason
-      LoggerInstance.debug(
-        `[ocean-node] could not read the status of ${this.nodeUri}: ${errorMessage(error)}`
+      this.log.emit(
+        'node.status.unreadable',
+        `Could not read the status of ${this.nodeUri}.`,
+        { nodeUri: this.nodeUri, error }
       )
       return undefined
     }
@@ -2582,9 +2597,11 @@ export class OceanNodeClient {
       return null
     }
 
-    warnOnce(
-      `empty-policy-server-url:${normalizeNodeUri(this.nodeUri)}`,
-      `${this.nodeUri} reported a policy server but answers as a node without one: its POLICY_SERVER_URL is likely set but empty, and it then checks no credentials at all.`
+    this.log.emit(
+      'node.policy_server.empty_url',
+      `${this.nodeUri} reported a policy server but answers as a node without one: its POLICY_SERVER_URL is likely set but empty, and it then checks no credentials at all.`,
+      { nodeUri: this.nodeUri },
+      { once: normalizeNodeUri(this.nodeUri) }
     )
 
     return null

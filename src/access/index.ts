@@ -6,11 +6,11 @@
  */
 
 import type { Config } from '@oceanprotocol/lib'
-import { LoggerInstance } from '@oceanprotocol/lib'
 import type { Signer } from 'ethers'
 import type { AccessConfig, AccessResult } from '../@types/Access.js'
 import { getDatatokenForService, getServiceIndex } from '../ddo/read.js'
 import { PolicySessionResolver } from '../identity/PolicySessionResolver.js'
+import { type Logger, log } from '../log/logger.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
 import { assertValidLimits } from '../utils/paymentLimits.js'
 import {
@@ -33,6 +33,8 @@ export interface AccessContext {
    * presentation is refused before anything is spent.
    */
   policySessions?: PolicySessionResolver
+  /** Where this call's log events go. Default: the process-wide logger. */
+  logger?: Logger
 }
 
 /**
@@ -45,12 +47,14 @@ export async function access(
   context: AccessContext
 ): Promise<AccessResult> {
   const { node, signer, chainConfig } = context
+  const logger = context.logger ?? log
 
   // A malformed `maxProviderFee` fails here, before any node call, even on a call that
   // ends up paying no fee.
   assertValidLimits(config)
 
-  const policySessions = context.policySessions ?? new PolicySessionResolver()
+  const policySessions =
+    context.policySessions ?? new PolicySessionResolver({ logger })
   const consumerAddress = await signer.getAddress()
 
   const asset = await node.resolve(config.assetDid)
@@ -123,13 +127,18 @@ export async function access(
     did: asset.id,
     service: { id: service.id, timeout: service.timeout },
     maxProviderFee: config.maxProviderFee,
-    confirmProviderFees: config.confirmProviderFees
+    confirmProviderFees: config.confirmProviderFees,
+    logger
   })
 
   // 4. Reuse or place the order, paying exactly the fee allowed above, if any.
   const { transferTxId, reused } = await sendSettlement(plan)
 
-  LoggerInstance.debug('[access] order settled', { transferTxId, reused })
+  logger.emit(
+    'access.order.settled',
+    reused ? 'Reused an order in force.' : 'Placed or extended the order.',
+    { did: config.assetDid, txHash: transferTxId, reused }
+  )
 
   // 5. Build the download URL — on the service's node, which holds the decryption key —
   // carrying the policy session when there is one.
