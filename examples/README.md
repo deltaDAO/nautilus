@@ -372,22 +372,49 @@ is one value — a policy-server session id — which it then carries into the d
 2. Run `npm start -- ssi:connect`. It authenticates with your **Ethereum** key — no separate
    walt.id password — and prints the wallets, keys and DIDs your account holds.
 3. Optionally pin them with `SSI_WALLET_ID`, `SSI_WALLET_KEY_ID` and `SSI_WALLET_DID`.
-4. Run `npm start -- ssi:round-trip` to publish a gated dataset and consume it in one go.
+4. Set `SSI_TRUSTED_ISSUERS` to the DIDs of the issuers whose credentials your gates accept,
+   comma-separated (e.g. `did:web:delta-dao.com`). The commands that publish a gate
+   (`ssi:publish-gated`, `ssi:publish-gated-compute`, `ssi:publish-partial`, `ssi:round-trip`)
+   refuse to run without it.
+5. Run `npm start -- ssi:round-trip` to publish a gated dataset and consume it in one go.
 
 **On the publishing side**, declare what you require:
 
 ```ts
 assetBuilder
+  .addCredentialAddresses(CredentialListTypes.ALLOW, allowlist(owner))
   .addRequestCredentials(CredentialListTypes.ALLOW, [
-    { type: 'VerifiableId', format: 'jwt_vc_json' }
+    {
+      type: 'gx:LegalPerson',
+      format: 'jwt_vc_json',
+      // Issuer trust, per credential (SSI_TRUSTED_ISSUERS in the examples).
+      policies: [{ policy: 'allowed-issuer', args: ['did:web:delta-dao.com'] }]
+    }
   ])
-  .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'not-before'])
-  .setVpPolicies(CredentialListTypes.ALLOW, [{ policy: 'holder-binding' }])
+  .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'not-before', 'revoked-status-list'])
+  .setVpPolicies(CredentialListTypes.ALLOW, [{ policy: 'minimum-credentials', args: '1' }])
 ```
 
-VC policies check each credential; VP policies check the presentation as a whole. Gating also
-works per service, so an asset can offer an open preview alongside a gated full dataset — see
-`npm start -- ssi:publish-partial`.
+VC policies check each credential; VP policies check the presentation as a whole. This is the
+set `identity.ts` uses, and why:
+
+- **Issuer trust goes on the credential.** The policy server drops the arguments of asset- and
+  service-level VC policies, and `allowed-issuer` without its issuers throws in walt.id, which
+  denies every consumer. Per-credential `policies` keep their arguments.
+- **`minimum-credentials` needs its argument** (`args: '1'`): a bare name fails in the verifier.
+- **No `holder-binding`.** It binds a credential to its presenter only when the credential
+  JWT's `sub` is the presenter's DID, and it fails (a NullPointerException in walt.id) for
+  credentials without `sub`: VCDM 2.0 `vc+jwt` and URL-subject credentials such as Gaia-X
+  `gx:LegalPerson`. Without it a copied credential JWT can be presented from any wallet, so
+  the address allow list is what binds access to an account.
+- **No `presentation-definition` with `jwt_vc_json`.** The definition walt.id generates matches
+  the type at `$.vc.type`, which a VCDM 2.0 `vc+jwt` credential does not have, so it is refused.
+- **Known limitation:** walt.id applies per-credential policies by credential type (the last
+  entry of its `type` array). A presented credential of another type runs only the asset-level
+  VC policies, so it passes without issuer trust. Keep the address allow list.
+
+Gating also works per service, so an asset can offer an open preview alongside a gated full
+dataset — see `npm start -- ssi:publish-partial`.
 
 Gating applies to compute too: `npm start -- ssi:publish-gated-compute <algorithmDid>`
 publishes a gated compute dataset that trusts that algorithm, and

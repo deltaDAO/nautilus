@@ -11,8 +11,11 @@ import {
   getServices,
   Nautilus,
   type PricingConfigWithoutOwner,
+  type RequestCredential,
   ServiceBuilder,
   ServiceTypes,
+  type VcPolicy,
+  type VpPolicy,
   WaltIdCredentialProvider,
   WaltIdHttpWallet,
   WaltIdVcSigner,
@@ -24,6 +27,7 @@ import type { NetworkConfig } from './config'
 import { resolveNetwork } from './config'
 import { advertisedJobPrice, ceilingFromEnv, paymentLimits } from './limits'
 import {
+  allowlist,
   describeRemoteStore,
   getRemoteStore,
   getSigner,
@@ -302,6 +306,66 @@ export async function setupWithIdentity(
 }
 
 /**
+ * The issuers whose credentials a gate accepts: `SSI_TRUSTED_ISSUERS`, comma-separated DIDs.
+ *
+ * Required. Without issuer trust a gate accepts any credential of the requested type whose
+ * signature checks out, including one the consumer issued to themselves.
+ */
+function trustedIssuers(): string[] {
+  const issuers = (process.env.SSI_TRUSTED_ISSUERS ?? '')
+    .split(',')
+    .map((issuer) => issuer.trim())
+    .filter(Boolean)
+
+  if (issuers.length === 0)
+    throw new Error(
+      'Set SSI_TRUSTED_ISSUERS in your .env file: the DIDs of the issuers whose credentials the gate accepts, comma-separated (e.g. did:web:delta-dao.com).'
+    )
+
+  return issuers
+}
+
+/**
+ * One requested credential, with issuer trust on the credential itself.
+ *
+ * Per credential, not in `setVcPolicies`: the policy server drops the arguments of asset- and
+ * service-level VC policies, and `allowed-issuer` without its issuers throws in walt.id,
+ * which denies every consumer. Per-credential policies keep their arguments.
+ */
+function requestCredential(
+  type: string,
+  issuers: string[] = trustedIssuers()
+): RequestCredential {
+  return {
+    type,
+    format: 'jwt_vc_json',
+    policies: [{ policy: 'allowed-issuer', args: issuers }]
+  }
+}
+
+/** Checked on every presented credential: the policy server's own defaults. */
+const GATE_VC_POLICIES: VcPolicy[] = [
+  'signature',
+  'not-before',
+  'revoked-status-list'
+]
+
+/**
+ * Checked on the presentation as a whole. `minimum-credentials` needs its argument; a bare
+ * name fails in the verifier for every presentation.
+ *
+ * No `holder-binding`: it reads the credential JWT's `sub`, and fails for credentials without
+ * one, such as VCDM 2.0 `vc+jwt` and URL-subject credentials like Gaia-X `gx:LegalPerson`.
+ * Without it a copied credential can be presented from any wallet, so the address allow list
+ * is what binds access to an account. No `presentation-definition` either: the definition
+ * walt.id generates for `jwt_vc_json` matches `$.vc.type`, which VCDM 2.0 credentials do not
+ * have. See the identity guide in the docs.
+ */
+const GATE_VP_POLICIES: VpPolicy[] = [
+  { policy: 'minimum-credentials', args: '1' }
+]
+
+/**
  * Publishes a dataset that requires a verifiable credential to access.
  *
  * The `SSIpolicy` block this produces is what the policy server actually parses. Note that
@@ -312,7 +376,12 @@ export async function setupWithIdentity(
  * **VC policies** check each presented credential; **VP policies** check the presentation as
  * a whole. The policy server's defaults are `signature`, `not-before` and
  * `revoked-status-list`. Valid names can be listed from the verifier's
- * `/openid4vc/policy-list` endpoint.
+ * `/openid4vc/policy-list` endpoint. Issuer trust (`SSI_TRUSTED_ISSUERS`) sits on the
+ * requested credential; see `requestCredential`.
+ *
+ * Known limitation: walt.id applies per-credential policies by credential type (the last
+ * entry of its `type` array), so a presented credential of another type skips the issuer
+ * check. The address allow list is the gate that binds access to an account.
  */
 export async function publishGatedDataset(
   nautilus: Nautilus,
@@ -321,7 +390,11 @@ export async function publishGatedDataset(
   owner: string,
   credentialType = 'VerifiableId'
 ) {
-  console.log(`Publishing a dataset gated on a ${credentialType} credential...`)
+  const issuers = trustedIssuers()
+
+  console.log(
+    `Publishing a dataset gated on a ${credentialType} credential from ${issuers.join(', ')}...`
+  )
 
   const service = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
     serviceType: ServiceTypes.ACCESS
@@ -350,18 +423,14 @@ export async function publishGatedDataset(
     .setLicense('MIT')
     .addService(service)
     .setOwner(owner)
+    // The gate that binds access to an account; the policy server refuses every address
+    // that is not on it (see allowlist() in nautilus.ts).
+    .addCredentialAddresses(CredentialListTypes.ALLOW, allowlist(owner))
     .addRequestCredentials(CredentialListTypes.ALLOW, [
-      { type: credentialType, format: 'jwt_vc_json' }
+      requestCredential(credentialType, issuers)
     ])
-    .setVcPolicies(CredentialListTypes.ALLOW, [
-      'signature',
-      'not-before',
-      'revoked-status-list'
-    ])
-    .setVpPolicies(CredentialListTypes.ALLOW, [
-      { policy: 'holder-binding' },
-      { policy: 'minimum-credentials', args: '1' }
-    ])
+    .setVcPolicies(CredentialListTypes.ALLOW, GATE_VC_POLICIES)
+    .setVpPolicies(CredentialListTypes.ALLOW, GATE_VP_POLICIES)
     .build()
 
   const result = await publishAsset(nautilus, asset)
@@ -391,8 +460,10 @@ export async function publishGatedComputeDataset(
   algorithmDids: string[],
   credentialType = 'VerifiableId'
 ) {
+  const issuers = trustedIssuers()
+
   console.log(
-    `Publishing a compute dataset gated on a ${credentialType} credential...`
+    `Publishing a compute dataset gated on a ${credentialType} credential from ${issuers.join(', ')}...`
   )
 
   const service = new ServiceBuilder<ServiceTypes.COMPUTE, FileTypes.URL>({
@@ -426,15 +497,14 @@ export async function publishGatedComputeDataset(
     .setLicense('MIT')
     .addService(service.build())
     .setOwner(owner)
+    // The gate that binds access to an account; the policy server refuses every address
+    // that is not on it (see allowlist() in nautilus.ts).
+    .addCredentialAddresses(CredentialListTypes.ALLOW, allowlist(owner))
     .addRequestCredentials(CredentialListTypes.ALLOW, [
-      { type: credentialType, format: 'jwt_vc_json' }
+      requestCredential(credentialType, issuers)
     ])
-    .setVcPolicies(CredentialListTypes.ALLOW, [
-      'signature',
-      'not-before',
-      'revoked-status-list'
-    ])
-    .setVpPolicies(CredentialListTypes.ALLOW, [{ policy: 'holder-binding' }])
+    .setVcPolicies(CredentialListTypes.ALLOW, GATE_VC_POLICIES)
+    .setVpPolicies(CredentialListTypes.ALLOW, GATE_VP_POLICIES)
     .build()
 
   const result = await publishAsset(nautilus, asset)
@@ -512,6 +582,8 @@ export async function publishPartiallyGatedDataset(
   pricingConfig: { [key: string]: PricingConfigWithoutOwner },
   owner: string
 ) {
+  const issuers = trustedIssuers()
+
   console.log(
     'Publishing a dataset with an open preview and a gated full service...'
   )
@@ -542,9 +614,9 @@ export async function publishPartiallyGatedDataset(
     .addFile(file)
     .setPricing(pricingConfig.FREE)
     .setDatatokenNameAndSymbol('Full Access Token', 'FULL')
-    // Gating on the service, not the asset.
+    // Gating on the service, not the asset, with issuer trust on the credential.
     .addRequestCredentials(CredentialListTypes.ALLOW, [
-      { type: 'VerifiableId', format: 'jwt_vc_json' }
+      requestCredential('VerifiableId', issuers)
     ])
     .build()
 
@@ -560,6 +632,8 @@ export async function publishPartiallyGatedDataset(
     .addService(preview)
     .addService(full)
     .setOwner(owner)
+    // The asset-level allow list, which the policy server checks for both services.
+    .addCredentialAddresses(CredentialListTypes.ALLOW, allowlist(owner))
     .build()
 
   const result = await publishAsset(nautilus, asset)
