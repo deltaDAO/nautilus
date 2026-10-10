@@ -337,7 +337,8 @@ export const COMMANDS: Record<string, Command> = {
     run: (ctx, did, serviceId) => removeService(ctx.nautilus, did, serviceId)
   },
   'asset:unlist': {
-    summary: 'Hide an asset from listings',
+    summary:
+      'Unlist an asset: still resolvable and searchable, flagged for markets to hide',
     args: ['did'],
     run: (ctx, did) => unlistAsset(ctx.nautilus, did)
   },
