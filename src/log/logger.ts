@@ -70,9 +70,11 @@ export type LogTap = (event: LogEvent, printed: boolean) => void
 
 let tap: LogTap | undefined
 
-/** Installs (or, with `undefined`, removes) the tap. Only for tests. */
-export function setLogTap(next: LogTap | undefined): void {
+/** Installs (or, with `undefined`, removes) the tap, returning the one before. Only for tests. */
+export function setLogTap(next: LogTap | undefined): LogTap | undefined {
+  const previous = tap
   tap = next
+  return previous
 }
 
 /**

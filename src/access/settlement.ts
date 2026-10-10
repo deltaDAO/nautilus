@@ -6,12 +6,9 @@
  * escrow, then sends the orders, so an input that cannot be ordered is refused before the
  * escrow deposit. `planSettlement` and `sendSettlement` are not exported from the package.
  */
-import {
-  type Config,
-  LoggerInstance,
-  type ProviderFees
-} from '@oceanprotocol/lib'
+import type { Config, ProviderFees } from '@oceanprotocol/lib'
 import type { Signer } from 'ethers'
+import { type Logger, log } from '../log/logger.js'
 import {
   checkOrder,
   type OrderRequest,
@@ -55,6 +52,8 @@ export type SettleOrderParams = {
    * and in a `ProviderFeeNotAllowedError`.
    */
   did?: string
+  /** Where this call's log events go. Default: the process-wide logger. */
+  logger?: Logger
 } & ProviderFeeLimits
 
 /**
@@ -159,6 +158,7 @@ export async function planSettlement(
     providerFees,
     consumer: params.consumer,
     payer: params.payer,
+    logger: params.logger,
     ...allowed
   }
 
@@ -181,6 +181,7 @@ async function reusableOrder(
   params: SettleOrderParams
 ): Promise<{ transferTxId: string; feeDue: boolean } | undefined> {
   const { initialized, service } = params
+  const logger = params.logger ?? log
 
   if (hasReusableOrder(initialized))
     return {
@@ -206,15 +207,25 @@ async function reusableOrder(
         ? undefined
         : String(providerFee.providerFeeAddress)
   }).catch((error: unknown) => {
-    LoggerInstance.warn(
-      `[settlement] Could not look up a previous order of ${params.datatokenAddress}, ordering anew: ${error instanceof Error ? error.message : String(error)}`
+    logger.emit(
+      'access.order.lookup_failed',
+      `Could not look up a previous order of ${params.datatokenAddress}; ordering anew.`,
+      { did: params.did, datatokenAddress: params.datatokenAddress, error }
     )
     return undefined
   })
 
   if (!previous) return undefined
 
-  LoggerInstance.debug('[settlement] previous order found on chain', previous)
+  logger.emit(
+    'access.order.previous_found',
+    'Found a previous order on chain.',
+    () => ({
+      did: params.did,
+      orderTxId: previous.orderTxId,
+      usableTxId: previous.usableTxId
+    })
+  )
 
   return previous.usableTxId
     ? { transferTxId: previous.usableTxId, feeDue: false }
