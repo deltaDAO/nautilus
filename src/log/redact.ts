@@ -183,6 +183,8 @@ function redactValue(key: string, value: unknown, depth: number): unknown {
 }
 
 function redactPlain(value: unknown, depth: number): unknown {
+  // `null` or `undefined` in a list: kept (JSON writes both as `null`).
+  if (value === null || value === undefined) return null
   switch (typeof value) {
     case 'string':
       return scrub(value, MAX_FIELD_LENGTH)
@@ -278,45 +280,29 @@ export function debugUnredacted(
   const topic = EVENT_TOPIC[name] ?? COMPONENT_TOPIC[component]
   if (!topic || !debugEnabled('sensitive', topic)) return
   try {
-    if (msg === printedMsg && !touches(fields, 0)) return
+    if (msg === printedMsg && !touches(fields)) return
     debugRaw(topic, `log event ${name} before redaction`, { msg, fields })
   } catch {
     // Debug output must never fail the operation it describes.
   }
 }
 
-/** Whether the redaction of `fields` changes anything. */
-function touches(fields: Record<string, unknown>, depth: number): boolean {
-  if (depth >= MAX_DEPTH) return true
-  for (const [key, value] of Object.entries(fields)) {
-    if (value === undefined || value === null) continue
-    const normalized = normalizeKey(key)
-    if (
-      value instanceof Error ||
-      normalized === 'error' ||
-      normalized === 'code' ||
-      isSecretKey(key) ||
-      value instanceof URL
+/**
+ * Whether the redaction of `fields` changes anything: the redacted copy (`redactFields`,
+ * the same code that redacts the printed event, so the two cannot drift apart) compared
+ * with a plain JSON copy of the raw fields. Fields that do not serialise (a cycle) count
+ * as changed.
+ */
+function touches(fields: Record<string, unknown>): boolean {
+  let raw: string | undefined
+  try {
+    raw = JSON.stringify(fields, (_key, value: unknown) =>
+      typeof value === 'bigint' ? value.toString() : value
     )
-      return true
-    if (typeof value === 'string') {
-      if (URL_KEY.test(normalized) && originOf(value) !== value) return true
-      if (scrub(value, MAX_FIELD_LENGTH) !== value) return true
-    } else if (typeof value === 'object') {
-      if (
-        Array.isArray(value)
-          ? value.some((entry) =>
-              entry && typeof entry === 'object'
-                ? touches(entry as Record<string, unknown>, depth + 1)
-                : typeof entry === 'string' &&
-                  scrub(entry, MAX_FIELD_LENGTH) !== entry
-            )
-          : touches(value as Record<string, unknown>, depth + 1)
-      )
-        return true
-    }
+  } catch {
+    return true
   }
-  return false
+  return JSON.stringify(redactFields(fields)) !== raw
 }
 
 // #endregion
