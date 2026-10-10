@@ -19,6 +19,7 @@ import {
   addCredentialAddresses,
   addRequestCredentials
 } from '../../src/identity/policy.js'
+import type { LogEvent, LoggingOptions } from '../../src/log/index.js'
 import { AssetBuilder } from '../../src/Nautilus/Asset/AssetBuilder.js'
 import { PLACEHOLDER_ADDRESS } from '../../src/Nautilus/Asset/NautilusDDO.js'
 import {
@@ -259,6 +260,7 @@ async function createNautilus(
     remoteStore?: RemoteStore
     node?: NodeMockOptions
     config?: Record<string, unknown>
+    logger?: LoggingOptions
   } = {}
 ): Promise<{
   nautilus: Nautilus
@@ -283,7 +285,8 @@ async function createNautilus(
       fixedRateExchangeAddress: DATATOKEN_ADDRESS,
       dispenserAddress: OWNER_ADDRESS,
       ...options.config
-    }
+    },
+    logger: options.logger
   })
 
   const node = createNodeMock(options.node)
@@ -1549,6 +1552,30 @@ describe('policy server that denies every consumer', () => {
     await nautilus.publish(asset)
 
     expect(warnings(warn).some((text) => DENIES_ALL.test(text))).to.equal(false)
+  })
+
+  it("goes to the instance's own logger when it has one, and to the process-wide one otherwise", async () => {
+    const global = captureLog()
+    const tenant: LogEvent[] = []
+    const { nautilus: own } = await createNautilus({
+      node: { policyServer: true },
+      logger: { level: 'debug', sink: (event) => tenant.push(event) }
+    })
+    const { nautilus: shared } = await createNautilus({
+      node: { policyServer: true }
+    })
+
+    await own.publish(validAsset())
+    await shared.publish(validAsset())
+
+    // The instance's level applies to it alone: its debug events, none in the global sink.
+    expect(tenant.map((event) => event.event)).to.include.members([
+      'chain.config.ready',
+      'publish.preflight.denies_all'
+    ])
+    expect(global.events.map((event) => event.event)).to.deep.equal([
+      'publish.preflight.denies_all'
+    ])
   })
 
   it('does not warn when no node has a policy server, or says', async () => {
