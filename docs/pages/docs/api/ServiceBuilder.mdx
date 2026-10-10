@@ -159,7 +159,11 @@ const service = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
   .addFile({ type: 'url', url: 'https://data.example/x.csv', method: 'GET' })
   .setPricing({ type: 'free' })
   .addRequestCredentials(CredentialListTypes.ALLOW, [ // [!code focus]
-    { type: 'VerifiableId', format: 'jwt_vc_json' } // [!code focus]
+    { // [!code focus]
+      type: 'VerifiableId', // [!code focus]
+      format: 'jwt_vc_json', // [!code focus]
+      policies: [{ policy: 'allowed-issuer', args: ['did:web:issuer.example'] }] // [!code focus]
+    } // [!code focus]
   ]) // [!code focus]
   .build()
 ```

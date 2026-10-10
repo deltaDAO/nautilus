@@ -236,7 +236,9 @@ address (`OceanNodeClient.policySessionAddress`).
 
 ## Publishing a gated asset
 
-Declare which credentials you require, and the checks they must pass:
+Declare which credentials you require, who must have issued them, and the checks they must
+pass. This is the set to start from: it works through nautilus, ocean-node, the policy server
+and the walt.id verifier as they are deployed today.
 
 ```ts twoslash
 import { AssetBuilder, CredentialListTypes } from '@deltadao/nautilus'
@@ -244,8 +246,17 @@ import { AssetBuilder, CredentialListTypes } from '@deltadao/nautilus'
 const assetBuilder = new AssetBuilder()
 // ---cut---
 assetBuilder
+  // The gate that binds access to an account: see the limitations below.
+  .addCredentialAddresses(CredentialListTypes.ALLOW, ['0x0DB823218e337a...'])
   .addRequestCredentials(CredentialListTypes.ALLOW, [ // [!code focus]
-    { type: 'VerifiableId', format: 'jwt_vc_json' } // [!code focus]
+    { // [!code focus]
+      type: 'gx:LegalPerson', // [!code focus]
+      format: 'jwt_vc_json', // [!code focus]
+      policies: [ // [!code focus]
+        // Issuer trust, per credential: only credentials from these issuers count. // [!code focus]
+        { policy: 'allowed-issuer', args: ['did:web:delta-dao.com'] } // [!code focus]
+      ] // [!code focus]
+    } // [!code focus]
   ]) // [!code focus]
   .setVcPolicies(CredentialListTypes.ALLOW, [ // [!code focus]
     'signature', // [!code focus]
@@ -253,7 +264,6 @@ assetBuilder
     'revoked-status-list' // [!code focus]
   ]) // [!code focus]
   .setVpPolicies(CredentialListTypes.ALLOW, [ // [!code focus]
-    { policy: 'holder-binding' }, // [!code focus]
     { policy: 'minimum-credentials', args: '1' } // [!code focus]
   ]) // [!code focus]
 ```
@@ -267,6 +277,53 @@ VC policies are names, while every VP policy is an object, `{ policy }` or
 `{ policy, args }` with `args` as a string, as the enterprise market writes them: an asset
 whose list mixed names and objects was published but not indexed by ocean-node 4.2.x. The policy server parses `args` as JSON when it can, so `'1'` reaches the
 verifier as the number `1`; pass structured arguments through `JSON.stringify`.
+`minimum-credentials` needs its argument: walt.id reads it as a number, and a bare
+`{ policy: 'minimum-credentials' }` fails in the verifier for every presentation.
+
+**Put policies that take arguments on the credential.** The policy server keeps only the
+*name* of an asset- or service-level VC policy and drops its arguments. `allowed-issuer`
+without its list of issuers throws "Invalid argument" in walt.id, which fails the
+presentation and so **denies every consumer**. Per-credential `policies` (the `policies` of a
+`request_credentials` entry) and VP policies keep their arguments, so issuer trust and other
+argument-bearing checks such as walt.id's `schema` go on the credential, as above.
+
+:::warning[Leave out `holder-binding` for Gaia-X and other `vc+jwt` credentials]
+`holder-binding` checks that the presenter is the subject of every credential in the
+presentation. What it gives and what it costs:
+
+- It binds a credential to its presenter **only** when the credential JWT's `sub` is the
+  presenter's DID. walt.id reads `sub` and nothing else.
+- It fails, with a `NullPointerException` in the verifier, for credentials that have no
+  `sub`: VCDM 2.0 `vc+jwt` credentials and credentials whose subject is a URL, such as the
+  Gaia-X `gx:LegalPerson` credential. An asset that requires it refuses every holder of such a
+  credential.
+- Without it, a copied credential JWT can be presented from any wallet: the credential is a
+  bearer credential. Assets that need access bound to an account must rely on the address
+  allow list, which is the gate that binds access to the consumer's Ethereum account.
+
+Require it only when every credential the asset accepts carries the holder's DID in `sub`.
+:::
+
+:::warning[No `presentation-definition` with `jwt_vc_json`, for now]
+The policy server does not forward a presentation definition of the asset's own: walt.id
+generates one from `request_credentials`, and for `jwt_vc_json` it matches the credential's
+type at `$.vc.type`. A VCDM 2.0 `vc+jwt` credential such as `gx:LegalPerson` carries its
+`type` at the top level and has no `vc` claim, so nothing matches and
+`presentation-definition` refuses it. Only VCDM 1.1 credentials (`vc`-wrapped) pass. Leave it
+out of `vp_policies` until the policy server forwards a definition that matches VCDM 2.0
+credentials.
+:::
+
+### Known limitation: credentials of another type
+
+walt.id applies per-credential policies by the type of the presented credential, matched on
+the **last** entry of its `type` array against `request_credentials`. A presented credential
+of any other type runs only the asset-level VC policies, and `minimum-credentials` counts it.
+So a presentation holding a self-issued credential of another type passes a gate whose issuer
+trust is per credential. Closing that needs the policy server to refuse credentials of a type
+the asset did not ask for; nautilus cannot do it on its own. Until then, the address allow list
+is the gate that binds access to an account: treat the credential checks as a further
+condition on the addresses you allow, not as the only gate.
 
 Gating also works per service, via
 [`ServiceBuilder.addRequestCredentials`](/docs/api/servicebuilder/addRequestCredentials) —
@@ -356,7 +413,7 @@ with the `wallet` option.
 ## Try it
 
 The [examples](/docs/examples) cover both halves of the exchange. Set `SSI_WALLET_API` in
-`.env` first:
+`.env` first, and `SSI_TRUSTED_ISSUERS` (the issuer DIDs your gates accept) to publish a gate:
 
 ```sh
 npm start -- ssi:connect                 # authenticate, list your wallets, keys and DIDs
