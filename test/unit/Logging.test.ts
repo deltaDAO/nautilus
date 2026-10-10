@@ -20,9 +20,10 @@ import {
   resetLogging,
   setLogTap
 } from '../../src/log/logger.js'
+import { formatPretty } from '../../src/log/sinks.js'
 import { Nautilus } from '../../src/Nautilus/Nautilus.js'
 import { captureLog } from '../helpers.js'
-import { FAKE, findSecrets } from '../secretScan.js'
+import { allowMadeUpFields, FAKE, findSecrets } from '../secretScan.js'
 
 /** A spy on stderr, where the default logger prints, returning the lines. */
 function stderrLines() {
@@ -85,6 +86,7 @@ afterEach(() => {
 
 describe('secret scan (V b)', () => {
   it('no format and no sink sees an RPC token, session id, signature, JWT or S3 secret', () => {
+    allowMadeUpFields()
     const sunk: LogEvent[] = []
     const lines = stderrLines()
     // One event per level the catalogue has, through all three outputs.
@@ -445,6 +447,7 @@ describe('regressions (V f)', () => {
 
   describe('redaction by key', () => {
     function redacted(fields: Record<string, unknown>, msg = 'm') {
+      allowMadeUpFields()
       const log = captureLog({ level: 'trace' })
       createLogger().emit('publish.tokens.created', msg, fields)
       return log.events[0]
@@ -525,6 +528,250 @@ describe('regressions (V f)', () => {
         big: '10',
         when: '1970-01-01T00:00:00.000Z'
       })
+    })
+  })
+
+  describe('redaction by key, every spelling (fix round)', () => {
+    function redacted(fields: Record<string, unknown>) {
+      allowMadeUpFields()
+      const log = captureLog({ level: 'trace' })
+      createLogger().emit('publish.tokens.created', 'm', fields)
+      return log.events[0].fields
+    }
+
+    it('redacts every spelling and suffix of a credential key', () => {
+      const keys = [
+        'session_id',
+        'Session-Id',
+        'policySessionId',
+        'secret',
+        'clientSecret',
+        'client_secret',
+        'secretKey',
+        'secret_access_key',
+        'AWS_SECRET_ACCESS_KEY',
+        'refresh_token',
+        'accessToken',
+        'idToken',
+        'vpToken',
+        'bearerToken',
+        'x-api-key',
+        'private_key',
+        'passphrase',
+        'setCookie',
+        'credentials',
+        'credential',
+        'presentation',
+        'vpPresentation',
+        'rawTx',
+        'signed_tx',
+        'consumer_signature',
+        'proxyAuthorization',
+        'mnemonic',
+        'sid',
+        'SID',
+        'nonce',
+        'token'
+      ]
+      const fields = redacted(
+        Object.fromEntries(keys.map((key) => [key, 'value-that-must-not-show']))
+      )
+
+      expect(fields).to.deep.equal(
+        Object.fromEntries(keys.map((key) => [key, '<redacted>']))
+      )
+    })
+
+    it('keeps nonce, token and sid exact, so ids and addresses stay readable', () => {
+      const kept = {
+        decryptNonce: 7,
+        paymentToken: '0xToken',
+        datatokenAddress: '0xdt',
+        orderTxId: '0xorder',
+        accessKeyId: 'AKIDEXAMPLE',
+        consideration: 'sid as part of a word'
+      }
+
+      expect(redacted(kept)).to.deep.equal(kept)
+    })
+
+    it('keeps a code that reads as an error code, and redacts any other', () => {
+      expect(
+        redacted({
+          code: 'SERVER_ERROR',
+          errorCode: 'abc',
+          nested: { code: -32005 },
+          list: [{ code: 'CALL_EXCEPTION' }]
+        })
+      ).to.deep.equal({
+        code: 'SERVER_ERROR',
+        errorCode: 'abc',
+        nested: { code: -32005 },
+        list: [{ code: 'CALL_EXCEPTION' }]
+      })
+      for (const code of ['SplxlOBeZQQYbYS6WxSbIA', 'abc', 4001, '123456'])
+        expect(redacted({ code }).code).to.equal('<redacted>')
+    })
+
+    it("redacts a class instance's own properties, and a URL object to its origin", () => {
+      class Credentials {
+        constructor(
+          readonly accessKeyId: string,
+          readonly secretAccessKey: string
+        ) {}
+      }
+      class Pointer {
+        readonly type = 's3'
+        readonly s3Access = new Credentials('AKIDEXAMPLE', FAKE.s3Secret)
+        readonly endpoint = new URL(FAKE.rpcUrl)
+      }
+
+      expect(
+        redacted({ pointer: new Pointer(), where: new URL(FAKE.rpcUrl) })
+      ).to.deep.equal({
+        pointer: {
+          type: 's3',
+          s3Access: {
+            accessKeyId: 'AKIDEXAMPLE',
+            secretAccessKey: '<redacted>'
+          },
+          endpoint: 'https://rpc.example.org'
+        },
+        where: 'https://rpc.example.org'
+      })
+    })
+
+    it('strips control characters from keys, so a key can neither forge a line nor hide a credential', () => {
+      const fields = redacted({
+        'a\u001b[2J\nb': 1,
+        'session\u0000Id': FAKE.sessionId,
+        ['k'.repeat(300)]: 2
+      })
+
+      expect(Object.keys(fields)).to.deep.equal([
+        'a b',
+        'session Id',
+        `${'k'.repeat(100)}…`
+      ])
+      expect(fields['session Id']).to.equal('<redacted>')
+      const line = formatPretty({
+        time: '',
+        level: 'warn',
+        event: 'publish.tokens.created',
+        component: 'publish',
+        msg: 'm',
+        fields
+      })
+      expect([...line].some((char) => char.charCodeAt(0) < 0x20)).to.equal(
+        false
+      )
+    })
+  })
+
+  describe('errors (fix round)', () => {
+    function error(value: unknown) {
+      const log = captureLog({ level: 'trace' })
+      createLogger().emit('access.order.lookup_failed', 'm', {
+        error: value
+      })
+      return String(log.events[0].fields.error)
+    }
+
+    it('shows the cause, two levels deep, each sanitised, without repeating it', () => {
+      const third = new Error('third level')
+      const second = new Error(
+        `connect ECONNREFUSED at ${FAKE.rpcUrl} sessionId=${FAKE.sessionId}`,
+        { cause: third }
+      )
+      const first = new Error('could not detect network', { cause: second })
+      const deeper = new Error('outer', { cause: first })
+
+      expect(error(first)).to.equal(
+        `could not detect network (cause: connect ECONNREFUSED at https://rpc.example.org sessionId=<redacted>; cause: third level)`
+      )
+      // Two levels at most: `third` is a third level of `deeper`.
+      expect(error(deeper)).to.equal(
+        'outer (cause: could not detect network; cause: connect ECONNREFUSED at https://rpc.example.org sessionId=<redacted>)'
+      )
+      // A cause that says the same adds nothing.
+      expect(
+        error(new Error('timeout', { cause: new Error('timeout') }))
+      ).to.equal('timeout')
+      // A cycle ends.
+      const cyclic = new Error('a') as Error & { cause?: unknown }
+      cyclic.cause = cyclic
+      expect(error(cyclic)).to.equal('a')
+    })
+
+    it('shows a thrown non-Error by its message and code, never [object Object]', () => {
+      expect(
+        error({ code: 'ACTION_REJECTED', message: 'user rejected action' })
+      ).to.equal('ACTION_REJECTED: user rejected action')
+      expect(error({ code: 'oauth-code-xyz', message: 'refused' })).to.equal(
+        'refused'
+      )
+      expect(error({ status: 500, secretAccessKey: FAKE.s3Secret })).to.equal(
+        '{"status":500,"secretAccessKey":"<redacted>"}'
+      )
+      expect(error('plain text')).to.equal('plain text')
+    })
+
+    it("sanitises the error's name", () => {
+      const evil = new Error('m')
+      evil.name = `\u001b[31mEvil\nName ${FAKE.jwt}`
+
+      expect(error(evil)).to.equal('Evil Name <redacted>: m')
+    })
+  })
+
+  describe('emit never throws (fix round)', () => {
+    it('turns fields that cannot be read into fieldsError', () => {
+      const received: LogEvent[] = []
+      configureLogging({ sink: (event) => received.push(event) })
+      const fields = {
+        get nodeUri(): string {
+          throw new Error(`getter failed at ${FAKE.rpcUrl}`)
+        }
+      }
+
+      expect(() =>
+        log.emit('publish.preflight.denies_all', 'still logged', fields)
+      ).not.to.throw()
+      expect(received).to.have.length(1)
+      expect(received[0].msg).to.equal('still logged')
+      expect(received[0].fields).to.deep.equal({
+        fieldsError: 'getter failed at https://rpc.example.org'
+      })
+    })
+
+    it('drops a line stderr refuses', () => {
+      vi.spyOn(process.stderr, 'write').mockImplementation(() => {
+        throw new Error('EPIPE')
+      })
+
+      expect(() =>
+        log.emit('publish.preflight.denies_all', 'lost')
+      ).not.to.throw()
+    })
+  })
+
+  describe("configureLogging's oceanjs option (not active yet)", () => {
+    it("warns once for 'passthrough' or 'silent', and not for 'capture'", () => {
+      const log = captureLog()
+
+      configureLogging({ oceanjs: 'capture' })
+      configureLogging({ oceanjs: 'silent' })
+      configureLogging({ oceanjs: 'silent' })
+      configureLogging({ oceanjs: 'passthrough' })
+
+      expect(
+        log.events.map((event) => [event.event, event.fields.mode])
+      ).to.deep.equal([
+        ['config.oceanjs.not_active', 'silent'],
+        ['config.oceanjs.not_active', 'passthrough']
+      ])
+      expect(log.events[0].msg).to.contain('LoggerInstance.setLevel')
+      expect(getLoggingConfig().oceanjs).to.equal('passthrough')
     })
   })
 
