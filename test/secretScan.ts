@@ -59,6 +59,24 @@ const PATTERNS: [string, (text: string) => boolean][] = [
   ]
 ]
 
+/**
+ * Long-lived credentials among the fixtures: never in a `sensitive` debug event either, only
+ * at `secrets`.
+ */
+const CREDENTIALS: [string, string][] = [
+  ['RPC URL path token', FAKE.rpcPathToken],
+  ['RPC URL query token', FAKE.rpcQueryToken],
+  ['S3 secret key', FAKE.s3Secret],
+  ['S3 secret key', 'read-secret']
+]
+
+/** The long-lived fixture credentials `text` holds; empty when it has none. */
+export function findCredentials(text: string): string[] {
+  return CREDENTIALS.filter(([, secret]) => text.includes(secret)).map(
+    ([name]) => name
+  )
+}
+
 /** The names of the patterns `text` matches; empty when it is clean. */
 export function findSecrets(text: string): string[] {
   return PATTERNS.filter(([, test]) => test(text)).map(([name]) => name)
