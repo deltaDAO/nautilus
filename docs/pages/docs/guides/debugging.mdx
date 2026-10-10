@@ -46,9 +46,17 @@ Nautilus.setDebug({ level: 'off' }) // [!code focus]
 | `sensitive` | raw node, wallet, verifier and RPC answers; session ids and redirect URIs; the verifier's per-policy results with full errors; request payloads with their signatures and nonces; raw signed transactions; presented VP/VC JWTs; storage pointers without their credentials | access, SSI, ordering and indexing problems |
 | `secrets` | everything in `sensitive`, plus long-lived credentials: the RPC URL's token, S3 secret keys, IPFS (Pinata) JWTs, `Authorization` headers | store or RPC authentication problems |
 
-`sensitive` still hides long-lived credentials: an RPC URL reads
-`https://rpc.example.org/v3/<redacted>`. `secrets` must be named explicitly: no other value of
-`NAUTILUS_DEBUG` reaches it.
+`sensitive` still hides long-lived credentials, **best effort, by name and shape**: an RPC URL
+reads `https://rpc.example.org/v3/<redacted>`, and so does any value under a name ending in
+`token`, `key`, `secret`, `password`, `auth`, `cookie`, `jwt` or `credential(s)` (`apiToken`,
+`pinataGatewayToken`, drpc's `dkey`, `S3_SECRET_KEY=`, `PINATA_JWT=`, a `Cookie` header), in
+URLs, objects and text, also in JSON quoted inside JSON. Session-scoped values stay readable
+(`vp_token`, `state`, `sessionId`, `nonce`, `signature`, `id`). A credential under a name
+nautilus does not know, or without a name, still prints: scan the output before you share
+it. A long id in a URL path (20 or more letters and digits, such as a 64-hex compute job id
+without `0x`, an Arweave id or an S3 object key segment) is masked like an API key in a
+path, `https://…/v3/<key>`; the `secrets` tier shows it. `secrets` must be named explicitly:
+no other value of `NAUTILUS_DEBUG` reaches it.
 
 nautilus never holds the signer's private key or mnemonic (your signer does), so neither is
 printed at any tier.
@@ -56,12 +64,21 @@ printed at any tier.
 ## Topics
 
 `node`, `wallet`, `policy`, `rpc`, `order`, `nonce`, `store` and `compute`. Narrow the output
-with `NAUTILUS_DEBUG_TOPICS=policy,wallet` or `topics: ['policy', 'wallet']`.
+with `NAUTILUS_DEBUG_TOPICS=policy,wallet` or `topics: ['policy', 'wallet']`. An unknown topic
+in `NAUTILUS_DEBUG_TOPICS` is ignored with a `config.env.invalid` warning; when none of the
+topics given is known, no topic prints (never all of them).
+
+nautilus's own [log events](/docs/api/nautilus/configureLogging) hand their raw fields to the
+channel too, but only when the event is printed at the current log level: pair
+`NAUTILUS_DEBUG` with `NAUTILUS_LOG_LEVEL=debug` (or `configureLogging({ level: 'debug' })`)
+to see the raw fields of every event.
 
 ## What you see
 
-Each event is one line on stderr, prefixed with its tier and topic, so the lines are easy to
-find, split off and delete:
+Each event is one line on stderr (in a browser, through `console.info`, which consoles show
+by default), prefixed with its tier and topic, so the lines are easy to find, split off and
+delete. A string in an event is cut at 32,768 characters and an event at about 256 KB, after
+the masking:
 
 ```
 [nautilus] WARNING: sensitive debug logging is ON: the output contains session ids, signatures and request data. Don't use it in production, and don't share the output.
@@ -93,7 +110,9 @@ report:
 1. Keep only the lines you need (`grep '^\[nautilus:debug:'` finds them).
 2. Run a secret scan over them, and replace session ids, signatures, nonces and JWTs with
    `<redacted>`. A session id lets anyone read the presentation through the node's passthrough
-   until the verifier forgets it.
+   until the verifier forgets it. Remove raw signed transactions too: anyone can broadcast
+   one that was never mined. And remove presented VP/VC JWTs: they carry the holder's
+   personal data (name, address, registration numbers, whatever the credential states).
 3. Never share `secrets` output. If you captured any, rotate every credential it printed: the
    RPC URL's token, the S3 keys, the IPFS JWT.
 4. Delete the files when you are done.
