@@ -109,6 +109,60 @@ jobs:
         run: npm run typecheck
         working-directory: examples
 
+  # The examples otherwise only typecheck, which misses a command that now throws or
+  # prints the wrong thing. This runs a fixed set of them in-process against the unit
+  # suite's node mock and chain stubs, plus a local stub for the RPC, IPFS and a file
+  # (examples/smoke/smoke.test.ts): a publish, a download, two compute commands
+  # (environments, job status), the gated SSI publish and a revoke. Starting a compute
+  # job, walt.id presentations and real contracts or indexing are not covered here; those
+  # run manually on the dev stack.
+  examples-smoke:
+    name: Examples smoke
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install dependencies
+        uses: ./.github/actions/install-dependencies
+
+      # The examples install nautilus from `src/` through its exports map, which points at
+      # the build (see the Examples job). The smoke itself runs against the source.
+      - name: Build nautilus
+        run: npm run build
+
+      - name: Install examples
+        run: npm ci
+        working-directory: examples
+
+      - name: Run the example commands
+        run: npm run examples:smoke
+
+  # The docs pages carry type-checked `ts twoslash` samples; a sample that no longer
+  # compiles against the API fails the build, so the docs cannot drift from the code.
+  docs:
+    name: Docs
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Build docs
+        run: npm run docs:build
+
   test:
     name: Test
     runs-on: ubuntu-latest
