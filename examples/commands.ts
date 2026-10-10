@@ -72,6 +72,7 @@ import {
   publishAccessDataset,
   publishComputeAlgorithm,
   publishComputeDataset,
+  publishInParallel,
   publishMultiServiceDataset,
   publishSaaSOffer,
   publishSession,
@@ -184,6 +185,12 @@ export const COMMANDS: Record<string, Command> = {
     summary: 'Publish one NFT carrying two services',
     run: publishes(publishMultiServiceDataset)
   },
+  'publish:parallel': {
+    requires: 'store',
+    summary:
+      'Publish three datasets at once (Promise.all) from one key; the nonce guard keeps their nonces apart',
+    run: publishes(publishInParallel)
+  },
   'publish:resume': {
     usesStore: true,
     summary:
@@ -208,6 +215,7 @@ export const COMMANDS: Record<string, Command> = {
           publishCommand.startsWith('ssi:publish-')
         ) ||
         publishCommand === 'publish:resume' ||
+        publishCommand === 'publish:parallel' ||
         publishCommand === 'publish:validate'
       )
         throw new Error(

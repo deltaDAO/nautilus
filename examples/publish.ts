@@ -238,6 +238,82 @@ export async function publishAccessDataset(
   return publishAsset(nautilus, asset)
 }
 
+/**
+ * Three datasets published at once from one key, with `Promise.all`.
+ *
+ * Each publish sends several transactions (NFT with datatoken, metadata), and the three run
+ * concurrently. Before the nonce guard, two of them could take the same nonce and one failed
+ * with only "ocean.js returned no transaction". `Nautilus.create` now wraps the signer: its
+ * transactions go out one at a time with consecutive nonces, and a nonce refusal is
+ * recovered from where that is provably safe. This prints each transaction's nonce, so you
+ * can see they are consecutive. The guard covers one process: run one process per key.
+ */
+export async function publishInParallel(
+  nautilus: Nautilus,
+  networkConfig: NetworkConfig,
+  pricingConfig: { [key: string]: PricingConfigWithoutOwner },
+  owner: string
+) {
+  console.log('Publishing three datasets at once from one key...')
+
+  const assets = [1, 2, 3].map((n) =>
+    new AssetBuilder()
+      .setType('dataset')
+      .setName(`Nautilus-Example: Parallel Dataset ${n}`)
+      .setDescription(DESCRIPTION)
+      .setAuthor('Company Name')
+      .setProvidedBy('Company Name')
+      .setLicense('MIT')
+      .addTags(['nautilus-example'])
+      .setNftTokenName(`Nautilus Example NFT ${n}`)
+      .setNftTokenSymbol('NAUT-EX')
+      .addService(
+        new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+          serviceType: ServiceTypes.ACCESS
+        })
+          .setServiceEndpoint(networkConfig.oceanNodeUri)
+          .setName('Data Access Service')
+          .setTimeout(600)
+          .addFile(EXAMPLE_DATASET)
+          .setPricing(pricingConfig.FREE)
+          .build()
+      )
+      .setOwner(owner)
+      .addCredentialAddresses(CredentialListTypes.ALLOW, allowlist(owner))
+      .build()
+  )
+
+  const options = { waitForIndexer: indexerOptions() }
+  const results = await Promise.allSettled(
+    assets.map((asset) => nautilus.publish(asset, options))
+  )
+
+  const provider = nautilus.getSigner().provider
+  for (const [index, result] of results.entries()) {
+    if (result.status === 'rejected') {
+      // The error names the cause: the RPC's refusal, or a NonceGuardError on `cause`.
+      console.log(
+        `  ${index + 1}: FAILED ${result.reason?.message ?? result.reason}`
+      )
+      continue
+    }
+
+    const { ddo, setMetadataTxReceipt } = result.value
+    const tx = await provider?.getTransaction(setMetadataTxReceipt.hash)
+    recordPublish('publish', result.value, {
+      command: publishSession.command,
+      chainId: publishSession.chainId
+    })
+    console.log(
+      `  ${index + 1}: ${ddo.id} (metadata tx ${setMetadataTxReceipt.hash}, nonce ${tx?.nonce})`
+    )
+  }
+
+  const failed = results.filter((result) => result.status === 'rejected')
+  if (failed.length)
+    throw new Error(`${failed.length} of 3 parallel publishes failed.`)
+}
+
 /** A dataset algorithms can run against, without the algorithm seeing the raw data. */
 export async function publishComputeDataset(
   nautilus: Nautilus,
