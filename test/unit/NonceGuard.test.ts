@@ -1675,4 +1675,42 @@ describe('Nautilus.create: the verification provider', () => {
     const nautilus = await create(BigInt(CHAIN_ID))
     expect(nautilus.getSigner()).to.be.instanceOf(NonceGuardSigner)
   })
+
+  it("must be another RPC than the signer's (security review round 2, n1)", async () => {
+    const rpc = 'http://127.0.0.1:9/v3/FAKERPCTOKENcreate'
+    const options = { staticNetwork: true }
+    const own = new JsonRpcProvider(rpc, CHAIN_ID, options)
+    const sameUrl = new JsonRpcProvider(rpc, CHAIN_ID, options)
+    const other = new JsonRpcProvider(
+      'http://127.0.0.1:9/v3/another',
+      CHAIN_ID,
+      options
+    )
+    const config = {
+      oceanNodeUri: 'https://ocean-node.example.com',
+      nftFactoryAddress: ADDRESS,
+      fixedRateExchangeAddress: ADDRESS,
+      dispenserAddress: ADDRESS
+    }
+    const signer = new Wallet(PRIVATE_KEY).connect(own)
+    try {
+      for (const verificationProvider of [own, sameUrl]) {
+        const error = await failure(
+          Nautilus.create(signer, { verificationProvider, config })
+        )
+        expect(error.message).to.match(
+          /verificationProvider is the signer's own RPC/
+        )
+        expect(error.message).not.to.match(/FAKERPCTOKEN/)
+      }
+
+      const nautilus = await Nautilus.create(signer, {
+        verificationProvider: other,
+        config
+      })
+      expect(nautilus.getSigner()).to.be.instanceOf(NonceGuardSigner)
+    } finally {
+      for (const provider of [own, sameUrl, other]) provider.destroy()
+    }
+  })
 })

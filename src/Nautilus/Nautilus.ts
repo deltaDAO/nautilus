@@ -344,7 +344,9 @@ export interface NautilusOptions
    * A second RPC provider for the chain, asked for the second read before nautilus decides
    * a transaction was never sent: before an order, purchase, approval or escrow payment is
    * sent again after a nonce refusal, and before a stored envelope is removed after a
-   * failed metadata transaction. Default: the signer's own provider, read twice.
+   * failed metadata transaction. Default: the signer's own provider, read twice. It must
+   * be another RPC than the signer's: `create()` refuses the same provider object or the
+   * same URL. Without it, nautilus never sends a transaction that moves value again.
    */
   verificationProvider?: Provider
 }
@@ -629,6 +631,12 @@ export class Nautilus {
     // chain would never know the transaction, which proves nothing.
     const verifier = this.options.verificationProvider
     if (verifier) {
+      // The same RPC twice is one read source, so it proves nothing a second RPC would: a
+      // transaction that moves value would be sent again on the word of one RPC.
+      if (sameRpc(verifier, this.signer.provider))
+        throw new Error(
+          "Nautilus.create: verificationProvider is the signer's own RPC (the same provider, or the same URL). Pass a provider for another RPC of the chain, or leave it out: without it, an order or payment refused for its nonce is never sent again."
+        )
       const verifierChainId = Number((await verifier.getNetwork()).chainId)
       if (verifierChainId !== chainId)
         throw new Error(
@@ -2157,4 +2165,25 @@ export class Nautilus {
   }
 
   // #endregion
+}
+
+/**
+ * Whether two providers are one RPC: the same object, or JSON-RPC providers with the same
+ * URL (ethers' `JsonRpcProvider` exposes it through `_getConnection()`).
+ */
+function sameRpc(a: Provider, b: Provider | null): boolean {
+  if (!b) return false
+  if (a === b) return true
+  const urlOf = (provider: Provider) => {
+    try {
+      const url = (
+        provider as { _getConnection?: () => { url?: unknown } }
+      )._getConnection?.().url
+      return typeof url === 'string' ? new URL(url).href : undefined
+    } catch {
+      return undefined
+    }
+  }
+  const url = urlOf(a)
+  return url !== undefined && url === urlOf(b)
 }
