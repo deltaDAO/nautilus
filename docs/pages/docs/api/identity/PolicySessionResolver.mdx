@@ -52,6 +52,13 @@ const session = await policySessions.resolve({ // [!code focus]
    request is `message.redirectUri`.
 6. Only when the `SSIpolicy` asks for credentials: the provider's `present()`, then
    `checkSessionId`, which must report `verificationResult: true` (else `PolicyDeniedError`).
+   When `present()` throws because the verifier refused the presentation (a
+   `CredentialPresentationError` with `reason: 'verifier-rejected'`, or any other error, from
+   a custom provider), `checkSessionId` is read too, best effort and cut after 15 seconds: if
+   the verifier's record names failed policies, a `PolicyDeniedError` with them, the
+   provider's error as its `cause`; otherwise the provider's error, unchanged. A
+   `CredentialPresentationError` for a step before the verifier is thrown as it is, without
+   the read. Either way nothing is cached.
 7. The session is cached and returned as the payload for the node's `policyServer` slot: a
    presented session in memory only, unless `persistPresentedSessions`.
 
@@ -80,8 +87,16 @@ until the verifier forgets it. Keep session ids out of logs and shared URLs, and
 
 | Error | When |
 | --- | --- |
-| `PolicyDeniedError` | The policy server refused the consumer: a reply with `success: false` and a 4xx (`code`: its status, `reason`: its message, bounded), or the verifier did not accept the presentation (`code` is `undefined`, `reason` names the failed policies, `policyResults` lists each policy's name, outcome and error, never the presentation). Also carries `did`, `serviceId` and `consumerAddress`. |
+| `PolicyDeniedError` | The policy server refused the consumer: a reply with `success: false` and a 4xx (`code`: its status, `reason`: its message, bounded), or the verifier did not accept the presentation (`code` is `undefined`, `reason` names the failed policies as the node reports them, `policyResults` lists each policy's name, outcome and error, never the presentation; `cause` is the provider's error when `present()` threw). Also carries `did`, `serviceId` and `consumerAddress`. |
+| The provider's error | `present()` threw for a step before the verifier, or the verifier's record names no failed policy or cannot be read: for `WaltIdCredentialProvider` a `CredentialPresentationError` with a `reason`. |
 | `OceanNodeError` | Anything else, with the status: the node's own 401 (nonce, signature, "Auth not configured"), its 404 (`Not found`: the asset is not indexed there), its 400 when it cannot reach the policy server, a network error, a timeout, a rate limit or a 5xx. |
 | `Error` | The service asks for a presentation and no credential provider is set. |
+
+`policyResults` come through the node (for a download, the publisher's choice of node), so
+each name and error is cut at 100 characters and stripped of control characters, and at most
+50 are kept, failures first. `reason` lists what fits of the failed policies within its 200
+characters and counts the rest (`; 2 more in policyResults`). A policy's error can quote a value of the presented credential: don't send
+them to a central log. No error carries the session id; `NAUTILUS_DEBUG=sensitive` with the
+`policy` topic shows the verifier's whole record ([debugging](/docs/guides/debugging)).
 
 See [credential-gated assets](/docs/guides/identity).

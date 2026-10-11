@@ -2,6 +2,7 @@ import {
   AssetBuilder,
   type ComputeEnvironment,
   CredentialListTypes,
+  CredentialPresentationError,
   type CredentialProvider,
   type DdoSigner,
   type FileTypes,
@@ -10,6 +11,7 @@ import {
   getServiceByType,
   getServices,
   Nautilus,
+  PolicyDeniedError,
   type PricingConfigWithoutOwner,
   type RequestCredential,
   ServiceBuilder,
@@ -713,7 +715,9 @@ export async function consumeGatedAsset(
   console.log(`Consuming ${getMetadata(asset).name}`)
   console.log('  asset credentials:', JSON.stringify(getCredentials(asset)))
 
-  const result = await nautilus.access({ assetDid, serviceId })
+  const result = await nautilus
+    .access({ assetDid, serviceId })
+    .catch(printRefusal)
 
   console.log('\nDownload URL:', result.url)
   console.log(`  order tx:     ${result.transferTxId}`)
@@ -754,13 +758,13 @@ export async function computeOnGatedDataset(
 
   console.log(`Running compute in ${environment.id} on a gated dataset...`)
 
-  const result = environment.free
-    ? await nautilus.freeCompute({
+  const result = await (environment.free
+    ? nautilus.freeCompute({
         dataset: { did: datasetDid },
         algorithm: { did: algorithmDid },
         computeEnv: environment.id
       })
-    : await nautilus.compute({
+    : nautilus.compute({
         dataset: { did: datasetDid },
         algorithm: { did: algorithmDid },
         computeEnv: environment.id,
@@ -777,10 +781,40 @@ export async function computeOnGatedDataset(
             environment.maxJobDuration || 3600
           ))
       })
+  ).catch(printRefusal)
 
   console.log(`Job started: ${result.jobs[0].jobId}`)
 
   return result.jobs[0]
+}
+
+/**
+ * Prints why a gated asset refused you, then rethrows.
+ *
+ * - `PolicyDeniedError`: the policy server refused your address (`code` is its status), or
+ *   the verifier did not accept the presentation; then `policyResults` names each policy
+ *   that failed, as the node reports it (e.g. `holder-binding: java.lang.NullPointerException`
+ *   for a credential without `sub`).
+ * - `CredentialPresentationError`: the wallet could not present (e.g. `reason` is
+ *   `no-matching-credential`), or the verifier refused and its record names no failed policy
+ *   (`verifier-rejected`).
+ *
+ * A policy's error can quote a value of your credential: print it for yourself, but keep it
+ * out of shared or central logs. Neither error carries the session id; for the raw answers
+ * run with `NAUTILUS_DEBUG=sensitive NAUTILUS_DEBUG_TOPICS=policy,wallet` (local only).
+ */
+function printRefusal(error: unknown): never {
+  if (error instanceof PolicyDeniedError) {
+    console.error(`\nRefused: ${error.reason}`)
+    for (const result of error.policyResults ?? [])
+      if (!result.success)
+        console.error(
+          `  failed: ${[result.credential, result.policy].filter(Boolean).join(' ')}${result.error ? `: ${result.error}` : ''}`
+        )
+  } else if (error instanceof CredentialPresentationError)
+    console.error(`\nCould not present (${error.reason}): ${error.message}`)
+
+  throw error
 }
 
 /** Every resource at its minimum (or 1), as `compute()` requests them by default. */

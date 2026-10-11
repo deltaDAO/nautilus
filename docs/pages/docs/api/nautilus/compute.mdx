@@ -339,9 +339,11 @@ lock as `context.escrowLock`.
   parameters, or a `select` among them declares no usable options
   (`'invalid-declaration'`). `error.did`, `error.serviceId` and `error.field` name the
   input.
-- `PolicyDeniedError`, `ProviderFeeSignatureError` and `ProviderFeeNotAllowedError`, as
-  for [`access`](/docs/api/nautilus/access#throws), and an `Error` when an input asks for a
-  verifiable presentation and no credential provider is set.
+- `PolicyDeniedError`, `CredentialPresentationError`, `ProviderFeeSignatureError` and
+  `ProviderFeeNotAllowedError`, as for [`access`](/docs/api/nautilus/access#throws), and an
+  `Error` when an input asks for a verifiable presentation and no credential provider is
+  set. A refused presentation names the failed policies of the input whose session it was
+  (`error.did`, `error.serviceId`).
 - `EscrowPaymentNotAllowedError`, with `error.reason`:
   - `'unknown-escrow'`: no escrow contract is pinned for the chain: no `config.escrow`, and
     no `EnterpriseEscrow` or `Escrow` in Ocean's address data. Set the chain's
