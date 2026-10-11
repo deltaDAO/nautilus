@@ -14,13 +14,16 @@ credential the verifier would reject for `holder-binding`.
     policies on the asset next to an ungated service. The policy server refused every
     consumer of that service ("SSIpolicy was found, but failed to fetch request
     credentials"). Put the policies on the gated service (`ServiceBuilder.setVcPolicies` /
-    `setVpPolicies`, new);
+    `setVpPolicies`, new). On an edit, clear the asset's lists with
+    `AssetBuilder.setVcPolicies(list, [])` and `setVpPolicies(list, [])` first: an
+    `SSIpolicy` entry left empty is now removed;
   - a VC policy at asset or service level that needs arguments (`allowed-issuer`, `schema`,
     `webhook`, `dynamic`, `credential-status`). The policy server keeps only the name of
     such a policy, so walt.id failed it for every presentation (refusing every consumer).
     Put it in the `policies` of the requested credential instead. Any other VC policy with
-    arguments ran without them: drop the arguments and keep the name. This also applies to
-    an edit of a published asset whose stored VC policies are of this kind;
+    arguments ran without them: drop the arguments and keep the name. An edit of a published
+    asset throws for stored VC policies of the five kinds that need arguments; others are
+    written back as their name;
   - `minimum-credentials` or `maximum-credentials` without an integer `args`, and
     `vp_required_credentials` without `args` of the form `{ required: [...] }`, which
     walt.id fails for every presentation;
@@ -51,7 +54,8 @@ credential the verifier would reject for `holder-binding`.
   - `presentation-definition` with a `jwt_vc_json` or `jwt_vc` request credential
     (`identity.policy.presentation_definition_vc_jwt`);
   - a requested type whose effective per-credential policies (walt.id keeps the last
-    non-empty list per type) have no `allowed-issuer` (`identity.policy.no_issuer_trust`),
+    non-empty list per type, after the policy server drops repeats of an identical request)
+    have no `allowed-issuer` (`identity.policy.no_issuer_trust`),
     and earlier lists that never run (`identity.policy.credential_policies_replaced`).
 
   `AssetBuilder.setSsiPolicyLint('warn' | 'error' | 'off')` chooses whether they are logged
@@ -59,7 +63,8 @@ credential the verifier would reject for `holder-binding`.
   process-wide logger. Service ids and names in findings are sanitised.
 - `SsiPolicyError` (`findings`: every finding, fatal first, each with `code`, `fatal`,
   `where`, `policy`, `credentialType`, `message`; the message lists the first 20),
-  `SsiPolicyFinding`, `SsiPolicyLintMode`, `CredentialRejectedLocallyError` and
+  `SsiPolicyFinding` (its `code` typed as `SsiPolicyFatalCode | SsiPolicyWarningCode`),
+  `SsiPolicyLintMode`, `CredentialRejectedLocallyError` and
   `CredentialRejectedLocallyReason` are exported.
 - `WaltIdCredentialProvider` options `preflight` (default `true`) and `logger`; a `debug`
   event `identity.preflight.skipped` for a credential it cannot decode, with the raw form on
