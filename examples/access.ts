@@ -5,7 +5,8 @@ import {
   getPricingInfo,
   getServiceByType,
   getServices,
-  type Nautilus
+  type Nautilus,
+  OrderCheckError
 } from '@deltadao/nautilus'
 import { ceilingFromEnv } from './limits'
 
@@ -20,22 +21,69 @@ import { ceilingFromEnv } from './limits'
  * a non-zero one only within `maxProviderFee`: these examples set it once in
  * `Nautilus.create` from `MAX_PROVIDER_FEE` (see `limits.ts`), and pay only zero fees
  * without it. A call can pass its own, as `access()` below shows.
+ *
+ * When the RPC fails to look up a previous order (as opposed to finding none), or the lookup
+ * cannot read back over the whole order window, `access()` does not buy a service that
+ * costs anything: it throws an `OrderCheckError` before paying, since a second order could
+ * pay twice. `--order-on-lookup-failure` passes
+ * `orderOnLookupFailure: true`, to buy anyway.
  */
+
+/** Options of the download commands. */
+export type DownloadOptions = {
+  /** Buy even when the previous order could not be checked (may pay twice). */
+  orderOnLookupFailure?: boolean
+}
+
+/**
+ * `access()` stopped before paying because the previous order could not be checked. Nothing
+ * was ordered or paid. The message (printed by `index.ts`) says why and what to do; this
+ * prints the fields a program would act on, then fails the command.
+ */
+function explainOrderCheck(error: unknown): never {
+  if (error instanceof OrderCheckError && error.retryable) {
+    const costs = error.costs
+      .map((cost) => `${cost.amount} ${cost.symbol}`)
+      .join(' + ')
+    console.error(
+      `Not bought (reason: ${error.reason}); a new order would cost ${costs || 'an amount that could not be read'}.`
+    )
+    if (error.reason === 'incomplete')
+      console.error(
+        `  checked the last ${hours(error.checkedHours)} of ${hours(error.windowHours)} hours`
+      )
+    if (error.costs.length)
+      console.error(
+        '  To buy anyway (it may pay twice), add --order-on-lookup-failure.'
+      )
+  }
+  throw error
+}
+
+function hours(value: number | undefined): string {
+  if (value === undefined || Number.isNaN(value)) return 'unknown'
+  return Number.isFinite(value) ? value.toFixed(1) : 'unlimited'
+}
 
 /** Orders the service if needed and prints the download URL. */
 export async function access(
   nautilus: Nautilus,
   assetDid: string,
-  userdata?: { [key: string]: unknown }
+  userdata?: { [key: string]: unknown },
+  options: DownloadOptions = {}
 ) {
-  const result = await nautilus.access({
-    assetDid,
-    userdata,
-    // This call's ceiling, replacing the one set in Nautilus.create. A fee above it, or in
-    // another token, throws a ProviderFeeNotAllowedError before anything is spent, naming
-    // the fee the node asked for.
-    maxProviderFee: ceilingFromEnv('MAX_PROVIDER_FEE') ?? []
-  })
+  const result = await nautilus
+    .access({
+      assetDid,
+      userdata,
+      // This call's ceiling, replacing the one set in Nautilus.create. A fee above it, or in
+      // another token, throws a ProviderFeeNotAllowedError before anything is spent, naming
+      // the fee the node asked for.
+      maxProviderFee: ceilingFromEnv('MAX_PROVIDER_FEE') ?? [],
+      // false by default: an OrderCheckError instead of a possible second payment.
+      orderOnLookupFailure: options.orderOnLookupFailure
+    })
+    .catch(explainOrderCheck)
 
   console.log('Download URL:', result.url)
   console.log(`  service:      ${result.serviceId}`)
@@ -48,8 +96,14 @@ export async function access(
 }
 
 /** Orders and actually fetches the data. */
-export async function download(nautilus: Nautilus, assetDid: string) {
-  const { url } = await nautilus.access({ assetDid })
+export async function download(
+  nautilus: Nautilus,
+  assetDid: string,
+  options: DownloadOptions = {}
+) {
+  const { url } = await nautilus
+    .access({ assetDid, orderOnLookupFailure: options.orderOnLookupFailure })
+    .catch(explainOrderCheck)
 
   const response = await fetch(url)
 

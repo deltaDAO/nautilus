@@ -15,6 +15,7 @@ import {
   accessSpecificService,
   accessWithUserdata,
   checkPrice,
+  type DownloadOptions,
   download
 } from './access'
 import {
@@ -96,6 +97,8 @@ export type Command = {
   summary: string
   /** Positional argument names, for the usage line. Suffix `?` if optional. */
   args?: string[]
+  /** Optional `--flags` the command understands, for the usage line. */
+  flags?: string[]
   /**
    * What the command needs before it runs:
    *
@@ -114,6 +117,29 @@ export type Command = {
   /** `true` when the command builds its own Nautilus with an SSI wallet. */
   identity?: boolean
   run: (ctx: Context, ...args: string[]) => Promise<unknown>
+}
+
+/**
+ * Buy even when the previous order could not be checked on chain (`orderOnLookupFailure`):
+ * without it, a paid download stops with an `OrderCheckError` rather than risk paying twice.
+ */
+const ORDER_ON_LOOKUP_FAILURE = '--order-on-lookup-failure'
+
+/** The arguments that are not `--flags`. */
+export function positional(args: string[]): string[] {
+  return args.filter((arg) => !arg.startsWith('--'))
+}
+
+/** The download commands' options; a misspelt flag fails the command before anything runs. */
+function downloadOptions(args: string[]): DownloadOptions {
+  const unknown = args.filter(
+    (arg) => arg.startsWith('--') && arg !== ORDER_ON_LOOKUP_FAILURE
+  )
+  if (unknown.length)
+    throw new Error(
+      `Unknown option ${unknown.join(', ')}; the only one is ${ORDER_ON_LOOKUP_FAILURE}.`
+    )
+  return { orderOnLookupFailure: args.includes(ORDER_ON_LOOKUP_FAILURE) }
 }
 
 /** Publish helpers all take the same four arguments. */
@@ -369,13 +395,21 @@ export const COMMANDS: Record<string, Command> = {
     role: 'consumer',
     summary: 'Order an asset and return the download URL',
     args: ['did'],
-    run: (ctx, did) => access(ctx.consumer, did)
+    flags: [ORDER_ON_LOOKUP_FAILURE],
+    run: (ctx, ...args) => {
+      const [did] = positional(args)
+      return access(ctx.consumer, did, undefined, downloadOptions(args))
+    }
   },
   'access:download': {
     role: 'consumer',
     summary: 'Order an asset and actually fetch the bytes',
     args: ['did'],
-    run: (ctx, did) => download(ctx.consumer, did)
+    flags: [ORDER_ON_LOOKUP_FAILURE],
+    run: (ctx, ...args) => {
+      const [did] = positional(args)
+      return download(ctx.consumer, did, downloadOptions(args))
+    }
   },
   'access:service': {
     role: 'consumer',
@@ -602,7 +636,11 @@ export const COMMANDS: Record<string, Command> = {
 
 /** The usage line of a command: its name and its arguments. */
 export function formatUsage(name: string, command: Command): string {
-  return [name, ...(command.args ?? []).map((a) => `<${a}>`)].join(' ')
+  return [
+    name,
+    ...(command.args ?? []).map((a) => `<${a}>`),
+    ...(command.flags ?? []).map((flag) => `[${flag}]`)
+  ].join(' ')
 }
 
 /** Arguments a command cannot run without (not `?`-optional, not `...` rest). */
