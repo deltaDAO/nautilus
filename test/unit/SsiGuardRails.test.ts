@@ -646,6 +646,11 @@ describe('SSI policy lint in AssetBuilder.build()', () => {
       SsiPolicyError,
       /needs an integer argument/
     )
+    // walt.id's JsonPrimitive.int refuses a leading '+' (NumberFormatException).
+    expect(vp({ policy: 'minimum-credentials', args: '+1' })).to.throw(
+      SsiPolicyError,
+      /'minimum-credentials' needs an integer argument/
+    )
     for (const args of ['1', '{"required":[{}]}', '{"required":"x"}'])
       expect(vp({ policy: 'vp_required_credentials', args })).to.throw(
         SsiPolicyError,

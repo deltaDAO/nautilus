@@ -3,8 +3,10 @@ export * from './PolicySessionResolver.js'
 export * from './policy.js'
 export {
   SsiPolicyError,
+  type SsiPolicyFatalCode,
   type SsiPolicyFinding,
-  type SsiPolicyLintMode
+  type SsiPolicyLintMode,
+  type SsiPolicyWarningCode
 } from './policyLint.js'
 export {
   CredentialRejectedLocallyError,

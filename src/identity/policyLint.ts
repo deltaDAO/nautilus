@@ -54,6 +54,24 @@ import { isSsiPolicyCredential } from './policy.js'
  */
 export type SsiPolicyLintMode = 'warn' | 'error' | 'off'
 
+/** Codes of findings that throw in every lint mode (see `SsiPolicyFinding.code`). */
+export type SsiPolicyFatalCode =
+  | 'no-request-credentials'
+  | 'vc-policy-arguments'
+  | 'vp-policy-arguments'
+  | 'credential-policy-arguments'
+
+/** Codes of findings that are warnings, each logged as its own event (see `SsiPolicyFinding.code`). */
+export type SsiPolicyWarningCode =
+  | 'no-vc-signature'
+  | 'no-vp-signature'
+  | 'no-minimum-credentials'
+  | 'wildcard-allow'
+  | 'holder-binding'
+  | 'presentation-definition-vc-jwt'
+  | 'no-issuer-trust'
+  | 'credential-policies-replaced'
+
 /** One problem the lint found. */
 export interface SsiPolicyFinding {
   /**
@@ -78,19 +96,7 @@ export interface SsiPolicyFinding {
    * - `credential-policies-replaced`: per-credential policies of a type requested twice that
    *   never run, because walt.id keeps the last non-empty list.
    */
-  code:
-    | 'no-request-credentials'
-    | 'vc-policy-arguments'
-    | 'vp-policy-arguments'
-    | 'credential-policy-arguments'
-    | 'no-vc-signature'
-    | 'no-vp-signature'
-    | 'no-minimum-credentials'
-    | 'wildcard-allow'
-    | 'holder-binding'
-    | 'presentation-definition-vc-jwt'
-    | 'no-issuer-trust'
-    | 'credential-policies-replaced'
+  code: SsiPolicyFatalCode | SsiPolicyWarningCode
   /** `true` for setups that cannot work: these throw whatever the lint mode. */
   fatal: boolean
   /** Where it was found: `'asset'`, or `'service <id or name>'`. */
@@ -151,19 +157,18 @@ const VP_INTEGER_POLICIES = new Set([
 /** Request formats whose generated presentation definition filters on `$.vc.type`. */
 const VC_TYPE_FILTER_FORMATS = new Set(['jwt_vc_json', 'jwt_vc'])
 
-const WARNING_EVENTS: Partial<Record<SsiPolicyFinding['code'], LogEventName>> =
-  {
-    'no-vc-signature': 'identity.policy.no_vc_signature',
-    'no-vp-signature': 'identity.policy.no_vp_signature',
-    'no-minimum-credentials': 'identity.policy.no_minimum_credentials',
-    'wildcard-allow': 'identity.policy.wildcard_allow',
-    'holder-binding': 'identity.policy.holder_binding',
-    'presentation-definition-vc-jwt':
-      'identity.policy.presentation_definition_vc_jwt',
-    'no-issuer-trust': 'identity.policy.no_issuer_trust',
-    'credential-policies-replaced':
-      'identity.policy.credential_policies_replaced'
-  }
+/** The event each warning is logged as: a new warning code fails to compile without one. */
+const WARNING_EVENTS: Record<SsiPolicyWarningCode, LogEventName> = {
+  'no-vc-signature': 'identity.policy.no_vc_signature',
+  'no-vp-signature': 'identity.policy.no_vp_signature',
+  'no-minimum-credentials': 'identity.policy.no_minimum_credentials',
+  'wildcard-allow': 'identity.policy.wildcard_allow',
+  'holder-binding': 'identity.policy.holder_binding',
+  'presentation-definition-vc-jwt':
+    'identity.policy.presentation_definition_vc_jwt',
+  'no-issuer-trust': 'identity.policy.no_issuer_trust',
+  'credential-policies-replaced': 'identity.policy.credential_policies_replaced'
+}
 
 /** The policy server's environment may add policies nautilus cannot see (D4). */
 const OPERATOR_NOTE =
@@ -279,7 +284,9 @@ export function applySsiPolicyLint(
   if (mode === 'off') return
 
   for (const finding of warnings) {
-    const event = WARNING_EVENTS[finding.code]
+    const event = Object.hasOwn(WARNING_EVENTS, finding.code)
+      ? WARNING_EVENTS[finding.code as SsiPolicyWarningCode]
+      : undefined
     if (event)
       logger.emit(event, finding.message, {
         where: finding.where,
@@ -566,7 +573,7 @@ function readInteger(args: unknown): number | undefined {
   const n =
     typeof args === 'number'
       ? args
-      : typeof args === 'string' && /^[+-]?\d+$/.test(args)
+      : typeof args === 'string' && /^-?\d+$/.test(args)
         ? Number(args)
         : Number.NaN
   return Number.isInteger(n) && n >= -(2 ** 31) && n < 2 ** 31 ? n : undefined
