@@ -143,10 +143,10 @@ function urlsBeyondOrigin(text: string): boolean {
 }
 
 /**
- * Whether the tap of `test/setup.ts` checks each event's fields against the catalogue. Set
- * back to `true` before each test.
+ * Whether the tap of `test/setup.ts` checks each event's fields, and its `once`, against
+ * the catalogue. Set back to `true` before each test.
  */
-export const catalogueCheck = { fields: true }
+export const catalogueCheck = { fields: true, once: true }
 
 /**
  * For the rest of the current test, events may carry fields the catalogue does not list:
@@ -154,4 +154,13 @@ export const catalogueCheck = { fields: true }
  */
 export function allowMadeUpFields(): void {
   catalogueCheck.fields = false
+}
+
+/**
+ * For the rest of the current test, events may be emitted with or without `once` whatever
+ * the catalogue says: for tests of the logger itself, which use catalogued events as
+ * stand-ins for any warning.
+ */
+export function allowAnyOnce(): void {
+  catalogueCheck.once = false
 }

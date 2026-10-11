@@ -26,8 +26,10 @@ import {
   withQualifiedJobId
 } from '../../src/compute/jobs.js'
 import { Nautilus } from '../../src/index.js'
+import { type DebugEvent, setDebug } from '../../src/log/debug.js'
 import { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
 import { captureLog, expectThrowsAsync } from '../helpers.js'
+import { FAKE } from '../secretScan.js'
 
 const ADDRESS = '0x0000000000000000000000000000000000000001'
 /** As ocean-node builds them: `0x` and a sha256 for the engine, a sha256 for the job. */
@@ -443,6 +445,169 @@ describe('Nautilus compute jobs', () => {
     expect(url).not.toHaveBeenCalled()
   })
 
+  it('getComputeResult says once per node and job that a job has no result, however often it is asked', async () => {
+    const nautilus = await createNautilus()
+    const failed = statusJob({
+      status: 41,
+      statusText: 'Failed to run algorithm',
+      results: RESULTS.slice(0, 3)
+    })
+    statusAnswers([failed], [failed], [], [])
+    const log = captureLog()
+
+    await nautilus.getComputeResult({ jobId: JOB_ID })
+    await nautilus.getComputeResult({ jobId: JOB_ID })
+    // The same job id on another node is another job.
+    const nodeUri = 'https://other-node.test.invalid'
+    await nautilus.getComputeResult({ jobId: JOB_ID, nodeUri })
+    await nautilus.getComputeResult({ jobId: JOB_ID, nodeUri })
+
+    expect(
+      log.named('compute.result.unavailable').map((event) => event.msg)
+    ).to.deep.equal([
+      "the job has no 'output' result (status 41: Failed to run algorithm); pass resultIndex to read another. Results: " +
+        JSON.stringify(RESULTS.slice(0, 3)),
+      'node https://other-node.test.invalid does not know the job'
+    ])
+  })
+
+  it('getComputeResult says each kind of reason once: a job the node did not know, then one without an output', async () => {
+    const nautilus = await createNautilus()
+    const failed = statusJob({
+      status: 41,
+      statusText: 'Failed to run algorithm',
+      results: RESULTS.slice(0, 3)
+    })
+    statusAnswers([], [], [failed], [failed])
+    const log = captureLog()
+
+    for (let call = 0; call < 4; call++)
+      await nautilus.getComputeResult({ jobId: JOB_ID })
+
+    expect(
+      log.named('compute.result.unavailable').map((event) => event.msg)
+    ).to.deep.equal([
+      'node https://ocean-node.example.com does not know the job',
+      "the job has no 'output' result (status 41: Failed to run algorithm); pass resultIndex to read another. Results: " +
+        JSON.stringify(RESULTS.slice(0, 3))
+    ])
+  })
+
+  it('hands a result list cleaned only of control characters to the debug channel', async () => {
+    const nautilus = await createNautilus()
+    const results = [
+      { filename: 'image\u001b[31m.log', filesize: 10, type: 'imageLog' }
+    ]
+    const failed = statusJob({
+      status: 41,
+      statusText: 'Failed',
+      results: results as never
+    })
+    statusAnswers([failed])
+    captureLog()
+    // The debug banner goes to stderr.
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    const debug: DebugEvent[] = []
+    setDebug({
+      level: 'sensitive',
+      topics: ['compute'],
+      sink: (event) => debug.push(event)
+    })
+
+    await nautilus.getComputeResult({ jobId: JOB_ID })
+
+    expect(debug.map((event) => event.message)).to.deep.equal([
+      'job results before redaction'
+    ])
+    expect(JSON.stringify(debug[0].data)).to.contain('image\\u001b[31m.log')
+  })
+
+  it('reads a megabyte of hostile result names in no time (security regression)', async () => {
+    // Text built to be slow to redact: dotted words (the URL scheme pattern used to
+    // rescan from each one) and `0x` runs (the hex patterns). Only the start is read, and
+    // the list's start is a run of hex with a separator just before the read limit (8,192),
+    // so the word that the cut splits is dropped after a long run.
+    const hostile = [
+      {
+        filename: `${'a'.repeat(8_150)} b${'a.'.repeat(250_000)}`,
+        type: 'imageLog',
+        index: 0
+      },
+      { filename: '0x'.repeat(250_000), type: 'configurationLog', index: 1 }
+    ]
+    const job = statusJob({
+      status: 41,
+      statusText: 'Failed',
+      results: hostile as never
+    })
+    const nautilus = await createNautilus()
+    statusAnswers([job], [job], [job])
+    captureLog()
+    // The debug channel, when a user turns it on, gets the whole list: not timed here.
+    setDebug({ level: 'off' })
+
+    const started = performance.now()
+    await nautilus.getComputeResult({ jobId: JOB_ID })
+    const streamed = (await nautilus
+      .streamComputeResult({ jobId: JOB_ID })
+      .catch((error) => error)) as Error
+    await nautilus.getComputeLogs({ jobId: JOB_ID }).catch(() => undefined)
+    const elapsed = performance.now() - started
+
+    // About 30 ms; 150 ms when the cut word was found by a regular expression.
+    expect(elapsed).to.be.below(100)
+    expect(streamed.message).to.match(
+      /Results: \[.*… \(2 results; getComputeStatus\(\) lists them all\)$/
+    )
+    expect(streamed.message.length).to.be.below(2_000)
+  })
+
+  it('shows no token of a URL with a backslash in its path, in the warning, the errors or the sensitive debug channel', async () => {
+    const results = [
+      {
+        filename: `https://rpc.example.org/x\\y/v3/${FAKE.rpcPathToken}`,
+        filesize: 10,
+        type: 'imageLog',
+        index: 0
+      }
+    ]
+    const job = statusJob({
+      status: 41,
+      statusText: 'Failed',
+      results: results as never
+    })
+    const nautilus = await createNautilus()
+    statusAnswers([job], [job], [job])
+    const log = captureLog()
+    const stderr = vi
+      .spyOn(process.stderr, 'write')
+      .mockImplementation(() => true)
+    const debug: DebugEvent[] = []
+    setDebug({
+      level: 'sensitive',
+      topics: ['compute'],
+      sink: (event) => debug.push(event)
+    })
+
+    await nautilus.getComputeResult({ jobId: JOB_ID })
+    const streamed = (await nautilus
+      .streamComputeResult({ jobId: JOB_ID })
+      .catch((error) => error)) as Error
+
+    const [warning] = log.named('compute.result.unavailable')
+    for (const text of [
+      warning.msg,
+      streamed.message,
+      JSON.stringify(stderr.mock.calls)
+    ])
+      expect(text).not.to.contain(FAKE.rpcPathToken)
+    expect(warning.msg).to.contain(
+      'Results: [{"filename":"https://rpc.example.org"'
+    )
+    expect(debug.length).to.be.greaterThan(0)
+    expect(JSON.stringify(debug)).not.to.contain(FAKE.rpcPathToken)
+  })
+
   it('getComputeResult reads an explicit result of a failed job', async () => {
     const nautilus = await createNautilus()
     statusAnswers([statusJob({ status: 11, results: RESULTS.slice(0, 1) })])
@@ -649,6 +814,93 @@ describe('Nautilus compute jobs', () => {
       /has finished \(status 11: Pulling algorithm image failed\) and has no 'algorithmLog'/
     )
     expect(logs).not.toHaveBeenCalled()
+  })
+
+  it("bounds and cleans the node's results and status text in the warning and the errors; the raw list reaches the debug channel", async () => {
+    // A node that lists results with terminal escapes, a URL with a token and far too
+    // much text: none of it may reach the warning or the thrown errors as it is.
+    const hostile = [
+      {
+        filename: `\u001b[2J\u001b[31mforged\r\n[nautilus] all good https://store.example.org/r?token=${FAKE.rpcQueryToken}`,
+        filesize: 10,
+        type: 'imageLog',
+        index: 0
+      },
+      ...Array.from({ length: 60 }, (_, index) => ({
+        filename: `${'x'.repeat(100)}.log`,
+        filesize: 1,
+        type: 'configurationLog',
+        index: index + 1
+      }))
+    ]
+    const job = statusJob({
+      status: 41,
+      statusText: '\u001b[31mFailed\u001b[0m\nto run',
+      results: hostile as never
+    })
+    const nautilus = await createNautilus()
+    statusAnswers([job], [job], [job], [job])
+    const log = captureLog()
+    const debug: DebugEvent[] = []
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    setDebug({
+      level: 'sensitive',
+      topics: ['compute'],
+      sink: (event) => debug.push(event)
+    })
+
+    await nautilus.getComputeResult({ jobId: JOB_ID })
+    const streamed = (await nautilus
+      .streamComputeResult({ jobId: JOB_ID })
+      .catch((error) => error)) as Error
+    const logs = (await nautilus
+      .getComputeLogs({ jobId: JOB_ID })
+      .catch((error) => error)) as Error
+
+    const [warning] = log.named('compute.result.unavailable')
+    for (const text of [warning.msg, streamed.message, logs.message]) {
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting they are gone
+      expect(text).not.to.match(/[\u0000-\u001f]/)
+      expect(text).not.to.contain(FAKE.rpcQueryToken)
+      expect(text).to.contain('Failed to run')
+      expect(text).to.contain('https://store.example.org')
+      expect(text).not.to.contain('[2J')
+      // The result list is cut (1,000 characters), so the whole text stays within the
+      // logger's 2,000-character bound on a message, which would cut it otherwise.
+      expect(text).to.match(
+        /Results: \[.*… \(61 results; getComputeStatus\(\) lists them all\)$/
+      )
+      expect(text).not.to.contain(
+        `${'x'.repeat(100)}.log","filesize":1,"type":"configurationLog","index":20`
+      )
+      expect(text.length).to.be.below(2_000)
+    }
+    expect(streamed.message).to.match(/no 'output' result/)
+    expect(logs.message).to.match(/no 'algorithmLog' result/)
+
+    // What was cut or cleaned is in the debug channel, as the node sent it: the escapes,
+    // the forged line, every result. The token is a credential, shown only at `secrets`.
+    const raw = JSON.stringify(debug.map((event) => event.data))
+    expect(debug.length).to.be.greaterThan(0)
+    expect(debug.every((event) => event.topic === 'compute')).to.equal(true)
+    expect(debug.every((event) => event.tier === 'sensitive')).to.equal(true)
+    expect(raw).to.contain('\\u001b[2J')
+    expect(raw).to.contain('\\u001b[31mFailed')
+    expect(raw).to.contain('[nautilus] all good')
+    expect(raw).to.contain('"index":60')
+    expect(raw).not.to.contain(FAKE.rpcQueryToken)
+
+    debug.length = 0
+    setDebug({
+      level: 'secrets',
+      topics: ['compute'],
+      sink: (event) => debug.push(event)
+    })
+    await nautilus.getComputeResult({ jobId: JOB_ID })
+    const secrets = debug.filter((event) => event.tier === 'secrets')
+    expect(JSON.stringify(secrets.map((event) => event.data))).to.contain(
+      FAKE.rpcQueryToken
+    )
   })
 
   it('getComputeLogs throws for an unknown job', async () => {

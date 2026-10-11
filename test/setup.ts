@@ -91,7 +91,7 @@ setLogTap((event, _printed, call) => {
     for (const key of Object.keys(event.fields))
       if (!allowed.has(key))
         leaks.push(`${event.event}: field '${key}' is not in the catalogue`)
-  if (call.once !== Boolean(spec.once))
+  if (catalogueCheck.once && call.once !== Boolean(spec.once))
     leaks.push(
       `${event.event}: emitted ${call.once ? 'with' : 'without'} once, but the catalogue says once: ${Boolean(spec.once)}`
     )
@@ -155,6 +155,7 @@ beforeEach(() => {
   if (suiteDebug === 'sensitive' || suiteDebug === 'secrets')
     setDebug({ level: suiteDebug, sink: () => undefined })
   catalogueCheck.fields = true
+  catalogueCheck.once = true
 })
 
 afterAll(() => {

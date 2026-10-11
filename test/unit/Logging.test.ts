@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { LoggerInstance, LogLevel } from '@oceanprotocol/lib'
 import { makeError } from 'ethers'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PolicySessionResolver } from '../../src/identity/PolicySessionResolver.js'
 import { MemorySessionStore } from '../../src/identity/session.js'
 import { processEnv, readLoggingEnv } from '../../src/log/env.js'
@@ -24,7 +24,12 @@ import {
 import { formatPretty } from '../../src/log/sinks.js'
 import { Nautilus } from '../../src/Nautilus/Nautilus.js'
 import { captureLog } from '../helpers.js'
-import { allowMadeUpFields, FAKE, findSecrets } from '../secretScan.js'
+import {
+  allowAnyOnce,
+  allowMadeUpFields,
+  FAKE,
+  findSecrets
+} from '../secretScan.js'
 
 /** A spy on stderr, where the default logger prints, returning the lines. */
 function stderrLines() {
@@ -86,6 +91,13 @@ const LEAKY_MESSAGE = `Failed at ${FAKE.rpcUrl}: signature=${FAKE.signature} ses
 afterEach(() => {
   vi.restoreAllMocks()
   LoggerInstance.setLevel(LogLevel.Error)
+})
+
+// The tests here are of the logger itself: they emit catalogued events (mostly
+// `publish.preflight.denies_all`) as stand-ins for any warning, without the `once` key the
+// real call site passes.
+beforeEach(() => {
+  allowAnyOnce()
 })
 
 describe('secret scan (V b)', () => {
@@ -425,10 +437,12 @@ describe('regressions (V f)', () => {
           )
       })
 
-      log.emit('compute.duration.capped', 'capped', {
-        requested: 9000,
-        ceiling: 3600
-      })
+      log.emit(
+        'compute.duration.capped',
+        'capped',
+        { requested: 9000, ceiling: 3600 },
+        { once: 'environment-1:9000:3600' }
+      )
 
       expect(pinoLike.warn).toHaveBeenCalledWith(
         { event: 'compute.duration.capped', requested: 9000, ceiling: 3600 },
@@ -1064,6 +1078,20 @@ describe('regressions (V f)', () => {
         logger.emit('node.policy_server.empty_url', 'k', {}, { once: `k${i}` })
       logger.emit('node.policy_server.empty_url', 'a again', {}, { once: 'a' })
       expect(own.at(-1)?.msg).to.equal('a again')
+    })
+
+    it('remembers a long once key by its hash: bounded, and still one per key', () => {
+      const own: LogEvent[] = []
+      const logger = createLogger({ sink: (event) => own.push(event) })
+      // A key can hold a node's text (an environment id, an asset name) of any length.
+      const long = (mark: string) => `${mark}${'x'.repeat(100_000)}`
+
+      for (const key of [long('a'), long('a'), long('b')])
+        logger.emit('node.policy_server.empty_url', 'k', {}, { once: key })
+
+      expect(own).to.have.length(2)
+      const shown = (logger as unknown as { shown: Set<string> }).shown
+      for (const key of shown) expect(key.length).to.be.below(300)
     })
   })
 

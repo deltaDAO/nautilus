@@ -41,6 +41,7 @@ import {
   OceanNodeError
 } from '../../src/node/OceanNodeClient.js'
 import {
+  expectedDid,
   maxDecryptableJwsLength,
   maxJwsLengthFor
 } from '../../src/publish/envelope.js'
@@ -79,6 +80,9 @@ import { FAKE } from '../secretScan.js'
 
 const PRIVATE_KEY =
   '0x0123456789012345678901234567890123456789012345678901234567890123'
+/** Another publisher's key (a fixture, as above). */
+const OTHER_PRIVATE_KEY =
+  '0x1123456789012345678901234567890123456789012345678901234567890123'
 
 /** The NFT as `completePublish()` and `edit()` read it from the chain. */
 const nftState = vi.hoisted(() => ({
@@ -266,12 +270,13 @@ async function createNautilus(
     node?: NodeMockOptions
     config?: Record<string, unknown>
     logger?: LoggingOptions | Logger
+    privateKey?: string
   } = {}
 ): Promise<{
   nautilus: Nautilus
   node: NodeMock
 }> {
-  const wallet = new Wallet(PRIVATE_KEY)
+  const wallet = new Wallet(options.privateKey ?? PRIVATE_KEY)
   const signer = wallet.connect({
     getNetwork: async () => ({ chainId: BigInt(CHAIN_ID) }),
     getTransactionCount: async (_address: string, tag: 'pending' | 'latest') =>
@@ -1615,7 +1620,11 @@ describe('policy server that denies every consumer', () => {
       logger
     })
 
+    const other = validAsset()
+    other.ddo.metadata.name = 'Another dataset'
     await first.publish(validAsset())
+    await second.publish(other)
+    // The same asset again, through the other instance: the shared logger warned already.
     await second.publish(validAsset())
 
     expect(
@@ -1623,6 +1632,114 @@ describe('policy server that denies every consumer', () => {
     ).to.have.length(2)
     expect(tenant.map((event) => event.event)).to.include('chain.config.ready')
     expect(global.events).to.deep.equal([])
+  })
+
+  it('warns once per node and asset: the DID on an edit, the name before the mint', async () => {
+    const log = captureLog()
+    const { nautilus } = await createNautilus({ node: { policyServer: true } })
+    const named = (name: string) => {
+      const asset = validAsset()
+      asset.ddo.metadata.name = name
+      return asset
+    }
+    const edited = (name: string) => {
+      const fixture = getAssetFixture()
+      fixture.credentialSubject.metadata.name = name
+      fixture.credentialSubject.credentials = {} as never
+      return new AssetBuilder(fixture).build()
+    }
+
+    // Before the mint there is no DID: the same name warns once.
+    await nautilus.publish(named('Dataset A'))
+    await nautilus.publish(named('Dataset A'))
+    await nautilus.publish(named('Dataset B'))
+    // An edit has its DID, which the key uses, whatever the name.
+    await nautilus.edit(edited('Dataset A'))
+    await nautilus.edit(edited('Renamed'))
+    // completePublish has the NFT, so the DID the node will derive from it: here the
+    // edited asset's, so the same asset, not warned about again whatever its name.
+    expect(expectedDid(NFT_ADDRESS, CHAIN_ID)).to.equal(ASSET_DID)
+    await nautilus.completePublish(NFT_ADDRESS, named('Dataset C'))
+
+    const warnings = log.named('publish.preflight.denies_all')
+    expect(
+      warnings.map((event) => event.did ?? event.fields.name)
+    ).to.deep.equal(['Dataset A', 'Dataset B', ASSET_DID])
+    for (const warning of warnings) {
+      expect(warning.level).to.equal('warn')
+      expect(warning.msg).to.match(DENIES_ALL)
+    }
+  })
+
+  it('keys completePublish by the DID its NFT gives, not by the name', async () => {
+    const log = captureLog()
+    const { nautilus } = await createNautilus({ node: { policyServer: true } })
+
+    await nautilus.completePublish(NFT_ADDRESS, validAsset())
+
+    const [warning] = log.named('publish.preflight.denies_all')
+    expect(warning.did).to.equal(expectedDid(NFT_ADDRESS, CHAIN_ID))
+    expect(warning.fields.name).to.equal(undefined)
+  })
+
+  it("keys the name by the publisher, so another publisher's asset of the same name is warned about", async () => {
+    // Two tenants of one server, sharing the process-wide logger.
+    const log = captureLog()
+    const { nautilus: first } = await createNautilus({
+      node: { policyServer: true }
+    })
+    const { nautilus: second } = await createNautilus({
+      node: { policyServer: true },
+      privateKey: OTHER_PRIVATE_KEY
+    })
+
+    await first.publish(validAsset())
+    await second.publish(validAsset())
+    await second.publish(validAsset())
+
+    expect(log.named('publish.preflight.denies_all')).to.have.length(2)
+  })
+
+  it('takes an endpoint with a trailing slash for the same node', async () => {
+    const log = captureLog()
+    const { nautilus, node } = await createNautilus({
+      node: { policyServer: true }
+    })
+    const asset = validAsset()
+    asset.ddo.services[0].serviceEndpoint = 'https://node.test.invalid/'
+
+    await nautilus.publish(asset)
+
+    expect(
+      log
+        .named('publish.preflight.denies_all')
+        .map((event) => event.fields.endpoint)
+    ).to.deep.equal(['https://node.test.invalid'])
+    expect(node.calls.hasPolicyServer).to.have.length(1)
+  })
+
+  it('warns again for the same asset on another node', async () => {
+    const log = captureLog()
+    const { nautilus: first } = await createNautilus({
+      node: { policyServer: true }
+    })
+    const asset = validAsset()
+
+    await first.publish(asset)
+    // The same asset with its service on a second node (the configured one is asked too,
+    // and was warned about already).
+    const moved = validAsset()
+    moved.ddo.services[0].serviceEndpoint = 'https://second-node.example.org'
+    await first.publish(moved)
+
+    expect(
+      log
+        .named('publish.preflight.denies_all')
+        .map((event) => event.fields.endpoint)
+    ).to.deep.equal([
+      'https://node.test.invalid',
+      'https://second-node.example.org'
+    ])
   })
 
   it('does not warn when no node has a policy server, or says', async () => {
@@ -1856,9 +1973,12 @@ describe('indexer nonce preflight', () => {
     })
 
     await nautilus.publish(validAsset())
+    // The nonce has not moved (the mock answers the same): the same warning, not again.
+    await nautilus.publish(validAsset())
 
-    expect(vi.mocked(writeMetadata)).toHaveBeenCalledTimes(1)
-    const [warning] = log.named('publish.preflight.indexer_nonce_will_stick')
-    expect(warning.msg).to.match(/second decrypt call/)
+    expect(vi.mocked(writeMetadata)).toHaveBeenCalledTimes(2)
+    const warnings = log.named('publish.preflight.indexer_nonce_will_stick')
+    expect(warnings).to.have.length(1)
+    expect(warnings[0].msg).to.match(/second decrypt call/)
   })
 })
