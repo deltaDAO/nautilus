@@ -15,6 +15,7 @@ import { Decimal } from 'decimal.js'
 import { Contract, type Signer } from 'ethers'
 import { debugRaw } from '../log/debug.js'
 import { type Logger, log } from '../log/logger.js'
+import { sanitize } from '../node/messages.js'
 import {
   checkOrder,
   type OrderRequest,
@@ -284,13 +285,13 @@ async function onLookupFailure(
 ): Promise<undefined> {
   const logger = params.logger ?? log
   const failure = classifyLookupFailure(error)
-  const costs = await quote().then(
-    ({ pricing, price }) => costsOfNewOrder(params, pricing, price),
-    (priceError: unknown) => {
+  // A throw while the costs are put together counts as an unreadable price too.
+  const costs = await quote()
+    .then(({ pricing, price }) => costsOfNewOrder(params, pricing, price))
+    .catch((priceError: unknown) => {
       debugRaw('order', 'price read error before redaction', priceError)
       return undefined
-    }
-  )
+    })
 
   const subject: OrderSubject = {
     did: params.did,
@@ -347,12 +348,14 @@ async function costsOfNewOrder(
       )
     })
 
+  // The node's fee, not checked yet (`settleOrder()` checks it after this): its text is
+  // sanitised and bounded before it goes into the message.
   const fee = params.initialized.providerFee as ProviderFeeLike | undefined
   if (isFeeDue(fee) && fee?.providerFeeToken !== undefined) {
     const token = String(fee.providerFeeToken)
     const units = String(fee.providerFeeAmount)
     const amount = await unitsToAmount(signer, token, units).catch(
-      () => `${units} base units`
+      () => `${sanitize(units, MAX_UNITS_LENGTH, 'order')} base units`
     )
     costs.push({ amount, symbol: await symbolOf(signer, token) })
   }
@@ -360,13 +363,17 @@ async function costsOfNewOrder(
   return costs
 }
 
+/** How much of a fee amount the node quoted goes into a message, in base units. */
+const MAX_UNITS_LENGTH = 40
+
 /**
- * Whether an amount is not provably zero: one that cannot be read (`NaN`, not a number)
- * counts as a cost, so a malformed price never makes a paid service look free.
+ * Whether an amount is not provably zero: one that cannot be read (`NaN`, not a number,
+ * empty or missing) counts as a cost, so a malformed price never makes a paid service look
+ * free.
  */
 function notZero(amount: string | undefined): boolean {
   try {
-    return !new Decimal(amount || 0).isZero()
+    return !new Decimal(amount ?? Number.NaN).isZero()
   } catch {
     return true
   }
@@ -388,7 +395,8 @@ async function symbolOf(
   } catch {
     // The symbol is only for the message: the address names the token as well.
   }
-  return `tokens of ${shortHex(token)}`
+  // The token can be the node's (its fee, unchecked here): sanitised and bounded.
+  return `tokens of ${sanitize(shortHex(token), 42, 'order')}`
 }
 
 /** `read`, called at most once; every call gets its result. */
