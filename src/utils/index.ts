@@ -24,11 +24,24 @@ export async function getChainId(signer: Signer): Promise<number> {
   return Number((await signer.provider.getNetwork()).chainId)
 }
 
+/**
+ * The signer's balance of a datatoken.
+ *
+ * @param config the chain config, as `Nautilus.getOceanConfig()` returns it. Without it,
+ * the chain id is read from the signer (the balance needs no contract address from the
+ * config). Either way ocean.js is given the chain, so it does not look a config up for an
+ * undefined network, which it reports as an error ("No config found for given network
+ * 'undefined'").
+ */
 export async function getDatatokenBalance(
   signer: Signer,
-  datatokenAddress: string
+  datatokenAddress: string,
+  config?: Config
 ): Promise<string> {
-  return new Datatoken(signer).balance(
+  const chainConfig =
+    config ?? ({ chainId: await getChainId(signer) } as Config)
+
+  return new Datatoken(signer, chainConfig.chainId, chainConfig).balance(
     datatokenAddress,
     await signer.getAddress()
   )

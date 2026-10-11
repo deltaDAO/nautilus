@@ -56,7 +56,9 @@ export async function editPrice(params: {
 
   const exchange = new FixedRateExchange(
     chainConfig.fixedRateExchangeAddress as string,
-    signer
+    signer,
+    chainConfig.chainId,
+    chainConfig
   )
 
   return confirmTransaction(

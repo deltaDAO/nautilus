@@ -502,7 +502,12 @@ async function orderFixed(
     return { transferTxId: receipt.hash, reused: false }
   }
 
-  const exchange = new FixedRateExchange(route.exchangeAddress, signer)
+  const exchange = new FixedRateExchange(
+    route.exchangeAddress,
+    signer,
+    request.config.chainId,
+    request.config
+  )
 
   await confirm(
     'buyDatatokens',
@@ -541,7 +546,12 @@ async function orderFree(
     return { transferTxId: receipt.hash, reused: false }
   }
 
-  const dispenser = new Dispenser(route.dispenserAddress, signer)
+  const dispenser = new Dispenser(
+    route.dispenserAddress,
+    signer,
+    request.config.chainId,
+    request.config
+  )
 
   await confirm(
     'dispense',
