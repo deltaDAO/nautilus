@@ -40,8 +40,9 @@ import {
 import { processEnv, readDebugEnv } from '../../src/log/env.js'
 import type { DebugEvent, DebugTopic } from '../../src/log/index.js'
 import { log, resetLogging } from '../../src/log/logger.js'
+import { redactFields } from '../../src/log/redact.js'
 import { Nautilus } from '../../src/Nautilus/index.js'
-import { sanitize } from '../../src/node/messages.js'
+import { redactSecrets, sanitize } from '../../src/node/messages.js'
 import {
   OceanNodeClient,
   type OceanNodeError,
@@ -1221,5 +1222,108 @@ describe('fix-round controls', () => {
     expect(events.map((event) => event.message)).to.include(
       'checkSessionId after the failed presentation failed'
     )
+  })
+})
+
+describe('round-2 fixes', () => {
+  /** Key names built from prefixes and credential (and readable) endings. */
+  const NAMES = [
+    '',
+    'api',
+    'access',
+    'x-',
+    'client',
+    'master',
+    'db_',
+    'aws_',
+    'Account',
+    'storage',
+    'pinata_',
+    'session',
+    'auth',
+    'vp_',
+    'public',
+    'object',
+    'status',
+    'exit',
+    'otp',
+    'encryption',
+    'signing',
+    'X-Amz-',
+    'd',
+    'write'
+  ].flatMap((prefix) =>
+    [
+      'key',
+      'Key',
+      'auth',
+      'Auth',
+      'token',
+      'secret',
+      'password',
+      'code',
+      'sig',
+      'signature',
+      'credential',
+      'credentials',
+      'cookie',
+      'jwt',
+      'id',
+      'sessionId',
+      'privateKey',
+      'Security-Token',
+      'nonce'
+    ].map((ending) => `${prefix}${ending}`)
+  )
+
+  it('logs and errors hide every key the sensitive tier hides (dkey, sig, encryptionKey, AccountKey, apiAuth, x-auth, …)', () => {
+    const value = 'FAKEsupersetQ7m2Lx9pVt4'
+    const narrower: string[] = []
+    for (const key of [...NAMES, 'x-auth', 'hmacKey', 'signingKey']) {
+      for (const text of [
+        `${key}=${value}`,
+        `${key}: ${value}`,
+        `"${key}": "${value}"`,
+        `{\\"${key}\\":\\"${value}\\"}`,
+        `'${key}': '${value}'`
+      ])
+        if (
+          !maskText(text).includes(value) &&
+          (sanitize(text, 5000, null).includes(value) ||
+            redactSecrets(text).includes(value))
+        )
+          narrower.push(text)
+      for (const entry of [value, { inner: value }])
+        if (
+          JSON.stringify(maskCredentials({ [key]: entry })) !==
+            JSON.stringify({ [key]: entry }) &&
+          JSON.stringify(redactFields({ [key]: entry })).includes(value)
+        )
+          narrower.push(`field ${key}`)
+    }
+    expect(narrower).to.deep.equal([])
+
+    // The names the round-2 reviews found printing in logs and errors.
+    for (const key of [
+      'dkey',
+      'sig',
+      'accessKey',
+      'encryptionKey',
+      'signingKey',
+      'AccountKey',
+      'apiAuth',
+      'x-auth'
+    ]) {
+      expect(redactSecrets(`${key}=${value}`), key).to.equal(
+        `${key}=<redacted>`
+      )
+      expect(redactFields({ [key]: value }), key).to.deep.equal({
+        [key]: '<redacted>'
+      })
+    }
+    // Public keys and an object key stay readable.
+    expect(
+      redactFields({ key: 'ddo/a.json', publicKey: '0x02ab', objectKey: 'k' })
+    ).to.deep.equal({ key: 'ddo/a.json', publicKey: '0x02ab', objectKey: 'k' })
   })
 })

@@ -739,7 +739,7 @@ describe('regressions (V f)', () => {
       })
     })
 
-    it('applies the code rule to every …code key, keeping an HTTP status for statusCode', () => {
+    it('applies the code rule to `code` and one-time codes, and keeps every other …code key', () => {
       expect(
         redacted({
           errorCode: 'ECONNREFUSED',
@@ -747,11 +747,20 @@ describe('regressions (V f)', () => {
           rpcCode: -32603,
           statusCode: 404,
           httpStatusCode: '503',
-          authCode: 'SERVER_ERROR',
+          bigStatusCode: 999,
           otherCode: 404,
+          exitCode: 0,
+          bytecode: '0x6080604052',
+          opcode: 'PUSH1',
+          countryCode: 'DE',
+          authCode: 'SERVER_ERROR',
           code: 'JBSWY3DPEHPK3PXP',
           verifyCode: 'abc',
-          bigStatusCode: 999
+          otpCode: 'JBSWY3DP',
+          recoveryCode: 'abcd-efgh',
+          user_code: 'WDJB-MJHT',
+          tx_code: 493536,
+          codeHash: 'kept'
         })
       ).to.deep.equal({
         errorCode: 'ECONNREFUSED',
@@ -759,12 +768,21 @@ describe('regressions (V f)', () => {
         rpcCode: -32603,
         statusCode: 404,
         httpStatusCode: '503',
+        bigStatusCode: 999,
+        otherCode: 404,
+        exitCode: 0,
+        bytecode: '0x6080604052',
+        opcode: 'PUSH1',
+        countryCode: 'DE',
         // Every suffix rule wins over the code rule.
         authCode: '<redacted>',
-        otherCode: '<redacted>',
         code: '<redacted>',
         verifyCode: '<redacted>',
-        bigStatusCode: '<redacted>'
+        otpCode: '<redacted>',
+        recoveryCode: '<redacted>',
+        user_code: '<redacted>',
+        tx_code: '<redacted>',
+        codeHash: 'kept'
       })
     })
 

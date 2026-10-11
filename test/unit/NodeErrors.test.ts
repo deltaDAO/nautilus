@@ -1007,7 +1007,7 @@ describe("the node's text in a message", () => {
     }
   })
 
-  it('keeps a token address, an error code and an HTTP status, and redacts the rest', () => {
+  it('keeps a token address, an error code, a status and other …code keys, and redacts the rest', () => {
     const address = '0x1B3fC2A9e4d5E6f708192a3b4C5d6E7f80912a3B'
     for (const [text, expected] of [
       [`paymentToken=${address}`, `paymentToken=${address}`],
@@ -1016,7 +1016,16 @@ describe("the node's text in a message", () => {
       ['code=TIMEOUT code=CANCELLED', 'code=TIMEOUT code=CANCELLED'],
       ['errorCode: ECONNREFUSED', 'errorCode: ECONNREFUSED'],
       ['statusCode: 503', 'statusCode: 503'],
-      ['statusCode: 777', 'statusCode: <redacted>'],
+      ['statusCode: 777', 'statusCode: 777'],
+      // Only `code` and one-time codes are secret: an exit code or bytecode stays readable.
+      [
+        'exitCode=0 bytecode: 0x6080604052',
+        'exitCode=0 bytecode: 0x6080604052'
+      ],
+      [
+        'otpCode=JBSWY3DP recoveryCode: abcd-efgh',
+        'otpCode=<redacted> recoveryCode: <redacted>'
+      ],
       // An upper-case base32 one-time code is not an error code.
       ['code=JBSWY3DPEHPK3PXP', 'code=<redacted>'],
       ['otp: 123456, pin: 1234', 'otp: <redacted>, pin: <redacted>'],
