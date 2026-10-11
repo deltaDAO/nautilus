@@ -1,6 +1,7 @@
 import {
   AssetBuilder,
   type ComputeEnvironment,
+  type CredentialAttributeRequirement,
   CredentialListTypes,
   type CredentialProvider,
   CredentialRejectedLocallyError,
@@ -417,6 +418,8 @@ export async function publishGatedDataset(
   options: {
     /** Also require `holder-binding`: only for `ssi:publish-holder-binding`. */
     holderBinding?: boolean
+    /** Attributes the credential must have, e.g. its country (`ssi:publish-gated-de`). */
+    attributes?: CredentialAttributeRequirement[]
   } = {}
 ) {
   const issuers = trustedIssuers()
@@ -441,7 +444,7 @@ export async function publishGatedDataset(
     .setDatatokenNameAndSymbol('Gated Access Token', 'GAT')
     .build()
 
-  const asset = new AssetBuilder()
+  const builder = new AssetBuilder()
     .setType('dataset')
     .setName('Nautilus-Example: Credential-Gated Dataset')
     .setDescription(
@@ -455,9 +458,14 @@ export async function publishGatedDataset(
     // The gate that binds access to an account; the policy server refuses every address
     // that is not on it (see allowlist() in nautilus.ts).
     .addCredentialAddresses(CredentialListTypes.ALLOW, allowlist(owner))
-    .addRequestCredentials(CredentialListTypes.ALLOW, [
-      requestCredential(credentialType, issuers)
-    ])
+    // Issuer trust on the requested credential: the same policy as requestCredential().
+    .trustIssuers(credentialType, issuers)
+
+  // Attribute checks go on the same request credential: walt.id keeps one policy list per type.
+  if (options.attributes?.length)
+    builder.requireCredentialAttributes(credentialType, options.attributes)
+
+  const asset = builder
     .setVcPolicies(CredentialListTypes.ALLOW, GATE_VC_POLICIES)
     .setVpPolicies(
       CredentialListTypes.ALLOW,
@@ -508,6 +516,52 @@ export async function publishHolderBindingDataset(
 
   console.log(
     `\nConsume it: npm start -- ssi:consume ${result.ddo.id}\n  A ${credentialType} credential without 'sub', or with another DID's, is refused before anything is presented.`
+  )
+
+  return result
+}
+
+/**
+ * Publishes the gate of `publishGatedDataset` with an attribute requirement: only credentials
+ * whose `gx:legalAddress.gx:countryCode` is `countryCode` (default `DE`), e.g. Gaia-X
+ * participants from Germany, from a trusted issuer.
+ *
+ * `requireCredentialAttributes` writes walt.id's per-credential `schema` policy next to the
+ * `allowed-issuer` of `trustIssuers`. A consumer whose credential has another country (or
+ * none) is refused by `WaltIdCredentialProvider` before anything is presented, ordered or
+ * paid (`CredentialRejectedLocallyError`, `reason: 'attribute-mismatch'`).
+ *
+ * Known limitation: like issuer trust, the attribute check runs only on presented credentials
+ * of the requested type. A hand-built presentation with a self-issued credential of another
+ * type skips both, so the address allow list stays the gate that holds.
+ */
+export async function publishCountryGatedDataset(
+  nautilus: Nautilus,
+  networkConfig: NetworkConfig,
+  pricingConfig: { [key: string]: PricingConfigWithoutOwner },
+  owner: string,
+  countryCode = 'DE',
+  credentialType = 'gx:LegalPerson'
+) {
+  console.log(
+    `Requiring credentialSubject.gx:legalAddress.gx:countryCode = ${countryCode}`
+  )
+
+  const result = await publishGatedDataset(
+    nautilus,
+    networkConfig,
+    pricingConfig,
+    owner,
+    credentialType,
+    {
+      attributes: [
+        { path: ['gx:legalAddress', 'gx:countryCode'], equals: countryCode }
+      ]
+    }
+  )
+
+  console.log(
+    `\nConsume it: npm start -- ssi:consume ${result.ddo.id}\n  A ${credentialType} credential with another country, or none, is refused before anything is presented.\n  Not access control against a hand-built presentation of another type: the address allow list is.`
   )
 
   return result
@@ -785,7 +839,17 @@ export async function consumeGatedAsset(
   console.log(`Consuming ${getMetadata(asset).name}`)
   console.log('  asset credentials:', JSON.stringify(getCredentials(asset)))
 
-  const result = await nautilus.access({ assetDid, serviceId })
+  let result: Awaited<ReturnType<Nautilus['access']>>
+  try {
+    result = await nautilus.access({ assetDid, serviceId })
+  } catch (error) {
+    // Refused before presenting: holder-binding, or the attributes the gate requires.
+    if (error instanceof CredentialRejectedLocallyError)
+      console.log(
+        `\nRefused before presenting (${error.policy}, ${error.reason}${error.path ? `, ${error.path.join('.')}` : ''}): nothing was ordered or paid.`
+      )
+    throw error
+  }
 
   console.log('\nDownload URL:', result.url)
   console.log(`  order tx:     ${result.transferTxId}`)

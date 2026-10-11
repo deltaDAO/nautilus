@@ -455,6 +455,31 @@ describe('example commands', () => {
     }
   })
 
+  it('ssi:publish-gated-de publishes issuer trust, then the country schema, without a warning', async () => {
+    const events: LogEvent[] = []
+    Nautilus.configureLogging({ sink: (event) => events.push(event) })
+
+    try {
+      const out = await run('ssi:publish-gated-de')
+
+      expect(out).toContain(
+        String.raw`{\"policy\":\"allowed-issuer\",\"args\":[\"did:web:issuer.example\"]}`
+      )
+      expect(out).toContain(String.raw`\"gx:countryCode\":{\"const\":\"DE\"}`)
+      expect(out.indexOf('allowed-issuer')).toBeLessThan(
+        out.indexOf(String.raw`\"policy\":\"schema\"`)
+      )
+      expect(out).toContain('npm start -- ssi:consume did:ope:')
+      expect(
+        events
+          .filter((event) => event.level === 'warn')
+          .map((event) => event.event)
+      ).toEqual([])
+    } finally {
+      Nautilus.configureLogging({ sink: undefined })
+    }
+  })
+
   it('ssi:publish-holder-binding publishes and warns about holder-binding at build', async () => {
     const events: LogEvent[] = []
     Nautilus.configureLogging({ sink: (event) => events.push(event) })

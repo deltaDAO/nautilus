@@ -417,8 +417,8 @@ is one value — a policy-server session id — which it then carries into the d
 3. Optionally pin them with `SSI_WALLET_ID`, `SSI_WALLET_KEY_ID` and `SSI_WALLET_DID`.
 4. Set `SSI_TRUSTED_ISSUERS` to the DIDs of the issuers whose credentials your gates accept,
    comma-separated (e.g. `did:web:delta-dao.com`). The commands that publish a gate
-   (`ssi:publish-gated`, `ssi:publish-gated-compute`, `ssi:publish-partial`, `ssi:round-trip`,
-   `ssi:publish-holder-binding`, `ssi:holder-binding`)
+   (`ssi:publish-gated`, `ssi:publish-gated-de`, `ssi:publish-gated-compute`,
+   `ssi:publish-partial`, `ssi:round-trip`, `ssi:publish-holder-binding`, `ssi:holder-binding`)
    refuse to run without it, or with an entry that is not a DID (`did:<method>:<id>`).
 5. Run `npm start -- ssi:round-trip` to publish a gated dataset and consume it in one go.
    Against the local dev stack, also set `SSI_ALLOW_INSECURE_TRANSPORT=true`: its policy
@@ -482,6 +482,27 @@ it, and with a credential without `sub` (a Gaia-X `vc+jwt`, a URL subject) the c
 refused **before anything is presented** with a `CredentialRejectedLocallyError`
 (`policy: 'holder-binding'`, `reason: 'no-sub'`). Neither check stops a hand-built
 presentation of another type (the limitation above).
+
+**Requiring credential attributes.** Access can also depend on what the credential says.
+`npm start -- ssi:publish-gated-de` publishes the gate above for `gx:LegalPerson` credentials
+whose `gx:legalAddress.gx:countryCode` is `DE` (pass another country code, and optionally a
+credential type, as arguments):
+
+```ts
+assetBuilder
+  .trustIssuers('gx:LegalPerson', ['did:web:delta-dao.com'])
+  .requireCredentialAttributes('gx:LegalPerson', [
+    { path: ['gx:legalAddress', 'gx:countryCode'], equals: 'DE' }
+  ])
+```
+
+`requireCredentialAttributes` writes walt.id's per-credential `schema` policy, `trustIssuers`
+its `allowed-issuer`, both on the one request credential of that type (walt.id keeps one
+policy list per type). A consumer whose credential has another country, or none, is refused
+**before anything is presented** (`CredentialRejectedLocallyError`, `policy: 'schema'`,
+`reason: 'attribute-mismatch'`); `ssi:consume` prints the refused attribute's path, never its
+value. Like issuer trust, the check runs only on credentials of the requested type, so it does
+not stop a hand-built presentation of another type (the limitation above).
 
 Gating also works per service, so an asset can offer a preview that needs no credential
 (allow-listed accounts only) and a full service that also requires a credential — see

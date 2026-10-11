@@ -53,6 +53,7 @@ import {
   connectSsiWallet,
   consumeGatedAsset,
   explainCredentialFailure,
+  publishCountryGatedDataset,
   publishGatedComputeDataset,
   publishGatedDataset,
   publishHolderBindingDataset,
@@ -520,6 +521,32 @@ export const COMMANDS: Record<string, Command> = {
         identity.networkConfig,
         identity.pricingConfig,
         identity.owner,
+        credentialType
+      )
+    }
+  },
+  'ssi:publish-gated-de': {
+    usesStore: true,
+    summary:
+      'Publish a gated dataset that requires gx:legalAddress.gx:countryCode = DE (or the given country) from a trusted issuer',
+    args: ['countryCode?', 'credentialType?'],
+    requires: 'none',
+    identity: true,
+    run: async (
+      _ctx,
+      countryCode = 'DE',
+      credentialType = 'gx:LegalPerson'
+    ) => {
+      // Before anything is sent: a gate with a malformed issuer would refuse everyone.
+      trustedIssuers()
+      const identity = await setupWithIdentity({ withRemoteStore: true })
+
+      return publishCountryGatedDataset(
+        identity.nautilus,
+        identity.networkConfig,
+        identity.pricingConfig,
+        identity.owner,
+        countryCode,
         credentialType
       )
     }
