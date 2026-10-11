@@ -1,0 +1,921 @@
+/**
+ * A rejected presentation (N3 of the beta.2 run): the wallet's 400 answer carries the
+ * verifier's error page, `…/error?id=<policy-server session id>`, and says only
+ * "Presentation failed". nautilus keeps the wallet's message alone, asks the verifier's
+ * record which policy failed, and names it.
+ *
+ * The wallet is the real `WaltIdHttpWallet` against a stubbed `fetch`, the provider the real
+ * `WaltIdCredentialProvider`, the resolver the real `PolicySessionResolver`; the node is a
+ * stub, except where the real `OceanNodeClient` reads a hostile verifier record.
+ */
+
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { CredentialProvider } from '../../src/identity/CredentialProvider.js'
+import { PolicySessionResolver } from '../../src/identity/PolicySessionResolver.js'
+import { addRequestCredentials } from '../../src/identity/policy.js'
+import { MemorySessionStore } from '../../src/identity/session.js'
+import {
+  CredentialPresentationError,
+  WaltIdCredentialProvider
+} from '../../src/identity/WaltIdProvider.js'
+import {
+  WaltIdHttpWallet,
+  type WaltIdWallet
+} from '../../src/identity/waltid/client.js'
+import { redactSecrets } from '../../src/node/messages.js'
+import {
+  OceanNodeClient,
+  PolicyDeniedError,
+  PolicyServerAction,
+  type PolicySessionCheck
+} from '../../src/node/OceanNodeClient.js'
+import {
+  CHAIN_ID,
+  getAssetFixture,
+  OWNER_ADDRESS,
+  SERVICE_ID
+} from '../fixtures/Asset.js'
+import { FAKE } from '../secretScan.js'
+
+const NODE = 'https://node.test.invalid'
+const SID = FAKE.sessionId
+const VERIFIER = 'verifier.internal.test.invalid'
+/** walt.id's answer when the verifier refused the presentation (`ExchangeController`). */
+const VERIFIER_400 = JSON.stringify({
+  redirectUri: `http://${VERIFIER}:7003/error?id=${SID}&state=${SID}`,
+  errorMessage: 'Presentation failed - redirecting to error page'
+})
+/** The verifier's record of the session: only `holder-binding` failed, on a credential without `sub`. */
+const HOLDER_BINDING_NPE: PolicySessionCheck = {
+  verified: false,
+  policyResults: [
+    {
+      credential: 'VerifiablePresentation',
+      policy: 'signature',
+      success: true
+    },
+    {
+      credential: 'VerifiablePresentation',
+      policy: 'holder-binding',
+      success: false,
+      error: 'java.lang.NullPointerException'
+    },
+    { credential: 'VerifiableId', policy: 'signature', success: true }
+  ]
+}
+
+/** A real HTTP wallet whose `usePresentationRequest` is answered with `body`. */
+function httpWallet(status: number, body: string) {
+  return new WaltIdHttpWallet({
+    apiUrl: 'https://wallet.test.invalid',
+    fetchImpl: (async () => new Response(body, { status })) as typeof fetch
+  })
+}
+
+/** A wallet that holds a `VerifiableId` and presents through `http`. */
+function walletPresentingThrough(http: WaltIdHttpWallet): WaltIdWallet {
+  return {
+    authenticate: async () => ({ token: 'session-token' }),
+    isSessionValid: async () => true,
+    logout: async () => undefined,
+    listWallets: async () => [{ id: 'wallet-1' }],
+    listKeys: async () => [],
+    listDids: async () => [{ did: 'did:key:holder' }],
+    sign: async () => 'jwt',
+    matchCredentials: async () => [
+      {
+        id: 'credential-1',
+        parsedDocument: { type: ['VerifiableCredential', 'VerifiableId'] }
+      }
+    ],
+    unmatchedCredentials: async () => [],
+    resolvePresentationRequest: async () => 'openid4vp://resolved',
+    usePresentationRequest: http.usePresentationRequest.bind(http)
+  }
+}
+
+/** An asset whose `SSIpolicy` asks for a `VerifiableId`. */
+function ssiAsset() {
+  const asset = getAssetFixture()
+  asset.credentialSubject.credentials = addRequestCredentials(
+    asset.credentialSubject.credentials as never,
+    'allow' as never,
+    [{ type: 'VerifiableId', format: 'jwt_vc_json' }]
+  ) as never
+  return asset
+}
+
+/**
+ * A node with a policy server that opens session `SID` and answers `checkSessionId` with
+ * `check` (or throws it).
+ */
+function policyNode(check: PolicySessionCheck | Error) {
+  const calls = { initiate: 0, checked: [] as string[] }
+  const openid4vp = `openid4vp://authorize?${new URLSearchParams({
+    response_type: 'vp_token',
+    state: SID,
+    response_mode: 'direct_post',
+    presentation_definition_uri: `https://ps.test.invalid/pd/${SID}`,
+    response_uri: `https://ps.test.invalid/verify/${SID}`
+  })}`
+
+  const node = {
+    nodeUri: NODE,
+    policySessionAddress: (address: string) => address,
+    hasPolicyServer: async () => true,
+    initializePolicyVerification: async () => {
+      calls.initiate++
+      return {
+        success: true,
+        httpStatus: 200,
+        message: { sessionId: SID, redirectUri: openid4vp }
+      }
+    },
+    checkPolicySession: async (sessionId: string) => {
+      calls.checked.push(sessionId)
+      if (check instanceof Error) throw check
+      return check
+    },
+    policyServerPassthrough: async (action: { action?: string }) =>
+      action.action === PolicyServerAction.GET_PD
+        ? {
+            message: {
+              id: 'definition',
+              input_descriptors: [
+                {
+                  id: 'VerifiableId',
+                  constraints: {
+                    fields: [
+                      {
+                        path: ['$.vc.type'],
+                        filter: { type: 'string', pattern: 'VerifiableId' }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        : undefined
+  } as unknown as OceanNodeClient
+
+  return { node, calls }
+}
+
+function waltIdProvider(node: OceanNodeClient, wallet: WaltIdWallet) {
+  return new WaltIdCredentialProvider(node, {
+    wallet,
+    signer: { getAddress: async () => OWNER_ADDRESS } as never
+  })
+}
+
+function resolve(node: OceanNodeClient, resolver: PolicySessionResolver) {
+  return resolver.resolve({
+    node,
+    asset: ssiAsset(),
+    serviceId: SERVICE_ID,
+    consumerAddress: OWNER_ADDRESS
+  })
+}
+
+/** Everything an error carries that a caller could log: message, fields, and its causes. */
+function everything(error: unknown): string {
+  const parts: string[] = []
+  let current = error as Record<string, unknown> | undefined
+  for (let depth = 0; current && depth < 10; depth++) {
+    parts.push(
+      String(current.message),
+      String(current.stack),
+      JSON.stringify({
+        details: current.details,
+        reason: current.reason,
+        policyResults: current.policyResults
+      })
+    )
+    current = current.cause as Record<string, unknown> | undefined
+  }
+  return parts.join('\n')
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
+
+describe("the wallet's 400 answer to a presentation", () => {
+  it('keeps only the errorMessage: no redirect URI, session id or verifier host', async () => {
+    const result = await httpWallet(400, VERIFIER_400).usePresentationRequest(
+      'wallet-1',
+      'did:key:holder',
+      'openid4vp://resolved',
+      ['credential-1'],
+      'session-token'
+    )
+
+    expect(result).to.deep.equal({
+      errorMessage: 'Presentation failed - redirecting to error page',
+      rejectedBy: 'verifier'
+    })
+  })
+
+  it("reads a 400 without a redirectUri as the wallet's own failure", async () => {
+    const result = await httpWallet(
+      400,
+      JSON.stringify({ errorMessage: 'No DID to use supplied' })
+    ).usePresentationRequest('w', 'did', 'req', ['c'], 'session-token')
+
+    expect(result).to.deep.equal({
+      errorMessage: 'No DID to use supplied',
+      rejectedBy: 'wallet'
+    })
+  })
+
+  it('redacts and bounds the errorMessage, and keeps nothing of a body that is not JSON', async () => {
+    const hostile = await httpWallet(
+      400,
+      JSON.stringify({
+        redirectUri: null,
+        errorMessage: `\u001b[31mfailed\u001b[0m at https://${VERIFIER}/error?id=${SID} ${FAKE.jwt} ${'x'.repeat(2000)}`
+      })
+    ).usePresentationRequest('w', 'did', 'req', ['c'], 'session-token')
+
+    expect(hostile.rejectedBy).to.equal('verifier')
+    expect(hostile.errorMessage).to.match(/^failed at https:\/\/verifier/)
+    expect(hostile.errorMessage?.length).to.be.at.most(501)
+    expect(hostile.errorMessage).not.to.contain('\u001b')
+    expect(hostile.errorMessage).not.to.match(/error\?id=|eyJ/)
+    expect(hostile.errorMessage).not.to.contain(SID)
+
+    const text = await httpWallet(
+      400,
+      `<html>error?id=${SID}</html>`
+    ).usePresentationRequest('w', 'did', 'req', ['c'], 'session-token')
+    expect(text).to.deep.equal({
+      errorMessage: "the wallet's answer is not JSON (HTTP 400)",
+      rejectedBy: 'wallet'
+    })
+  })
+
+  it('throws a CredentialPresentationError with reason verifier-rejected and details.errorMessage only', async () => {
+    const { node } = policyNode(HOLDER_BINDING_NPE)
+    const challenge = {
+      asset: ssiAsset(),
+      serviceId: SERVICE_ID,
+      consumerAddress: OWNER_ADDRESS,
+      node,
+      sessionId: SID,
+      redirectUri: `openid4vp://authorize?${new URLSearchParams({
+        response_uri: `https://ps.test.invalid/verify/${SID}`
+      })}`
+    }
+
+    const thrown = await waltIdProvider(
+      node,
+      walletPresentingThrough(httpWallet(400, VERIFIER_400))
+    )
+      .present(challenge)
+      .catch((error) => error)
+
+    expect(thrown).to.be.instanceOf(CredentialPresentationError)
+    expect(thrown.reason).to.equal('verifier-rejected')
+    expect(thrown.message).to.equal(
+      'The verifier rejected the presentation: Presentation failed - redirecting to error page'
+    )
+    expect(thrown.details).to.deep.equal({
+      errorMessage: 'Presentation failed - redirecting to error page'
+    })
+    expect(everything(thrown)).not.to.match(/error\?id=|redirectUri/)
+    expect(everything(thrown)).not.to.contain(VERIFIER)
+    expect(everything(thrown)).not.to.contain(SID)
+  })
+})
+
+describe('a failed presentation names the failed policy', () => {
+  it('throws a PolicyDeniedError naming holder-binding: java.lang.NullPointerException, without the session id or the verifier', async () => {
+    const { node, calls } = policyNode(HOLDER_BINDING_NPE)
+    const resolver = new PolicySessionResolver({
+      credentials: waltIdProvider(
+        node,
+        walletPresentingThrough(httpWallet(400, VERIFIER_400))
+      )
+    })
+
+    const thrown = await resolve(node, resolver).catch((error) => error)
+
+    expect(calls.checked).to.deep.equal([SID])
+    expect(thrown).to.be.instanceOf(PolicyDeniedError)
+    expect(thrown.reason).to.equal(
+      'the node reports that the verifier did not accept the presentation (holder-binding: java.lang.NullPointerException)'
+    )
+    expect(thrown.message).to.contain(
+      'holder-binding: java.lang.NullPointerException'
+    )
+    expect(thrown.policyResults).to.deep.equal(HOLDER_BINDING_NPE.policyResults)
+    expect(thrown.cause).to.be.instanceOf(CredentialPresentationError)
+    expect(thrown.cause.reason).to.equal('verifier-rejected')
+    expect(thrown.cause.details.errorMessage).to.equal(
+      'Presentation failed - redirecting to error page'
+    )
+
+    const text = everything(thrown)
+    expect(text).not.to.contain(SID)
+    expect(text).not.to.contain('error?id=')
+    expect(text).not.to.contain(VERIFIER)
+  })
+
+  it('rethrows the original error when the verifier reports no failed policy', async () => {
+    const failure = new CredentialPresentationError(
+      'The verifier rejected the presentation: Presentation failed - redirecting to error page',
+      { errorMessage: 'Presentation failed - redirecting to error page' },
+      'verifier-rejected'
+    )
+    const credentials: CredentialProvider = {
+      present: async () => {
+        throw failure
+      }
+    }
+
+    for (const check of [
+      { verified: false, policyResults: [] },
+      {
+        verified: false,
+        policyResults: [{ policy: 'signature', success: true }]
+      },
+      { verified: true, policyResults: HOLDER_BINDING_NPE.policyResults }
+    ]) {
+      const { node, calls } = policyNode(check)
+      const thrown = await resolve(
+        node,
+        new PolicySessionResolver({ credentials })
+      ).catch((error) => error)
+
+      expect(calls.checked).to.deep.equal([SID])
+      expect(thrown).to.equal(failure)
+    }
+  })
+
+  it('rethrows the original error when the check itself fails', async () => {
+    const failure = new CredentialPresentationError(
+      'The verifier rejected the presentation.',
+      undefined,
+      'verifier-rejected'
+    )
+    const { node, calls } = policyNode(new Error('node unreachable'))
+
+    const thrown = await resolve(
+      node,
+      new PolicySessionResolver({
+        credentials: {
+          present: async () => {
+            throw failure
+          }
+        }
+      })
+    ).catch((error) => error)
+
+    expect(calls.checked).to.deep.equal([SID])
+    expect(thrown).to.equal(failure)
+  })
+
+  it('caches no rejected session: the next attempt opens a new one', async () => {
+    const { node, calls } = policyNode(HOLDER_BINDING_NPE)
+    const store = new MemorySessionStore()
+    const resolver = new PolicySessionResolver({
+      credentials: waltIdProvider(
+        node,
+        walletPresentingThrough(httpWallet(400, VERIFIER_400))
+      ),
+      sessionStore: store,
+      persistPresentedSessions: true
+    })
+
+    for (let attempt = 0; attempt < 2; attempt++)
+      expect(
+        await resolve(node, resolver).catch((error) => error)
+      ).to.be.instanceOf(PolicyDeniedError)
+
+    expect(calls.initiate).to.equal(2)
+    expect(
+      store.get({
+        nodeUri: NODE,
+        did: ssiAsset().id,
+        serviceId: SERVICE_ID,
+        consumerAddress: OWNER_ADDRESS
+      })
+    ).to.equal(undefined)
+  })
+
+  it('lists what fits of many failed policies and counts the rest', async () => {
+    const policyResults = Array.from({ length: 12 }, (_, index) => ({
+      policy: `policy-${index}`,
+      success: false,
+      error: `failure number ${index} ${'detail '.repeat(20)}`
+    }))
+    const { node } = policyNode({ verified: false, policyResults })
+
+    const thrown = await resolve(
+      node,
+      new PolicySessionResolver({
+        credentials: {
+          present: async () => {
+            throw new Error('Presentation failed')
+          }
+        }
+      })
+    ).catch((error) => error)
+
+    expect(thrown).to.be.instanceOf(PolicyDeniedError)
+    expect(thrown.reason).to.match(
+      /^the node reports that the verifier did not accept the presentation \(policy-0: failure number 0 .*; \d+ more in policyResults\)$/
+    )
+    expect(thrown.policyResults).to.have.length(12)
+  })
+})
+
+describe("the node's per-policy results", () => {
+  it('bounds a hostile record: at most 50 results, failures kept, no control characters, names bounded', async () => {
+    const ansi = '\u001b[2J\u001b]8;;https://evil.test.invalid\u0007'
+    const results = [
+      {
+        credential: `${ansi}VerifiableId${'y'.repeat(500)}`,
+        policyResults: Array.from({ length: 1000 }, (_, index) => ({
+          policy: `${ansi}policy-${index}\u202e${'z'.repeat(100)}`,
+          is_success: index !== 999,
+          error:
+            index === 999
+              ? `${ansi}refused\nat java.lang.Thread.run(${SID})`
+              : null
+        }))
+      }
+    ]
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              success: true,
+              httpStatus: 200,
+              message: {
+                verificationResult: false,
+                policyResults: { results }
+              }
+            }),
+            { status: 200 }
+          )
+      )
+    )
+
+    // A 2xx answer: an error answer is cut at 64 KiB, before it could hold this many.
+    const check = await new OceanNodeClient({
+      nodeUri: NODE,
+      chainId: CHAIN_ID,
+      auth: 'a-session-token',
+      consumerAddress: OWNER_ADDRESS
+    }).checkPolicySession(SID)
+
+    expect(check.verified).to.equal(false)
+    expect(check.policyResults).to.have.length(50)
+    expect(
+      check.policyResults.filter((result) => !result.success)
+    ).to.have.length(1)
+    const failed = check.policyResults.find((result) => !result.success)
+    expect(failed?.policy.startsWith('policy-999')).to.equal(true)
+    expect(failed?.error).to.equal('refused')
+
+    for (const result of check.policyResults) {
+      expect(result.policy.length).to.be.at.most(101)
+      expect(result.credential?.length).to.be.at.most(101)
+      expect(JSON.stringify(result)).not.to.match(
+        /\\u001b|\\u0007|\u202e|evil\.test/
+      )
+    }
+  })
+})
+
+describe("CredentialPresentationError's reason", () => {
+  it('says which step failed', async () => {
+    const { node } = policyNode(HOLDER_BINDING_NPE)
+    const challenge = {
+      asset: ssiAsset(),
+      serviceId: SERVICE_ID,
+      consumerAddress: OWNER_ADDRESS,
+      node,
+      sessionId: SID,
+      redirectUri: `openid4vp://authorize?${new URLSearchParams({
+        response_uri: `https://ps.test.invalid/verify/${SID}`
+      })}`
+    }
+    const base = walletPresentingThrough(httpWallet(400, VERIFIER_400))
+    const reasonOf = (
+      wallet: Partial<WaltIdWallet>,
+      redirectUri = challenge.redirectUri
+    ) =>
+      waltIdProvider(node, { ...base, ...wallet })
+        .present({ ...challenge, redirectUri })
+        .catch((error: CredentialPresentationError) => error.reason)
+
+    expect(await reasonOf({ matchCredentials: async () => [] })).to.equal(
+      'no-matching-credential'
+    )
+    expect(await reasonOf({ listWallets: async () => [] })).to.equal(
+      'wallet-setup'
+    )
+    expect(await reasonOf({ listDids: async () => [] })).to.equal(
+      'wallet-setup'
+    )
+    expect(await reasonOf({}, 'https://not-openid4vp.test.invalid')).to.equal(
+      'request-invalid'
+    )
+    expect(
+      await reasonOf({
+        usePresentationRequest: walletPresentingThrough(
+          httpWallet(
+            400,
+            JSON.stringify({ errorMessage: 'No DID to use supplied' })
+          )
+        ).usePresentationRequest
+      })
+    ).to.equal('wallet-failed')
+    expect(
+      await waltIdProvider(node, base)
+        .present(challenge)
+        .catch((error: CredentialPresentationError) => error.reason)
+    ).to.equal('verifier-rejected')
+    expect(
+      await new WaltIdCredentialProvider(node, {
+        wallet: base,
+        signer: { getAddress: async () => OWNER_ADDRESS } as never,
+        onSelectCredentials: async () => []
+      })
+        .present(challenge)
+        .catch((error: CredentialPresentationError) => error.reason)
+    ).to.equal('none-selected')
+  })
+})
+
+/** The harness's reading of a refusal (`tests/check.ts`): the failed policies, or nothing. */
+const HARNESS_REFUSAL = /did not accept the presentation \((.*)\)\s*$/
+
+/** A resolver whose provider fails with `error`, against a node answering `check`. */
+async function refusal(check: PolicySessionCheck | Error, error: unknown) {
+  const { node, calls } = policyNode(check)
+  const thrown = await resolve(
+    node,
+    new PolicySessionResolver({
+      credentials: {
+        present: async () => {
+          throw error
+        }
+      }
+    })
+  ).catch((caught) => caught)
+  return { thrown, calls }
+}
+
+describe("a refusal's reason fits PolicyDeniedError's bound", () => {
+  it('keeps the closing parenthesis with three mid-length failures', async () => {
+    const { thrown } = await refusal(
+      {
+        verified: false,
+        policyResults: [
+          {
+            credential: 'VerifiableId',
+            policy: 'allowed-issuer',
+            success: false,
+            error: 'No issuer found in credential: did:key:z6Mkfake'
+          },
+          {
+            credential: 'VerifiableId',
+            policy: 'schema',
+            success: false,
+            error: 'credentialSubject.birthDate is required here'
+          },
+          {
+            credential: 'VerifiableId',
+            policy: 'expired',
+            success: false,
+            error: 'expired'
+          }
+        ]
+      },
+      new Error('Presentation failed')
+    )
+
+    expect(thrown).to.be.instanceOf(PolicyDeniedError)
+    expect(thrown.reason.length).to.be.at.most(200)
+    expect(thrown.reason).to.match(/\)$/)
+    expect(HARNESS_REFUSAL.exec(thrown.reason)?.[1]).to.match(
+      /^allowed-issuer: No issuer found/
+    )
+  })
+
+  it('never cuts the reason, whatever the number and length of the failures', async () => {
+    for (const count of [1, 2, 3, 5, 12, 50])
+      for (const length of [0, 10, 45, 79, 80, 81, 150, 400]) {
+        const { thrown } = await refusal(
+          {
+            verified: false,
+            policyResults: Array.from({ length: count }, (_, index) => ({
+              policy: `p${index}`,
+              success: false,
+              ...(length ? { error: 'e'.repeat(length) } : {})
+            }))
+          },
+          new Error('Presentation failed')
+        )
+        const what = `${count} failures of ${length}`
+
+        expect(thrown.reason.length, what).to.be.at.most(200)
+        expect(thrown.reason, what).not.to.match(/…$/)
+        expect(HARNESS_REFUSAL.exec(thrown.reason)?.[1], what).to.match(/^p0/)
+      }
+  })
+})
+
+describe('the read after a failed presentation', () => {
+  it('runs only when the verifier refused, or for a custom provider', async () => {
+    for (const reason of [
+      'no-matching-credential',
+      'none-selected',
+      'wallet-setup',
+      'request-invalid',
+      'wallet-failed'
+    ] as const) {
+      const failure = new CredentialPresentationError(
+        'failed',
+        undefined,
+        reason
+      )
+      const { thrown, calls } = await refusal(HOLDER_BINDING_NPE, failure)
+
+      expect(calls.checked, reason).to.deep.equal([])
+      expect(thrown, reason).to.equal(failure)
+    }
+
+    for (const failure of [
+      new CredentialPresentationError(
+        'refused',
+        undefined,
+        'verifier-rejected'
+      ),
+      new Error('a custom provider failed')
+    ]) {
+      const { thrown, calls } = await refusal(HOLDER_BINDING_NPE, failure)
+
+      expect(calls.checked).to.deep.equal([SID])
+      expect(thrown).to.be.instanceOf(PolicyDeniedError)
+      expect(thrown.cause).to.equal(failure)
+    }
+  })
+
+  it('is cut when the node never answers, with the debug channel off', async () => {
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation(() =>
+      AbortSignal.abort(new Error('timed out'))
+    )
+    const failure = new Error('Presentation failed')
+    const { node } = policyNode(HOLDER_BINDING_NPE)
+    // A P2P read that never answers and ignores its signal.
+    ;(
+      node as unknown as { checkPolicySession: () => Promise<never> }
+    ).checkPolicySession = () => new Promise<never>(() => undefined)
+
+    const thrown = await resolve(
+      node,
+      new PolicySessionResolver({
+        credentials: {
+          present: async () => {
+            throw failure
+          }
+        }
+      })
+    ).catch((error) => error)
+
+    expect(thrown).to.equal(failure)
+  }, 2_000)
+})
+
+describe("a policy-server session id in the wallet's text (D10)", () => {
+  const PSID = FAKE.policySessionId
+  const [context, random] = PSID.split('-')
+  /** walt.id's texts that quote the session id, and other shapes it may take. */
+  const QUOTING = [
+    `Id parameter ${PSID} doesn't refer to an existing session, or session expired`,
+    `Presentation failed for session ${PSID}: policies signature, holder-binding`,
+    `failed with state=${PSID}`,
+    `see verifier/error?id=${PSID}`,
+    `see http%3A%2F%2Fverifier%3A7003%2Ferror%3Fid%3D${PSID}`,
+    `see http:\\/\\/verifier:7003\\/error?id=${PSID}`,
+    `stateId: ${PSID}`
+  ]
+
+  function challengeFor(node: OceanNodeClient, sessionId: string = PSID) {
+    return {
+      asset: ssiAsset(),
+      serviceId: SERVICE_ID,
+      consumerAddress: OWNER_ADDRESS,
+      node,
+      sessionId,
+      redirectUri: `openid4vp://authorize?${new URLSearchParams({
+        response_uri: 'https://ps.test.invalid/verify'
+      })}`
+    }
+  }
+
+  it('is not in the error of the real wallet and provider, nor in its cause chain', async () => {
+    for (const errorMessage of QUOTING)
+      for (const check of [
+        HOLDER_BINDING_NPE,
+        { verified: false, policyResults: [] },
+        new Error('node unreachable')
+      ]) {
+        const { node } = policyNode(check)
+        const wallet = walletPresentingThrough(
+          httpWallet(400, JSON.stringify({ redirectUri: '', errorMessage }))
+        )
+        const provider = waltIdProvider(node, wallet)
+
+        const presented = await provider
+          .present(challengeFor(node))
+          .catch((error) => error)
+        expect(presented.reason).to.equal('verifier-rejected')
+        expect(everything(presented), errorMessage).not.to.contain(context)
+        expect(everything(presented), errorMessage).not.to.contain(random)
+
+        const thrown = await resolve(
+          node,
+          new PolicySessionResolver({ credentials: provider })
+        ).catch((error) => error)
+        expect(everything(thrown), errorMessage).not.to.contain(context)
+        expect(everything(thrown), errorMessage).not.to.contain(random)
+      }
+  })
+
+  it("is redacted by the provider, in any shape, from a custom wallet's message", async () => {
+    const { node } = policyNode(HOLDER_BINDING_NPE)
+    const base = walletPresentingThrough(httpWallet(400, VERIFIER_400))
+    const presentWith = (errorMessage: string, sessionId: string) =>
+      waltIdProvider(node, {
+        ...base,
+        // A custom wallet: nothing redacted before the provider.
+        usePresentationRequest: async () => ({ errorMessage })
+      })
+        .present(challengeFor(node, sessionId))
+        .catch((error) => error)
+
+    const quoted = await presentWith(
+      `session ${SID} expired; state ${SID.toUpperCase()}`,
+      SID
+    )
+    expect(quoted.message).to.equal(
+      'The verifier rejected the presentation: session <redacted> expired; state <redacted>'
+    )
+    expect(quoted.details).to.deep.equal({
+      errorMessage: 'session <redacted> expired; state <redacted>'
+    })
+
+    const halves = await presentWith(
+      `only the random half ${random}, and the context ${context}`,
+      PSID
+    )
+    expect(halves.details.errorMessage).to.equal(
+      'only the random half <redacted>, and the context <redacted>'
+    )
+  })
+
+  it('is redacted in any text, but a compute job id of the same shape is kept', () => {
+    for (const text of QUOTING)
+      expect(redactSecrets(text), text).not.to.contain(random)
+
+    const jobId = `0x${'9f86'.repeat(16)}-${'3a7b'.repeat(16)}`
+    expect(redactSecrets(`job ${jobId} is running`)).to.equal(
+      `job ${jobId} is running`
+    )
+  })
+
+  it("is redacted from the node's per-policy results too", async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              success: true,
+              httpStatus: 200,
+              message: {
+                verificationResult: false,
+                policyResults: {
+                  results: [
+                    {
+                      credential: 'VerifiableId',
+                      policyResults: [
+                        {
+                          policy: 'presentation-definition',
+                          is_success: false,
+                          error: `no session ${PSID}`
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }),
+            { status: 200 }
+          )
+      )
+    )
+
+    const check = await new OceanNodeClient({
+      nodeUri: NODE,
+      chainId: CHAIN_ID,
+      auth: 'a-session-token',
+      consumerAddress: OWNER_ADDRESS
+    }).checkPolicySession(PSID)
+
+    expect(check.policyResults).to.deep.equal([
+      {
+        credential: 'VerifiableId',
+        policy: 'presentation-definition',
+        success: false,
+        error: 'no session <redacted>'
+      }
+    ])
+  })
+})
+
+describe("the wallet's own 400 answers", () => {
+  it("keeps the message of walt.id's StatusPages answer", async () => {
+    const result = await httpWallet(
+      400,
+      JSON.stringify({
+        exception: true,
+        id: 'IllegalArgumentException',
+        status: 'Bad Request',
+        code: '400',
+        message: `SD-JWT VC must not end with '~' \u001b[31m${FAKE.jwt}`
+      })
+    ).usePresentationRequest('w', 'did', 'req', ['c'], 'session-token')
+
+    expect(result).to.deep.equal({
+      errorMessage: "SD-JWT VC must not end with '~' <redacted>",
+      rejectedBy: 'wallet'
+    })
+
+    const empty = await httpWallet(
+      400,
+      JSON.stringify({ exception: true, message: null })
+    ).usePresentationRequest('w', 'did', 'req', ['c'], 'session-token')
+    expect(empty.errorMessage).to.equal('the wallet gave no reason')
+  })
+})
+
+describe("the node's per-policy errors", () => {
+  it('are cut at 100 characters', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              success: true,
+              httpStatus: 200,
+              message: {
+                verificationResult: false,
+                policyResults: {
+                  results: [
+                    {
+                      credential: 'VerifiableId',
+                      policyResults: [
+                        {
+                          policy: 'allowed-issuer',
+                          is_success: false,
+                          error: `No issuer found in credential: ${'{"name":"Jane Doe"} '.repeat(20)}`
+                        },
+                        {
+                          policy: 'schema',
+                          is_success: false,
+                          error: { message: 'm'.repeat(300) }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }),
+            { status: 200 }
+          )
+      )
+    )
+
+    const check = await new OceanNodeClient({
+      nodeUri: NODE,
+      chainId: CHAIN_ID,
+      auth: 'a-session-token',
+      consumerAddress: OWNER_ADDRESS
+    }).checkPolicySession(SID)
+
+    expect(check.policyResults).to.have.length(2)
+    for (const result of check.policyResults)
+      expect(result.error?.length).to.equal(101)
+  })
+})

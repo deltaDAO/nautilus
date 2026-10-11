@@ -30,7 +30,7 @@ export interface NodeAnswer {
 }
 
 /** How much of a node's text goes into an error message. */
-const MAX_NODE_MESSAGE_LENGTH = 200
+export const MAX_NODE_MESSAGE_LENGTH = 200
 /** How much of a text `sanitize` reads at least, however short the message: see `readLimit`. */
 const MIN_READ_LENGTH = 8_192
 
@@ -61,6 +61,18 @@ const HEX_SIGNATURE = /\b0x[0-9a-f]{130}\b/gi
  * and is redacted too; the raw value is in the debug channel, so nothing is lost.
  */
 const SIGNED_TRANSACTION = /\b0x(?:0[1-4])?f[89a][0-9a-f]{196,}(?![0-9a-f])/gi
+/**
+ * A policy-server session id: two SHA-256 hashes in hex joined by `-` (the policy server's
+ * `generateSessionId`). walt.id quotes it bare (`Id parameter <id> doesn't refer to an
+ * existing session`), so no key gives it away. No word boundary: it is caught after
+ * `%3D` too. Not after `0x`: ocean-node's compute job ids, `0x<cluster hash>-<job hash>`,
+ * have the same shape and are no credential.
+ *
+ * Matched together with every `0x` hex run, which `redactSessionId` keeps as it is: one
+ * pass from left to right, so a long hex run (calldata, a signed transaction) costs linear
+ * time. A lookbehind for the `0x` would rescan the run from each of its characters.
+ */
+const POLICY_SESSION_ID = /0x[0-9a-f]+|[0-9a-f]{64}-[0-9a-f]{64}/gi
 
 /** ANSI escape sequences: CSI (`ESC [ … m`), OSC (`ESC ] … BEL`) and two-byte ones. */
 const ANSI_ESCAPE =
@@ -78,8 +90,8 @@ const ANSI_ESCAPE =
  *   redacted whole. As for fields, a `…token` holding an EVM address is kept, and so is a
  *   `…code` that reads as an error code (`code=SERVER_ERROR`, `"code": -32005`), so RPC
  *   failures stay legible;
- * - `Bearer` and `Basic` credentials, JWTs, 65-byte hex signatures and raw signed
- *   transactions anywhere.
+ * - `Bearer` and `Basic` credentials, JWTs, 65-byte hex signatures, raw signed
+ *   transactions and policy-server session ids (`<64 hex>-<64 hex>`) anywhere.
  *
  * A URL keeps its origin only: its path and query (an openid4vp `request_uri`, a policy
  * server's redirect URI, an internal path) are dropped, and so are its user and password.
@@ -95,6 +107,12 @@ export function redactSecrets(text: string): string {
     .replace(JWT, '<redacted>')
     .replace(HEX_SIGNATURE, '<redacted>')
     .replace(SIGNED_TRANSACTION, '<redacted>')
+    .replace(POLICY_SESSION_ID, redactSessionId)
+}
+
+/** A `POLICY_SESSION_ID` match as `redactSecrets` returns it: a `0x` hex run kept. */
+function redactSessionId(match: string): string {
+  return /^0x/i.test(match) ? match : '<redacted>'
 }
 
 /** Whether `value` reads as an error code: see `log/keys.ts`. */
@@ -162,12 +180,14 @@ export function sanitize(
 
 /**
  * The node's message in `text`: a JSON string unquoted, the `error` (or `message`) of a JSON
- * object, anything else as it is. Credentials are redacted and the result is bounded. When
- * that is not the whole text, the raw text goes to the debug channel under `topic`.
+ * object, anything else as it is. Credentials are redacted and the result is bounded
+ * (`maxLength`, 200 by default). When that is not the whole text, the raw text goes to the
+ * debug channel under `topic`.
  */
 export function nodeText(
   text: string,
-  topic: DebugTopic | null = 'node'
+  topic: DebugTopic | null = 'node',
+  maxLength = MAX_NODE_MESSAGE_LENGTH
 ): string {
   const trimmed = text.trim()
   let message = trimmed
@@ -188,24 +208,26 @@ export function nodeText(
       // not JSON: the text as it is
     }
 
-  const clean = sanitize(message, MAX_NODE_MESSAGE_LENGTH, null)
+  const clean = sanitize(message, maxLength, null)
   if (topic && debugEnabled('sensitive', topic) && clean !== trimmed)
     debugRaw(topic, 'node text before redaction', text)
   return clean
 }
 
 /**
- * A value the node returned in place of the expected one, as bounded text. The raw value
- * goes to the debug channel under `topic` when the text is not all of it.
+ * A value the node returned in place of the expected one, as bounded text (`maxLength`, 200
+ * by default). The raw value goes to the debug channel under `topic` when the text is not
+ * all of it.
  */
 export function boundedNodeMessage(
   value: unknown,
-  topic: DebugTopic | null = 'node'
+  topic: DebugTopic | null = 'node',
+  maxLength = MAX_NODE_MESSAGE_LENGTH
 ): string {
-  if (typeof value === 'string') return nodeText(value, topic)
+  if (typeof value === 'string') return nodeText(value, topic, maxLength)
 
   const text = JSON.stringify(value) ?? String(value)
-  const clean = sanitize(text, MAX_NODE_MESSAGE_LENGTH, null)
+  const clean = sanitize(text, maxLength, null)
   if (topic && debugEnabled('sensitive', topic) && clean !== text)
     debugRaw(topic, 'node value before redaction', value)
   return clean
