@@ -31,6 +31,7 @@ import {
 import {
   findPreviousOrder,
   IncompleteOrderLookupError,
+  InconsistentRpcAnswerError,
   type PreviousOrderQuery
 } from '../../src/utils/previousOrder.js'
 import {
@@ -61,7 +62,12 @@ vi.mock('../../src/utils/pricing.js', async (importOriginal) => ({
     datatokenAddress,
     publishMarketFee: {}
   })),
-  getOrderPrice: vi.fn(async () => ({ total: '0', consumeMarketFee: '0' }))
+  // As `getOrderPrice` returns it: a missing fee no longer reads as zero.
+  getOrderPrice: vi.fn(async () => ({
+    total: '0',
+    publishMarketFee: '0',
+    consumeMarketFee: '0'
+  }))
 }))
 
 const CONSUMER = '0x0000000000000000000000000000000000c05e5a'
@@ -434,10 +440,46 @@ describe('findPreviousOrder', () => {
 
   it('follows only the first reuse in a transaction, as the node does', async () => {
     chain.started(tx(1), 3_600, { fee: { address: OTHER } })
-    // A bogus reuse ahead of the valid one: the node follows it and refuses the download.
-    chain.tx(tx(2), 100).reused(tx(9)).reused(tx(1)).fee()
+    chain.started(tx(3), 7_200, { serviceIndex: 1 })
+    // A reuse of another service's order ahead of the valid one: the node follows it and
+    // refuses the download.
+    chain.tx(tx(2), 100).reused(tx(3)).reused(tx(1)).fee()
 
     expect(await find()).to.deep.equal({ orderTxId: tx(1) })
+  })
+
+  // An RPC answer without what the logs promise (a lagging backend behind a load balancer)
+  // is a failed lookup, not "no order": read as one, it bought a valid order again.
+  it('throws when the RPC has no receipt for a transaction its logs list', async () => {
+    chain.started(tx(1), 3_600)
+    chain.getTransactionReceipt.mockResolvedValue(null)
+
+    await expect(find()).rejects.toThrow(InconsistentRpcAnswerError)
+  })
+
+  it('throws when a receipt lacks the order event the logs list', async () => {
+    chain.started(tx(1), 3_600)
+    const read = chain.getTransactionReceipt.getMockImplementation()
+    chain.getTransactionReceipt.mockImplementation(async (txId: string) => {
+      const receipt = (await read?.(txId)) ?? null
+      return receipt && { ...receipt, logs: [] }
+    })
+
+    await expect(find()).rejects.toThrow(InconsistentRpcAnswerError)
+  })
+
+  it('throws when the RPC has no receipt for the order a reuse of the account names', async () => {
+    chain.started(tx(1), 3_600, { fee: { address: OTHER } })
+    chain.tx(tx(2), 100).reused(tx(9)).reused(tx(1)).fee()
+
+    await expect(find()).rejects.toThrow(InconsistentRpcAnswerError)
+  })
+
+  it('throws when the RPC has no newest block', async () => {
+    chain.started(tx(1), 3_600)
+    chain.getBlock.mockResolvedValue(null as never)
+
+    await expect(find()).rejects.toThrow(InconsistentRpcAnswerError)
   })
 
   it('refuses a transaction whose first reuse was made by another caller', async () => {
@@ -883,6 +925,49 @@ describe('settleOrder with an order on chain', () => {
     expect(vi.mocked(order)).not.toHaveBeenCalled()
     expect(vi.mocked(reuseOrder)).not.toHaveBeenCalled()
   })
+
+  // Probes of round-2 security review M1: a valid order on chain, a paid service, and an
+  // RPC answer without what its logs promise. Each used to be "not found": a second order.
+  for (const [name, lag] of [
+    [
+      'has no receipt for the order its logs list',
+      () => chain.getTransactionReceipt.mockResolvedValue(null)
+    ],
+    [
+      'returns the order’s receipt without its events',
+      () => {
+        const read = chain.getTransactionReceipt.getMockImplementation()
+        chain.getTransactionReceipt.mockImplementation(async (txId: string) => {
+          const receipt = (await read?.(txId)) ?? null
+          return receipt && { ...receipt, logs: [] }
+        })
+      }
+    ],
+    [
+      'has no newest block',
+      () => chain.getBlock.mockResolvedValue(null as never)
+    ]
+  ] as const)
+    it(`does not order a paid service when the RPC ${name}`, async () => {
+      chain.started(tx(1), 3_600)
+      lag()
+
+      const thrown = await settle({
+        providerFee: signedProviderFee({
+          providerData,
+          providerFeeAmount: '30'
+        })
+      }).catch((caught) => caught)
+
+      expect(thrown).to.be.instanceOf(OrderCheckError)
+      expect(thrown.reason).to.equal('rpc-error')
+      expect(thrown.message).to.contain(
+        "Cause: the RPC's answer lacked data the check needs ("
+      )
+      expect(thrown.message).to.contain('Retry in a minute or use another RPC.')
+      expect(vi.mocked(order)).not.toHaveBeenCalled()
+      expect(vi.mocked(reuseOrder)).not.toHaveBeenCalled()
+    })
 
   it('does not order a paid service whose orders never expire, past the read depth', async () => {
     const thrown = await settle(

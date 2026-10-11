@@ -18,7 +18,8 @@ import {
 } from '../node/messages.js'
 import {
   type IncompleteLookupLimit,
-  IncompleteOrderLookupError
+  IncompleteOrderLookupError,
+  InconsistentRpcAnswerError
 } from '../utils/previousOrder.js'
 import {
   answeredWithError,
@@ -36,7 +37,10 @@ export type OrderCheckFailure =
   | 'unreachable'
   /** The lookup stopped before it covered the whole order window. */
   | 'incomplete'
-  /** The RPC answered with another error. */
+  /**
+   * The RPC answered with another error, or without data its own answers promise (no
+   * receipt for a transaction its logs list, no newest block).
+   */
   | 'rpc-error'
 
 /** An amount of a token, as people read it: `{ amount: '1.002', symbol: 'devEURAU' }`. */
@@ -242,6 +246,17 @@ function classify(error: unknown): LookupFailure {
       checkedHours: incomplete.checkedHours,
       windowHours: incomplete.windowHours,
       limit: incomplete.limit
+    }
+
+  const inconsistent = chain.find(
+    (entry): entry is InconsistentRpcAnswerError =>
+      entry instanceof InconsistentRpcAnswerError
+  )
+  if (inconsistent)
+    return {
+      reason: 'rpc-error',
+      phrase: `the RPC's answer lacked data the check needs (${inconsistent.missing})`,
+      cause: redactedError(inconsistent)
     }
 
   const rateLimit = rateLimitOf(error)
