@@ -1,0 +1,57 @@
+# setVcPolicies
+
+Set the checks applied to each presented credential, for this service specifically.
+
+The service-level counterpart of [`AssetBuilder.setVcPolicies`](/docs/api/assetbuilder/setVcPolicies). The policy server merges the asset's and the accessed service's VC policies, so a list set here runs for this service only.
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+// ---cut---
+import { CredentialListTypes } from '@deltadao/nautilus'
+
+serviceBuilder.setVcPolicies(CredentialListTypes.ALLOW, [ // [!code focus]
+  'signature', // [!code focus]
+  'not-before', // [!code focus]
+  'revoked-status-list' // [!code focus]
+]) // [!code focus]
+```
+
+**Gate one service and leave another open** by putting the VC and VP policies here, next to
+the service's [`addRequestCredentials`](/docs/api/servicebuilder/addRequestCredentials), not on
+the asset. The policy server refuses every consumer of a service whose merged view holds an
+`SSIpolicy` entry but requests no credential ("SSIpolicy was found, but failed to fetch
+request credentials"), so asset-level policies close an ungated sibling service.
+[`build()`](/docs/api/assetbuilder/build) throws an `SsiPolicyError` for that setup. See
+[per-service gating](/docs/guides/identity#per-service-gating).
+
+:::warning[Arguments are dropped at this level]
+These are names only, as on the asset: the policy server keeps only the *name* of an asset- or
+service-level VC policy. Put argument-bearing policies, such as issuer trust
+(`allowed-issuer`), on the credential, in the `policies` of
+[`addRequestCredentials`](/docs/api/servicebuilder/addRequestCredentials).
+[`build()`](/docs/api/assetbuilder/build) throws for an entry with arguments, and for
+`allowed-issuer`, `schema`, `webhook`, `dynamic` or `credential-status`.
+:::
+
+:::info
+This *replaces* the service's list: leaving a policy out removes it, and `[]` clears them. The
+service's request credentials are kept either way. On a service loaded from a resolved DDO
+(`new ServiceBuilder({ asset, serviceId })`), the policies you pass are the ones it ends up
+with.
+:::
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.

@@ -23,11 +23,15 @@ assetBuilder.build() // [!code focus]
 
 `build()` throws for a new asset without `name`, `type`, `providedBy` or a service. It also
 checks the SSI policies of the asset and its services, see
-[`setSsiPolicyLint`](/docs/api/assetbuilder/setSsiPolicyLint): it logs a warning for
-`holder-binding`, for `presentation-definition` with `jwt_vc_json` credentials and for request
-credentials without per-credential issuer trust, and throws an `SsiPolicyError` for policies
-the policy server would weaken or walt.id would fail on every presentation (a VC policy with
-arguments at asset or service level, a bare `minimum-credentials`).
+[`setSsiPolicyLint`](/docs/api/assetbuilder/setSsiPolicyLint): it logs a warning for a gate
+weaker than the recommended set (no VC or VP `signature`, no `minimum-credentials` of at least
+1, `'*'` in the address allow list), for `holder-binding`, for `presentation-definition` with
+`jwt_vc_json` credentials and for request credentials without per-credential issuer trust. It
+throws an `SsiPolicyError` for policies the policy server would refuse or weaken or walt.id
+would fail on every presentation: an `SSIpolicy` on a service that requests no credential (for
+example asset-level VC or VP policies next to an ungated service), a VC policy with arguments
+at asset or service level, VP arguments walt.id cannot read (a bare `minimum-credentials`), an
+`allowed-issuer` that names no issuer.
 
 ## Returns
 

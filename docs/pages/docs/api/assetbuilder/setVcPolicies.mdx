@@ -30,7 +30,18 @@ presentation and denies every consumer. Put argument-bearing policies, such as i
 
 [`build()`](/docs/api/assetbuilder/build) throws an `SsiPolicyError` for such a list: any
 entry with arguments, and `allowed-issuer`, `schema`, `webhook`, `dynamic` or
-`credential-status`, which cannot work without them.
+`credential-status`, which cannot work without them. For another policy with arguments, such as
+`{ policy: 'expired', args }`, drop the arguments and keep the name here: moving it onto one
+credential would check only credentials of that type.
+:::
+
+:::warning[Not next to an ungated service]
+The policy server merges these into every service of the asset, and refuses every consumer of
+a service that then holds an `SSIpolicy` entry but requests no credential. When one service
+stays open, set the policies on the gated service instead, with
+[`ServiceBuilder.setVcPolicies`](/docs/api/servicebuilder/setVcPolicies); `build()` throws for
+the asset-level form. Without `signature` in the list, `build()` warns
+`identity.policy.no_vc_signature`.
 :::
 
 :::info

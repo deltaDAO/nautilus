@@ -21,10 +21,18 @@ assetBuilder.setVpPolicies(CredentialListTypes.ALLOW, [ // [!code focus]
 ]) // [!code focus]
 ```
 
-`minimum-credentials` needs its argument: a bare `{ policy: 'minimum-credentials' }` fails in
-the walt.id verifier for every presentation, so [`build()`](/docs/api/assetbuilder/build)
-throws an `SsiPolicyError` for it (and for a bare `maximum-credentials` or
-`vp_required_credentials`).
+`minimum-credentials` needs an integer argument: a bare `{ policy: 'minimum-credentials' }`
+(or `args: 'abc'`) fails in the walt.id verifier for every presentation, so
+[`build()`](/docs/api/assetbuilder/build) throws an `SsiPolicyError` for it, and for
+`maximum-credentials` likewise. `vp_required_credentials` takes an object,
+`args: JSON.stringify({ required: [{ credential_type: 'gx:LegalPerson' }] })`; `build()`
+throws for any other shape. Without a `minimum-credentials` of at least 1, a presentation
+holding no credential passes: `build()` warns `identity.policy.no_minimum_credentials`.
+
+The policy server merges these into every service of the asset, and refuses every consumer of
+a service that then holds an `SSIpolicy` entry but requests no credential: when one service
+stays open, set them on the gated service with
+[`ServiceBuilder.setVpPolicies`](/docs/api/servicebuilder/setVpPolicies).
 
 **Check the presentation's own signature** with `{ policy: 'signature' }` among the VP
 policies. walt.id runs only the VP policies the session lists, so without it nothing checks
@@ -32,7 +40,8 @@ that the presentation was signed by the DID it names, unless the policy server's
 it through `DEFAULT_VP_POLICIES`, which nautilus cannot see. Listed on the asset, the check
 holds whatever that setting is; when the policy server adds it too, it simply runs twice. It
 does not bind the credential to the presenter, which is `holder-binding`'s job, and it does not
-stop a presentation replayed from an earlier session: the verifier accepts it.
+stop a presentation replayed from an earlier session: the verifier accepts it. Without it,
+`build()` warns `identity.policy.no_vp_signature`.
 
 :::warning[`holder-binding` and `presentation-definition`]
 Neither belongs in the default set:

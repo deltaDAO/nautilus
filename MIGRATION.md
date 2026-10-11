@@ -312,12 +312,20 @@ no such lookup and is unchanged. See [`OrderCheckError`](https://nautilus.delta-
 **`AssetBuilder.build()` checks the asset's SSI policies.** It throws an `SsiPolicyError` for
 policies that cannot work as written, which earlier versions published:
 
+- an `SSIpolicy` that applies to a service requesting no credential, typically VC or VP
+  policies on the asset next to an ungated service (a free preview). The policy server
+  refused every consumer of that service ("SSIpolicy was found, but failed to fetch request
+  credentials"). Put the policies on the gated service with the new
+  `ServiceBuilder.setVcPolicies()` / `setVpPolicies()` (see the diff below);
 - a VC policy at asset or service level (`setVcPolicies()`, or a stored asset being edited)
   that needs arguments (`allowed-issuer`, `schema`, `webhook`, `dynamic`,
-  `credential-status`) or carries any. The policy server keeps only the name, so walt.id
-  failed it for every presentation, or ran it without its arguments. Move it into the
-  `policies` of the requested credential;
-- `minimum-credentials`, `maximum-credentials` or `vp_required_credentials` without `args`.
+  `credential-status`). The policy server keeps only the name, so walt.id failed it for every
+  presentation. Move it into the `policies` of the requested credential. Another VC policy
+  with arguments ran without them: drop the arguments and keep the name;
+- `minimum-credentials` or `maximum-credentials` without an integer `args`, and
+  `vp_required_credentials` without `args` of the form `{ required: [...] }`;
+- a per-credential `allowed-issuer` that names no issuer (no `args`, `[]`, `'*'`), which
+  refused every credential.
 
 ```diff
  builder
@@ -333,10 +341,34 @@ policies that cannot work as written, which earlier versions published:
 +  .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'not-before', 'revoked-status-list'])
 ```
 
-It also logs a warning (`identity.policy.*` events) for `holder-binding`, for
-`presentation-definition` with `jwt_vc_json` credentials and for a requested credential
-without a per-credential `allowed-issuer`. `setSsiPolicyLint('error')` turns those into an
-`SsiPolicyError`, `'off'` silences them. See [`setSsiPolicyLint`](https://nautilus.delta-dao.com/docs/api/assetbuilder/setSsiPolicyLint).
+Gating one service and leaving another open:
+
+```diff
+ const full = new ServiceBuilder({ serviceType: ServiceTypes.ACCESS })
+   // …
+   .addRequestCredentials(CredentialListTypes.ALLOW, [gxLegalPerson])
++  .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'not-before', 'revoked-status-list'])
++  .setVpPolicies(CredentialListTypes.ALLOW, [
++    { policy: 'signature' },
++    { policy: 'minimum-credentials', args: '1' }
++  ])
+   .build()
+
+ new AssetBuilder()
+   .addService(preview) // no credential
+   .addService(full)
+-  .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'not-before', 'revoked-status-list'])
+-  .setVpPolicies(CredentialListTypes.ALLOW, [{ policy: 'signature' }, { policy: 'minimum-credentials', args: '1' }])
+```
+
+It also logs a warning (`identity.policy.*` events) for a gate weaker than the recommended
+set (no VC or VP `signature`, no `minimum-credentials` of at least 1), for `'*'` in the address
+allow list of a credential-gated service, for `holder-binding`, for `presentation-definition`
+with `jwt_vc_json` credentials, for a requested credential without a per-credential
+`allowed-issuer`, and for per-credential policies that never run because the type is requested
+twice. Assets published with the recommended set build without a warning; older ones without
+VP `signature` or `minimum-credentials` now warn on edit. `setSsiPolicyLint('error')` turns
+those into an `SsiPolicyError`, `'off'` silences them. See [`setSsiPolicyLint`](https://nautilus.delta-dao.com/docs/api/assetbuilder/setSsiPolicyLint).
 
 **`WaltIdCredentialProvider` checks `holder-binding` before presenting.** When a service
 requires it and a selected credential has no `sub`, or a `sub` that is not your DID, the

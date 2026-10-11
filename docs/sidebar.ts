@@ -458,7 +458,15 @@ export const sidebar = {
               link: '/docs/api/servicebuilder/setServiceEndpoint'
             },
             { text: 'setState', link: '/docs/api/servicebuilder/setState' },
-            { text: 'setTimeout', link: '/docs/api/servicebuilder/setTimeout' }
+            { text: 'setTimeout', link: '/docs/api/servicebuilder/setTimeout' },
+            {
+              text: 'setVcPolicies',
+              link: '/docs/api/servicebuilder/setVcPolicies'
+            },
+            {
+              text: 'setVpPolicies',
+              link: '/docs/api/servicebuilder/setVpPolicies'
+            }
           ]
         }
       ]

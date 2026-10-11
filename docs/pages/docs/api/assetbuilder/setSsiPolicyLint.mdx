@@ -11,10 +11,22 @@ a service. It warns when:
 | --- | --- |
 | `identity.policy.holder_binding` | `holder-binding` is among the VP policies. It requires every credential's JWT `sub` to be the presenter's DID, so it refuses Gaia-X and other VCDM 2.0 `vc+jwt` credentials with a URL subject. |
 | `identity.policy.presentation_definition_vc_jwt` | `presentation-definition` is combined with a `jwt_vc_json` (or `jwt_vc`) request credential. walt.id's generated definition looks for the type at `$.vc.type`, which VCDM 2.0 credentials do not have. |
-| `identity.policy.no_issuer_trust` | A request credential has no per-credential `allowed-issuer`, so a credential of that type from any issuer, a self-issued one included, is accepted. |
+| `identity.policy.no_issuer_trust` | A requested credential type has no per-credential `allowed-issuer` among the policies walt.id runs for it (the last non-empty list for the type), so a credential of that type from any issuer, a self-issued one included, is accepted. |
+| `identity.policy.credential_policies_replaced` | A type is requested more than once with different per-credential policies. walt.id keeps only the last non-empty list per type, so the earlier policies never run. |
+| `identity.policy.no_vc_signature` | A credential-gated service's VC policies (asset and service merged) have no `signature`: a credential that names a trusted issuer but is signed by anyone passes `allowed-issuer`. |
+| `identity.policy.no_vp_signature` | A credential-gated service's VP policies have no `signature`: nothing is sure to check the presentation's own signature. |
+| `identity.policy.no_minimum_credentials` | A credential-gated service's VP policies have no `minimum-credentials` of at least 1: a presentation holding no credential passes. |
+| `identity.policy.wildcard_allow` | A credential-gated service lets every address in (`'*'` in the allow list, read as the policy server reads it), so a hand-built presentation of another credential type opens it to anyone ([type bypass](/docs/guides/identity#known-limitation-credentials-of-another-type)). |
 
-Each event carries `where` (`'asset'` or `'service <id>'`) and, where it applies,
-`credentialType`.
+The policy server may add `signature` from its operator's `DEFAULT_VC_POLICIES` /
+`DEFAULT_VP_POLICIES`, which nautilus cannot read; list it on the asset or service so the
+check holds whatever the operator set. The recommended set
+([identity guide](/docs/guides/identity#publishing-a-gated-asset)) builds without a warning.
+
+Each event carries `where` (`'asset'` or `'service <id or name>'`, the place the policy sits or,
+for a missing one, where the service's policies sit) and, where it applies, `credentialType`.
+Service ids and names are sanitised (control characters stripped, length bounded); on an
+edit they come from the node.
 
 ## Usage
 
@@ -34,8 +46,13 @@ assetBuilder.setSsiPolicyLint('error') // [!code focus]
 
 - `'warn'` (the default): each finding is logged as a `warn` event. Existing assets keep
   building.
-- `'error'`: `build()` throws an `SsiPolicyError` whose `findings` list them all.
-- `'off'`: no warnings.
+- `'error'`: `build()` throws an `SsiPolicyError` whose `findings` list them all, the fatal
+  ones (below) first. Its message spells out the first 20.
+- `'off'`: no warnings. A fatal finding still throws, with only the fatal ones in
+  `findings`.
+
+In `'warn'` mode a fatal finding throws as well, and its `SsiPolicyError.findings` then holds
+the warnings too, which are not logged.
 
 Any other value throws a `TypeError`. The mode is kept across [`reset()`](/docs/api/assetbuilder/reset).
 
@@ -43,13 +60,25 @@ Any other value throws a `TypeError`. The mode is kept across [`reset()`](/docs/
 `build()` throws an `SsiPolicyError` whatever the mode for policies that cannot work as
 written:
 
-- a VC policy at asset or service level that needs arguments (`allowed-issuer`, `schema`,
-  `webhook`, `dynamic`, `credential-status`) or carries any: the policy server keeps only the
-  name, so walt.id fails it for every presentation, or runs it without its arguments. Put it on
-  the credential, in the `policies` of
-  [`addRequestCredentials`](/docs/api/assetbuilder/addRequestCredentials);
-- `minimum-credentials`, `maximum-credentials` or `vp_required_credentials` without `args`:
-  walt.id fails it for every presentation.
+- `no-request-credentials`: a service whose merged view (asset and service) holds an
+  `SSIpolicy` entry but requests no credential. The policy server refuses every consumer of
+  it ("SSIpolicy was found, but failed to fetch request credentials"). Typical cause: VC or VP
+  policies on the asset next to a service without request credentials. Put the policies on the
+  gated service with [`ServiceBuilder.setVcPolicies`](/docs/api/servicebuilder/setVcPolicies)
+  and [`setVpPolicies`](/docs/api/servicebuilder/setVpPolicies), or add request credentials;
+- `vc-policy-arguments`: a VC policy at asset or service level that needs arguments
+  (`allowed-issuer`, `schema`, `webhook`, `dynamic`, `credential-status`): the policy server
+  keeps only the name, so walt.id fails it for every presentation. Put it on the credential, in
+  the `policies` of [`addRequestCredentials`](/docs/api/assetbuilder/addRequestCredentials).
+  Any other VC policy with arguments (`{ policy: 'expired', args }`) runs without them, a
+  different check: drop the arguments and keep the name, which checks every presented
+  credential (moving it onto one credential would check only credentials of that type);
+- `vp-policy-arguments`: `minimum-credentials` or `maximum-credentials` without an integer
+  argument (`args: '1'`), or `vp_required_credentials` without one of the form
+  `JSON.stringify({ required: [{ credential_type: '<type>' }] })`: walt.id fails it for every
+  presentation;
+- `credential-policy-arguments`: a per-credential `allowed-issuer` that names no issuer (no
+  `args`, `[]`, `'*'`; `'*'` is not a wildcard in walt.id): every credential is refused.
 :::
 
 :::info

@@ -165,8 +165,18 @@ const service = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
       policies: [{ policy: 'allowed-issuer', args: ['did:web:issuer.example'] }] // [!code focus]
     } // [!code focus]
   ]) // [!code focus]
+  .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'not-before', 'revoked-status-list']) // [!code focus]
+  .setVpPolicies(CredentialListTypes.ALLOW, [ // [!code focus]
+    { policy: 'signature' }, // [!code focus]
+    { policy: 'minimum-credentials', args: '1' } // [!code focus]
+  ]) // [!code focus]
   .build()
 ```
+
+Keep the VC and VP policies on the gated service, as here, when a sibling service stays open:
+the policy server merges asset-level `SSIpolicy` entries into every service and refuses every
+consumer of a service that holds one without a request credential.
+[`build()`](/docs/api/assetbuilder/build) throws an `SsiPolicyError` for that setup.
 
 See [Credential-gated assets](/docs/guides/identity).
 
@@ -246,7 +256,9 @@ Compute services only; these throw on an access service.
 ### Gating
 
 [`addCredentialAddresses`](/docs/api/servicebuilder/addCredentialAddresses) ·
-[`addRequestCredentials`](/docs/api/servicebuilder/addRequestCredentials)
+[`addRequestCredentials`](/docs/api/servicebuilder/addRequestCredentials) ·
+[`setVcPolicies`](/docs/api/servicebuilder/setVcPolicies) ·
+[`setVpPolicies`](/docs/api/servicebuilder/setVpPolicies)
 
 ### Building
 

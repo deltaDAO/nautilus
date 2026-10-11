@@ -183,8 +183,9 @@ try {
 }
 ```
 
-`reason` is `'no-sub'` or `'sub-mismatch'`, and the message says what to do: ask the publisher
-to drop `holder-binding` for that credential type, or present a credential issued to your DID.
+`reason` is `'no-sub'` or `'sub-mismatch'` (a `sub` that is another DID, empty, or not a
+string), and the message says what to do: ask the publisher to drop `holder-binding`, which
+applies to every credential in the presentation, or present a credential issued to your DID.
 Credentials the provider cannot decode (SD-JWT, JSON-LD, anything but a plain JWT) are not
 judged: they are presented, and a `debug` event `identity.preflight.skipped` says so. Pass
 `preflight: false` to the provider for a verifier whose rule differs from walt.id's. Every
@@ -388,17 +389,31 @@ them, and:
 
 | Finding | What happens |
 | --- | --- |
-| A VC policy at asset or service level with arguments, or one that needs them (`allowed-issuer`, `schema`, `webhook`, `dynamic`, `credential-status`) | Throws an `SsiPolicyError`: the policy server keeps only the name, so the check fails every presentation or silently becomes another one |
-| `minimum-credentials`, `maximum-credentials` or `vp_required_credentials` without `args` | Throws an `SsiPolicyError`: walt.id fails it for every presentation |
+| A service whose merged view holds an `SSIpolicy` entry but requests no credential | Throws an `SsiPolicyError`: the policy server refuses every consumer of that service ("SSIpolicy was found, but failed to fetch request credentials"). See [per-service gating](#per-service-gating) |
+| A VC policy at asset or service level that needs arguments (`allowed-issuer`, `schema`, `webhook`, `dynamic`, `credential-status`) | Throws an `SsiPolicyError`: the policy server keeps only the name, so the check fails every presentation. Put it on the credential |
+| Any other VC policy at asset or service level with arguments | Throws an `SsiPolicyError`: the check silently runs without them. Drop the arguments and keep the name |
+| `minimum-credentials` or `maximum-credentials` without an integer `args`; `vp_required_credentials` without `args` of the form `{ required: [...] }` | Throws an `SsiPolicyError`: walt.id fails it for every presentation |
+| A per-credential `allowed-issuer` that names no issuer (no `args`, `[]`, `'*'`) | Throws an `SsiPolicyError`: walt.id refuses every credential (`'*'` is not a wildcard) |
+| No VC `signature` in the merged view | Warns: `identity.policy.no_vc_signature` (a credential naming a trusted issuer but signed by anyone passes `allowed-issuer`) |
+| No VP `signature` in the merged view | Warns: `identity.policy.no_vp_signature` |
+| No `minimum-credentials` of at least 1 in the merged view | Warns: `identity.policy.no_minimum_credentials` (a presentation holding no credential passes) |
+| `'*'` in the address allow list of a credential-gated service, as the policy server reads it | Warns: `identity.policy.wildcard_allow` (no gate against a hand-built presentation; see the [limitation below](#known-limitation-credentials-of-another-type)) |
 | `holder-binding` | Warns: `identity.policy.holder_binding` |
 | `presentation-definition` with a `jwt_vc_json` or `jwt_vc` credential | Warns: `identity.policy.presentation_definition_vc_jwt` |
-| A requested credential without a per-credential `allowed-issuer` | Warns: `identity.policy.no_issuer_trust` (a self-issued credential of that type is accepted) |
+| A requested credential type whose effective per-credential policies have no `allowed-issuer` | Warns: `identity.policy.no_issuer_trust` (a self-issued credential of that type is accepted) |
+| A type requested twice with different per-credential policies | Warns: `identity.policy.credential_policies_replaced`: walt.id keeps only the last non-empty list per type, so the earlier policies never run |
+
+The policy server may add `signature` to every session from its operator's
+`DEFAULT_VC_POLICIES` / `DEFAULT_VP_POLICIES`, which nautilus cannot read, so the two
+`signature` warnings can fire on a deployment that checks it anyway; listing it on the asset
+makes the check hold whatever the operator set. `minimum-credentials` is never added.
 
 The warnings are log events at `warn` level. With
 [`setSsiPolicyLint('error')`](/docs/api/assetbuilder/setSsiPolicyLint) they throw an
 `SsiPolicyError` instead, and `'off'` silences them; the throws happen in every mode.
-`SsiPolicyError.findings` lists each problem with `code`, `where`, `policy` and
-`credentialType`. There is deliberately no warning for a missing `presentation-definition`.
+`SsiPolicyError.findings` lists each problem with `code`, `fatal`, `where`, `policy` and
+`credentialType`: every finding, the fatal ones first (under `'off'`, the fatal ones only).
+There is deliberately no warning for a missing `presentation-definition`.
 
 nautilus adds no policy on its own: what the asset requires stays what you wrote. None of
 these checks closes the limitation below.
@@ -429,10 +444,71 @@ in the allow list: the policy server lets every address through it, which leaves
 all. Treat issuer trust and attribute checks as a filter for honest consumers, not as the only
 protection.
 
-Gating also works per service, via
-[`ServiceBuilder.addRequestCredentials`](/docs/api/servicebuilder/addRequestCredentials) —
-useful when an asset offers both a preview that needs no credential (allow-listed accounts
-only) and a full service that also requires a credential.
+`build()` warns about `'*'` on a credential-gated service (`identity.policy.wildcard_allow`),
+reading the allow lists as the policy server does: the asset's list holds `'*'`, and the
+service has no address list of its own or its list holds `'*'` too. Under
+[`setSsiPolicyLint('error')`](/docs/api/assetbuilder/setSsiPolicyLint) it throws.
+
+### Per-service gating
+
+Gating also works per service: an asset can offer a preview that needs no credential
+(allow-listed accounts only) and a full service that also requires one. Put the request
+credentials **and** the VC and VP policies on the gated service, with
+[`ServiceBuilder.addRequestCredentials`](/docs/api/servicebuilder/addRequestCredentials),
+[`setVcPolicies`](/docs/api/servicebuilder/setVcPolicies) and
+[`setVpPolicies`](/docs/api/servicebuilder/setVpPolicies), and keep the asset's own
+`SSIpolicy` empty:
+
+```ts twoslash
+import {
+  AssetBuilder,
+  CredentialListTypes,
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const access = () =>
+  new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+    serviceType: ServiceTypes.ACCESS
+  })
+    .setServiceEndpoint('https://ocean-node.dev.pontus-x.eu')
+    .addFile({ type: 'url', url: 'https://data.example/x.csv', method: 'GET' })
+    .setPricing({ type: 'free' })
+// ---cut---
+const preview = access().setName('Preview').build()
+
+const full = access()
+  .setName('Full dataset')
+  .addRequestCredentials(CredentialListTypes.ALLOW, [ // [!code focus]
+    { // [!code focus]
+      type: 'gx:LegalPerson', // [!code focus]
+      format: 'jwt_vc_json', // [!code focus]
+      policies: [{ policy: 'allowed-issuer', args: ['did:web:delta-dao.com'] }] // [!code focus]
+    } // [!code focus]
+  ]) // [!code focus]
+  .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'not-before', 'revoked-status-list']) // [!code focus]
+  .setVpPolicies(CredentialListTypes.ALLOW, [ // [!code focus]
+    { policy: 'signature' }, // [!code focus]
+    { policy: 'minimum-credentials', args: '1' } // [!code focus]
+  ]) // [!code focus]
+  .build()
+
+const asset = new AssetBuilder()
+  .setType('dataset')
+  .setName('My Dataset')
+  .setProvidedBy('My Organisation')
+  .addCredentialAddresses(CredentialListTypes.ALLOW, ['0x0DB823218e337a...'])
+  .addService(preview)
+  .addService(full)
+  .build()
+```
+
+The policy server merges the asset's `SSIpolicy` entries into every service and refuses every
+consumer of a service whose merged view holds one but requests no credential ("SSIpolicy was
+found, but failed to fetch request credentials"). VC or VP policies set on the asset would so
+close the preview to everyone; `build()` throws an `SsiPolicyError` for that setup, in every
+lint mode, naming the services concerned.
 
 ### Issuing from a real DID
 

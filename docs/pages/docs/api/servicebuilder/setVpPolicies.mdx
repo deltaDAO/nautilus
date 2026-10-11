@@ -1,0 +1,52 @@
+# setVpPolicies
+
+Set the checks applied to the presentation as a whole, for this service specifically.
+
+The service-level counterpart of [`AssetBuilder.setVpPolicies`](/docs/api/assetbuilder/setVpPolicies), with the same form: each policy is `{ policy }`, or `{ policy, args }` with `args` a string (pass structured arguments through `JSON.stringify`). The policy server merges the asset's and the accessed service's VP policies.
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+// ---cut---
+import { CredentialListTypes } from '@deltadao/nautilus'
+
+serviceBuilder.setVpPolicies(CredentialListTypes.ALLOW, [ // [!code focus]
+  { policy: 'signature' }, // [!code focus]
+  { policy: 'minimum-credentials', args: '1' } // [!code focus]
+]) // [!code focus]
+```
+
+`{ policy: 'signature' }` checks the presentation's own signature, and
+`minimum-credentials` of at least 1 refuses a presentation holding no credential.
+[`build()`](/docs/api/assetbuilder/build) warns when a credential-gated service's merged view
+lacks either (see [`setSsiPolicyLint`](/docs/api/assetbuilder/setSsiPolicyLint)).
+
+As on the asset, `build()` throws for VP arguments walt.id cannot read: a bare or non-integer
+`minimum-credentials` or `maximum-credentials`, and a `vp_required_credentials` whose
+argument is not `{ required: [...] }`.
+
+Put the VP policies of a service gated on its own here rather than on the asset: an
+asset-level `SSIpolicy` entry makes the policy server refuse every consumer of a sibling
+service that requests no credential. See
+[`setVcPolicies`](/docs/api/servicebuilder/setVcPolicies) and
+[per-service gating](/docs/guides/identity#per-service-gating).
+
+:::info
+This *replaces* the service's list: leaving a policy out removes it, and `[]` clears them. The
+service's request credentials are kept either way.
+:::
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.
