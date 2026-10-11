@@ -71,9 +71,12 @@ Credential gating is enforced on **consumption**, not on publication.
 [`access`](/docs/api/nautilus/access) reuses your previous order while it is inside the
 service's timeout. ocean-node 3.0 to 4.2 report no `validOrder` from the access
 `initialize`, so nautilus finds the order in the datatoken's events instead, reading back
-no further than the timeout and at most 100 000 blocks. An order older than that, one
-placed by another account or for another service, or a lookup the RPC refuses, means a new
-order. `reusedOrder` in the result says which happened.
+no further than the timeout and at most 100 000 blocks. An order past its timeout, or one
+placed by another account or for another service, means a new order. `reusedOrder` in the
+result says which happened. A lookup the RPC refuses, or one that cannot read back over the
+whole timeout, does not buy a service that costs anything: `access()` throws an
+[`OrderCheckError`](/docs/api/nautilus/access#ordercheckerror) before paying, unless you
+pass `orderOnLookupFailure: true`.
 
 [`compute`](/docs/api/nautilus/compute) orders each input on every job. See
 [Do you already hold an order?](/docs/guides/pricing#do-you-already-hold-an-order).

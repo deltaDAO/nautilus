@@ -128,6 +128,11 @@ What nautilus does, in order:
 5. Funds and authorises escrow for exactly the quoted amount: it approves and deposits only
    what escrow lacks, and authorises the environment to lock the job's amount.
 6. Orders each input as planned, reusing an existing order where the node says one is valid.
+   Unlike [`access()`](/docs/guides/download#why-access-can-stop-before-paying), `compute()`
+   does not look previous orders up on chain itself, and it never throws an
+   `OrderCheckError`. It orders every input the node does not report as validly ordered,
+   and since `compute()` sends the node no `transferTxId`, the node reports none: **each
+   paid input is bought on every job**.
 7. Starts the job.
 
 Steps 5 to 7 run one job at a time per chain, payer, payment token and environment within
