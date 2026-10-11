@@ -23,7 +23,7 @@
  *
  * When off, `debugEnabled` is one comparison and no raw value is copied or kept.
  */
-import { maskCredentials, maskNeverShown } from './credentials.js'
+import { CutText, maskCredentials, maskNeverShown } from './credentials.js'
 import {
   DEBUG_LEVELS,
   DEBUG_TOPICS,
@@ -55,7 +55,10 @@ export interface DebugEvent {
   /**
    * The raw value, as plain data (strings, numbers, booleans, `null`, arrays, objects):
    * an error becomes `{ name, message, code, …, cause }`. Long strings are cut at 32,768
-   * characters, and the whole event at about 256 KB of text, after masking.
+   * characters, and the whole event at about 256 KB of text, after masking. A string is
+   * read up to 65,536 characters (an event up to about 256 KB) before masking, and up to
+   * the last space or punctuation before that point, so no credential is cut in two. A
+   * cut string ends in ` …(cut: N of M characters shown)`, M its length as given.
    */
   data?: unknown
 }
@@ -83,13 +86,19 @@ interface State {
 const MAX_STRING_LENGTH = 32_768
 /**
  * How much of a string is read before masking: more than is printed, so a credential that
- * straddles the cut is masked whole before the cut is made.
+ * straddles the printed cut is masked whole before that cut is made, and a string that
+ * masking shortens still fills what is printed. The read itself ends before the last word
+ * it would cut (`readString`).
  */
 const RAW_STRING_LENGTH = 2 * MAX_STRING_LENGTH
 /** How many characters of strings and keys one event prints, at most. */
 const MAX_EVENT_SIZE = 262_144
-/** How many characters of strings and keys are read for one event, before masking. */
-const RAW_EVENT_SIZE = 2 * MAX_EVENT_SIZE
+/**
+ * How many characters of strings and keys are read for one event, before masking: what is
+ * printed, since masking all of a large event is what an event costs. A string the budget
+ * cuts ends before its last word, as at `RAW_STRING_LENGTH`.
+ */
+const RAW_EVENT_SIZE = MAX_EVENT_SIZE
 /** How deep an event's data is kept. */
 const MAX_DEPTH = 8
 /** How many entries of an array or object are kept. */
@@ -313,7 +322,8 @@ interface Budget {
 
 /**
  * `value` as plain data for masking: strings read up to twice what is printed, the whole
- * up to twice the event's size. `bounded` makes the printed cut after masking.
+ * up to the event's size; a string read in part is a `CutText`. `bounded` makes the
+ * printed cut, and marks every cut, after masking.
  */
 function readRaw(value: unknown): unknown {
   return plain(value, 0, new WeakSet(), {
@@ -325,6 +335,11 @@ function readRaw(value: unknown): unknown {
 /** The marker of what an event left out once its size was used up. */
 const EVENT_CUT = `event cut at ${MAX_EVENT_SIZE} characters`
 
+/** `, event cut at …` when `budget` is used up: why a read left entries out. */
+function eventCut(budget: Budget): string {
+  return budget.left <= 0 ? `, ${EVENT_CUT}` : ''
+}
+
 /**
  * Masked plain data as printed: strings cut at `MAX_STRING_LENGTH`, and the walk stopped,
  * with a marker, once the event holds `MAX_EVENT_SIZE` characters of strings and keys.
@@ -335,6 +350,8 @@ function bounded(data: unknown): unknown {
 
 function cut(value: unknown, budget: Budget): unknown {
   if (typeof value === 'string') return cutString(value, budget)
+  if (value instanceof CutText)
+    return cutString(value.text, budget, value.total)
   if (!value || typeof value !== 'object') return value
 
   if (Array.isArray(value)) {
@@ -361,12 +378,56 @@ function cut(value: unknown, budget: Budget): unknown {
   return out
 }
 
-function cutString(value: string, budget: Budget): string {
+/**
+ * Masked `text`, cut at what `budget` has left, and marked when cut here or when read in
+ * part (`total`: the length as given). The marker is set off by a space, so it does not
+ * run into the text before it.
+ */
+function cutString(text: string, budget: Budget, total?: number): string {
+  const limit = Math.max(0, Math.min(budget.stringLength, budget.left))
+  budget.left -= Math.min(text.length, limit)
+  if (text.length <= limit && total === undefined) return text
+  const shown = text.slice(0, limit)
+  return `${shown} …(cut: ${shown.length} of ${Math.max(total ?? 0, text.length)} characters shown)`
+}
+
+/**
+ * `value`, read up to what `budget` has left: whole, or as a `CutText` that ends at the
+ * last space or punctuation before the cut. A credential the cut goes through is left out
+ * whole, so masking never sees (and so never misses) a part of one.
+ */
+function readString(value: string, budget: Budget): string | CutText {
   const limit = Math.max(0, Math.min(budget.stringLength, budget.left))
   budget.left -= Math.min(value.length, limit)
-  return value.length > limit
-    ? `${value.slice(0, limit)}…(cut at ${limit} characters)`
-    : value
+  if (value.length <= limit) return value
+  return new CutText(beforeLastWord(value.slice(0, limit)), value.length)
+}
+
+/** What ends a word for `beforeLastWord`: whitespace, quotes, brackets, `,` and `;`. */
+const WORD_END = /[\s"'`<>()[\]{},;]/
+
+/**
+ * `text` without its last word: up to and including the last whitespace, quote, bracket,
+ * `,` or `;`. A URL, a `key=value` pair or a token the cut went through is dropped whole.
+ * A last word of `0x` hex (transaction data) is kept: no credential is recognised by the
+ * end of one.
+ */
+function beforeLastWord(text: string): string {
+  let end = text.length
+  while (end > 0 && !WORD_END.test(text[end - 1])) end--
+  return HEX_WORD.test(text.slice(end)) ? text : text.slice(0, end)
+}
+
+/** A word of `0x` hex. */
+const HEX_WORD = /^0x[0-9a-f]+$/i
+
+/** Bytes as `0x` hex, as many as `budget` has room for. */
+function readBytes(bytes: Uint8Array, budget: Budget): string | CutText {
+  const limit = Math.max(0, Math.min(budget.stringLength, budget.left))
+  const count = Math.min(bytes.length, Math.max(0, Math.floor((limit - 2) / 2)))
+  const hex = `0x${Array.from(bytes.subarray(0, count), (byte) => byte.toString(16).padStart(2, '0')).join('')}`
+  budget.left -= hex.length
+  return count < bytes.length ? new CutText(hex, 2 + 2 * bytes.length) : hex
 }
 
 /** `out[key] = value`, also for a `__proto__` key, which stays a key. */
@@ -391,7 +452,7 @@ function plain(
 ): unknown {
   switch (typeof value) {
     case 'string':
-      return cutString(value, budget)
+      return readString(value, budget)
     case 'number':
       return Number.isFinite(value) ? value : String(value)
     case 'boolean':
@@ -411,13 +472,7 @@ function plain(
 
   if (value instanceof Date) return value.toISOString()
   if (value instanceof URL) return value.href
-  if (value instanceof Uint8Array)
-    return plain(
-      `0x${Array.from(value.subarray(0, budget.stringLength), (byte) => byte.toString(16).padStart(2, '0')).join('')}`,
-      depth,
-      seen,
-      budget
-    )
+  if (value instanceof Uint8Array) return readBytes(value, budget)
 
   seen.add(object)
   try {
@@ -428,7 +483,7 @@ function plain(
         kept.push(plain(entry, depth + 1, seen, budget) ?? null)
       }
       if (value.length > kept.length)
-        kept.push(`… ${value.length - kept.length} more`)
+        kept.push(`… ${value.length - kept.length} more${eventCut(budget)}`)
       return kept
     }
     if (value instanceof Map)
@@ -444,8 +499,8 @@ function plain(
 
     const out: Record<string, unknown> = {}
     if (value instanceof Error) {
-      out.name = cutString(String(value.name), budget)
-      out.message = cutString(String(value.message), budget)
+      out.name = readString(String(value.name), budget)
+      out.message = readString(String(value.message), budget)
     }
     const keys = Object.keys(object).filter((key) => key !== 'stack')
     let read = 0
@@ -462,7 +517,8 @@ function plain(
       const converted = plain(entry, depth + 1, seen, budget)
       if (converted !== undefined) define(out, key, converted)
     }
-    if (keys.length > read) out['…'] = `${keys.length - read} more`
+    if (keys.length > read)
+      out['…'] = `${keys.length - read} more${eventCut(budget)}`
     if (
       value instanceof Error &&
       !Object.hasOwn(out, 'cause') &&

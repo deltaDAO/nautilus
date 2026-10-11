@@ -1020,7 +1020,7 @@ describe('what the sensitive tier still hides: by name and shape', () => {
 
     const data = events[0].data as string
     expect(data).not.to.contain(token.slice(0, 6))
-    expect(data).to.match(/…\(cut at 32768 characters\)$/)
+    expect(data).to.match(/ …\(cut: 32768 of \d+ characters shown\)$/)
   })
 
   it('bounds one event to about 256 KB, with a marker', () => {
@@ -1325,5 +1325,84 @@ describe('round-2 fixes', () => {
     expect(
       redactFields({ key: 'ddo/a.json', publicKey: '0x02ab', objectKey: 'k' })
     ).to.deep.equal({ key: 'ddo/a.json', publicKey: '0x02ab', objectKey: 'k' })
+  })
+
+  /** The data of a cut string, its marker's numbers, and the text before the marker. */
+  function cutMarker(data: string): {
+    shown: number
+    total: number
+    text: string
+  } {
+    const match = / …\(cut: (\d+) of (\d+) characters shown\)$/.exec(data)
+    expect(match, data.slice(-80)).not.to.equal(null)
+    const text = data.slice(0, match?.index)
+    return { shown: Number(match?.[1]), total: Number(match?.[2]), text }
+  }
+
+  it('shows no part of a credential the raw read cuts, after masking shrank the text (code N1)', () => {
+    const events = captureDebug('sensitive')
+    const token = 'Zx9Qw8Er7Ty6Ui5Op4As3Df2Gh1Jk0Lm'
+    const url = 'https://rpc.example.org/v3/'
+    for (const keep of [3, 8, 19]) {
+      // 40,000 characters of a masked value shrink the read 65,536 to about 25,000, so
+      // the raw cut, `keep` characters into the token, is in what is printed.
+      const big = `apiToken=${'Z9'.repeat(20_000)}`
+      const pad = 65_536 - big.length - 1 - url.length - keep
+      for (const filler of ['y'.repeat(pad), 'y '.repeat(pad / 2)]) {
+        const text = `${big} ${filler.slice(0, pad)}${url}${token} tail`
+        events.length = 0
+        debugRaw('rpc', 'shrunk', text)
+
+        const data = events[0].data as string
+        expect(data, `${keep}`).not.to.contain(token.slice(0, 3))
+        // The marker tells the truth: what is shown, of the length given.
+        const marker = cutMarker(data)
+        expect(marker.text.length).to.equal(marker.shown)
+        expect(marker.total).to.equal(text.length)
+      }
+    }
+  })
+
+  it('shows no part of a credential the event budget cuts, and sets the marker off (security N-m1)', () => {
+    const events = captureDebug('sensitive')
+    const token = 'FAKELLstr9Q7wZ3kP2mN8vB4cR6tY1uAbCd'
+    const prefix = 'https://rpc.example/v2/'
+    // The token straddles the end of the read: at 512 KB (before this fix) and at 256 KB
+    // (now). At 35 the cut falls right after the token, which the marker used to stick to.
+    for (const [rows, read] of [
+      [190, 524_288],
+      [90, 262_144]
+    ])
+      for (const back of [5, 19, 25, 35]) {
+        const many = Array.from({ length: rows }, () => ({
+          apiKey: 'x'.repeat(2700)
+        }))
+        const left = read - (4 + rows * (6 + 2700) + 4)
+        const last = `${'b'.repeat(left - prefix.length - back)}${prefix}${token} end`
+        events.length = 0
+        debugRaw('rpc', 'budget', { many, last })
+
+        expect(JSON.stringify(events[0].data), `${back}`).not.to.contain(
+          token.slice(0, 4)
+        )
+        const data = (events[0].data as { last?: string }).last
+        if (read === 262_144)
+          expect(cutMarker(data ?? '').total).to.equal(last.length)
+      }
+  })
+
+  it('keeps 0x hex and bytes read in part, marked with their whole length', () => {
+    const events = captureDebug('sensitive')
+    debugRaw('rpc', 'hex', { data: `0x${'ab'.repeat(40_000)}` })
+    debugRaw('rpc', 'bytes', new Uint8Array(40_000))
+    for (const event of events) {
+      const data =
+        typeof event.data === 'string'
+          ? event.data
+          : (event.data as { data: string }).data
+      const marker = cutMarker(data)
+      expect(marker).to.include({ shown: 32_768, total: 80_002 })
+      expect(marker.text).to.match(/^0x[0-9a-f]{32766}$/)
+    }
   })
 })

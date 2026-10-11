@@ -26,7 +26,8 @@ the redacted error does not explain can be diagnosed without out-of-band queries
 - **One line per event**, on stderr, prefixed `[nautilus:debug:sensitive]` or
   `[nautilus:debug:SECRETS]` and the topic; line breaks and control characters in the data
   are written as JSON escapes; strings are cut at 32,768 characters and an event at about
-  256 KB, after masking. A `sink` receives `{ time, tier, topic, message, data }` instead.
+  256 KB, after masking, and a longer string is read only up to the last word before the
+  cut, so a credential is never shown in part (`…(cut: N of M characters shown)`). A `sink` receives `{ time, tier, topic, message, data }` instead.
 - **A warning when it is turned on**, once per tier, on stderr, whatever the log level or
   sink; stronger under `NODE_ENV=production`.
 - **Errors, return values and log events do not change.** They stay exactly as redacted as

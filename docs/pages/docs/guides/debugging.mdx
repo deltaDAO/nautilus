@@ -78,7 +78,8 @@ to see the raw fields of every event.
 Each event is one line on stderr (in a browser, through `console.info`, which consoles show
 by default), prefixed with its tier and topic, so the lines are easy to find, split off and
 delete. A string in an event is cut at 32,768 characters and an event at about 256 KB, after
-the masking:
+the masking; a longer string is read only up to the last word before the cut, so a
+credential is never shown in part. A cut string ends in `…(cut: N of M characters shown)`:
 
 ```
 [nautilus] WARNING: sensitive debug logging is ON: the output contains session ids, signatures and request data. Don't use it in production, and don't share the output.
