@@ -8,8 +8,9 @@
  * redaction of `src/node/messages.ts` shares):
  *
  * - a credential or a one-time value is replaced by `<redacted>`: the exact keys `nonce`,
- *   `sid`, `auth`, `bearer`, `seed`, `pk`, `privkey`, `otp`, `pin`, `hmac`, `dkey`, `sig`
- *   and `requestUri`, any key ending in a credential name (`secret`, `secretKey`,
+ *   `sid`, `auth`, `bearer`, `seed`, `pk`, `privkey`, `otp`, `pin`, `hmac`, `dkey`, `sig`,
+ *   `pass`, `pwd` and `requestUri`, any key holding `privateKey`, any key ending in the word
+ *   `pass` (`DB_PASS`), any key ending in a credential name (`secret`, `secretKey`,
  *   `password`, `apiKey`, `privateKey`, `sessionId`, `signature`, `cookie`, `jwt`,
  *   `authorization`, `accessToken`, `sessionToken`, `authorizationCode`, `credentials`,
  *   `presentation`, `signedTx`, `rawTx`, …), and any other key ending in `key` or `auth`

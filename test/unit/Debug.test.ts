@@ -1405,4 +1405,60 @@ describe('round-2 fixes', () => {
       expect(marker.text).to.match(/^0x[0-9a-f]{32766}$/)
     }
   })
+
+  it('hides a private key under any name holding one, at every tier, and pass/pwd keys in logs (N7)', () => {
+    const value = 'FAKEn7Q7m2Lx9pVt4'
+    const has = (out: unknown) => JSON.stringify(out).includes(value)
+    const text = (key: string) => `${key}=${value} "${key}": "${value}"`
+    for (const key of [
+      'privateKeyHex',
+      'private_key_hex',
+      'PRIVATE_KEY_HEX',
+      'privKeyBytes',
+      'signerPrivateKey'
+    ]) {
+      expect(has(redactFields({ [key]: value })), key).to.equal(false)
+      expect(sanitize(text(key), 500, null), key).not.to.contain(value)
+      expect(
+        has(maskCredentials({ [key]: value, text: text(key) })),
+        key
+      ).to.equal(false)
+      expect(
+        has(maskNeverShown({ [key]: value, text: text(key) })),
+        key
+      ).to.equal(false)
+    }
+    for (const key of [
+      'pass',
+      'PASS',
+      'pwd',
+      'passwd',
+      'passphrase',
+      'DB_PASS',
+      'dbPass',
+      'smtp-pass',
+      'dbPassword'
+    ]) {
+      expect(has(redactFields({ [key]: value })), key).to.equal(false)
+      expect(sanitize(text(key), 500, null), key).not.to.contain(value)
+      expect(
+        has(maskCredentials({ [key]: value, text: text(key) })),
+        key
+      ).to.equal(false)
+    }
+    // Words that only end in the letters `pass`, and other readable keys, stay readable.
+    const readable = {
+      passed: 3,
+      passive: true,
+      bypass: 'yes',
+      compass: 'n',
+      surpass: 'x',
+      BYPASS: 'y',
+      pkg: 'nautilus'
+    }
+    expect(redactFields(readable)).to.deep.equal(readable)
+    expect(sanitize('passed=3 bypass: yes pkg=nautilus', 500, null)).to.equal(
+      'passed=3 bypass: yes pkg=nautilus'
+    )
+  })
 })
