@@ -24,9 +24,11 @@ const wallet = new Wallet(key, provider)
 const nautilus = await Nautilus.create(wallet, { config })
 ```
 
-`confirmTransaction(operation, response)` takes the signer as an optional third argument, so
-its error can name why the send failed. To keep nautilus from setting nonces, pass
-`nonceManagement: 'off'`.
+`confirmTransaction(operation, response)` takes the signer and the contract the call went
+to as optional third and fourth arguments, so its error can name why the send failed. To
+keep nautilus from setting nonces, pass `nonceManagement: 'off'`. For paid flows, also pass
+`verificationProvider` (a second RPC for the same chain): without it, an order refused for
+its nonce is never sent again.
 
 ## Upgrading from 2.0.0-beta.1
 
