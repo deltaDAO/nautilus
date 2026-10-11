@@ -612,6 +612,17 @@ network's EURAU/OCEAN configs; without any fixed config they publish for free an
 
 To check what an asset costs before buying it, run `npm start -- access:price <did>`.
 
+If the RPC fails while nautilus looks for an order you already hold (a rate limit, no
+answer, an error), or the lookup cannot read back over the whole order window,
+`access:order` and `access:download` stop **before paying** for a paid service, with an
+`OrderCheckError`: buying without that check could pay twice. Nothing is spent; run the
+command again in a minute or with another `RPC_URL`. The message says when a retry would
+end the same way (a service whose orders never expire, past the lookup's 100 000 blocks).
+To buy anyway, add `--order-on-lookup-failure` (`orderOnLookupFailure: true`); any other
+`--` option fails the command. `NAUTILUS_DEBUG=sensitive`
+shows the RPC's unredacted answer (topic `order`). A free service is ordered anyway, with
+a warning.
+
 ## Checks
 
 ```sh

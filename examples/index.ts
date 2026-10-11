@@ -7,6 +7,7 @@ import {
   formatCommandHelp,
   formatHelp,
   formatUsage,
+  positional,
   requiredArgs,
   runCommand
 } from './commands'
@@ -55,7 +56,7 @@ async function main() {
     return
   }
 
-  if (args.length < requiredArgs(command).length) {
+  if (positional(args).length < requiredArgs(command).length) {
     console.error(`Usage: npm start -- ${formatUsage(name, command)}`)
     console.error(`       npm start -- ${name} --help`)
     process.exitCode = 1
