@@ -48,3 +48,7 @@ Get it from the asset with `getDatatokenForService(asset, serviceId)`.
 
 The chain config. Read it from the instance with
 [`getOceanConfig`](/docs/api/nautilus/getOceanConfig).
+
+Without it, the chain id is read from the signer, and a datatoken with fixed rates is reported
+as `'fixed'` without checking that its exchange is active (that needs the config's
+`fixedRateExchangeAddress`).

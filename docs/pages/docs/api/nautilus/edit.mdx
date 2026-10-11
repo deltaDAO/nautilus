@@ -91,6 +91,15 @@ Built from an `AssetBuilder` constructed with a resolved asset.
 
 Same as [`publish`](/docs/api/nautilus/publish#options-optional).
 
+## Warnings
+
+The same as [`publish`](/docs/api/nautilus/publish#warnings), and they are printed the same
+way. An edit has the asset's DID, so the missing-allow-list warning
+(`publish.preflight.denies_all`) is printed once per node and DID, whatever the asset is named.
+Editing the same asset again without an address allow list does not repeat it. The publish
+that created the asset had no DID yet and was keyed by its name, so an edit after it warns
+once more.
+
 ## Throws
 
 - **Before any transaction:** an asset not built from a resolved DDO, `encrypt: false`, a

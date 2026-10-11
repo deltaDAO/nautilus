@@ -207,7 +207,8 @@ Defaults to the first accepted token; an unaccepted one fails with the list of a
 
 - Type: `number`
 
-Seconds. Capped to the environment's `maxJobDuration`, with a warning when it is.
+Seconds. Capped to the environment's `maxJobDuration`, with a warning when it is
+(`compute.duration.capped`, once per node, environment, requested duration and limit).
 
 ##### output (optional)
 

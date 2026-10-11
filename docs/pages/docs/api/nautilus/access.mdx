@@ -70,6 +70,15 @@ What happens in order:
    spender, after every check has passed.
 6. The download URL is built, carrying the policy-server session if there is one.
 
+A fixed-price or free order prints nothing of its own at the default level. Earlier
+releases let ocean.js print `No config found for given network 'undefined'` twice for each
+fixed-price order, and once for a free order on a template-1 datatoken. The exchange and the
+dispenser were built without the chain's config. Now every ocean.js contract nautilus builds
+gets the config, so the line is gone. Their transactions also use the config's
+`gasFeeMultiplier`, as the datatoken's own transactions already did. The exported
+`getPricingInfo` and `getDatatokenBalance` take the config as an optional last argument;
+without it they read the chain id from the signer, so they don't print the line either.
+
 ## Returns
 
 - Type: `AccessResult`

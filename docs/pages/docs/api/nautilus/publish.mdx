@@ -174,6 +174,26 @@ There is no `encrypt` option any more. The pointer and the stored envelope are a
 node-encrypted, and passing `encrypt: false` throws.
 :::
 
+## Warnings
+
+`publish()` goes on after these and prints a warning: on `stderr` by default, or to your
+`sink` (see [`configureLogging`](/docs/api/nautilus/configureLogging)). They print at the
+default level (`warn`). Filter on the event name, not on the message, which may change.
+Errors, URLs and node text in a warning are redacted and shortened: an RPC URL shows only its
+origin, so its key is never printed. With the [debug channel](/docs/api/nautilus/setDebug) on,
+the removed text goes there.
+
+| Event | What it means | What to do | How often |
+|---|---|---|---|
+| `publish.preflight.denies_all` | A node that checks the asset has a policy server, and the asset's `credentials` have no address allow list. That is the configured node or any service's `serviceEndpoint`. The policy server checks the consumer's address against that list first, so it refuses every consumer. The asset is published, but nobody can download it or run compute on it. | Add the consumers' addresses with `addCredentialAddresses(CredentialListTypes.ALLOW, [...])` before publishing. | Once per node and asset. The asset is its DID when it has one ([`edit`](/docs/api/nautilus/edit), [`completePublish`](/docs/api/nautilus/completePublish)). Before the mint there is no DID, so it is the publisher's address and the asset's name: new assets of one publisher with the same name warn once per node. Publishing an asset and then editing it warns once for each. |
+| `publish.preflight.publisher_is_node` | The publisher's address is the node's own (`providerAddress`). The node's decrypt calls then fail with 401, and the asset goes on chain but is never indexed. | Publish with another key. | Once per node address. |
+| `publish.preflight.indexer_nonce_will_stick` | The node's indexer will sign this asset's second decrypt call with a nonce the node does not accept. Unless another decrypt moves the nonce first, the asset is not indexed and the indexer nonce gets stuck. | Ask the node operator, or publish later. See [`checkIndexerNonce`](#checkindexernonce). | Once per node and nonce. |
+| `publish.metadata.events_unchecked` | The block of the metadata transaction could not be read, so a second metadata event of the NFT in the same block would go unnoticed (see `MetadataConflictError` below). | Use `waitForIndexer` and check that the indexed asset is yours. | Every time. |
+| `publish.preflight.pending_unreadable` | [`completePublish`](/docs/api/nautilus/completePublish) only: the signer's pending transaction count could not be read, so an earlier metadata transaction that is still pending cannot be ruled out. | Check that no earlier metadata transaction of the NFT is still pending. If one is, it may write the metadata a second time. | Every time. |
+
+To silence them, pass `level: 'error'` to [`configureLogging`](/docs/api/nautilus/configureLogging),
+or handle them in your own `sink`.
+
 ## Throws
 
 - **Before any transaction:** `encrypt: false`, a `DEPRECATED` or `REVOKED_BY_PUBLISHER`
