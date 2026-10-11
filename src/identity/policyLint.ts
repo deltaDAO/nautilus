@@ -255,7 +255,7 @@ export function lintSsiPolicies(
       fatal: true,
       where,
       policy: 'SSIpolicy',
-      message: `The ${where} has an SSIpolicy entry, but ${names.length === 1 ? `${names[0]} requests` : `${names.join(', ')} request`} no credential: the policy server merges the asset's SSIpolicy entries with the accessed service's and refuses every consumer of a service that holds one without a request credential ("SSIpolicy was found, but failed to fetch request credentials"). Put the VC and VP policies on the gated service only (ServiceBuilder.setVcPolicies / setVpPolicies, next to its addRequestCredentials), or add request credentials.`
+      message: `The ${where} has an SSIpolicy entry, but ${names.length === 1 ? `${names[0]} requests` : `${names.join(', ')} request`} no credential: the policy server merges the asset's SSIpolicy entries with the accessed service's and refuses every consumer of a service that holds one without a request credential ("SSIpolicy was found, but failed to fetch request credentials"). Put the VC and VP policies on the gated service only (ServiceBuilder.setVcPolicies / setVpPolicies, next to its addRequestCredentials), or add request credentials.${where === asset.where ? " On an edit, clear the asset's lists with AssetBuilder.setVcPolicies(list, []) and setVpPolicies(list, []), which removes its emptied SSIpolicy entry, then set them on the gated service." : ''}`
     })
 
   return [...findings.values()]

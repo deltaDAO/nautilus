@@ -87,7 +87,8 @@ export function addRequestCredentials(
  *
  * A genuine replacement, which routing this through `addRequestCredentials` was not: that
  * merges, so on an edited asset the policies the caller left out stayed in the document
- * and the checks they meant to remove went on running. Passing `[]` clears them.
+ * and the checks they meant to remove went on running. Passing `[]` clears them; an entry
+ * left with no request credential and no VC or VP policy is removed.
  */
 export function setVcPolicies(
   credentials: DdoCredentials,
@@ -101,7 +102,8 @@ export function setVcPolicies(
 
 /**
  * Replaces the VP policies on the given list's `SSIpolicy` entry, keeping its request
- * credentials. Passing `[]` clears them.
+ * credentials. Passing `[]` clears them; an entry left with no request credential and no
+ * VC or VP policy is removed.
  */
 export function setVpPolicies(
   credentials: DdoCredentials,
@@ -114,7 +116,8 @@ export function setVpPolicies(
 }
 
 /**
- * Applies a change to one list's single `SSIpolicy` entry, creating it if needed.
+ * Applies a change to one list's single `SSIpolicy` entry, creating it if needed, and
+ * removing it when the change leaves it empty.
  *
  * One entry with one value per list. The policy server merges every value of every
  * `SSIpolicy` entry (asset and service level), so existing entries and values are merged
@@ -136,6 +139,15 @@ function updateSsiPolicy(
 
   mutate(value)
 
+  // An emptied entry goes: the policy server refuses every consumer of a service whose merged
+  // view holds an SSIpolicy entry without request credentials, so clearing an asset's VC and
+  // VP lists is how an edit moves them onto the gated service.
+  if (isEmptySsiValue(value))
+    return {
+      ...credentials,
+      [list]: entries.filter((entry) => !isSsiPolicyCredential(entry))
+    }
+
   if (existing) existing.values = [value]
   else entries.push({ type: 'SSIpolicy', values: [value] })
 
@@ -147,6 +159,17 @@ function updateSsiPolicy(
         )
       : entries
   }
+}
+
+/** An `SSIpolicy` value with no request credential, no VC or VP policy and nothing else. */
+function isEmptySsiValue(value: SsiPolicyValue): boolean {
+  return Object.entries(value).every(
+    ([key, field]) =>
+      (key === 'request_credentials' ||
+        key === 'vc_policies' ||
+        key === 'vp_policies') &&
+      (field === undefined || (Array.isArray(field) && field.length === 0))
+  )
 }
 
 /**

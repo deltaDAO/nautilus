@@ -332,7 +332,16 @@ export class AssetBuilder implements IAssetBuilder {
     return this
   }
 
-  /** Presentation-level checks, e.g. `holder-binding`, `minimum-credentials`. */
+  /**
+   * Presentation-level checks, e.g. `{ policy: 'signature' }`,
+   * `{ policy: 'minimum-credentials', args: '1' }`.
+   *
+   * Both setters replace the list; `[]` clears it. An asset-level `SSIpolicy` entry left with
+   * no request credential and no VC or VP policy is removed, which is how an edit moves the
+   * policies of an asset with an ungated service onto the gated one:
+   * `setVcPolicies(list, []).setVpPolicies(list, [])` here, then `ServiceBuilder.setVcPolicies`
+   * / `setVpPolicies` on the gated service.
+   */
   setVpPolicies(list: CredentialListTypes, policies: VpPolicy[]) {
     this.asset.ddo.credentials = setVpPolicies(
       this.asset.ddo.credentials,

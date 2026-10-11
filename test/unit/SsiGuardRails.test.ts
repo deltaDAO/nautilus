@@ -1031,6 +1031,87 @@ describe('SSI policy lint: per-service gating (D27)', () => {
   })
 })
 
+describe('SSI policy lint: editing an asset gated the old way (D27)', () => {
+  /** The old guide's shape: the safe set on the asset, a gated full and an ungated preview. */
+  function oldGuideAsset(): AssetV5 {
+    const published = getAssetFixture()
+    const [full] = published.credentialSubject.services
+    full.credentials = {
+      allow: [
+        {
+          type: 'SSIpolicy',
+          values: [
+            {
+              request_credentials: [
+                {
+                  type: 'VerifiableId',
+                  format: 'jwt_vc_json',
+                  policies: [JSON.stringify(TRUST[0].policies[0])]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    } as never
+    published.credentialSubject.services.push({
+      ...full,
+      id: 'preview',
+      name: 'Preview',
+      credentials: {} as never
+    })
+    published.credentialSubject.credentials = {
+      allow: [
+        { type: 'address', values: [{ address: OWNER_ADDRESS }] },
+        {
+          type: 'SSIpolicy',
+          values: [{ vc_policies: SAFE_VC, vp_policies: SAFE_VP }]
+        }
+      ]
+    } as never
+    return published
+  }
+
+  it('says how to repair it on an edit', () => {
+    expect(() =>
+      new AssetBuilder(oldGuideAsset()).setName('Renamed').build()
+    ).to.throw(
+      SsiPolicyError,
+      /On an edit, clear the asset's lists with AssetBuilder\.setVcPolicies\(list, \[\]\) and setVpPolicies\(list, \[\]\)/
+    )
+  })
+
+  it('moves the policies onto the gated service: the emptied asset entry goes, the preview opens', () => {
+    const published = oldGuideAsset()
+    const full = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+      asset: published,
+      serviceId: SERVICE_ID
+    })
+      .setVcPolicies(ALLOW, SAFE_VC)
+      .setVpPolicies(ALLOW, SAFE_VP)
+      .build()
+
+    let built: ReturnType<AssetBuilder['build']> | undefined
+    const seen = events(() => {
+      built = new AssetBuilder(published)
+        .setVcPolicies(ALLOW, [])
+        .setVpPolicies(ALLOW, [])
+        .addService(full)
+        .setSsiPolicyLint('error')
+        .build()
+    })
+
+    expect(names(seen)).to.deep.equal([])
+    expect(built?.ddo.credentials.allow).to.deep.equal([
+      { type: 'address', values: [{ address: OWNER_ADDRESS }] }
+    ])
+    expect(requiresPresentation(built?.ddo.credentials, {})).to.equal(false)
+    expect(
+      requiresPresentation(built?.ddo.credentials, full.credentials)
+    ).to.equal(true)
+  })
+})
+
 describe('SSI policy lint: weaker than the safe set (D4)', () => {
   const variant = (vc: string[], vp: { policy: string; args?: string }[]) =>
     safeSet().setVcPolicies(ALLOW, vc).setVpPolicies(ALLOW, vp)

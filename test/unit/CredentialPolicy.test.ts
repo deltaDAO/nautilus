@@ -125,9 +125,27 @@ describe('SSI credential block', () => {
 
   it('clears the policies when given an empty list', () => {
     let credentials = setVcPolicies({}, ALLOW, DEFAULT_VC_POLICIES)
+    credentials = setVpPolicies(credentials, ALLOW, [{ policy: 'signature' }])
     credentials = setVcPolicies(credentials, ALLOW, [])
 
     expect(ssiEntry(credentials)?.values[0].vc_policies).to.deep.equal([])
+  })
+
+  it('removes an entry left with no request credential and no policy', () => {
+    // The policy server refuses every consumer of a service whose merged view holds an
+    // SSIpolicy entry without request credentials, empty lists included.
+    let credentials = setVcPolicies(
+      { allow: [{ type: 'address', values: [{ address: '0x1' }] }] },
+      ALLOW,
+      DEFAULT_VC_POLICIES
+    )
+    credentials = setVpPolicies(credentials, ALLOW, [{ policy: 'signature' }])
+    credentials = setVcPolicies(credentials, ALLOW, [])
+    credentials = setVpPolicies(credentials, ALLOW, [])
+
+    expect(credentials.allow).to.deep.equal([
+      { type: 'address', values: [{ address: '0x1' }] }
+    ])
   })
 
   it('replaces the vp policies too', () => {
