@@ -41,7 +41,7 @@ export type DownloadOptions = {
  * prints the fields a program would act on, then fails the command.
  */
 function explainOrderCheck(error: unknown): never {
-  if (error instanceof OrderCheckError && error.retryable) {
+  if (error instanceof OrderCheckError) {
     const costs = error.costs
       .map((cost) => `${cost.amount} ${cost.symbol}`)
       .join(' + ')

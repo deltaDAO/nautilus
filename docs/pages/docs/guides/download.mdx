@@ -60,7 +60,7 @@ the datatoken's events; see
 ## Why access() can stop before paying
 
 Finding no previous order is normal: nautilus buys one. But when the lookup itself **fails**
-(the RPC rate-limits it, does not answer, or answers with an error) or **stops short** (it
+(the RPC rate-limits it, does not answer, answers with an error, or answers without the data the check needs) or **stops short** (it
 cannot read back over the whole order window), nautilus cannot tell whether you already
 hold a valid order. Buying anyway could make you pay twice, so for a
 service that costs anything `access()` stops before paying and throws an
