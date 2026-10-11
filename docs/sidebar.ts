@@ -288,6 +288,10 @@ export const sidebar = {
               link: '/docs/api/assetbuilder/removeService'
             },
             {
+              text: 'requireCredentialAttributes',
+              link: '/docs/api/assetbuilder/requireCredentialAttributes'
+            },
+            {
               text: 'setAlgorithm',
               link: '/docs/api/assetbuilder/setAlgorithm'
             },
@@ -346,6 +350,10 @@ export const sidebar = {
               link: '/docs/api/assetbuilder/setProvidedBy'
             },
             {
+              text: 'setRequestCredentials',
+              link: '/docs/api/assetbuilder/setRequestCredentials'
+            },
+            {
               text: 'setSsiPolicyLint',
               link: '/docs/api/assetbuilder/setSsiPolicyLint'
             },
@@ -357,6 +365,10 @@ export const sidebar = {
             {
               text: 'setVpPolicies',
               link: '/docs/api/assetbuilder/setVpPolicies'
+            },
+            {
+              text: 'trustIssuers',
+              link: '/docs/api/assetbuilder/trustIssuers'
             }
           ]
         },
@@ -406,6 +418,10 @@ export const sidebar = {
               text: 'removeTrustedAlgorithmPublisher',
               link: '/docs/api/servicebuilder/removeTrustedAlgorithmPublisher'
             },
+            {
+              text: 'requireCredentialAttributes',
+              link: '/docs/api/servicebuilder/requireCredentialAttributes'
+            },
             { text: 'reset', link: '/docs/api/servicebuilder/reset' },
             {
               text: 'setAllAlgorithmPublishersTrusted',
@@ -454,6 +470,10 @@ export const sidebar = {
             },
             { text: 'setPricing', link: '/docs/api/servicebuilder/setPricing' },
             {
+              text: 'setRequestCredentials',
+              link: '/docs/api/servicebuilder/setRequestCredentials'
+            },
+            {
               text: 'setServiceEndpoint',
               link: '/docs/api/servicebuilder/setServiceEndpoint'
             },
@@ -466,6 +486,10 @@ export const sidebar = {
             {
               text: 'setVpPolicies',
               link: '/docs/api/servicebuilder/setVpPolicies'
+            },
+            {
+              text: 'trustIssuers',
+              link: '/docs/api/servicebuilder/trustIssuers'
             }
           ]
         }

@@ -13,6 +13,7 @@ a service. It warns when:
 | `identity.policy.presentation_definition_vc_jwt` | `presentation-definition` is combined with a `jwt_vc_json` (or `jwt_vc`) request credential. walt.id's generated definition looks for the type at `$.vc.type`, which VCDM 2.0 credentials do not have. |
 | `identity.policy.no_issuer_trust` | A requested credential type has no per-credential `allowed-issuer` among the policies walt.id runs for it (the last non-empty list for the type, after the policy server drops repeats of an identical request), so a credential of that type from any issuer, a self-issued one included, is accepted. |
 | `identity.policy.credential_policies_replaced` | A type is requested more than once with different per-credential policies. walt.id keeps only the last non-empty list per type, after the policy server drops repeats of an identical request (the first one keeps its position), so the other lists never run. |
+| `identity.policy.unknown_name` | A VC, VP or per-credential policy name is not one walt.id knows (90e568f). A verifier that does not know it fails every presentation; a newer one may know it. |
 | `identity.policy.no_vc_signature` | A credential-gated service's VC policies (asset and service merged) have no `signature`: a credential that names a trusted issuer but is signed by anyone passes `allowed-issuer`. |
 | `identity.policy.no_vp_signature` | A credential-gated service's VP policies have no `signature`: nothing is sure to check the presentation's own signature. |
 | `identity.policy.no_minimum_credentials` | A credential-gated service's VP policies have no `minimum-credentials` of at least 1: a presentation holding no credential passes. |
@@ -24,7 +25,7 @@ check holds whatever the operator set. The recommended set
 ([identity guide](/docs/guides/identity#publishing-a-gated-asset)) builds without a warning.
 
 Each event carries `where` (`'asset'` or `'service <id or name>'`, the place the policy sits or,
-for a missing one, where the service's policies sit) and, where it applies, `credentialType`.
+for a missing one, where the service's policies sit) and, where it applies, `credentialType`; `identity.policy.unknown_name` also carries `policy`.
 Service ids and names are sanitised (control characters stripped, length bounded); on an
 edit they come from the node.
 
@@ -78,7 +79,14 @@ written:
   `JSON.stringify({ required: [{ credential_type: '<type>' }] })`: walt.id fails it for every
   presentation;
 - `credential-policy-arguments`: a per-credential `allowed-issuer` that names no issuer (no
-  `args`, `[]`, `'*'`; `'*'` is not a wildcard in walt.id): every credential is refused.
+  `args`, `[]`, `'*'`; `'*'` is not a wildcard in walt.id), or a per-credential `schema` whose
+  `args` are not a JSON Schema object: walt.id fails it for every presentation;
+- a credential type requested more than once with different formats or policies, at asset
+  and service level merged: walt.id keeps only the last request's per-credential policies for
+  a type, so the others, e.g. issuer trust, are silently dropped (code
+  `duplicate-request-type`). Use one request per type:
+  [`trustIssuers`](/docs/api/assetbuilder/trustIssuers) and
+  [`requireCredentialAttributes`](/docs/api/assetbuilder/requireCredentialAttributes) add to it.
 :::
 
 :::info

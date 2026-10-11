@@ -1,0 +1,79 @@
+# trustIssuers
+
+The service-level counterpart of [`AssetBuilder.trustIssuers`](/docs/api/assetbuilder/trustIssuers): it trusts the issuers for this service only.
+
+The policy server merges the asset's and the service's request credentials, and walt.id keeps one per-credential policy list per credential type, so put all the policies for a type at one level: [`AssetBuilder.build()`](/docs/api/assetbuilder/build) throws when a type is requested at both with different policies.
+
+Accept credentials of a requested type only from these issuers.
+
+It writes walt.id's per-credential `allowed-issuer` policy on the `allow` list, and adds the
+request credential if it is not there yet. Without it, a credential of that type from any
+issuer, a self-issued one included, is accepted (and `build()` warns:
+`identity.policy.no_issuer_trust`).
+
+## Usage
+
+```ts twoslash
+import {
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+
+const serviceBuilder = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+// ---cut---
+serviceBuilder.trustIssuers('gx:LegalPerson', ['did:web:delta-dao.com']) // [!code focus]
+```
+
+It stores the same policy as writing it by hand in
+[`addRequestCredentials`](/docs/api/servicebuilder/addRequestCredentials):
+
+```ts
+{ type: 'gx:LegalPerson', format: 'jwt_vc_json', policies: [
+  { policy: 'allowed-issuer', args: ['did:web:delta-dao.com'] }
+] }
+```
+
+## Parameters
+
+### type
+
+- Type: `string`
+
+The credential type, e.g. `'gx:LegalPerson'`.
+
+### issuers
+
+- Type: `string[]`
+
+The issuer DIDs to trust, compared by walt.id with the credential's `iss` (or `issuer`). Each
+must be a DID (`did:<method>:<id>`, e.g. `did:web:delta-dao.com`); anything else, or an empty
+list, throws a `TypeError`: a value that is not a DID never matches an issuer, and an empty
+list refuses every consumer.
+
+### options
+
+- Type: `{ format?: string }`
+
+Which request credential to change. Without `format`, the one request for `type` already on
+the list, or else a new `jwt_vc_json` one.
+
+## Combining
+
+Calls add issuers to the same `allowed-issuer` policy: any of them is trusted. The policy is
+stored first among the credential's policies.
+
+:::warning[Only credentials of the requested type are checked]
+walt.id runs per-credential policies only on presented credentials of the requested type. A
+hand-built presentation holding a self-issued credential of another type skips issuer trust.
+Keep an explicit address allow list. See the
+[known limitation](/docs/guides/identity#known-limitation-credentials-of-another-type).
+:::
+
+## Returns
+
+- Type: [`ServiceBuilder`](/docs/api/ServiceBuilder)
+
+The service builder instance, to chain further calls with.

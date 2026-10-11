@@ -159,10 +159,16 @@ If the wallet holds nothing that matches, the provider's error carries the crede
 
 ### Refused before presenting
 
-Before it presents anything, `WaltIdCredentialProvider` checks the one policy whose outcome it
-can decide from what it holds: `holder-binding`. When the service requires it and a selected
-credential's JWT has no `sub`, or a `sub` (up to a `#`) that is not the DID you present as, the
-verifier would refuse the presentation, so the provider throws a
+Before it presents anything, `WaltIdCredentialProvider` checks the policies whose outcome it
+can decide from what it holds:
+
+- `holder-binding`: when the service requires it and a selected credential's JWT has no `sub`,
+  or a `sub` (up to a `#`) that is not the DID you present as;
+- the service's [attribute requirements](#requiring-credential-attributes) (a per-credential
+  `schema`): when a selected credential of that type lacks a required attribute or has
+  another value.
+
+The verifier would refuse such a presentation, so the provider throws a
 `CredentialRejectedLocallyError` instead, with nothing presented, ordered or paid:
 
 ```ts twoslash
@@ -183,12 +189,19 @@ try {
 }
 ```
 
-`reason` is `'no-sub'` or `'sub-mismatch'` (a `sub` that is another DID, empty, or not a
-string), and the message says what to do: ask the publisher to drop `holder-binding`, which
-applies to every credential in the presentation, or present a credential issued to your DID.
-Credentials the provider cannot decode (SD-JWT, JSON-LD, anything but a plain JWT) are not
-judged: they are presented, and a `debug` event `identity.preflight.skipped` says so. Pass
-`preflight: false` to the provider for a verifier whose rule differs from walt.id's. Every
+| `policy` | `reason` | What the message says to do |
+| --- | --- | --- |
+| `holder-binding` | `'no-sub'`, `'sub-mismatch'` (a `sub` that is another DID, empty, or not a string) | Ask the publisher to drop `holder-binding`, which applies to every credential in the presentation, or present a credential issued to your DID |
+| `schema` | `'attribute-mismatch'` | Present a credential with the required attribute; `error.path` names it, e.g. `['credentialSubject', 'gx:legalAddress', 'gx:countryCode']` |
+
+The message names the attribute and the value the asset requires, never the value your
+credential holds; that goes to the [debug channel](/docs/guides/debugging) only, at the
+`sensitive` tier. Credentials the provider cannot decode (SD-JWT, JSON-LD, anything but a
+plain JWT) are not judged: they are presented, and a `debug` event `identity.preflight.skipped`
+says so. Attribute schemas that use JSON Schema keywords beyond `type`, `required`,
+`properties`, `const` and `enum` are not judged either (`debug` event
+`identity.preflight.schema_skipped`). Pass `preflight: false` to the provider for a verifier
+whose rules differ from walt.id's. Every
 other refusal still comes from the verifier, as above. This check helps honest consumers; it
 is no access control, which stays with the verifier and the address allow list.
 
@@ -304,6 +317,9 @@ assetBuilder
   ]) // [!code focus]
 ```
 
+[`trustIssuers(type, dids)`](/docs/api/assetbuilder/trustIssuers) writes the same
+per-credential `allowed-issuer`, and validates the DIDs.
+
 **VC policies** check each presented credential; **VP policies** check the presentation as a
 whole. nautilus's `DEFAULT_VC_POLICIES` are `signature`, `not-before` and
 `revoked-status-list`, the values the policy server ships; a deployment can run more, because
@@ -400,8 +416,11 @@ them, and:
 | `'*'` in the address allow list of a credential-gated service, as the policy server reads it | Warns: `identity.policy.wildcard_allow` (no gate against a hand-built presentation; see the [limitation below](#known-limitation-credentials-of-another-type)) |
 | `holder-binding` | Warns: `identity.policy.holder_binding` |
 | `presentation-definition` with a `jwt_vc_json` or `jwt_vc` credential | Warns: `identity.policy.presentation_definition_vc_jwt` |
+| A per-credential `schema` whose `args` are not a JSON Schema object (a string, an array, none), or an `allowed-issuer` without a list of DIDs | Throws an `SsiPolicyError` (`credential-policy-arguments`): walt.id fails it for every presentation. `addRequestCredentials` and `setRequestCredentials` already throw a `TypeError` for these |
+| A credential type requested more than once with different formats or policies, e.g. issuer trust at asset level and an attribute check at service level | Throws an `SsiPolicyError` (`duplicate-request-type`): walt.id keeps only the last request's per-credential policies for a type and silently drops the others |
 | A requested credential type whose effective per-credential policies have no `allowed-issuer` | Warns: `identity.policy.no_issuer_trust` (a self-issued credential of that type is accepted) |
 | A type requested twice with different per-credential policies | Warns: `identity.policy.credential_policies_replaced`: walt.id keeps only the last non-empty list per type, after the policy server drops repeats of an identical request (the first one keeps its position), so the other lists never run |
+| A policy name walt.id does not know, at any level | Warns: `identity.policy.unknown_name` (a verifier that does not know it fails every presentation) |
 
 The policy server may add `signature` to every session from its operator's
 `DEFAULT_VC_POLICIES` / `DEFAULT_VP_POLICIES`, which nautilus cannot read, so the two
@@ -417,6 +436,78 @@ There is deliberately no warning for a missing `presentation-definition`.
 
 nautilus adds no policy on its own: what the asset requires stays what you wrote. None of
 these checks closes the limitation below.
+
+### Requiring credential attributes
+
+Access can depend on what a credential *says*, not only on its type and issuer: for example,
+only participants whose `gx:LegalPerson` credential has `gx:legalAddress.gx:countryCode`
+equal to `DE`.
+
+```ts twoslash
+import { AssetBuilder, CredentialListTypes } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+assetBuilder
+  .addCredentialAddresses(CredentialListTypes.ALLOW, ['0x0DB823218e337a...'])
+  .trustIssuers('gx:LegalPerson', ['did:web:delta-dao.com']) // [!code focus]
+  .requireCredentialAttributes('gx:LegalPerson', [ // [!code focus]
+    { path: ['gx:legalAddress', 'gx:countryCode'], equals: 'DE' } // [!code focus]
+  ]) // [!code focus]
+  .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'not-before', 'revoked-status-list'])
+  .setVpPolicies(CredentialListTypes.ALLOW, [
+    { policy: 'signature' },
+    { policy: 'minimum-credentials', args: '1' }
+  ])
+```
+
+[`requireCredentialAttributes`](/docs/api/assetbuilder/requireCredentialAttributes) writes
+walt.id's per-credential `schema` policy: a JSON Schema built from the requirements, with
+`required` and `properties` from `credentialSubject` down to each attribute, and `const`
+(`equals`), `enum` (`oneOf`) or nothing (`exists`, or no condition) at the attribute. The
+example stores this request credential, issuer trust first:
+
+```json
+{
+  "type": "gx:LegalPerson",
+  "format": "jwt_vc_json",
+  "policies": [
+    "{\"policy\":\"allowed-issuer\",\"args\":[\"did:web:delta-dao.com\"]}",
+    "{\"policy\":\"schema\",\"args\":{\"type\":\"object\",\"required\":[\"credentialSubject\"],\"properties\":{\"credentialSubject\":{\"type\":\"object\",\"required\":[\"gx:legalAddress\"],\"properties\":{\"gx:legalAddress\":{\"type\":\"object\",\"required\":[\"gx:countryCode\"],\"properties\":{\"gx:countryCode\":{\"const\":\"DE\"}}}}}}}}"
+  ]
+}
+```
+
+Several requirements, and several calls, combine with AND; issuers of several
+[`trustIssuers`](/docs/api/assetbuilder/trustIssuers) calls combine with OR. Both add to the
+one request credential of that type (adding it if needed), because walt.id keeps a single
+per-credential policy list per type. For the same reason, request each type once, at asset
+or at service level: `build()` throws when a type is requested twice with different
+policies. Use [`setRequestCredentials`](/docs/api/assetbuilder/setRequestCredentials) to
+replace the list, e.g. to drop a requirement on an edit.
+
+**The shape walt.id checks.** walt.id validates the credential's `vc` claim when it has one
+(VCDM 1.1), and the whole JWT payload otherwise (VCDM 2.0 `vc+jwt`, such as the Gaia-X
+`gx:LegalPerson`). Both put `credentialSubject` at the root of what is validated, so the
+generated schema works for both. A hand-written schema must match that shape: one wrapped in
+`vc` refuses every credential. Its `args` must be the schema **object**: a string such as
+`JSON.stringify(schema)` or an array makes walt.id fail the policy for every presentation, so
+nautilus throws for them.
+
+**Consumers are told before presenting.** `WaltIdCredentialProvider` checks the selected
+credentials against the requirements and throws a `CredentialRejectedLocallyError` with
+`reason: 'attribute-mismatch'` when one would be refused (see
+[Refused before presenting](#refused-before-presenting)).
+
+:::warning[Attribute checks run only on credentials of the requested type]
+Like issuer trust, the attribute check is a per-credential policy, so it runs only on
+presented credentials whose type is the requested one. A hand-built presentation holding a
+self-issued credential of **another** type skips it, and the issuer check too: on the local
+SSI stack, a DE gate accepted such a presentation with no `gx:legalAddress` at all. The
+requirement filters honest consumers, whose wallet presents only the requested type, and is a
+compliance signal; it is not access control against someone who builds their own
+presentation. See the limitation below, and keep an explicit address allow list.
+:::
 
 ### Known limitation: credentials of another type
 

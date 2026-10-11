@@ -399,6 +399,50 @@ provider throws a `CredentialRejectedLocallyError` (`policy: 'holder-binding'`,
 reject. Nothing is presented, ordered or paid. Pass `preflight: false` to the provider for a
 verifier whose rule differs from walt.id's.
 
+### Credential attribute requirements
+
+**`addRequestCredentials` validates per-credential policies.** It throws a `TypeError` naming
+the credential type and the policy for a `schema` whose `args` are not a JSON Schema object
+(a string such as `JSON.stringify(schema)`, an array, none) and for an `allowed-issuer`
+without a list of DIDs. walt.id failed such a policy for every presentation.
+
+```diff
+ policies: [
+-  { policy: 'schema', args: JSON.stringify(schema) }
++  { policy: 'schema', args: schema }
+ ]
+```
+
+**`AssetBuilder.build()` throws an `SsiPolicyError`** for the same policies on a stored asset
+being edited (`credential-policy-arguments`), and for a credential type requested more than
+once with different formats or policies, asset and service level merged
+(`duplicate-request-type`). walt.id keeps only the last request's per-credential policies for
+a type, so issuer trust at asset level and an attribute check at service level silently
+became the attribute check alone. Put every policy for a type on one request:
+
+```diff
+ assetBuilder
+-  .addRequestCredentials(CredentialListTypes.ALLOW, [
+-    { type: 'gx:LegalPerson', format: 'jwt_vc_json', policies: [{ policy: 'allowed-issuer', args: ['did:web:delta-dao.com'] }] }
+-  ])
++  .trustIssuers('gx:LegalPerson', ['did:web:delta-dao.com'])
++  .requireCredentialAttributes('gx:LegalPerson', [
++    { path: ['gx:legalAddress', 'gx:countryCode'], equals: 'DE' }
++  ])
+ serviceBuilder
+-  .addRequestCredentials(CredentialListTypes.ALLOW, [
+-    { type: 'gx:LegalPerson', format: 'jwt_vc_json', policies: [{ policy: 'schema', args: schema }] }
+-  ])
+```
+
+It also warns (`identity.policy.unknown_name`) about a policy name walt.id does not know.
+
+**New:** `requireCredentialAttributes`, `trustIssuers` and `setRequestCredentials` on both
+builders, and an attribute check before presenting: `WaltIdCredentialProvider` throws a
+`CredentialRejectedLocallyError` with `policy: 'schema'`, `reason: 'attribute-mismatch'` and
+`path` for a credential the verifier would refuse for its attributes. See
+[requiring credential attributes](https://nautilus.delta-dao.com/docs/guides/identity#requiring-credential-attributes).
+
 ## Upgrading from 2.0.0-beta.0
 
 2.0.0-beta.1 makes published and edited assets indexable by an unmodified
