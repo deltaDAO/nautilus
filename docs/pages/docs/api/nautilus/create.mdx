@@ -272,7 +272,8 @@ process. See [Concurrency and nonces](/docs/guides/config#concurrency-and-nonces
 - Type: `Provider` (ethers)
 - Default: none (the signer's provider, read twice)
 
-A second, independent RPC provider for the same chain, read in every proof that a
+A second, independent RPC provider for the same chain (not the signer's own provider, nor
+one with the same URL: `create` refuses both), read in every proof that a
 transaction was never sent: before an order, purchase, approval or escrow payment is sent
 again after a nonce refusal, and before an envelope is removed after a metadata transaction
 refused for its nonce. **Without it, a transaction that moves value is never sent again**:
@@ -366,7 +367,7 @@ other's escrow authorisation. Jobs from another instance or process are not cove
 - When `nftFactoryAddress`, `fixedRateExchangeAddress` or `dispenserAddress` is missing or not
   an address, or `escrow` is set but is not an address.
 - When `nonceManagement` is neither `'auto'` nor `'off'`, or `verificationProvider` is on
-  another chain than the signer.
+  another chain than the signer, or is the signer's own provider (the same object or URL).
 - When `maxProviderFee` or `maxEscrowPayment` has an entry whose `token` is not an address,
   whose `amount` is not a non-negative integer, or whose token is listed twice, or when
   `confirmProviderFees` or `confirmEscrowPayment` is not a function.
