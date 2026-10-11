@@ -338,6 +338,13 @@ export const LOG_EVENTS = {
     description:
       'AssetBuilder.build(): a request credential has no per-credential allowed-issuer policy, so a credential of that type from any issuer, a self-issued one included, is accepted.',
     fields: ['where', 'credentialType']
+  },
+  'identity.preflight.skipped': {
+    level: 'debug',
+    component: 'identity',
+    description:
+      'WaltIdCredentialProvider could not decode a selected credential (not a plain JWT: SD-JWT, JSON-LD, mdoc), so its holder-binding check before presenting skipped it and the verifier decides. Its raw form goes to the debug channel (wallet topic).',
+    fields: ['serviceId', 'credentialId', 'format']
   }
 } as const satisfies Record<string, LogEventSpec>
 

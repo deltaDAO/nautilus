@@ -29,6 +29,7 @@ import {
   getServiceCredentials
 } from '../ddo/read.js'
 import { debugEnabled, debugRaw } from '../log/debug.js'
+import type { Logger } from '../log/logger.js'
 import { sanitize } from '../node/messages.js'
 import {
   type OceanNodeClient,
@@ -40,6 +41,7 @@ import type {
   CredentialProvider
 } from './CredentialProvider.js'
 import { requestedCredentialTypes } from './policy.js'
+import { assertHolderBinding } from './preflight.js'
 import {
   type WaltIdCredential,
   type WaltIdDidRef,
@@ -83,6 +85,15 @@ export interface WaltIdCredentialProviderOptions {
   ) => Promise<WaltIdCredential[]>
   /** Choose the holder DID. Defaults to the first. */
   onSelectDid?: (dids: WaltIdDidRef[]) => Promise<string>
+  /**
+   * Check the selected credentials against the service's `holder-binding` before presenting,
+   * and throw a `CredentialRejectedLocallyError` for one the verifier would reject (no `sub`,
+   * or a `sub` that is not the holder DID). Default `true`. Set `false` for a verifier whose
+   * rule differs from walt.id's. Credentials that are not plain JWTs are never judged.
+   */
+  preflight?: boolean
+  /** Where this provider's log events go. Default: the process-wide logger. */
+  logger?: Logger
 }
 
 /** Raised when the wallet could not answer the presentation request, carrying the reason where known. */
@@ -159,7 +170,8 @@ export class WaltIdCredentialProvider implements CredentialProvider {
       signer,
       presentationDefinition,
       challenge.redirectUri,
-      requestedTypes
+      requestedTypes,
+      challenge
     )
   }
 
@@ -186,7 +198,8 @@ export class WaltIdCredentialProvider implements CredentialProvider {
     signer: Signer,
     presentationDefinition: unknown,
     presentationRequest: string,
-    requestedTypes: Set<string>
+    requestedTypes: Set<string>,
+    challenge: CredentialChallenge
   ): Promise<void> {
     const { token } = await this.getWalletSession(signer)
     const walletId = await this.getWalletId(token)
@@ -228,6 +241,19 @@ export class WaltIdCredentialProvider implements CredentialProvider {
       )
 
     const did = await this.getDid(walletId, token)
+
+    // Before the request is even resolved: a credential the verifier would refuse for
+    // holder-binding costs a presentation and returns only "Presentation failed".
+    if (this.options.preflight !== false)
+      assertHolderBinding({
+        asset: challenge.asset,
+        serviceId: challenge.serviceId,
+        holderDid: did,
+        credentials: selected,
+        typeOf: (credential) =>
+          credentialTypes(credential).find((type) => requestedTypes.has(type)),
+        logger: this.options.logger
+      })
 
     const resolved = await this.wallet.resolvePresentationRequest(
       walletId,
