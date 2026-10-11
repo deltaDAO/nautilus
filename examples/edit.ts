@@ -58,6 +58,17 @@ import { publishedResult, publishSession } from './publish'
  *     with Typesense it keeps a short document holding only the NFT state. Either way, read
  *     the state from the chain.
  *   - **`waitForIndexer` throws** on failure or timeout instead of returning `undefined`.
+ *
+ * And in the next beta:
+ *
+ *   - **An edit builder refuses what an edit cannot apply.** `setType()`, `setNftData()`
+ *     and the `setNftToken*()` setters throw on an `AssetBuilder` built from a resolved
+ *     asset, and `setDatatokenData()`/`setDatatokenNameAndSymbol()` throw on a
+ *     `ServiceBuilder` loaded with a published service. Before, they were ignored. A new
+ *     service added by an edit still takes them (`addComputeService` below).
+ *   - **New datatokens go to the NFT's owner on chain.** `edit()` no longer takes the owner
+ *     from the DDO, whose `nft.owner` is the last account that wrote the metadata.
+ *     `setOwner()` may name only the signer or that owner.
  */
 
 /**
@@ -299,7 +310,33 @@ export async function addComputeService(
 
   for (const entry of getServices(after))
     console.log(`  ${entry.type.padEnd(8)} ${entry.name} (${entry.id})`)
+
+  // The new datatoken's minter and payment collector is the NFT's owner as the chain has
+  // it, even when another account (a manager) signs the edit, and whatever owner the DDO
+  // names. Read back from the chain, as above.
+  const added = getServices(after).at(-1)
+  if (added?.datatokenAddress) {
+    const signer = nautilus.getSigner()
+    const nft = new Contract(getNftAddress(after), NFT_OWNER_ABI, signer)
+    const datatoken = new Contract(
+      added.datatokenAddress,
+      DATATOKEN_ABI,
+      signer
+    )
+    console.log(`  NFT owner on chain:          ${await nft.ownerOf(1)}`)
+    console.log(
+      `  new datatoken's collector:   ${await datatoken.getPaymentCollector()}`
+    )
+  }
 }
+
+const NFT_OWNER_ABI = [
+  'function ownerOf(uint256 tokenId) view returns (address)'
+] as const
+
+const DATATOKEN_ABI = [
+  'function getPaymentCollector() view returns (address)'
+] as const
 
 /** The service to edit: by id, or the first one when `serviceId` is omitted or `first`. */
 function pickService(
