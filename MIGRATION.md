@@ -31,6 +31,21 @@ keep nautilus from setting nonces, pass `nonceManagement: 'off'`. For paid flows
 URL, which `create` refuses): without it, an order refused for its nonce is never sent
 again.
 
+### ocean.js's log lines go through nautilus's logger
+
+ocean.js's own lines (its `LoggerInstance`) are captured by default: they print as redacted
+`oceanjs.logger.*` events on stderr (or to your `sink`), not on the console, and follow
+nautilus's level. ocean.js's payload dump after a refused compute start no longer shows the
+request's nonce and session ids. Code that read ocean.js's lines from `console.error` (e.g. a
+test spy) reads them from a `sink`, or spies on `LoggerInstance.error` itself; to keep the
+old output, unredacted:
+
+```ts
+Nautilus.configureLogging({ oceanjs: 'passthrough' })
+```
+
+See [`configureLogging`](/docs/api/nautilus/configureLogging#oceanjs).
+
 ## Upgrading from 2.0.0-beta.1
 
 ### VP policies

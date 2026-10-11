@@ -68,7 +68,7 @@ topic (`access.operation.failed` to `order`, `publish.operation.failed` to `rpc`
 
 | Topic | Events |
 |-------|--------|
-| `node` | ocean-node answers and errors. |
+| `node` | ocean-node answers and errors, and the raw arguments of ocean.js's captured lines (`oceanjs.logger.*`, e.g. the request payload of a refused compute start). |
 | `wallet` | The walt.id wallet: its error answers, the resolved presentation request, the presentation result. |
 | `policy` | Policy-server sessions (the `initiate` reply), the verifier's session record and per-policy results. |
 | `rpc` | The chain RPC: errors with their request URL and response. |

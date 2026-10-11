@@ -14,7 +14,8 @@ Nautilus.configureLogging({ level: 'debug', format: 'json' }) // [!code focus]
 nautilus has its own logger. It prints **structured, catalogued events**: each has a stable
 name such as `publish.preflight.denies_all`, a level, a component and a message, and its data
 is redacted before it is printed or handed to you. ocean.js's `LoggerInstance` is no longer
-used for nautilus's own lines.
+used for nautilus's own lines, and ocean.js's own lines are routed through nautilus's logger
+too (the [`oceanjs`](#oceanjs) option).
 
 By default only warnings and errors print, to stderr: a readable line on a terminal, one JSON
 object per line otherwise.
@@ -158,36 +159,70 @@ When a failure needs the raw values, turn on the separate debug channel with
 [`setDebug`](/docs/api/nautilus/setDebug) or `NAUTILUS_DEBUG` (see the
 [debugging guide](/docs/guides/debugging)); it leaves these events as they are.
 
-:::warning[ocean.js still prints its own lines]
-This covers nautilus's events only. Until a later release routes ocean.js's logger through
-nautilus (the [`oceanjs`](#oceanjs) option), ocean.js prints its own lines unredacted, at its
-own level: by default errors only, and a refused compute start is such an error, printed with
-its request payload (the signature, the nonce and the policy-server session id). To silence
-ocean.js now:
-
-```ts twoslash
-import { LoggerInstance, LogLevel } from '@oceanprotocol/lib'
-
-LoggerInstance.setLevel(LogLevel.None) // [!code focus]
-```
-
-[`setLogLevel`](/docs/api/nautilus/setLogLevel) sets the same level, and nautilus's own
-level with it.
-:::
+This covers ocean.js's own lines too, which nautilus captures by default (the
+[`oceanjs`](#oceanjs) option): among them the request payload ocean.js logs after a refused
+compute start, whose nonce and policy-server session ids are redacted like any other.
 
 #### oceanjs
 
 - Type: `'capture' | 'passthrough' | 'silent'`
+- Default: `'capture'`
 
-What to do with ocean.js's own log output: `'capture'` routes it through nautilus's logger,
-redacted; `'passthrough'` leaves it as ocean.js prints it; `'silent'` drops it.
+What to do with ocean.js's own log output, the lines ocean.js prints through its
+process-wide `LoggerInstance`:
 
-**Not active yet.** The value is accepted and stored, but a later release implements it.
-Until then ocean.js prints its own lines as before, unredacted, at the level
-[`setLogLevel`](/docs/api/nautilus/setLogLevel) (or `LoggerInstance.setLevel`) sets on its
-`LoggerInstance`; its default is errors only. Passing any mode, `'capture'` included,
-prints a `config.oceanjs.not_active` warning once. For the interim workaround, see
-the warning under [`sink`](#sink) above.
+| Mode | ocean.js's lines |
+|------|------------------|
+| `'capture'` (default) | become nautilus events of the component `oceanjs`, redacted like every other event, printed at nautilus's level, in its format and to its sink |
+| `'passthrough'` | print as ocean.js prints them, to the console, **unredacted** |
+| `'silent'` | are dropped |
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+
+Nautilus.configureLogging({ oceanjs: 'silent' }) // [!code focus]
+```
+
+A captured line is one of four events, by ocean.js's method: `oceanjs.logger.error`
+(`error`), `oceanjs.logger.warn` (`warn`), `oceanjs.logger.log` (`info`; ocean.js's `log` and
+`bypass`) and `oceanjs.logger.debug` (`debug`). Its message is ocean.js's text; the objects
+ocean.js logged after it are in `fields.args` (a JSON string holding an object is read as
+the object), with `fields.method` naming the method. For example, a compute start the node
+refuses:
+
+```
+[nautilus] [oceanjs] error: Compute start failed: 400 Bad Request (oceanjs.logger.error method=error args=[{"error":"Algorithm did:ope:… not allowed to run on the dataset: did:ope:…"}])
+[nautilus] [oceanjs] error: Payload was: (oceanjs.logger.error method=error args=[{"consumerAddress":"0x…","signature":"<redacted>","nonce":"<redacted>",…,"policyServer":[{"sessionId":"<redacted>",…}]}])
+```
+
+ocean.js's own level still decides first which lines it emits: errors only by default. To see
+its warnings, log and debug lines too, raise it with `LoggerInstance.setLevel` from
+`@oceanprotocol/lib` (or [`setLogLevel`](/docs/api/nautilus/setLogLevel)), and set
+nautilus's `level` to match. The raw lines, unredacted, reach only the `sensitive` tier of the
+debug channel (topic `node`), and only when the event prints; see
+[`setDebug`](/docs/api/nautilus/setDebug).
+
+:::warning[`'passthrough'` prints ocean.js's payload dump unredacted]
+After a refused compute start or initialize, ocean.js logs the request payload at error
+level, its default: the request's nonce and the policy-server session ids as they are (and
+the signature, where ocean.js does not replace it itself). A logged signature with an unspent
+nonce can be replayed. Use `'passthrough'` only where ocean.js's output is not kept or shared.
+:::
+
+Notes:
+
+- `LoggerInstance` is one object for the whole process, so the mode applies to every ocean.js
+  user in it, not only to nautilus's calls. nautilus replaces that object's five logging
+  methods (`error`, `warn`, `log`, `debug`, `bypass`) when it is imported; `console` and
+  ocean.js's level are left alone. With `'passthrough'`, each call goes to ocean.js's own
+  method unchanged.
+- Captured lines go to the process-wide configuration set here, not to an instance's own
+  [`logger`](/docs/api/nautilus/create#logger).
+- A few ocean.js functions write to `console` directly, not through `LoggerInstance`, and
+  print as before whatever the mode (e.g. the legacy-signing note on chain 8996, or errors of
+  ocean.js's own NFT and access-list helpers, which nautilus does not call).
+- An app that loads ocean.js through `require` gets ocean.js's other bundle, with a logger of
+  its own: its lines are not captured.
 
 ## Environment variables
 

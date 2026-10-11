@@ -39,6 +39,11 @@ ocean.js's `LoggerInstance`, which decides what ocean.js itself prints.
 
 Without a call, nautilus prints warnings and errors, and ocean.js errors only.
 
+ocean.js's lines go through nautilus's logger by default, redacted (the
+[`oceanjs`](/docs/api/nautilus/configureLogging#oceanjs) option of `configureLogging`), so a
+line prints when both levels let it through: ocean.js's decides which lines it emits,
+nautilus's which of those print.
+
 The level controls how much is printed, never unredacted data: at every level, nautilus's
 events have session ids, signatures, tokens and URLs redacted. The raw values need
 [`setDebug`](/docs/api/nautilus/setDebug) (see the [debugging guide](/docs/guides/debugging)).
