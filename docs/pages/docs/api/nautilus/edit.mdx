@@ -23,10 +23,12 @@ baseline to merge over. Passing a freshly built asset throws. Such a builder ref
 edit cannot change (`setType()`, the NFT setters, the datatoken setters of a loaded service);
 see [What an edit cannot change](/docs/guides/edit#what-an-edit-cannot-change).
 
-The datatoken of each new service goes to the **NFT's owner as the chain reports it**, not to
-the owner the resolved DDO names (the node's last metadata writer), also when a manager-role
-account signs; [`setOwner()`](/docs/api/assetbuilder/setOwner) may name only the signer or
-that owner.
+The datatoken of each new service goes to the **NFT's owner as your RPC reports it**
+(`ownerOf`), not to the owner the resolved DDO names (the node's last metadata writer), also
+when a manager-role account signs; [`setOwner()`](/docs/api/assetbuilder/setOwner) may name
+only the signer or that owner, and an owner without `deployERC20` is refused. Before reading
+it, `edit()` checks that the DDO's id is the DID of its `nftAddress` on the configured chain,
+so a node cannot point the edit at another NFT.
 
 :::info
 The merge is structural, not top-level. Setting one field leaves every other field of the
@@ -59,7 +61,9 @@ per block, so when another metadata transaction for the NFT landed in the same b
 another instance or process), `edit()` throws a `MetadataConflictError` — see
 [one metadata event per block](/docs/guides/edit#one-metadata-event-per-block).
 
-`edit()` refuses `encrypt: false` and, before anything is spent, a signer without the NFT's
+`edit()` refuses `encrypt: false` and, before anything is spent, a DDO whose id is not its
+NFT's DID, a declared issuer the signer is not (see
+[`setIssuer`](/docs/api/assetbuilder/setIssuer)), a signer without the NFT's
 `updateMetadata` permission (and `deployERC20`, when a re-priced service needs a datatoken),
 an asset whose NFT is `DEPRECATED` or `REVOKED_BY_PUBLISHER` (read under the same per-NFT
 lock, so a revoke this instance started first is seen), and an edit that sets either state

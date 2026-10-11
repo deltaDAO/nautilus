@@ -4,7 +4,7 @@ On a publish, the address that will own the data NFT. On an edit, the minter and
 
 **Publish:** defaults to the signer's address, and must be the signer: `publish()` refuses any other address before the mint.
 
-**Edit:** defaults to the NFT's owner **as the chain reports it** (`ownerOf`), also when a manager-role account signs the edit. The owner named in the resolved DDO is never used: ocean-node reports the last account that wrote the metadata there, and a stale or malicious node could name anyone, who would then mint the datatoken freely and collect its revenue. `setOwner()` may name only the signer or the on-chain owner; any other address makes `edit()` throw before any transaction. Naming the signer when it is not the owner logs a visible warning (`edit.owner.not_nft_owner`), since the revenue then goes to the signer.
+**Edit:** defaults to the NFT's owner **as your RPC reports it** (`ownerOf`), also when a manager-role account signs the edit. The owner named in the resolved DDO is never used: ocean-node reports the last account that wrote the metadata there, and a stale or malicious node could name anyone, who would then mint the datatoken freely and collect its revenue. `setOwner()` may name only the signer or the on-chain owner; any other address makes `edit()` throw before any transaction. Naming the signer when it is not the owner logs a visible warning (`edit.owner.not_nft_owner`), since the payments for priced services then go to the signer. When the edit creates datatokens and the owner lacks the `deployERC20` permission on the NFT, `edit()` throws before any transaction and suggests `setOwner(<signer>)`.
 
 ## Usage
 

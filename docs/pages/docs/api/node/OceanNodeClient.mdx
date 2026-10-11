@@ -68,7 +68,10 @@ serve the asset. Only then does it read the node's indexing state for the DID (b
 forms, in parallel, within one 15 s timeout), and when the node recorded an indexing failure
 the message says so (*"the node recorded an indexing error for tx …: …"*) and `state` holds
 the record. Over P2P the node's `Not found` answer is an `AssetNotFoundError` too, without
-`state`: the indexing state is served over HTTP only.
+`state`: the indexing state is served over HTTP only. `resolve` and `resolveMany` throw an
+`OceanNodeError` for a DDO whose `id` is not a DID asked for (the `did:op:` and `did:ope:`
+forms of one DID match); the served id appears sanitised, the raw value on the debug
+channel (topic `node`).
 
 ### getIndexingState
 

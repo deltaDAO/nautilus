@@ -37,7 +37,7 @@ console.log(metadata.name, services[0].id, owner)
 | --- | --- |
 | `getDid(ddo)` | `string` — the asset's `did:ope:…` |
 | `getNftAddress(ddo)` | `string` |
-| `getOwner(ddo)` | `string \| undefined` — from indexed NFT data |
+| `getOwner(ddo)` | `string \| undefined` — the node's indexed NFT data: the account that wrote the metadata last, not necessarily the NFT's owner. For the owner, read `ownerOf` on chain. |
 | `getIssuer` *(via the document)* | the DID or address that signed the credential |
 
 :::warning

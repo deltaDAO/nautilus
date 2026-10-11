@@ -54,6 +54,10 @@ the record (over HTTP only: a P2P node's not-found carries no `state`). If the a
 [`waitForIndexer`](/docs/api/nautilus/waitForIndexer) instead. Any other failure is an
 `OceanNodeError` with the node's status and text.
 
+A DDO whose `id` is not the DID asked for is refused with an `OceanNodeError` (the `did:op:`
+and `did:ope:` forms of one DID match): it describes another asset, and its `nftAddress`
+names another NFT.
+
 ## Parameters
 
 ### did

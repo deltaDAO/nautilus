@@ -119,6 +119,11 @@ export function getLifecycleState(ddo: unknown): number | undefined {
   return getNft(ddo)?.state
 }
 
+/**
+ * The NFT owner the node indexed for the asset: the account that wrote the metadata last
+ * (the metadata event's sender), not necessarily the NFT's owner, and whatever a stale or
+ * malicious node says. For the owner, read `ownerOf` on the NFT contract.
+ */
 export function getOwner(ddo: unknown): string | undefined {
   return getNft(ddo)?.owner
 }

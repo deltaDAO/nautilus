@@ -195,16 +195,24 @@ datatoken with them.
 ### Who gets the new datatokens
 
 A new service added by an edit gets a new datatoken. Its minter and payment collector (who
-can mint it freely, and who collects its revenue) is the **NFT's owner as the chain reports
-it** (`ownerOf`), also when a manager-role account signs the edit.
+can mint it freely, and who collects its payments when it is priced) is the **NFT's owner as
+your RPC reports it** (`ownerOf`), also when a manager-role account signs the edit. That
+owner needs the `deployERC20` permission on the NFT, which the NFT gives its owner; when it
+lacks it, `edit()` throws before any transaction and names
+[`setOwner(<signer>)`](/docs/api/assetbuilder/setOwner) as the way out.
 
 The owner named in the resolved DDO is never used. ocean-node reports there the account that
 wrote the metadata last, not the NFT's owner: after a manager's edit it names the manager,
 after an NFT transfer it still names the old owner until the next edit, and a malicious node
 can name anyone. [`setOwner()`](/docs/api/assetbuilder/setOwner) may name only the signer or
 the on-chain owner; any other address makes `edit()` throw before any transaction. Naming
-the signer when it is not the owner logs a visible warning (`edit.owner.not_nft_owner`): the
-revenue then goes to the signer.
+the signer when it is not the owner logs a visible warning (`edit.owner.not_nft_owner`): its
+payments then go to the signer.
+
+The NFT whose owner is read is tied to the DID you resolved, so a node cannot point an edit
+at another NFT. [`getAsset()`](/docs/api/nautilus/getAsset) refuses a DDO whose id is not
+the DID asked for, and `edit()` refuses, before any transaction, a DDO whose id is not the
+DID of its `nftAddress` on the configured chain.
 
 ```ts twoslash
 import {
@@ -238,9 +246,8 @@ edit.setOwner(managerAddress) // [!code focus]
 The edit builder starts with the issuer of the published asset, and the edit must be signed
 by that identity. To re-issue the asset under another one — a manager-role account, or the
 new owner after an NFT transfer — call [`setIssuer()`](/docs/api/assetbuilder/setIssuer) with
-the identity that signs the edit. Otherwise signing throws `The DDO declares issuer "…" but
-it is being signed by "…"`. That check runs when the document is signed, after the datatokens
-of new services were created, so set the issuer before calling `edit()`.
+the identity that signs the edit. Otherwise `edit()` throws `The DDO declares issuer "…" but
+it is being signed by "…"` before any transaction, so no datatoken is created for nothing.
 
 ## Changing a price
 

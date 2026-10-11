@@ -2,8 +2,9 @@
 "@deltadao/nautilus": minor
 ---
 
-`edit()` gives the datatokens of new services to the NFT's owner as the chain reports it,
-and an edit builder refuses the setters an edit cannot apply instead of ignoring them.
+`edit()` gives the datatokens of new services to the NFT's owner as your RPC reports it,
+on the NFT the resolved DID names, and an edit builder refuses the setters an edit cannot
+apply instead of ignoring them.
 
 **Breaking (beta API)**
 
@@ -22,8 +23,25 @@ and an edit builder refuses the setters an edit cannot apply instead of ignoring
   the new datatoken's minter (free tokens) and payment collector (revenue).
 - **`setOwner()` on an edit accepts only the signer or the on-chain owner**; any other
   address throws before any transaction. Naming the signer when it is not the owner logs a
-  visible warning, `edit.owner.not_nft_owner`. An owner read that fails stops the edit
-  before any transaction; the raw RPC error goes to the debug channel (topic `rpc`).
+  visible warning, `edit.owner.not_nft_owner`. An owner read that fails, or answers the zero
+  address, stops the edit before any transaction; the raw RPC error goes to the debug
+  channel (topic `rpc`). An owner without the `deployERC20` permission is refused before
+  any transaction, naming `setOwner(<signer>)` as the way out.
+- **`getAsset()` and `getAssets()` throw an `OceanNodeError` for a DDO whose `id` is not a
+  DID asked for** (the `did:op:` and `did:ope:` forms of one DID match), and **`edit()`
+  refuses, before any transaction, a DDO whose `id` is not the DID of its `nftAddress` on
+  the configured chain.** Before, a malicious node could serve another NFT's DDO for a DID,
+  and the edit then minted on that NFT with its owner as minter and payment collector. The
+  node-supplied values are shown sanitised; the raw ones go to the debug channel (`node`).
+- **A declared issuer the signer is not is refused before any transaction** by `publish()`,
+  `completePublish()` and `edit()`, with the message `The DDO declares issuer "…" but it is
+  being signed by "…". … Nothing was sent.` Before, the NFT or the new datatokens were
+  created first and signing failed. The declared issuer is shown sanitised.
+- **A signed payload's `iss` must be its `issuer`, and its `sub` and `jti` the DDO's id**,
+  when present. A custom `DdoSigner` that sets them otherwise is refused before anything is
+  stored.
+- `getOwner()` is documented as what it is: the account that wrote the metadata last, as
+  the node reports it.
 
 **Fixed**
 

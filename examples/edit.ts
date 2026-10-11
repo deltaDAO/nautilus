@@ -69,6 +69,8 @@ import { publishedResult, publishSession } from './publish'
  *   - **New datatokens go to the NFT's owner on chain.** `edit()` no longer takes the owner
  *     from the DDO, whose `nft.owner` is the last account that wrote the metadata.
  *     `setOwner()` may name only the signer or that owner.
+ *   - **Checked before any transaction:** the DDO's id must be the DID of its NFT, and a
+ *     declared issuer must be the signer (`setIssuer()` to re-issue under another one).
  */
 
 /**
@@ -311,10 +313,11 @@ export async function addComputeService(
   for (const entry of getServices(after))
     console.log(`  ${entry.type.padEnd(8)} ${entry.name} (${entry.id})`)
 
-  // The new datatoken's minter and payment collector is the NFT's owner as the chain has
+  // The new datatoken's minter and payment collector is the NFT's owner as the RPC reports
   // it, even when another account (a manager) signs the edit, and whatever owner the DDO
   // names. Read back from the chain, as above.
-  const added = getServices(after).at(-1)
+  const before = new Set(getServices(asset).map((entry) => entry.id))
+  const added = getServices(after).find((entry) => !before.has(entry.id))
   if (added?.datatokenAddress) {
     const signer = nautilus.getSigner()
     const nft = new Contract(getNftAddress(after), NFT_OWNER_ABI, signer)
@@ -323,7 +326,10 @@ export async function addComputeService(
       DATATOKEN_ABI,
       signer
     )
-    console.log(`  NFT owner on chain:          ${await nft.ownerOf(1)}`)
+    const owner: string = await nft.ownerOf(1)
+    const { minter } = await datatoken.getPermissions(owner)
+    console.log(`  NFT owner on chain:          ${owner}`)
+    console.log(`  ... is the new datatoken's minter: ${minter}`)
     console.log(
       `  new datatoken's collector:   ${await datatoken.getPaymentCollector()}`
     )
@@ -335,7 +341,8 @@ const NFT_OWNER_ABI = [
 ] as const
 
 const DATATOKEN_ABI = [
-  'function getPaymentCollector() view returns (address)'
+  'function getPaymentCollector() view returns (address)',
+  'function getPermissions(address user) view returns (tuple(bool minter, bool paymentManager))'
 ] as const
 
 /** The service to edit: by id, or the first one when `serviceId` is omitted or `first`. */

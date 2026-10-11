@@ -322,7 +322,8 @@ metadata last: after a manager's edit, the owner's next edit adding a service ma
 manager its minter and payment collector. The edit builder no longer carries an owner
 (`build().owner` is `undefined` unless `setOwner()` was called), and `setOwner()` on an
 edit accepts only the signer or the on-chain owner; any other address throws before any
-transaction.
+transaction. An on-chain owner without the `deployERC20` permission is refused too, with
+`setOwner(<signer>)` as the way out.
 
 ```ts
 // beta.1: ignored on an edit, and the new datatoken went to the DDO's nft.owner
@@ -335,6 +336,17 @@ new AssetBuilder(published).addService(service).build()
 **An edit signed by another identity no longer fails at `iss`.** The previous signer's JWT
 claims (`iss`, `sub`, `jti`) are dropped from the edited document, so a manager or a new owner
 can re-issue the asset with `setIssuer()`. See [What an edit cannot change](https://nautilus.delta-dao.com/docs/guides/edit#what-an-edit-cannot-change).
+
+**A declared issuer the signer is not is refused before any transaction.** `publish()`,
+`completePublish()` and `edit()` used to mint the NFT or the new datatokens first and fail
+only when signing (`The DDO declares issuer "…" but it is being signed by "…"`); the message
+now ends with "Nothing was sent." A custom `DdoSigner` whose payload carries `iss`, `sub` or
+`jti` must make `iss` its `issuer` and `sub`/`jti` the DDO's id, as the built-in signers do.
+
+**`getAsset()` and `getAssets()` refuse a DDO whose id is not a DID asked for**, with an
+`OceanNodeError`, and `edit()` refuses, before any transaction, a DDO whose id is not the DID
+of its `nftAddress` on the configured chain. A correct node never serves either. `getOwner()`
+returns the account that wrote the metadata last; read `ownerOf` on chain for the owner.
 
 ## Upgrading from 2.0.0-beta.0
 

@@ -22,7 +22,9 @@ const asset = assets['did:ope:2a6ebce0af9361e2c7d1e1e7909ecac3e4cabb4f089f7edd51
 - Type: `Record<string, AssetV5>`
 
 The resolved assets, keyed by **lower-cased** DID. A DID the node does not know is simply
-absent from the result rather than causing a throw.
+absent from the result rather than causing a throw. A DDO whose `id` is none of the DIDs
+asked for makes it throw an `OceanNodeError`, as
+[`getAsset`](/docs/api/nautilus/getAsset#throws) does.
 
 ## Parameters
 

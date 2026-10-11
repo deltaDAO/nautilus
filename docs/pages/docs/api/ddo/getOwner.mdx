@@ -1,6 +1,14 @@
 # getOwner
 
-The address that owns the asset's NFT.
+The NFT owner the node reports for the asset.
+
+:::warning
+ocean-node reports here the account that wrote the metadata **last**, not the NFT's owner:
+after a manager-role account edits the asset it names the manager, after an NFT transfer it
+names the old owner until the next edit, and a malicious node can name anyone. Do not use it
+to decide who administers the asset or receives its revenue: read `ownerOf` on the NFT
+contract (the chain is the authority). `edit()` does so itself.
+:::
 
 ## Usage
 

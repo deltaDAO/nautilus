@@ -4,9 +4,11 @@ Set the issuer of the asset's verifiable credential.
 
 New in v2, because the DDO is now signed. Leave it unset and publish fills it in from whichever signer signs the document — the holder DID when signing through walt.id, or the signer's address when using the default `Eip191VcSigner`.
 
-### On an edit
+A declared issuer must be the identity that signs: `publish()`, `completePublish()` and `edit()` otherwise throw `The DDO declares issuer "…" but it is being signed by "…"` before any transaction.
 
-An edit builder starts with the issuer of the published asset, and the edit must be signed by that identity: signing with another one throws `The DDO declares issuer "…" but it is being signed by "…"`. To re-issue the asset under another identity — a manager-role account, or the new owner after an NFT transfer — call `setIssuer()` with the identity that signs the edit. The check runs when the document is signed, after any datatoken for a new service was created, so set the issuer before calling `edit()`.
+## On an edit
+
+An edit builder starts with the issuer of the published asset, and the edit must be signed by that identity. To re-issue the asset under another identity — a manager-role account, or the new owner after an NFT transfer — call `setIssuer()` with the identity that signs the edit.
 
 ## Usage
 
