@@ -259,8 +259,9 @@ signs locally (an ethers `Wallet`), it sends one transaction at a time per chain
 address, with the nonce `max(its counter, the pending count)`, and recovers from a nonce
 refusal: a transaction the chain already has is waited for, never sent again; one it does
 not have is sent again with a fresh nonce, at most three times; an order, purchase,
-approval or escrow payment only with proof the first can never be mined, otherwise it
-stops with a `NonceGuardError` ("may have been sent"). Wallet-managed signers
+approval or escrow payment only with proof from two RPCs (needs `verificationProvider`)
+that the first can never be mined, otherwise it stops with a `NonceGuardError` ("may have
+been sent"). Wallet-managed signers
 (`JsonRpcSigner`, browser wallets) keep choosing their own nonces. `'off'`: nautilus never
 sets a nonce and never resends. Either way a refused transaction the chain already has is
 returned, and the cause of a failed send is named. In-process only: use one key per
@@ -269,12 +270,14 @@ process. See [Concurrency and nonces](/docs/guides/config#concurrency-and-nonces
 ##### verificationProvider
 
 - Type: `Provider` (ethers)
-- Default: the signer's provider, read twice
+- Default: none (the signer's provider, read twice)
 
-A second RPC provider for the same chain, asked for the second read before nautilus decides
-a transaction was never sent: before an order, purchase, approval or escrow payment is sent
+A second, independent RPC provider for the same chain, read in every proof that a
+transaction was never sent: before an order, purchase, approval or escrow payment is sent
 again after a nonce refusal, and before an envelope is removed after a metadata transaction
-refused for its nonce.
+refused for its nonce. **Without it, a transaction that moves value is never sent again**:
+it stops with "may have been sent". Recommended for paid flows, where a single
+load-balanced RPC whose transaction index lags could make a mined order look unsent.
 
 ##### maxProviderFee
 
@@ -362,7 +365,8 @@ other's escrow authorisation. Jobs from another instance or process are not cove
   `allowInsecureTransport`.
 - When `nftFactoryAddress`, `fixedRateExchangeAddress` or `dispenserAddress` is missing or not
   an address, or `escrow` is set but is not an address.
-- When `nonceManagement` is neither `'auto'` nor `'off'`.
+- When `nonceManagement` is neither `'auto'` nor `'off'`, or `verificationProvider` is on
+  another chain than the signer.
 - When `maxProviderFee` or `maxEscrowPayment` has an entry whose `token` is not an address,
   whose `amount` is not a non-negative integer, or whose token is listed twice, or when
   `confirmProviderFees` or `confirmEscrowPayment` is not a function.

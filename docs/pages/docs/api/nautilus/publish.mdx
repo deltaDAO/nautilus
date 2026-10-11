@@ -172,8 +172,17 @@ use a nonce the node does not accept. `false` skips the check.
 Which nonces a node does not accept depends on its version (the `version` of its `GET /`):
 before 4.2.2 it refuses a decrypt call whose signed message hash starts with a zero byte,
 so a next nonce with such a hash sticks the indexer; 4.2.2 and later accept it, so it is
-neither refused nor warned about. A node that reports no version, or a pre-release of
-4.2.2, is treated as older.
+neither refused nor warned about. Instead nautilus logs `node.indexer_nonce.zero_byte_accepted`
+at `info`. A node that reports no version, or a pre-release of 4.2.2, is treated as older.
+
+:::warning
+The version is what the node reports about itself, and the fix is in the OE fork of
+ocean-node (`oe-ocean-node` 4.2.2). Upstream `oceanprotocol/ocean-node` uses the same 4.x
+numbers without it: on such a node at 4.2.2 or later an asset published on a zero-byte
+nonce is not indexed, and its indexer nonce sticks. No funds are at risk. If you publish to
+a node that is not the OE fork, watch for the `info` event, or check the node's logs for
+`consumer address and nonce signature mismatch`.
+:::
 
 :::info
 There is no `encrypt` option any more. The pointer and the stored envelope are always
@@ -223,7 +232,7 @@ or handle them in your own `sink`.
   completing, and pass `stored.txHash` to `completePublish` as `metadataTxHash`. See [when a write fails](/docs/guides/remote-stores#when-a-write-fails-after-the-envelope-is-stored).
   A transaction that failed to send is named in the error: the RPC's refusal, or a
   `NonceGuardError` when it was refused for its nonce and nautilus did not, or could not
-  safely, send it again (see
+  safely, send it again, or when a resend failed for another reason (see
   [Concurrency and nonces](/docs/guides/config#concurrency-and-nonces)), on `cause`. A
   metadata transaction refused for its nonce leaves the envelope only when it is proven
   never mined (`cleanup: 'removed'`); otherwise `'kept'`.
