@@ -23,6 +23,7 @@ import {
   Wallet
 } from 'ethers'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { type DebugEvent, setDebug } from '../../src/log/debug.js'
 import type { NodeAuth } from '../../src/node/auth.js'
 import { nodeText, redactSecrets } from '../../src/node/messages.js'
 import {
@@ -31,6 +32,7 @@ import {
   OceanNodeError
 } from '../../src/node/OceanNodeClient.js'
 import { ASSET_DID, CHAIN_ID, NFT_ADDRESS } from '../fixtures/Asset.js'
+import { FAKE } from '../secretScan.js'
 
 const NODE = 'https://node.test.invalid'
 const PEER = '16Uiu2HAmPeerIdOnly'
@@ -802,6 +804,110 @@ describe('resolve', () => {
     expect(error.message).to.equal(
       '[ocean-node] resolve: P2P command error: Gateway node error: no response from peer'
     )
+  })
+
+  describe("refuses a DDO that is not the requested DID's", () => {
+    /** Another asset's DID: what a node serving its own NFT's DDO answers with. */
+    const OTHER_DID = `did:ope:${'e0de'.repeat(16)}`
+    const forged = `${OTHER_DID}\n[nautilus] forged log line ${FAKE.rpcUrl}`
+
+    it('over HTTP, naming the id sanitised, with the raw value on the debug channel', async () => {
+      const events: DebugEvent[] = []
+      vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+      setDebug({
+        level: 'sensitive',
+        topics: ['node'],
+        sink: (event) => events.push(event)
+      })
+      stubFetch({
+        [ddo]: { status: 200, body: JSON.stringify({ id: forged }) }
+      })
+
+      const error = await rejection(() => client().resolve(ASSET_DID))
+
+      expect(error).not.to.be.instanceOf(AssetNotFoundError)
+      expect(error.message).to.match(
+        /^\[ocean-node\] resolve: the node answered with a DDO whose id is "did:ope:e0de.*", not the DID asked for, did:ope:7e03.*Refused/
+      )
+      expect(error.message).not.to.contain('\n')
+      expect(error.message).not.to.contain(FAKE.rpcQueryToken)
+      const [raw] = events.filter((event) =>
+        event.message.startsWith('resolve: the served DDO')
+      )
+      expect(raw.topic).to.equal('node')
+      expect(JSON.stringify(raw.data)).to.contain(
+        '\\n[nautilus] forged log line'
+      )
+    })
+
+    it('over HTTP, for a self-consistent DDO of another NFT (the attacker NFT for the victim DID)', async () => {
+      stubFetch({
+        [ddo]: {
+          status: 200,
+          body: JSON.stringify({
+            id: OTHER_DID,
+            credentialSubject: { id: OTHER_DID, nftAddress: NFT_ADDRESS }
+          })
+        }
+      })
+
+      const error = await rejection(() => client().resolve(ASSET_DID))
+
+      expect(error.message).to.contain(`whose id is "${OTHER_DID}"`)
+    })
+
+    it('over HTTP, without an id', async () => {
+      stubFetch({ [ddo]: { status: 200, body: JSON.stringify({}) } })
+
+      const error = await rejection(() => client().resolve(ASSET_DID))
+
+      expect(error.message).to.contain('whose id is missing')
+    })
+
+    it('over P2P', async () => {
+      vi.spyOn(Aquarius.prototype, 'resolve').mockResolvedValueOnce({
+        id: OTHER_DID
+      } as never)
+
+      const error = await rejection(() => client(PEER).resolve(ASSET_DID))
+
+      expect(error.message).to.contain(`whose id is "${OTHER_DID}"`)
+    })
+
+    it('in resolveMany', async () => {
+      vi.spyOn(Aquarius.prototype, 'querySearch').mockResolvedValueOnce({
+        hits: {
+          hits: [{ _source: { id: ASSET_DID } }, { _source: { id: OTHER_DID } }]
+        }
+      } as never)
+
+      const error = await rejection(() =>
+        client().resolveMany([ASSET_DID, DID_OP])
+      )
+
+      expect(error.message).to.match(
+        /^\[ocean-node\] resolveMany: .*whose id is "did:ope:e0de.*not one of the DIDs asked for/
+      )
+    })
+
+    it('but accepts the other form and case of the same DID', async () => {
+      stubFetch({
+        [`/assets/ddo/${encodeURIComponent(DID_OP)}`]: {
+          status: 200,
+          body: JSON.stringify({ id: ASSET_DID })
+        }
+      })
+      expect(await client().resolve(DID_OP)).to.deep.equal({ id: ASSET_DID })
+
+      vi.spyOn(Aquarius.prototype, 'querySearch').mockResolvedValueOnce({
+        hits: { hits: [{ _source: { id: ASSET_DID } }] }
+      } as never)
+      expect(
+        await client().resolveMany([
+          ASSET_DID.toUpperCase().replace('DID:OPE:', 'did:ope:')
+        ])
+      ).to.have.keys([ASSET_DID])
+    })
   })
 
   it('reads no indexing state for an id that is not a did:op:/did:ope: hash', async () => {

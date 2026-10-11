@@ -87,6 +87,7 @@ import {
   boundedNodeMessage,
   describeAnswer,
   describeError,
+  sanitize,
   sanitizedError
 } from './messages.js'
 
@@ -1280,6 +1281,10 @@ export class OceanNodeClient {
    * in parallel, within one 15 s timeout). Over P2P it goes through ocean.js, and a 404 is
    * told by the node's "Not found" answer; the indexing state is not read (it is served over
    * HTTP only), so the error carries no `state`. Aborting `signal` rejects with its reason.
+   *
+   * The node chooses what it serves, so a DDO whose `id` is not `did` is refused with an
+   * `OceanNodeError`: its `nftAddress` names another NFT, and `edit()` would write to, and
+   * mint datatokens on, that NFT. The `did:op:` and `did:ope:` forms of one DID match.
    */
   async resolve(did: string, signal?: AbortSignal): Promise<AssetV5> {
     if (!isHttpUri(this.nodeUri)) {
@@ -1290,6 +1295,7 @@ export class OceanNodeClient {
       })
       if (!asset) throw new AssetNotFoundError(did)
 
+      assertServedDid('resolve', [did], asset)
       return asset as unknown as AssetV5
     }
 
@@ -1301,7 +1307,9 @@ export class OceanNodeClient {
         await this.indexingFailureOf(did, signal)
       )
 
-    return nodeJson<AssetV5>('resolve', response)
+    const asset = nodeJson<AssetV5>('resolve', response)
+    assertServedDid('resolve', [did], asset)
+    return asset
   }
 
   /**
@@ -1794,7 +1802,10 @@ export class OceanNodeClient {
     return attempt('query', () => this.aquarius.querySearch(query, signal))
   }
 
-  /** Resolves many DIDs in one query, keyed by lower-cased DID. */
+  /**
+   * Resolves many DIDs in one query, keyed by lower-cased DID. Throws an `OceanNodeError`
+   * when the node answers with a DDO whose `id` is none of `dids` (see `resolve`).
+   */
   async resolveMany(dids: string[]): Promise<Record<string, AssetV5>> {
     if (!dids.length) return {}
 
@@ -1811,7 +1822,10 @@ export class OceanNodeClient {
 
     for (const hit of response?.hits?.hits || []) {
       const asset = hit._source
-      if (asset?.id) assets[asset.id.toLowerCase()] = asset
+      if (!asset?.id) continue
+
+      assertServedDid('resolveMany', dids, asset)
+      assets[asset.id.toLowerCase()] = asset
     }
 
     return assets
@@ -3017,6 +3031,44 @@ export class OceanNodeClient {
 }
 
 /** The path of `GET /api/aquarius/assets/ddo/<did>`. */
+/** The hash of a `did:op:` or `did:ope:` DID, lower-cased, or `undefined`. */
+function didHash(did: string): string | undefined {
+  return /^did:ope?:([0-9a-f]{64})$/i.exec(did.trim())?.[1].toLowerCase()
+}
+
+/** Whether two DIDs name the same asset: the same hash in either form, or equal. */
+function isSameDid(a: string, b: string): boolean {
+  const [hashA, hashB] = [didHash(a), didHash(b)]
+
+  return hashA && hashB
+    ? hashA === hashB
+    : a.trim().toLowerCase() === b.trim().toLowerCase()
+}
+
+/**
+ * Throws unless the DDO the node served has the `id` of one of the DIDs asked for. The id
+ * is node-supplied, so the message carries it sanitised and bounded, and the raw value goes
+ * to the debug channel.
+ */
+function assertServedDid(
+  operation: string,
+  dids: readonly string[],
+  asset: unknown
+): void {
+  const id = (asset as { id?: unknown } | null)?.id
+
+  if (typeof id === 'string' && dids.some((did) => isSameDid(did, id))) return
+
+  debugRaw('node', `${operation}: the served DDO's id is not a DID asked for`, {
+    dids,
+    id
+  })
+  throw new OceanNodeError(
+    operation,
+    `the node answered with a DDO whose id is ${typeof id === 'string' ? `"${sanitize(id, 100, null)}"` : 'missing'}, not ${dids.length === 1 ? `the DID asked for, ${dids[0]}` : 'one of the DIDs asked for'}. Refused: its nftAddress names another asset's NFT.`
+  )
+}
+
 function ddoPath(did: string): string {
   return `/api/aquarius/assets/ddo/${encodeURIComponent(did)}`
 }
