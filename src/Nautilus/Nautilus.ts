@@ -1616,7 +1616,9 @@ export class Nautilus {
           nodeUri: this.node.nodeUri,
           nodeVersion: state.nodeVersion,
           nonce: decryptNonce
-        }
+        },
+        // Until the nonce moves, every publish onto this node would say the same.
+        { once: `${this.node.nodeUri}:${decryptNonce}` }
       )
     else if (
       !isIndexerNonceSignable(

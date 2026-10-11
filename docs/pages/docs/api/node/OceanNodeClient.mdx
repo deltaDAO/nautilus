@@ -155,8 +155,8 @@ and later accept it (`nodeAcceptsZeroByteNonce(version)`). `nodeVersion` is the 
 the node reports in `GET /` (sanitised); without one, or for a pre-release of 4.2.2, the
 zero-byte rule applies. The version is self-reported, and the fix is in the OE fork
 (`oe-ocean-node`): an upstream ocean-node with the same number still refuses such a call.
-Each time a zero-byte nonce is let through on the version alone, `getIndexerNonceState()`
-logs `node.indexer_nonce.zero_byte_accepted` at `info`.
+When a zero-byte nonce is let through on the version alone, `getIndexerNonceState()` logs
+`node.indexer_nonce.zero_byte_accepted` at `info`, once per node and nonce.
 
 `publish`, `completePublish` and `edit` call it before their first transaction and throw an
 `IndexerNonceStuckError` (an `OceanNodeError` carrying this `state`) when `stuck`; pass
