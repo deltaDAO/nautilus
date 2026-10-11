@@ -14,10 +14,11 @@ import {
 } from '@oceanprotocol/lib'
 import {
   getAddress,
-  getBytes,
   hexlify,
+  id,
   type Signer,
   solidityPackedKeccak256,
+  toBeArray,
   toUtf8Bytes,
   verifyMessage,
   Wallet
@@ -742,33 +743,42 @@ describe('OceanNodeClient policy server', () => {
 
   it('signs consumerAddress + (stored nonce + 1) + PolicyServerInitialize, as ocean.js does', async () => {
     status(true)
-    const wallet = Wallet.createRandom()
     vi.spyOn(ProviderInstance, 'getNonce').mockResolvedValue(6)
-    const fetch = answer(200, initiated())
+    // Fixed wallets, not random ones: for 1 in 256 addresses the digest starts with a zero
+    // byte, which ocean.js drops (`toBeArray`), so a random wallet failed by chance. Seed
+    // 278's digest is such a one.
+    for (const seed of ['signer 0', 'signer 278']) {
+      const wallet = new Wallet(id(seed))
+      const fetch = answer(200, initiated())
 
-    await client(wallet).initializePolicyVerification({
-      ...request,
-      consumerAddress: wallet.address
-    })
+      await client(wallet).initializePolicyVerification({
+        ...request,
+        consumerAddress: wallet.address
+      })
 
-    const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit]
-    const body = JSON.parse(String(init.body))
-    const message = `${wallet.address}7PolicyServerInitialize`
-    const digest = solidityPackedKeccak256(
-      ['bytes'],
-      [hexlify(toUtf8Bytes(message))]
-    )
+      const [url, init] = fetch.mock.calls[0] as unknown as [
+        string,
+        RequestInit
+      ]
+      const body = JSON.parse(String(init.body))
+      const message = `${wallet.address}7PolicyServerInitialize`
+      const digest = solidityPackedKeccak256(
+        ['bytes'],
+        [hexlify(toUtf8Bytes(message))]
+      )
 
-    expect(url).to.equal(`${NODE}/api/services/initializePSVerification`)
-    expect(body).to.include({
-      documentId: ASSET_DID,
-      serviceId: SERVICE_ID,
-      consumerAddress: wallet.address,
-      nonce: '7'
-    })
-    expect(verifyMessage(getBytes(digest), body.signature)).to.equal(
-      wallet.address
-    )
+      expect(url).to.equal(`${NODE}/api/services/initializePSVerification`)
+      expect(body).to.include({
+        documentId: ASSET_DID,
+        serviceId: SERVICE_ID,
+        consumerAddress: wallet.address,
+        nonce: '7'
+      })
+      // Signed as the bytes of the digest's number, so without leading zero bytes.
+      expect(verifyMessage(toBeArray(digest), body.signature), seed).to.equal(
+        wallet.address
+      )
+    }
   })
 
   it('sends a JWT as Authorization, with no nonce or signature', async () => {

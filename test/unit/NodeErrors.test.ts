@@ -15,9 +15,10 @@ import {
   ProviderInstance
 } from '@oceanprotocol/lib'
 import {
-  getBytes,
   hexlify,
+  id,
   solidityPackedKeccak256,
+  toBeArray,
   toUtf8Bytes,
   verifyMessage,
   Wallet
@@ -32,6 +33,7 @@ import {
   OceanNodeError
 } from '../../src/node/OceanNodeClient.js'
 import { ASSET_DID, CHAIN_ID, NFT_ADDRESS } from '../fixtures/Asset.js'
+import { cpuTime } from '../helpers.js'
 import { FAKE } from '../secretScan.js'
 
 const NODE = 'https://node.test.invalid'
@@ -274,27 +276,33 @@ describe('getComputeLogs', () => {
   })
 
   it('signs the request as ocean.js does', async () => {
-    const wallet = Wallet.createRandom()
-    const fetch = stubFetch({
-      '/api/services/nonce': { status: 200, body: '{"nonce":"4"}' },
-      '/api/services/computeStreamableLogs': { status: 200, body: '' }
-    })
+    // Fixed wallets, not random ones: for 1 in 256 addresses the hash starts with a zero
+    // byte, which ocean.js drops (`toBeArray`), and this test once failed by chance. Seed
+    // 398's hash is such a one.
+    for (const seed of ['signer 0', 'signer 398']) {
+      const wallet = new Wallet(id(seed))
+      const fetch = stubFetch({
+        '/api/services/nonce': { status: 200, body: '{"nonce":"4"}' },
+        '/api/services/computeStreamableLogs': { status: 200, body: '' }
+      })
 
-    await client(NODE, wallet).getComputeLogs(JOB)
+      await client(NODE, wallet).getComputeLogs(JOB)
 
-    const url = new URL(urls(fetch)[1])
-    const query = Object.fromEntries(url.searchParams)
-    expect(query.jobId).to.equal(JOB)
-    expect(query.consumerAddress).to.equal(wallet.address)
-    expect(query.nonce).to.equal('5')
-    // ocean.js's signRequest: the keccak256 of the message bytes, signed as bytes.
-    const hash = solidityPackedKeccak256(
-      ['bytes'],
-      [hexlify(toUtf8Bytes(`${wallet.address}5getComputeStreamableLogs`))]
-    )
-    expect(verifyMessage(getBytes(hash), query.signature)).to.equal(
-      wallet.address
-    )
+      const url = new URL(urls(fetch)[1])
+      const query = Object.fromEntries(url.searchParams)
+      expect(query.jobId).to.equal(JOB)
+      expect(query.consumerAddress).to.equal(wallet.address)
+      expect(query.nonce).to.equal('5')
+      // ocean.js's signRequest: the keccak256 of the message bytes, signed as the bytes of
+      // its number, so without leading zero bytes.
+      const hash = solidityPackedKeccak256(
+        ['bytes'],
+        [hexlify(toUtf8Bytes(`${wallet.address}5getComputeStreamableLogs`))]
+      )
+      expect(verifyMessage(toBeArray(hash), query.signature), seed).to.equal(
+        wallet.address
+      )
+    }
   })
 
   it("sends a JWT as Authorization, without a signature, naming the token's address", async () => {
@@ -1149,18 +1157,20 @@ describe("the node's text in a message", () => {
       expect(redactSecrets(text), text).to.equal(expected)
   })
 
-  it('redacts a megabyte of hostile text in no time (security regression)', () => {
+  it('redacts a megabyte of hostile text in no time (security regression)', async () => {
     // Text built to be slow to redact: dotted words (the URL scheme pattern used to rescan
     // from each one) and `0x` runs (the hex patterns). Only the start is read.
     for (const text of ['a.'.repeat(500_000), '0x'.repeat(500_000)]) {
-      const started = performance.now()
-      const clean = sanitize(text, 1_000, null)
-      expect(performance.now() - started, text.slice(0, 4)).to.be.below(50)
+      let clean = ''
+      const elapsed = await cpuTime(() => {
+        clean = sanitize(text, 1_000, null)
+      })
+      expect(elapsed, text.slice(0, 4)).to.be.below(50)
       expect(clean.length).to.be.at.most(1_001)
     }
   })
 
-  it('drops the word the read limit cuts in no time, also at the log window (security regression)', () => {
+  it('drops the word the read limit cuts in no time, also at the log window (security regression)', async () => {
     // A run with no separator up to just before the read limit, then one: the word the cut
     // splits used to be found by a regular expression that rescanned the run from each of
     // its characters (about 60 ms at 8,192, 300 ms at 16,000). A run of `a` is hex too, as
@@ -1189,9 +1199,10 @@ describe("the node's text in a message", () => {
     const slow: string[] = []
     for (const [label, limit, maxLength, budget, clean] of shapes) {
       const text = hostile(limit)
-      const started = performance.now()
-      const result = clean(text)
-      const elapsed = performance.now() - started
+      let result = ''
+      const elapsed = await cpuTime(() => {
+        result = clean(text)
+      })
 
       if (elapsed >= budget) slow.push(`${label}: ${elapsed.toFixed(0)} ms`)
       expect(result, label).to.equal(`${'a'.repeat(maxLength)}…`)

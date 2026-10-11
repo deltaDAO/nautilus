@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { setDebug } from '../../src/log/debug.js'
 import { IpfsRemoteStore } from '../../src/remote/IpfsRemoteStore.js'
 import { errorMessage, RequestTimeoutError } from '../../src/utils/http.js'
-import { expectThrowsAsync } from '../helpers.js'
+import { cpuTime, expectThrowsAsync } from '../helpers.js'
 
 const CID_V1 = 'bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy'
 const CID_V0 = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG'
@@ -566,6 +567,10 @@ describe('IpfsRemoteStore', () => {
     it('stays fast on a megabyte of hostile body', async () => {
       // ~1 MB of token-like text: each eyJ starts a match attempt over the rest of the body.
       const hostile = 'eyJ'.repeat(350_000)
+      // The scrubbing is timed, not the debug channel's hand-over of the raw body (and the
+      // suite's scan of it), which runs only when a user turns debug on: off here, also
+      // under NAUTILUS_TEST_DEBUG, where it once took this over the budget.
+      setDebug({ level: 'off' })
       const headers = { Authorization: `Bearer ${TOKEN}` }
 
       for (const [status, body] of [
@@ -581,11 +586,12 @@ describe('IpfsRemoteStore', () => {
           fetchImpl: fetchAnswering(status, body)
         })
 
-        const started = performance.now()
-        const thrown = await store
-          .put('{}', { did: 'did:ope:1' })
-          .catch((error) => error)
-        const elapsed = performance.now() - started
+        let thrown = new Error()
+        const elapsed = await cpuTime(async () => {
+          thrown = await store
+            .put('{}', { did: 'did:ope:1' })
+            .catch((error) => error)
+        })
 
         expect(thrown.message).to.match(/^IPFS upload (failed|returned)/)
         expect(thrown.message.length).to.be.lessThan(800)
