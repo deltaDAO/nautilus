@@ -238,8 +238,8 @@ export const LOG_EVENTS = {
     level: 'warn',
     component: 'access',
     description:
-      'The previous order could not be looked up on chain, so a new one is placed.',
-    fields: ['datatokenAddress', 'error']
+      'The previous order could not be checked on chain (rate limit, no answer, incomplete scan or RPC error), and a new order is placed anyway: the service is free, or `orderOnLookupFailure` is set. A service that costs anything throws an `OrderCheckError` instead.',
+    fields: ['datatokenAddress', 'serviceId', 'reason', 'free', 'error']
   },
   'access.order.previous_found': {
     level: 'debug',

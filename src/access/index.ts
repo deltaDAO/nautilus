@@ -20,6 +20,11 @@ import {
 import { assertAccessRequest } from './guards.js'
 import { planSettlement, sendSettlement } from './settlement.js'
 
+export {
+  OrderCheckError,
+  type OrderCheckFailure,
+  type OrderCheckPrice
+} from './orderCheck.js'
 export { settleOrder } from './settlement.js'
 
 export interface AccessContext {
@@ -112,24 +117,31 @@ export async function access(
 
   // 3. Decide how to settle, and run every check of that path before anything is sent.
   //    The node's download `initialize` reports no `validOrder`, so a previous order is
-  //    looked up on chain, within the service's timeout. The node chose the fee's token
+  //    looked up on chain, within the service's timeout. A lookup that fails or stops short
+  //    on a service that costs anything throws an `OrderCheckError` here, with nothing paid,
+  //    unless `orderOnLookupFailure` is `true`: buying blind could pay twice. The node chose the fee's token
   //    and amount, and in a download it is the publisher's node, so a non-zero fee is paid
   //    only within what the caller allowed. Consent is asked for the fee this path pays
   //    only: none for an order used as it stands, the quoted fee for an order extended or
   //    placed.
-  const plan = await planSettlement({
-    signer,
-    chainConfig,
-    datatokenAddress,
-    serviceIndex: getServiceIndex(asset, service.id),
-    initialized,
-    consumer: consumerAddress,
-    did: asset.id,
-    service: { id: service.id, timeout: service.timeout },
-    maxProviderFee: config.maxProviderFee,
-    confirmProviderFees: config.confirmProviderFees,
-    logger
-  })
+  const plan = await planSettlement(
+    {
+      signer,
+      chainConfig,
+      datatokenAddress,
+      serviceIndex: getServiceIndex(asset, service.id),
+      initialized,
+      consumer: consumerAddress,
+      did: asset.id,
+      assetName: asset.credentialSubject?.metadata?.name,
+      service: { id: service.id, timeout: service.timeout, name: service.name },
+      orderOnLookupFailure: config.orderOnLookupFailure,
+      maxProviderFee: config.maxProviderFee,
+      confirmProviderFees: config.confirmProviderFees,
+      logger
+    },
+    'access()'
+  )
 
   // 4. Reuse or place the order, paying exactly the fee allowed above, if any.
   const { transferTxId, reused } = await sendSettlement(plan)

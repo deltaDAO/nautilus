@@ -17,6 +17,19 @@ export interface AccessConfig extends ProviderFeeLimits {
   serviceId?: string
   fileIndex?: number
   userdata?: UserCustomParameters
+  /**
+   * What to do when the previous order cannot be checked on chain (the RPC rate-limits the
+   * lookup, does not answer, or answers with an error, or the lookup cannot read back over
+   * the whole order window) and the service costs anything.
+   *
+   * By default `access()` stops before paying and throws an `OrderCheckError`: if the
+   * account already holds a valid order, buying again would pay twice. `true` (only `true`)
+   * places a new order anyway, with a warning. A free service is ordered either way, with
+   * a warning. "No previous order found" is not a failure: it always orders.
+   *
+   * @default false
+   */
+  orderOnLookupFailure?: boolean
 }
 
 /** What `access()` resolved on the way to the download URL. */

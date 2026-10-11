@@ -46,14 +46,19 @@
  */
 import type { Block, Log, Provider, TransactionReceipt } from 'ethers'
 import { Interface, toUtf8String, zeroPadValue } from 'ethers'
+import { rateLimitOf } from './rpcErrors.js'
 
-/** Blocks per `eth_getLogs` call at first, halved while the RPC refuses the range. */
+/**
+ * Blocks per `eth_getLogs` call at first, halved while the RPC refuses the range. A rate
+ * limit is not a range refusal: it is thrown, not halved.
+ */
 const CHUNK_BLOCKS = 2_000
 
 /**
  * The lookup's bounds: blocks back from the newest confirmed one, and rounds of
- * `eth_getLogs` calls (one round per chunk, retries included). An order beyond them is not
- * found, and `access()` places a new one.
+ * `eth_getLogs` calls (one round per chunk, retries included). A lookup that reaches either
+ * before the end of the service's timeout, with no order found, throws an
+ * `IncompleteOrderLookupError`: an order beyond them cannot be ruled out.
  */
 const MAX_BLOCKS = 100_000
 const MAX_READS = 100
@@ -61,8 +66,8 @@ const MAX_READS = 100
 /**
  * Candidates checked at most, each costing up to two receipt reads: anyone can place an
  * order with the account as consumer, and one of a free (dispenser) datatoken costs next to
- * nothing, so the lookup gives up after this many and `access()` extends the best one found,
- * or places a new order.
+ * nothing, so the lookup gives up after this many and `access()` extends the best one found.
+ * With none found, it throws an `IncompleteOrderLookupError`.
  */
 const MAX_CHECKS = 50
 
@@ -101,6 +106,50 @@ export interface PreviousOrderQuery {
   providerFeeAddress?: string
 }
 
+/**
+ * Which bound stopped a lookup short: the rounds of reads (`MAX_READS`, a slow or narrow
+ * RPC), the blocks read back (`MAX_BLOCKS`, a timeout longer than that, or none), or the
+ * candidates checked (`MAX_CHECKS`).
+ */
+export type IncompleteLookupLimit = 'reads' | 'depth' | 'candidates'
+
+/**
+ * Thrown by the lookup when it stopped before it covered the whole order window (the
+ * service's timeout), with no order found, so an order in the part it did not read cannot
+ * be ruled out. Not finding an order there is not "not found": a paid service is not
+ * ordered again (see `OrderCheckError`, reason `incomplete`).
+ */
+export class IncompleteOrderLookupError extends Error {
+  /** Hours back from now the lookup did read; `NaN` when that block's time is unknown. */
+  readonly checkedHours: number
+  /**
+   * Hours back from now an order would still be in force: the service's timeout, infinite
+   * when its orders never expire.
+   */
+  readonly windowHours: number
+  /** The bound that stopped it. Only `reads` can end differently on a retry. */
+  readonly limit: IncompleteLookupLimit
+
+  constructor(
+    checkedHours: number,
+    windowHours: number,
+    limit: IncompleteLookupLimit = 'reads'
+  ) {
+    super(
+      `The previous-order lookup stopped at its ${limit} limit, after ${roughHours(checkedHours)} of ${roughHours(windowHours)} hours.`
+    )
+    this.name = 'IncompleteOrderLookupError'
+    this.checkedHours = checkedHours
+    this.windowHours = windowHours
+    this.limit = limit
+  }
+}
+
+function roughHours(hours: number): string {
+  if (Number.isNaN(hours)) return 'unknown'
+  return Number.isFinite(hours) ? hours.toFixed(1) : 'unlimited'
+}
+
 export interface PreviousOrder {
   /** The `OrderStarted` transaction: the one `reuseOrder` extends. */
   orderTxId: string
@@ -119,7 +168,11 @@ export interface PreviousOrder {
  * `CONFIRMATIONS` down to the first block still inside the service's timeout, and no
  * further than `MAX_BLOCKS` and `MAX_READS`; at most `MAX_CHECKS` candidates are checked,
  * after which the best extendable order found is returned. A chunk the RPC refuses as too
- * large is read again in halves; any other error is thrown.
+ * large is read again in halves; any other error is thrown, a rate limit included.
+ *
+ * `undefined` means the whole window was read and holds no such order. A lookup that
+ * stopped before it covered the window (at `MAX_BLOCKS`, `MAX_READS` or `MAX_CHECKS`) with
+ * no order found throws an `IncompleteOrderLookupError` instead.
  */
 export async function findPreviousOrder(
   query: PreviousOrderQuery,
@@ -145,20 +198,25 @@ export async function findPreviousOrder(
 
   const latest = head.number - CONFIRMATIONS + 1
   const floor = Math.max(0, latest - MAX_BLOCKS + 1)
-  const stop = Number.isFinite(cutoff)
+  // Where the window starts, and whether `MAX_BLOCKS` cut it: a service whose orders never
+  // expire has no start, and older orders than the floor may be in force.
+  const window = Number.isFinite(cutoff)
     ? await windowStart(provider, head, floor, cutoff)
-    : floor
+    : { start: floor, cut: floor > 0 }
+  const stop = window.start
 
   const check = checker(query, now, lifetime)
   let extendable: { orderTxId: string; timestamp: number } | undefined
   let chunk = CHUNK_BLOCKS
   let checks = 0
+  let to = latest
+  let reads = 0
+  /** Set when the scan reached a block older than the window: all of it was read. */
+  let covered = false
+  /** Set when `MAX_CHECKS` stopped the scan: the time of the first candidate not checked. */
+  let cappedAt: number | undefined
 
-  scan: for (
-    let to = latest, reads = 0;
-    to >= stop && reads < MAX_READS;
-    reads++
-  ) {
+  scan: for (; to >= stop && reads < MAX_READS; reads++) {
     const from = Math.max(stop, to - chunk + 1)
     let candidates: Candidate[]
 
@@ -172,8 +230,14 @@ export async function findPreviousOrder(
 
     for (const candidate of candidates) {
       // Every older candidate is older still, and so is the order it names.
-      if (candidate.timestamp < cutoff) break scan
-      if (checks++ === MAX_CHECKS) break scan
+      if (candidate.timestamp < cutoff) {
+        covered = true
+        break scan
+      }
+      if (checks++ === MAX_CHECKS) {
+        cappedAt = candidate.timestamp
+        break scan
+      }
 
       const verdict = await check(candidate)
 
@@ -187,7 +251,50 @@ export async function findPreviousOrder(
     to = from - 1
   }
 
-  return extendable && { orderTxId: extendable.orderTxId }
+  if (extendable) return { orderTxId: extendable.orderTxId }
+  if (covered) return undefined
+
+  // Nothing found, but not everything read: "not found" would buy again blind.
+  const windowHours = Number.isFinite(lifetime)
+    ? Number(query.timeout) / 3600
+    : Number.POSITIVE_INFINITY
+  const hoursSince = (timestamp: number | undefined) =>
+    timestamp === undefined ? Number.NaN : (now - timestamp) / 3600
+
+  if (cappedAt !== undefined)
+    throw new IncompleteOrderLookupError(
+      hoursSince(cappedAt),
+      windowHours,
+      'candidates'
+    )
+  if (to >= stop)
+    throw new IncompleteOrderLookupError(
+      to === latest
+        ? hoursSince(head.timestamp)
+        : hoursSince(await blockTime(provider, to + 1)),
+      windowHours,
+      'reads'
+    )
+  if (window.cut)
+    throw new IncompleteOrderLookupError(
+      hoursSince(window.time ?? (await blockTime(provider, stop))),
+      windowHours,
+      'depth'
+    )
+
+  return undefined
+}
+
+/** A block's time, or `undefined` when it cannot be read: only for the message. */
+async function blockTime(
+  provider: Provider,
+  block: number
+): Promise<number | undefined> {
+  try {
+    return (await provider.getBlock(block))?.timestamp
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -195,16 +302,20 @@ export async function findPreviousOrder(
  * too. Block times never decrease, so every block before it was mined before `cutoff` as
  * well. The block is estimated between `floor` and `head`, a chunk early, and checked; when
  * the estimate is wrong the whole bound is read.
+ *
+ * `cut` is set when `floor` is inside the window (or its time is unknown) and older blocks
+ * exist: the bound, not the timeout, ends the read. `time` is `floor`'s time, when read.
  */
 async function windowStart(
   provider: Provider,
   head: Block,
   floor: number,
   cutoff: number
-): Promise<number> {
+): Promise<{ start: number; cut: boolean; time?: number }> {
   const base = await provider.getBlock(floor)
 
-  if (!base || base.timestamp >= cutoff) return floor
+  if (!base || base.timestamp >= cutoff)
+    return { start: floor, cut: floor > 0, time: base?.timestamp }
 
   const estimate =
     floor +
@@ -214,11 +325,14 @@ async function windowStart(
     ) -
     CHUNK_BLOCKS
 
-  if (estimate <= floor) return floor
+  if (estimate <= floor) return { start: floor, cut: false }
 
   const block = await provider.getBlock(estimate)
 
-  return block && block.timestamp < cutoff ? estimate : floor
+  return {
+    start: block && block.timestamp < cutoff ? estimate : floor,
+    cut: false
+  }
 }
 
 interface Candidate {
@@ -425,8 +539,14 @@ function decode(log: Pick<Log, 'topics' | 'data'>): Event | undefined {
   }
 }
 
-/** Whether an RPC refused `eth_getLogs` for its range or its number of results. */
+/**
+ * Whether an RPC refused `eth_getLogs` for its range or its number of results. A rate limit
+ * is not one, though its text often reads like one ("exceeded maximum retry limit", "limit
+ * exceeded"): halving on it spends the reads until the window cannot be covered.
+ */
 function isRangeError(error: unknown): boolean {
+  if (rateLimitOf(error)) return false
+
   const { message, info } = (error ?? {}) as {
     message?: unknown
     info?: { error?: { message?: unknown } }
