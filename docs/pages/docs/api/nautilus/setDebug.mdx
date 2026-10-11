@@ -67,7 +67,7 @@ events printed at the current log level: pair the channel with `NAUTILUS_LOG_LEV
 | `wallet` | The walt.id wallet: its error answers, the resolved presentation request, the presentation result. |
 | `policy` | Policy-server sessions (the `initiate` reply), the verifier's session record and per-policy results. |
 | `rpc` | The chain RPC: errors with their request URL and response. |
-| `order` | The raw fields of the access log events, and the errors of the previous-order lookup and of the price read before redaction. Events of their own for orders: not emitted yet (from PR 9). |
+| `order` | The raw fields of the access log events, and the errors of the previous-order lookup and of the price read before redaction. Events of their own for orders: not emitted yet (from PRs 7 and 10d). |
 | `nonce` | The raw fields of the publish preflight's nonce warnings; nonce reads, the nonce guard's decisions (nonce chosen, refusal, resync, proof) and the signed transactions of refused sends. |
 | `store` | Remote stores: storage pointers, store answers. |
 | `compute` | The raw fields of the compute log events. Events of their own for compute jobs: not emitted yet (from PR 10d). |

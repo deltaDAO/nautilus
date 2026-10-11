@@ -22,6 +22,13 @@ whole order window.
   ethers' retries), a `Retry-After`, a rate-limit `-32005` or "too many requests" ended in
   halving the block range until the reads ran out, then "not found" and a new order. It
   now fails the lookup (`reason: 'rate-limited'`).
+- **An RPC answer without the data its own answers promise is a failed lookup, not "no
+  order".** No newest block, no receipt for an order transaction the RPC's logs list (or
+  for the order a reuse of the account names), or a receipt without that order's event,
+  as a load-balanced RPC whose backends lag each other answers for a recent order, gave
+  "not found" and a second order. It now fails the lookup (`reason: 'rpc-error'`, "the
+  RPC's answer lacked data the check needs"). Orders of another service, past the timeout
+  or of another account are still skipped.
 - **A paid service whose orders never expire (`timeout: 0`), or whose timeout is longer
   than 100 000 blocks (about 55 hours on OP Sepolia), throws `OrderCheckError`
   (`'incomplete'`) when no order is found in the blocks read**, since an older order may
@@ -48,5 +55,8 @@ whole order window.
   `transferTxId`, so the node reports no valid order and each paid input is bought on every
   job; that known limitation is not changed here.)
 
-**Migrate:** catch `OrderCheckError` where you call `access()` and retry later (or with
-another RPC); pass `orderOnLookupFailure: true` only where a second payment is acceptable.
+**Migrate:** catch `OrderCheckError` where you call `access()`, show its message (it names
+the cost, the cause and what to do) and retry later or with another RPC. Don't retry with
+`orderOnLookupFailure: true` on your own right after catching it: that is the second
+payment this change prevents. Offer it to the user, who knows whether the account already
+holds an order, and pass it only on their decision.

@@ -60,7 +60,7 @@ What happens in order:
    service, inside the service's timeout with at least 10 minutes left
    ([details](/docs/guides/pricing#downloads-the-order-on-chain)). Otherwise a datatoken is
    bought and a new order placed. "No order found" places a new one. A lookup that
-   **fails** (the RPC rate-limits it, does not answer, or answers with an error) or **stops
+   **fails** (the RPC rate-limits it, does not answer, answers with an error, or answers without the data the check needs) or **stops
    short** (it cannot read back over the whole order window) is not "no order found": on a
    service that costs anything, `access()` stops before paying and throws an
    [`OrderCheckError`](#ordercheckerror), since buying without the check could pay twice. A free service is ordered anyway, with a warning
@@ -280,7 +280,7 @@ Fields, so a program need not parse the text:
 | `rate-limited` | the RPC rate-limited the check (HTTP 429): an HTTP 429, a `Retry-After` header on an answer that is not a server error, JSON-RPC code `-32005` that does not refuse the block range, or "rate limit" / "too many requests" in the answer |
 | `unreachable` | the RPC did not answer: a network error or a timeout (not an RPC that answered with an error that mentions a timeout) |
 | `incomplete` | the check covered only the last 16 of the 24 hours an order stays valid: the lookup stopped before it covered the order window (below) |
-| `rpc-error` | the RPC returned an error: … (the RPC's own words, redacted) |
+| `rpc-error` | the RPC returned an error: … (the RPC's own words, redacted); or the RPC's answer lacked data the check needs (…): no newest block, no receipt for an order transaction its own logs list, or a receipt without that order's event, as a load-balanced RPC whose backends lag each other can answer |
 
 The lookup reads at most 100 000 blocks back, in at most 100 rounds of reads, and checks
 at most 50 candidate orders. When one of those bounds ends it before the service's
@@ -299,22 +299,38 @@ When the price cannot be read either, the message says "the price could not be r
 either" instead of the price, and offers no opt-in: nothing can be bought until the RPC
 answers.
 
+Don't catch the error and buy anyway on your own: that brings the second payment back. Show
+the message, which names the cost, the cause and what to do, and let the user decide.
+Retrying later, or with another RPC, is the safe first step. Offer `orderOnLookupFailure:
+true` only when the user knows the account holds no order in force, for example when an
+`incomplete` lookup reports that a retry ends the same way.
+
 ```ts twoslash
 import { Nautilus, OrderCheckError } from '@deltadao/nautilus'
 import { Wallet } from 'ethers'
 const nautilus = await Nautilus.create(new Wallet('0x1234'))
+/** Your UI: shows `question` and returns the user's answer. */
+declare function askUser(question: string): Promise<boolean>
 // ---cut---
+const assetDid = 'did:ope:1234abcd...'
 try {
-  await nautilus.access({ assetDid: 'did:ope:1234abcd...' })
+  await nautilus.access({ assetDid })
 } catch (error) {
-  if (error instanceof OrderCheckError && error.retryable) {
-    // Nothing was paid. Retry later, or with another RPC; or, accepting that it may pay
-    // twice, order anyway:
-    await nautilus.access({
-      assetDid: 'did:ope:1234abcd...',
-      orderOnLookupFailure: true
-    })
-  } else throw error
+  if (!(error instanceof OrderCheckError)) throw error
+
+  // Nothing was ordered or paid. With no costs, the price could not be read: nothing can
+  // be bought until the RPC answers.
+  const costs = error.costs
+    .map((cost) => `${cost.amount} ${cost.symbol}`)
+    .join(' + ')
+  const buyAnyway =
+    costs !== '' &&
+    (await askUser(
+      `${error.message}\n\nBuy anyway? If this account already holds an order, this pays ${costs} a second time.`
+    ))
+
+  if (buyAnyway)
+    await nautilus.access({ assetDid, orderOnLookupFailure: true })
 }
 ```
 

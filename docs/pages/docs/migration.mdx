@@ -315,10 +315,11 @@ address, not the one in the request.
 
 **`access()` throws an `OrderCheckError` instead of ordering anew when it cannot check for
 an order you already hold.** When the on-chain lookup of a previous order fails (the RPC
-rate-limits it, does not answer, or answers with an error) or stops short (it cannot read
+rate-limits it, does not answer, answers with an error, or answers without the data the
+check needs) or stops short (it cannot read
 back over the whole order window) and the service costs anything, nothing is bought:
-buying without the check could pay twice. Nothing was ordered or paid, and
-`error.retryable` is `true`. "No previous order found" still orders, as before.
+buying without the check could pay twice. Nothing was ordered or paid; the
+same call can be made again. "No previous order found" still orders, as before.
 
 A paid service whose orders never expire (`timeout: 0`), or whose timeout is longer than
 100 000 blocks, now needs `orderOnLookupFailure: true` for a purchase when no order is
@@ -332,11 +333,13 @@ const { url } = await nautilus.access({ assetDid })
 try {
   const { url } = await nautilus.access({ assetDid })
 } catch (error) {
-  if (error instanceof OrderCheckError) {
-    // error.reason: 'rate-limited' | 'unreachable' | 'incomplete' | 'rpc-error'
-    // retry later or with another RPC, or accept a possible second payment:
+  if (!(error instanceof OrderCheckError)) throw error
+  // Nothing was paid. Don't buy anyway on your own: that is the second payment this
+  // prevents. Show the message (cost, cause, what to do) and let the user decide; retrying
+  // later or with another RPC is the safe first step.
+  const costs = error.costs.map((c) => `${c.amount} ${c.symbol}`).join(' + ')
+  if (costs && (await askUser(`${error.message}\n\nBuy anyway, maybe paying ${costs} twice?`)))
     await nautilus.access({ assetDid, orderOnLookupFailure: true })
-  } else throw error
 }
 ```
 
