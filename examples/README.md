@@ -205,8 +205,12 @@ unknown value is ignored with a `config.env.invalid` warning. In your own code, 
 `Nautilus.configureLogging({ level, format, sink })`, or give one instance its own with
 `Nautilus.create(signer, { logger })`.
 
-ocean.js still prints its own lines, unredacted, at its own level (errors only by default)
-until a later release routes them through nautilus; see `configureLogging` in the docs.
+ocean.js's own lines go through nautilus's logger too, redacted, as `oceanjs.logger.*`
+events: e.g. `compute:free` with an algorithm the dataset does not trust prints ocean.js's
+`Compute start failed` and `Payload was:` lines as two `[oceanjs] error` lines, with the
+request's nonce and the policy-server session ids `<redacted>`. In your own code,
+`Nautilus.configureLogging({ oceanjs: 'silent' })` drops them, and `'passthrough'` lets
+ocean.js print them itself, unredacted; see `configureLogging` in the docs.
 
 ### Debugging a failure
 
