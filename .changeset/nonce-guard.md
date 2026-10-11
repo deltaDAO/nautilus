@@ -20,8 +20,9 @@ why instead of "ocean.js returned no transaction".
   already has is waited for and never sent again; one it does not have is sent again with a
   fresh nonce, at most three times. An order, purchase, approval or escrow payment is sent
   again only with proof from two RPCs that the first can never be mined (the account's
-  mined count past its nonce on both, read first; the hash unknown on both; and another
-  transaction of the account holding that nonce in the blocks since the send), so never
+  mined count past its nonce on both, read first; the hash unknown on both; and, in the
+  blocks since the send on each RPC, another call of the account holding that nonce, not
+  the same call to the same contract, which may be this one sped up or retried), so never
   without a `verificationProvider`; otherwise it stops with the new **`NonceGuardError`**
   (`reason: 'may-have-been-sent'`). A timeout, network error or any other refusal is never
   retried; a resend that fails that way is a `NonceGuardError` too, keeping the earlier
@@ -31,20 +32,24 @@ why instead of "ocean.js returned no transaction".
   account not mined past its nonce.
 - **New options on `Nautilus.create`:** `nonceManagement: 'auto' | 'off'` (default `'auto'`;
   `'off'` never sets a nonce or resends) and `verificationProvider`, a second RPC on the
-  same chain (checked at `create`) for the "never sent" proofs, recommended for paid flows.
+  same chain for the "never sent" proofs, recommended for paid flows; `create` checks its
+  chain and refuses the signer's own provider (the same object or URL).
   Wallet-managed signers (`JsonRpcSigner`, browser wallets) keep choosing their nonces.
 - **`getSigner()` returns the guarded signer**, not the object you passed in, so
   `getSigner() instanceof Wallet` is `false`. It signs through your signer.
 - **Errors name the cause.** `confirmTransaction(operation, response, signer?, to?)` takes
   the signer and the contract the call went to and, when ocean.js returned no transaction,
   names that contract's recorded failure, with "It may have been sent" unless it was refused
-  before the broadcast, and puts it on `cause`. With two sends to one contract in flight it
-  cannot tell which call failed, and keeps the generic message (also through ocean.js's
-  confidential-chain wrapper, which shares the record). No error carries a raw signed
-  transaction any more: ethers' refusals reach you with `<signed transaction 0x…hash>` in
-  their place, and the HTTP `request`/`response` of a failed send are dropped; the signed
-  bytes go to the debug channel (`NAUTILUS_DEBUG=sensitive`, topic `nonce`), with the nonce
-  reads and the guard's decisions.
+  before the broadcast, and puts it on `cause` (the `NonceGuardError`, or a sanitised copy of
+  the wallet's or RPC's error). With two sends to one contract on record (a broadcast until
+  it is mined, a failure for a minute) it cannot tell which call failed, and keeps the
+  generic message (also through ocean.js's confidential-chain wrapper, which shares the
+  record). No error carries a raw signed transaction or the RPC's URL path any more:
+  ethers' errors reach you with `<signed transaction 0x…hash>` in place of the signed bytes
+  (also where the RPC echoes them), the RPC URL cut to its origin (its path may hold an API
+  key), and the HTTP `request`, `response` and response body of a failed request dropped;
+  the raw values go to the debug channel (`NAUTILUS_DEBUG=sensitive`, topic `nonce`), with
+  the nonce reads and the guard's decisions.
 - **A metadata transaction refused for its nonce** keeps its stored envelope unless it is
   proven never mined (hash unknown on two reads, the account past its nonce, and no metadata
   event with this `metadataHash` up to a block each RPC names): `cleanup: 'removed'` only
