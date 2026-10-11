@@ -99,17 +99,19 @@ Each event is a `DebugEvent`:
 | `tier` | `'sensitive' \| 'secrets'` | `secrets` when the data holds a long-lived credential (only with `level: 'secrets'`). |
 | `topic` | `DebugTopic` | |
 | `message` | `string` | What the data is, e.g. `answer HTTP 400 Bad Request`. |
+| `opId`, `operation` | `string` | The [operation](/docs/api/nautilus/configureLogging#telling-operations-apart) the event belongs to, as on the log events. In Node only; unset outside an operation. |
 | `data` | `unknown` | The raw value as plain data. An error becomes `{ name, message, …, cause }`. After masking, strings are cut at 32,768 characters and the event at about 256 KB. A string longer than 65,536 characters, or past the event's size, is read only up to the last word before that point, so no credential is shown in part. Each cut ends in ` …(cut: N of M characters shown)`, M being the length as given. |
 
 ## Output
 
 Without a sink, each event is **one line** on stderr (`console.info` in a browser), prefixed
-with its tier and topic. Line breaks and control characters in the data are written as JSON
+with its tier and topic, and within an operation its name and `opId` after the time
+(`… 2026-10-10T13:36:58.772Z [access 3f9a2c1b] verifier per-policy results …`). Line breaks and control characters in the data are written as JSON
 escapes, so an event never spans two lines:
 
 ```
-[nautilus:debug:sensitive] [policy] 2026-10-10T13:36:58.772Z verifier per-policy results (checkSessionId) {"sessionId":"…","verificationResult":false,"policies":["VerifiablePresentation holder-binding: failed (java.lang.NullPointerException)", …]}
-[nautilus:debug:SECRETS] [rpc] 2026-10-10T13:37:02.104Z log event publish.metadata.events_unchecked before redaction {…}
+[nautilus:debug:sensitive] [policy] 2026-10-10T13:36:58.772Z [access 3f9a2c1b] verifier per-policy results (checkSessionId) {"sessionId":"…","verificationResult":false,"policies":["VerifiablePresentation holder-binding: failed (java.lang.NullPointerException)", …]}
+[nautilus:debug:SECRETS] [rpc] 2026-10-10T13:37:02.104Z [publish 8c41d07e] log event publish.metadata.events_unchecked before redaction {…}
 ```
 
 ## What does not change
