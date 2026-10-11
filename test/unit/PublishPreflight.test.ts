@@ -19,6 +19,7 @@ import {
   addCredentialAddresses,
   addRequestCredentials
 } from '../../src/identity/policy.js'
+import { type DebugEvent, setDebug } from '../../src/log/debug.js'
 import {
   createLogger,
   type LogEvent,
@@ -85,6 +86,8 @@ const nftState = vi.hoisted(() => ({
   hasMetadata: false,
   state: 0,
   owner: '',
+  /** Thrown by `getNftOwner()` instead of answering, when set. */
+  ownerError: undefined as Error | undefined,
   /** What `ERC721Factory.erc721List(nft)` answers; `''` means "the NFT itself". */
   factoryListed: '',
   datatokens: [] as string[],
@@ -117,6 +120,7 @@ vi.mock('@oceanprotocol/lib', async (importOriginal) => {
         ]
       }
       async getNftOwner() {
+        if (nftState.ownerError) throw nftState.ownerError
         return nftState.owner
       }
       async getNftPermissions() {
@@ -321,6 +325,7 @@ beforeEach(() => {
   nftState.hasMetadata = false
   nftState.state = 0
   nftState.owner = SIGNER_ADDRESS
+  nftState.ownerError = undefined
   nftState.factoryListed = ''
   nftState.datatokens = [DATATOKEN_ADDRESS]
   nftState.permissions = { updateMetadata: true, deployERC20: true }
@@ -1317,6 +1322,146 @@ describe('edit', () => {
     // No newly priced service, no datatoken to create: updateMetadata is enough.
     await nautilus.edit(new AssetBuilder(getAssetFixture()).build())
     expect(vi.mocked(writeMetadata)).toHaveBeenCalledTimes(1)
+  })
+
+  describe('the owner of the datatokens it creates', () => {
+    /** Holds a role on the NFT, but neither owns it nor signs. */
+    const ON_CHAIN_OWNER = '0x3333333333333333333333333333333333333333'
+    const FOREIGN = '0x4444444444444444444444444444444444444444'
+
+    function withNewService(configure = (builder: AssetBuilder) => builder) {
+      // The fixture's DDO says nft.owner is OWNER_ADDRESS: what a node reports after
+      // OWNER_ADDRESS wrote the metadata last, or a stale or malicious one.
+      return configure(new AssetBuilder(getAssetFixture()))
+        .addService(service('https://files.test.invalid/b.csv'))
+        .build()
+    }
+
+    function ownerPassed(): string | undefined {
+      return vi.mocked(createDatatokenForService).mock.calls[0]?.[0].owner
+    }
+
+    it("is the NFT's on-chain owner, not the DDO's nft.owner", async () => {
+      const { nautilus } = await createNautilus()
+
+      await nautilus.edit(withNewService())
+
+      expect(ownerPassed()).to.equal(SIGNER_ADDRESS)
+      expect(ownerPassed()).not.to.equal(OWNER_ADDRESS)
+    })
+
+    it('is the on-chain owner for a signer that only holds the roles', async () => {
+      nftState.owner = ON_CHAIN_OWNER
+      const { nautilus } = await createNautilus()
+      const log = captureLog()
+
+      await nautilus.edit(withNewService())
+
+      expect(ownerPassed()).to.equal(ON_CHAIN_OWNER)
+      expect(log.named('edit.owner.not_nft_owner')).to.have.length(0)
+    })
+
+    it('refuses an owner that is neither the signer nor the on-chain owner, before any transaction', async () => {
+      const { nautilus } = await createNautilus()
+
+      for (const named of [FOREIGN, OWNER_ADDRESS, 'not-an-address'])
+        await expectThrowsAsync(
+          () =>
+            nautilus.edit(withNewService((builder) => builder.setOwner(named))),
+          /edit: setOwner\(\) names .*neither the signer .* nor the owner of NFT .*Nothing was sent/
+        )
+
+      expect(vi.mocked(createDatatokenForService)).not.toHaveBeenCalled()
+      expect(vi.mocked(createPricingForDatatoken)).not.toHaveBeenCalled()
+      expect(vi.mocked(prepareMetadataForWrite)).not.toHaveBeenCalled()
+      expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+    })
+
+    it('accepts the signer as owner, and warns that the on-chain owner gets no revenue', async () => {
+      nftState.owner = ON_CHAIN_OWNER
+      const { nautilus } = await createNautilus()
+      const log = captureLog()
+
+      await nautilus.edit(
+        withNewService((builder) => builder.setOwner(SIGNER_ADDRESS))
+      )
+
+      expect(ownerPassed()).to.equal(SIGNER_ADDRESS)
+      const [warning] = log.named('edit.owner.not_nft_owner')
+      expect(warning.level).to.equal('warn')
+      expect(warning.fields).to.deep.include({
+        owner: SIGNER_ADDRESS,
+        nftOwner: ON_CHAIN_OWNER
+      })
+    })
+
+    it('accepts the on-chain owner as owner, without a warning', async () => {
+      nftState.owner = ON_CHAIN_OWNER
+      const { nautilus } = await createNautilus()
+      const log = captureLog()
+
+      await nautilus.edit(
+        withNewService((builder) =>
+          builder.setOwner(ON_CHAIN_OWNER.toLowerCase())
+        )
+      )
+
+      expect(ownerPassed()).to.equal(ON_CHAIN_OWNER)
+      expect(log.named('edit.owner.not_nft_owner')).to.have.length(0)
+    })
+
+    it('checks a named owner even when the edit creates no datatoken', async () => {
+      const { nautilus } = await createNautilus()
+
+      await expectThrowsAsync(
+        () =>
+          nautilus.edit(
+            new AssetBuilder(getAssetFixture()).setOwner(FOREIGN).build()
+          ),
+        /neither the signer/
+      )
+      expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+    })
+
+    it('stops before any transaction when the owner cannot be read, without the RPC detail', async () => {
+      nftState.ownerError = Object.assign(
+        new Error(`server response 503 (requestUrl="${FAKE.rpcUrl}")`),
+        { code: 'SERVER_ERROR' }
+      )
+      const { nautilus } = await createNautilus()
+
+      const thrown = (await nautilus
+        .edit(withNewService())
+        .catch((error) => error)) as Error
+
+      expect(thrown.message).to.match(
+        /edit: the owner of NFT .* could not be read from the chain.*Nothing was sent/
+      )
+      expect(thrown.message).not.to.contain(FAKE.rpcPathToken)
+      expect(thrown.message).not.to.contain('rpc.example.org')
+      expect(vi.mocked(createDatatokenForService)).not.toHaveBeenCalled()
+      expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+    })
+
+    it('hands the failed owner read to the debug channel, under the rpc topic', async () => {
+      const events: DebugEvent[] = []
+      vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+      setDebug({
+        level: 'sensitive',
+        topics: ['rpc'],
+        sink: (event) => events.push(event)
+      })
+      nftState.ownerError = new Error('header not found')
+      const { nautilus } = await createNautilus()
+
+      await nautilus.edit(withNewService()).catch(() => undefined)
+
+      const [raw] = events.filter(
+        (event) => event.message === 'edit: the NFT owner read failed'
+      )
+      expect(raw.topic).to.equal('rpc')
+      expect(JSON.stringify(raw.data)).to.contain('header not found')
+    })
   })
 
   it('does not wait for the indexer between sequential writes', async () => {

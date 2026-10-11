@@ -47,7 +47,7 @@ import type { CredentialProvider } from '../identity/CredentialProvider.js'
 import { PolicySessionResolver } from '../identity/PolicySessionResolver.js'
 import { isAddressCredential } from '../identity/policy.js'
 import type { SessionStore } from '../identity/session.js'
-import { type DebugOptions, setDebug } from '../log/debug.js'
+import { type DebugOptions, debugRaw, setDebug } from '../log/debug.js'
 import { fromOceanLogLevel } from '../log/levels.js'
 import { configureLogging, type Logger, loggerFor } from '../log/logger.js'
 import type { LoggingConfig, LoggingOptions } from '../log/types.js'
@@ -1013,6 +1013,61 @@ export class Nautilus {
   }
 
   /**
+   * The minter and payment collector of the datatokens `edit()` creates: the NFT's owner as
+   * the chain reports it, or the address `setOwner()` named, which must then be the signer
+   * or that owner. Never the owner in the resolved DDO: the node reports the last metadata
+   * writer there, and a stale or malicious node can name anyone, who would then mint the
+   * datatoken freely and collect its revenue. Refused before any transaction.
+   */
+  private async ownerForEdit(
+    asset: NautilusAsset,
+    nftAddress: string,
+    minting: boolean
+  ): Promise<string> {
+    const signer = getAddress(await this.signer.getAddress())
+
+    let onChain: unknown
+    try {
+      onChain = await new Nft(
+        this.signer,
+        this.config.chainId,
+        this.config
+      ).getNftOwner(nftAddress)
+    } catch (error) {
+      debugRaw('rpc', 'edit: the NFT owner read failed', {
+        nftAddress,
+        error
+      })
+    }
+
+    if (typeof onChain !== 'string' || !isAddress(onChain))
+      throw new Error(
+        `edit: the owner of NFT ${nftAddress} could not be read from the chain, and the datatokens an edit creates are given to it. Nothing was sent. Try again, or check the RPC.`
+      )
+
+    const nftOwner = getAddress(onChain)
+    const requested = asset.owner
+
+    if (!requested) return nftOwner
+
+    const named = isAddress(requested) ? getAddress(requested) : undefined
+
+    if (named !== signer && named !== nftOwner)
+      throw new Error(
+        `edit: setOwner() names ${named ?? 'a value that is not an address'}, which is neither the signer ${signer} nor the owner of NFT ${nftAddress} on chain, ${nftOwner}. The datatokens an edit creates make it their minter and payment collector, so only those two are accepted. Nothing was sent.`
+      )
+
+    if (minting && named !== nftOwner)
+      this.log.emit(
+        'edit.owner.not_nft_owner',
+        `edit: the datatokens this edit creates get ${named} as their minter and payment collector, as setOwner() asked, not the owner of NFT ${nftAddress}, ${nftOwner}. Their revenue goes to ${named}.`,
+        { nftAddress, owner: named, nftOwner }
+      )
+
+    return named
+  }
+
+  /**
    * Refuses an NFT the signer does not own, or one the configured ERC721 factory did not
    * create. Before `completePublish()` spends anything on it.
    */
@@ -1169,7 +1224,6 @@ export class Nautilus {
     assertWritableState(asset.lifecycleState ?? 0, 'the asset')
 
     const nftAddress = getNftAddress(baseline)
-    const owner = asset.owner || (await this.signer.getAddress())
     const priced = asset.ddo.services.filter((service) => service.pricing)
 
     const response = await this.withNftLock(nftAddress, async () => {
@@ -1194,6 +1248,10 @@ export class Nautilus {
         deployDatatokens: priced.length > 0,
         operation: 'edit'
       })
+      const owner =
+        priced.length || asset.owner
+          ? await this.ownerForEdit(asset, nftAddress, priced.length > 0)
+          : ''
 
       const remoteStore = this.requireRemoteStore(options)
       const ddoSigner = this.resolveDdoSigner(options)

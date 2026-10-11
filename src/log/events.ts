@@ -163,6 +163,13 @@ export const LOG_EVENTS = {
   },
 
   // edit
+  'edit.owner.not_nft_owner': {
+    level: 'warn',
+    component: 'edit',
+    description:
+      "edit() creates datatokens whose minter and payment collector is the address setOwner() named (the signer), not the NFT's owner on chain: their revenue goes to that address.",
+    fields: ['nftAddress', 'owner', 'nftOwner']
+  },
   'edit.price.setting': {
     level: 'debug',
     component: 'edit',

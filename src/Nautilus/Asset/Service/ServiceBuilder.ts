@@ -41,7 +41,8 @@ import {
  *     service needs its own datatoken.
  *   - `{ asset, serviceId }` — load a published service to edit. Pricing is locked (use
  *     `nautilus.setServicePrice()` instead), since changing it would mint a new datatoken
- *     and so change the service id.
+ *     and so change the service id. The datatoken setters throw for the same reason: the
+ *     service's datatoken exists already.
  */
 export class ServiceBuilder<
   ServiceType extends ServiceTypes,
@@ -372,12 +373,27 @@ export class ServiceBuilder<
 
   // #region pricing and datatoken
 
+  /** Throws for an existing service, whose datatoken was created when it was published. */
+  private assertNewDatatoken(setter: string): void {
+    if (this.service.editExistingService)
+      throw new Error(
+        `${setter} applies only to a new service, which gets a new datatoken. This service's datatoken exists already, and an edit does not change it.`
+      )
+  }
+
+  /**
+   * The new datatoken's parameters. Valid on a new service, also one added to a published
+   * asset by an edit; throws for an existing service.
+   */
   setDatatokenData(tokenData: DatatokenCreateParamsWithoutOwner) {
+    this.assertNewDatatoken('setDatatokenData()')
     this.service.datatokenCreateParams = { ...tokenData }
     return this
   }
 
+  /** Like `setDatatokenData()`: a new service only; throws for an existing one. */
   setDatatokenNameAndSymbol(dtName: string, dtSymbol: string) {
+    this.assertNewDatatoken('setDatatokenNameAndSymbol()')
     this.service.datatokenCreateParams = {
       ...this.service.datatokenCreateParams,
       name: dtName,

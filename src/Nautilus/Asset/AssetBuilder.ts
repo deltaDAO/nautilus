@@ -6,7 +6,7 @@ import type {
 } from '../../@types/Nautilus.js'
 import type { NftCreateDataWithoutOwner } from '../../@types/Publish.js'
 import { DEFAULT_DIRECTION, DEFAULT_LANGUAGE } from '../../ddo/language.js'
-import { getLifecycleState, getOwner } from '../../ddo/read.js'
+import { getLifecycleState } from '../../ddo/read.js'
 import type {
   CredentialListTypes,
   License,
@@ -45,6 +45,11 @@ import type {
  *     strings and wrap them; `setContentLanguage()` chooses the tag.
  *   - `license` became a structured object. `setLicense()` accepts either form.
  *   - `providedBy` is required by the v5 schema, so `build()` warns if it is missing.
+ *
+ * A builder constructed from a resolved asset is an edit builder. It refuses the setters an
+ * edit cannot apply, instead of ignoring them: `setType()` and the NFT setters
+ * (`setNftData()`, `setNftToken*()`). It does not take the owner from the resolved asset:
+ * `edit()` reads the NFT's owner on chain.
  */
 export class AssetBuilder implements IAssetBuilder {
   private asset: NautilusAsset
@@ -59,7 +64,10 @@ export class AssetBuilder implements IAssetBuilder {
     if (!source) return new NautilusAsset()
 
     const asset = new NautilusAsset(NautilusDDO.createFromAsset(source))
-    asset.owner = getOwner(source)
+    // Not seeded from the asset's `nft.owner`: the node reports the last metadata writer
+    // there, not the NFT's owner, and a stale or malicious node can name anyone. `edit()`
+    // reads the owner on chain, and `setOwner()` is the only way to name another.
+
     // Inherited, not requested: `edit()` writes the state the NFT has on chain unless
     // `setLifecycleState()` asks for another.
     asset.inheritLifecycleState(getLifecycleState(source))
@@ -72,9 +80,25 @@ export class AssetBuilder implements IAssetBuilder {
     this.asset = AssetBuilder.seed(this.source)
   }
 
+  /** Throws when this is an edit builder: `setter` applies only to a new asset. */
+  private assertNewAsset(setter: string, reason: string): void {
+    if (this.source)
+      throw new Error(
+        `${setter} applies only to a new asset, and this builder edits a published one. ${reason}`
+      )
+  }
+
   // #region metadata
 
+  /**
+   * Publish only. An edit builder throws: changing a published asset between `dataset` and
+   * `algorithm` is not supported, since its services were built for the type it has.
+   */
   setType(type: string) {
+    this.assertNewAsset(
+      'setType()',
+      'A published asset keeps its type: publish a new asset to change it.'
+    )
     this.asset.ddo.metadata.type = type
     return this
   }
@@ -214,34 +238,40 @@ export class AssetBuilder implements IAssetBuilder {
 
   // #endregion
 
-  // #region nft
+  // #region nft — publish only: an edit builder throws, since the NFT exists already
 
   setNftData(tokenData: NftCreateDataWithoutOwner) {
+    this.assertNewAsset('setNftData()', NFT_IS_PUBLISHED)
     this.asset.nftCreateData = { ...tokenData }
     return this
   }
 
   setNftTokenName(name: string) {
+    this.assertNewAsset('setNftTokenName()', NFT_IS_PUBLISHED)
     this.asset.nftCreateData.name = name
     return this
   }
 
   setNftTokenSymbol(symbol: string) {
+    this.assertNewAsset('setNftTokenSymbol()', NFT_IS_PUBLISHED)
     this.asset.nftCreateData.symbol = symbol
     return this
   }
 
   setNftTokenUri(uri: string) {
+    this.assertNewAsset('setNftTokenUri()', NFT_IS_PUBLISHED)
     this.asset.nftCreateData.tokenURI = uri
     return this
   }
 
   setNftTokenTransferable(transferable = true) {
+    this.assertNewAsset('setNftTokenTransferable()', NFT_IS_PUBLISHED)
     this.asset.nftCreateData.transferable = transferable
     return this
   }
 
   setNftTokenTemplate(template: number) {
+    this.assertNewAsset('setNftTokenTemplate()', NFT_IS_PUBLISHED)
     this.asset.nftCreateData.templateIndex = template
     return this
   }
@@ -253,6 +283,10 @@ export class AssetBuilder implements IAssetBuilder {
   /**
    * The DID or address that issues the asset's verifiable credential. Left unset, publish
    * fills it in from whichever signer signs the DDO.
+   *
+   * On an edit builder the issuer is the published one, and the edit must be signed by
+   * that identity. To re-issue under another one (a manager, or a new owner after a
+   * transfer), call this with the identity that signs the edit.
    */
   setIssuer(issuer: string) {
     this.asset.ddo.issuer = issuer
@@ -354,6 +388,12 @@ export class AssetBuilder implements IAssetBuilder {
     return this
   }
 
+  /**
+   * Publish: the NFT's owner, which must be the signer. Edit: the minter and payment
+   * collector of the datatokens the edit creates, which must be the signer or the NFT's
+   * owner on chain; left unset, it is the owner on chain. `edit()` checks it before any
+   * transaction.
+   */
   setOwner(owner: string) {
     this.asset.owner = owner
     return this
@@ -405,6 +445,9 @@ export class AssetBuilder implements IAssetBuilder {
     return this.asset
   }
 }
+
+const NFT_IS_PUBLISHED =
+  'The NFT exists already, and an edit does not change it.'
 
 function unique<T>(values: T[]): T[] {
   return Array.from(new Set(values))

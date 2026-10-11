@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { CredentialListTypes } from '../../src/ddo/types.js'
+import { params as datatokenDefaults } from '../../src/Nautilus/Asset/constants/datatoken.constants.js'
 import {
   type FileTypes,
   ServiceTypes
@@ -233,6 +234,44 @@ describe('ServiceBuilder in edit mode', () => {
     expect(() => builder.setPricing({ type: 'free' })).to.throw(
       /setServicePrice/
     )
+  })
+
+  it('refuses the datatoken setters instead of ignoring them', () => {
+    // The service's datatoken exists; an edit never applied these, silently.
+    const builder = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+      asset: getAssetFixture(),
+      serviceId: SERVICE_ID
+    })
+
+    expect(() => builder.setDatatokenNameAndSymbol('New', 'NEW')).to.throw(
+      'setDatatokenNameAndSymbol() applies only to a new service'
+    )
+    expect(() =>
+      builder.setDatatokenData({ ...datatokenDefaults, name: 'New' })
+    ).to.throw('setDatatokenData() applies only to a new service')
+
+    // The recovered name and symbol are untouched.
+    expect(builder.build().datatokenCreateParams.name).to.equal(
+      'Test Access Token'
+    )
+  })
+
+  it('keeps the datatoken setters for a new service added by an edit', () => {
+    // edit() mints a datatoken for each new priced service, with these parameters.
+    const service = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+      serviceType: ServiceTypes.ACCESS
+    })
+      .setServiceEndpoint('https://node.test.invalid')
+      .setPricing({ type: 'free' })
+      .setDatatokenData({ ...datatokenDefaults, templateIndex: 1 })
+      .setDatatokenNameAndSymbol('Added Token', 'ADDT')
+      .build()
+
+    expect(service.datatokenCreateParams).to.deep.include({
+      name: 'Added Token',
+      symbol: 'ADDT',
+      templateIndex: 1
+    })
   })
 
   it('needs no pricing config to build', () => {

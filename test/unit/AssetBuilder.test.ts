@@ -4,6 +4,7 @@ import type { AssetV5 } from '../../src/ddo/index.js'
 import { CredentialListTypes } from '../../src/ddo/types.js'
 import { addRequestCredentials } from '../../src/identity/policy.js'
 import { AssetBuilder } from '../../src/Nautilus/Asset/AssetBuilder.js'
+import { nftInitialCreateData } from '../../src/Nautilus/Asset/constants/nft.constants.js'
 import {
   type FileTypes,
   ServiceTypes
@@ -346,12 +347,74 @@ describe('AssetBuilder', () => {
 })
 
 describe('AssetBuilder in edit mode', () => {
-  it('seeds from a resolved asset, including its owner and state', () => {
+  it('seeds from a resolved asset, including its state but not its owner', () => {
     const asset = new AssetBuilder(getAssetFixture()).build()
 
-    expect(asset.owner).to.equal(OWNER_ADDRESS)
+    // The DDO's nft.owner is node-supplied (the last metadata writer); edit() reads the
+    // NFT's owner on chain instead.
+    expect(asset.owner).to.equal(undefined)
     expect(asset.lifecycleState).to.equal(0)
     expect(asset.ddo.getOriginalDDO()).to.exist
+  })
+
+  it('keeps an owner named with setOwner(), for edit() to check', () => {
+    const asset = new AssetBuilder(getAssetFixture())
+      .setOwner(OWNER_ADDRESS)
+      .build()
+
+    expect(asset.owner).to.equal(OWNER_ADDRESS)
+  })
+
+  describe('publish-only setters', () => {
+    const edit = () => new AssetBuilder(getAssetFixture())
+
+    const cases: [string, (builder: AssetBuilder) => unknown][] = [
+      ['setType()', (b) => b.setType('algorithm')],
+      [
+        'setNftData()',
+        (b) =>
+          b.setNftData({
+            name: 'Renamed NFT',
+            symbol: 'RN',
+            templateIndex: 1,
+            tokenURI: 'https://example.org/nft',
+            transferable: true
+          })
+      ],
+      ['setNftTokenName()', (b) => b.setNftTokenName('Renamed NFT')],
+      ['setNftTokenSymbol()', (b) => b.setNftTokenSymbol('RN')],
+      ['setNftTokenUri()', (b) => b.setNftTokenUri('https://example.org/nft')],
+      ['setNftTokenTransferable()', (b) => b.setNftTokenTransferable(true)],
+      ['setNftTokenTemplate()', (b) => b.setNftTokenTemplate(2)]
+    ]
+
+    for (const [setter, call] of cases) {
+      it(`${setter} throws on an edit builder instead of being ignored`, () => {
+        const builder = edit()
+
+        expect(() => call(builder)).to.throw(
+          `${setter} applies only to a new asset`
+        )
+        // Nothing was changed before the throw.
+        const asset = builder.build()
+        expect(asset.ddo.metadata.type).to.equal(undefined)
+        expect(asset.nftCreateData).to.deep.equal(nftInitialCreateData)
+      })
+
+      it(`${setter} still works on a new asset`, () => {
+        expect(() => call(aBuilder())).not.to.throw()
+      })
+    }
+
+    it('applies the NFT setters to a new asset', () => {
+      const asset = aBuilder()
+        .setNftTokenName('Control NFT')
+        .setNftTokenSymbol('CTRL')
+        .build()
+
+      expect(asset.nftCreateData.name).to.equal('Control NFT')
+      expect(asset.nftCreateData.symbol).to.equal('CTRL')
+    })
   })
 
   it('carries the published credentials forward', () => {
@@ -565,6 +628,6 @@ describe('AssetBuilder in edit mode', () => {
 
     expect(asset.ddo.metadata.name).to.equal(undefined)
     expect(asset.ddo.getOriginalDDO()).to.exist
-    expect(asset.owner).to.equal(OWNER_ADDRESS)
+    expect(asset.owner).to.equal(undefined)
   })
 })
