@@ -721,9 +721,10 @@ export function assertDid(
 /**
  * The NFT a resolved DDO's edit writes to, checksummed: its `nftAddress` (in v5 under
  * `credentialSubject`, so read with `ddo/read.js`), once that is an address, the DDO's
- * `chainId` is `chainId`, and its `id` is the NFT's DID on that chain (`expectedDid`). The DDO is node-served, so this binds the NFT to the DID asked for
- * (`OceanNodeClient.resolve` checks the id) before the NFT's owner is read or anything is
- * sent: a DDO naming another NFT would make that NFT's owner the minter and payment
+ * `chainId` is `chainId`, and its `id` is the NFT's DID on that chain (`expectedDid`).
+ * The DDO is node-served, so this binds the NFT to the DID asked for (`OceanNodeClient`'s
+ * `resolve`, `resolveMany` and `waitForIndexer` check the id) before the NFT's owner is
+ * read or anything is sent: a DDO naming another NFT would make that NFT's owner the minter and payment
  * collector of the datatokens an edit creates. The node-supplied values are shown
  * sanitised; the raw ones go to the debug channel.
  */
@@ -752,7 +753,7 @@ export function boundNftAddress(
 
   if (ddo.chainId !== chainId)
     return refuse(
-      `the DDO is for chain ${sanitize(String(ddo.chainId), 40, null)}, not the configured chain ${chainId}.`
+      `the DDO is for chain ${sanitize(String(JSON.stringify(ddo.chainId)), 40, null)}, not the configured chain ${chainId}.`
     )
 
   const nft = getAddress(nftAddress)

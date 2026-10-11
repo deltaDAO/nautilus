@@ -1461,6 +1461,13 @@ describe('edit', () => {
         /^edit: the DDO is for chain 1, not the configured chain 32456\. Nothing was sent\.$/
       )
       nothingSent()
+
+      // A string chain id is shown as one, so the message does not contradict itself.
+      await expectThrowsAsync(
+        () => nautilus.edit(served({ chainId: '32456' as unknown as number })),
+        /^edit: the DDO is for chain "32456", not the configured chain 32456\. Nothing was sent\.$/
+      )
+      nothingSent()
     })
 
     it('must be an address, shown sanitised when it is not', async () => {
@@ -1588,6 +1595,17 @@ describe('edit', () => {
         )
       expect(vi.mocked(createDatatokenForService)).not.toHaveBeenCalled()
       expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+
+      // Only a boolean true counts: a truthy non-boolean is no permission.
+      nftState.permissionsOf[ON_CHAIN_OWNER.toLowerCase()] = {
+        updateMetadata: false,
+        deployERC20: 'false' as unknown as boolean
+      }
+      await expectThrowsAsync(
+        () => nautilus.edit(withNewService((builder) => builder)),
+        /lacks the deployERC20 permission/
+      )
+      expect(vi.mocked(createDatatokenForService)).not.toHaveBeenCalled()
 
       // The way out it names.
       await nautilus.edit(

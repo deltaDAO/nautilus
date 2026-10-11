@@ -1090,7 +1090,7 @@ export class Nautilus {
           `edit: the permissions of ${owner}, the owner of NFT ${nftAddress}, could not be read from the chain, and the datatokens an edit creates make it their minter. Nothing was sent. Try again, or check the RPC.`
         )
 
-      if (!permissions.deployERC20)
+      if (permissions.deployERC20 !== true)
         throw new Error(
           `edit: ${owner}, the owner of NFT ${nftAddress} on chain, lacks the deployERC20 permission, and the datatokens an edit creates make it their minter and payment collector, so creating them would revert. Nothing was sent. The owner can grant it (addToCreateERC20List), or call setOwner('${signer}') to make the signer their minter and payment collector.`
         )
