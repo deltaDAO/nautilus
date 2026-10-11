@@ -173,6 +173,22 @@ example `publish.preflight.denies_all` when the node's policy server would refus
 consumer of the asset you publish. Every line names a stable event; secrets (RPC tokens,
 session ids, signatures, JWTs, S3 keys) are redacted at every level in nautilus's own lines.
 
+The warnings you may see while running these commands:
+
+- `publish.preflight.denies_all` (`publish:*`, `edit:*`): the node has a policy server and the
+  asset has no address allow list, so nobody can consume it. Printed once per node and
+  asset (by DID, or by publisher and name before the mint). The SSI commands add an allow
+  list, so they don't print it.
+- `publish.preflight.publisher_is_node`, `publish.preflight.indexer_nonce_will_stick`: the
+  asset would go on chain but not be indexed. The first is printed once per node, the second
+  once per node and nonce.
+- `compute.result.unavailable` (`compute:result`): the job is unknown, or finished without
+  an `output`. Printed once per node, job and reason. `compute.duration.capped`: the
+  requested duration was above the environment's limit.
+
+The paid commands (`access:order`, `access:download` on a fixed-price asset) no longer print
+ocean.js's `No config found for given network 'undefined'`.
+
 | Variable | Values |
 | --- | --- |
 | `NAUTILUS_LOG_LEVEL` | `silent`, `error`, `warn` (the default), `info`, `debug`, `trace`. `VERBOSE=true` is `debug`. |
