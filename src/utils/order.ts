@@ -30,7 +30,7 @@ import {
   type TransactionResponse
 } from 'ethers'
 import { type Logger, log } from '../log/logger.js'
-import { guardOf, withSendFailure } from './nonceGuard.js'
+import { failureText, guardOf, withSendFailure } from './nonceGuard.js'
 import {
   assertProviderFeesAllowed,
   type ProviderFeeLimits,
@@ -153,7 +153,12 @@ export async function reuseOrder(
     params.providerFees
   )
 
-  const receipt = await confirm('reuseOrder', response, params.signer)
+  const receipt = await confirm(
+    'reuseOrder',
+    response,
+    params.signer,
+    params.datatokenAddress
+  )
 
   return { transferTxId: receipt.hash, reused: true }
 }
@@ -498,7 +503,8 @@ async function orderFixed(
         orderParams,
         freParams
       ),
-      signer
+      signer,
+      pricing.datatokenAddress
     )
 
     return { transferTxId: receipt.hash, reused: false }
@@ -520,7 +526,8 @@ async function orderFixed(
       route.consumeMarket.address,
       route.consumeMarket.fee
     ),
-    signer
+    signer,
+    route.exchangeAddress
   )
 
   return startOrder(datatoken, pricing.datatokenAddress, orderParams)
@@ -544,7 +551,8 @@ async function orderFree(
         orderParams,
         route.dispenserAddress
       ),
-      signer
+      signer,
+      pricing.datatokenAddress
     )
 
     return { transferTxId: receipt.hash, reused: false }
@@ -560,7 +568,8 @@ async function orderFree(
   await confirm(
     'dispense',
     await dispenser.dispense(pricing.datatokenAddress, '1', payer),
-    signer
+    signer,
+    route.dispenserAddress
   )
 
   return startOrder(datatoken, pricing.datatokenAddress, orderParams)
@@ -600,7 +609,8 @@ async function startOrder(
       orderParams._providerFee,
       orderParams._consumeMarketFee
     ),
-    datatoken.signer
+    datatoken.signer,
+    datatokenAddress
   )
 
   return { transferTxId: receipt.hash, reused: false }
@@ -652,7 +662,8 @@ export async function approveFeeWei(params: {
       signer,
       new Error(
         `Could not approve the ${params.what} of ${amount} wei on token ${token} for ${spender}.`
-      )
+      ),
+      token
     )
 }
 
@@ -747,7 +758,8 @@ async function approveSpend(params: {
   await confirm(
     'approve',
     response as unknown as TransactionResponse,
-    params.signer
+    params.signer,
+    params.token
   )
 }
 
@@ -762,18 +774,23 @@ async function approveSpend(params: {
  * With the signer the transaction was sent with, and when that is the nonce guard
  * `Nautilus.create()` installs, a `null` names the send failure the guard recorded (the
  * wallet's or RPC's refusal, or the guard's `NonceGuardError`), which is also the error's
- * `cause`.
+ * `cause`; with `to`, the contract the call went to, only a failure of a send to that
+ * contract, and only when it was the only recent send there (concurrent calls to one
+ * contract cannot be told apart, and keep the generic message).
  */
 async function confirm(
   operation: string,
   response: TransactionResponse | unknown,
-  signer?: Signer
+  signer?: Signer,
+  to?: string
 ): Promise<TransactionReceipt> {
+  const guard = guardOf(signer)
+
   if (!response) {
-    const failure = guardOf(signer)?.takeLastFailure()
+    const failure = guard?.takeFailure(to)
 
     if (failure)
-      throw new Error(`${operation} failed: ${failure.text}`, {
+      throw new Error(`${operation} failed: ${failureText(failure)}`, {
         cause: failure.error
       })
 
@@ -781,6 +798,10 @@ async function confirm(
       `${operation} failed: ocean.js returned no transaction. The wallet or RPC rejected it, or it was sent and then reverted or timed out; ocean.js does not say which, so check the account's latest transactions before retrying.`
     )
   }
+
+  // This send's record no longer competes with another call's failure.
+  const sentHash = (response as { hash?: unknown }).hash
+  if (guard && typeof sentHash === 'string') guard.sends.settle(sentHash)
 
   const tx = response as TransactionResponse
 

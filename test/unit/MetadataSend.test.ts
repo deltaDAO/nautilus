@@ -116,7 +116,7 @@ async function setup() {
       error?: FailedWithStoredObject
     }>
 
-  return { send, edit, removed, wallet }
+  return { send, edit, removed }
 }
 
 beforeEach(() => {
@@ -235,7 +235,7 @@ describe('the stored envelope after the metadata transaction', () => {
   it('is the live one when the refused transaction was already mined: no resend, no failure', async () => {
     // "nonce too low" for a metadata transaction that was mined while its response was lost
     // (the beta.2 control). The nonce guard finds it by hash and waits for it.
-    const { send, edit, removed, wallet } = await setup()
+    const { send, edit, removed } = await setup()
     const request = {
       to: NFT_ADDRESS,
       data: `0x1aa3adf9${'00'.repeat(32)}`,
@@ -257,7 +257,6 @@ describe('the stored envelope after the metadata transaction', () => {
         info: { error: { code: -32003, message: 'nonce too low' } }
       } as never)
     )
-    void wallet
 
     const { response, error } = await edit()
 

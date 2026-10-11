@@ -251,7 +251,8 @@ async function send(
   await confirmTransaction(
     `escrow ${method}`,
     await sendTx(gas, signer, chainConfig.gasFeeMultiplier, fn, ...args),
-    signer
+    signer,
+    escrow.address
   )
 }
 

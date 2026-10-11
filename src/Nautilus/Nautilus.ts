@@ -625,6 +625,17 @@ export class Nautilus {
         `Nautilus.create: config.chainId is ${configured}, but the signer's provider is on chain ${chainId}. Connect the signer to the right RPC, or drop config.chainId.`
       )
 
+    // The proofs that a transaction was never sent read both providers: one on another
+    // chain would never know the transaction, which proves nothing.
+    const verifier = this.options.verificationProvider
+    if (verifier) {
+      const verifierChainId = Number((await verifier.getNetwork()).chainId)
+      if (verifierChainId !== chainId)
+        throw new Error(
+          `Nautilus.create: verificationProvider is on chain ${verifierChainId}, but the signer's provider is on chain ${chainId}. Pass a provider for the same chain.`
+        )
+    }
+
     const defaults = new ConfigHelper().getConfig(chainId)
 
     if (!defaults)
