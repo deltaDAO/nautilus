@@ -13,6 +13,11 @@ export const FAKE = {
   rpcQueryToken: 'rpc-query-token-9a7c',
   /** A policy-server session id. */
   sessionId: 'ps-session-3f9d2c1b-7a4e-4b8f-9c2d-1e0f5a6b7c8d',
+  /**
+   * A policy-server session id in the policy server's own shape: a SHA-256 of the request's
+   * context, `-`, a SHA-256 of random bytes (`generateSessionId`).
+   */
+  policySessionId: `${'5e55'.repeat(16)}-${'0dd5'.repeat(16)}`,
   /** A 65-byte ECDSA signature. */
   signature: `0x${'ab'.repeat(65)}`,
   /** A JWT (header `{"alg":"ES256K"}`, a payload and a signature). */
@@ -63,6 +68,7 @@ const SUITE_SECRETS = [
   FAKE.rpcPathToken,
   FAKE.rpcQueryToken,
   FAKE.sessionId,
+  FAKE.policySessionId,
   FAKE.jwt,
   FAKE.s3Secret,
   'read-secret',
@@ -83,6 +89,16 @@ const SECRET_KEYS =
 const PATTERNS: [string, (text: string) => boolean][] = [
   ['JWT', (text) => /\beyJ[\w-]*\.[\w-]+\.[\w-]*/.test(text)],
   ['65-byte hex signature', (text) => /\b0x[0-9a-f]{130}\b/i.test(text)],
+  [
+    'policy-server session id',
+    // Not after `0x` (a compute job id): `0x` runs are matched and skipped, as in
+    // `redactSecrets`, in linear time.
+    (text) =>
+      Array.from(
+        text.matchAll(/0x[0-9a-f]+|[0-9a-f]{64}-[0-9a-f]{64}/gi),
+        ([match]) => match
+      ).some((match) => !/^0x/i.test(match))
+  ],
   ['URL with more than its origin', (text) => urlsBeyondOrigin(text)],
   [
     'credential as key=value',

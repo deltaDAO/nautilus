@@ -465,7 +465,7 @@ describe("sensitive: the raw value in the channel, never in the caller's error",
     expect(JSON.stringify(record.data)).to.contain(FAKE.jwt)
   })
 
-  it('after a failed presentation, reads the verifier record only with the policy topic on, and throws the same error', async () => {
+  it('after a failed presentation, reads the verifier record either way, shows it only with the policy topic on, and throws the same error', async () => {
     const failure = new Error('Presentation failed')
     const run = async () => {
       const checked: string[] = []
@@ -507,7 +507,7 @@ describe("sensitive: the raw value in the channel, never in the caller's error",
 
     const off = await run()
     expect(off.thrown).to.equal(failure)
-    expect(off.checked).to.deep.equal([])
+    expect(off.checked).to.deep.equal([SID])
 
     const events = captureDebug('sensitive', ['policy'])
     const on = await run()

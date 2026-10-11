@@ -31,12 +31,14 @@ import {
 import type { PolicyServerPayload } from '../ddo/types.js'
 import { debugEnabled, debugRaw } from '../log/debug.js'
 import { type Logger, log } from '../log/logger.js'
+import { MAX_NODE_MESSAGE_LENGTH, sanitize } from '../node/messages.js'
 import {
   type OceanNodeClient,
   OceanNodeError,
   type PolicyCheckResult,
   PolicyDeniedError,
-  type PolicyServerReply
+  type PolicyServerReply,
+  type PolicySessionCheck
 } from '../node/OceanNodeClient.js'
 import {
   type CredentialProvider,
@@ -49,6 +51,7 @@ import {
   type SessionKey,
   type SessionStore
 } from './session.js'
+import { CredentialPresentationError } from './WaltIdProvider.js'
 
 /**
  * How long a cached session is reused by default: 2 minutes from `initiate`.
@@ -61,6 +64,12 @@ import {
  * may not honour it as long, so the same bound applies to it.
  */
 export const DEFAULT_SESSION_TTL_MS = 2 * 60 * 1000
+
+/** What a refusal's reason starts with; the failed policies follow in parentheses. */
+const REFUSED =
+  'the node reports that the verifier did not accept the presentation'
+/** How much of one failed policy goes into a refusal's reason. */
+const MAX_DESCRIBED_FAILURE = 80
 
 export interface PolicySessionResolverOptions {
   /**
@@ -171,6 +180,15 @@ export class PolicySessionResolver {
    * verifier does not accept the presentation; an `Error` before `initiate` when the
    * service asks for a presentation and no credential provider is set; and an
    * `OceanNodeError` when the node or the policy server cannot answer.
+   *
+   * When the provider's `present()` throws because the verifier refused the presentation (a
+   * `CredentialPresentationError` with reason `verifier-rejected`, or any other error, from a
+   * custom provider), the verifier's record of the session is read (`checkSessionId`, best
+   * effort, cut after 15 s): if it names failed policies, a `PolicyDeniedError` with
+   * `policyResults` is thrown, the provider's error as its `cause`; otherwise the provider's
+   * error. A `CredentialPresentationError` for a step before the verifier
+   * (`no-matching-credential`, `wallet-failed`, …) is thrown as it is, without the read.
+   * Either way the session is not cached.
    */
   async resolve(
     request: PolicySessionRequest
@@ -240,6 +258,17 @@ export class PolicySessionResolver {
           `the policy server asked for a presentation for service ${serviceId} of ${asset.id}, but sent no openid4vp request`
         )
 
+      const denied = (results: PolicyCheckResult[], cause?: unknown) =>
+        new PolicyDeniedError({
+          nodeUri: node.nodeUri,
+          did: asset.id,
+          serviceId,
+          consumerAddress,
+          reason: refusalReason(results),
+          policyResults: results,
+          cause
+        })
+
       try {
         await (this.credentials as CredentialProvider).present({
           asset,
@@ -250,22 +279,17 @@ export class PolicySessionResolver {
           redirectUri
         })
       } catch (error) {
-        if (debugEnabled('sensitive', 'policy'))
-          await debugFailedPresentation(node, sessionId, error)
-        throw error
+        // The wallet's error says only that the presentation failed. The verifier's record
+        // of the session says which policy refused it, when the verifier saw it.
+        const failed = reachedVerifier(error)
+          ? await failedPolicies(node, sessionId, error)
+          : undefined
+        throw failed ? denied(failed, error) : error
       }
 
       const check = await node.checkPolicySession(sessionId)
 
-      if (!check.verified)
-        throw new PolicyDeniedError({
-          nodeUri: node.nodeUri,
-          did: asset.id,
-          serviceId,
-          consumerAddress,
-          reason: `the verifier did not accept the presentation${describeFailedPolicies(check.policyResults)}`,
-          policyResults: check.policyResults
-        })
+      if (!check.verified) throw denied(check.policyResults)
     }
 
     if (this.sessionTtlMs > 0)
@@ -326,29 +350,48 @@ export class PolicySessionResolver {
   }
 }
 
-/** How long the debug read after a failed presentation may take. */
+/**
+ * How long the read after a refused presentation may take: the caller's error waits for it,
+ * and over P2P ocean.js applies no timeout of its own.
+ */
 const FAILED_PRESENTATION_READ_TIMEOUT_MS = 15_000
 
 /**
- * With the `policy` debug topic on: the presentation failed, so ask the verifier for its
- * record of the session (one `checkSessionId` read through the node, as after a successful
- * presentation), which `checkPolicySession` hands to the debug channel with its per-policy
- * results. Best effort: a failing read is only reported there, and the read is cut after
- * 15 s. The error thrown stays the same.
+ * Whether a failed `present()` may have reached the verifier: a `CredentialPresentationError`
+ * says which step failed, and only `verifier-rejected` did. A custom provider's other error
+ * says nothing about it, so the verifier is asked.
  */
-async function debugFailedPresentation(
+function reachedVerifier(error: unknown): boolean {
+  return (
+    !(error instanceof CredentialPresentationError) ||
+    error.reason === 'verifier-rejected'
+  )
+}
+
+/**
+ * After a presentation that may have reached the verifier (`reachedVerifier`): the
+ * verifier's per-policy results for the session, when it ran the policies and some failed
+ * (one `checkSessionId` read through the node, as after a successful presentation).
+ * `undefined` when the verifier reports no failed policy (it never saw the presentation, or
+ * the session expired) or the read fails: the error of the presentation then stands. A failing read goes to the debug channel only;
+ * the read is cut after 15 s.
+ */
+async function failedPolicies(
   node: OceanNodeClient,
   sessionId: string,
   error: unknown
-): Promise<void> {
-  debugRaw('policy', 'presentation failed', { sessionId, error })
+): Promise<PolicyCheckResult[] | undefined> {
+  if (debugEnabled('sensitive', 'policy'))
+    debugRaw('policy', 'presentation failed', { sessionId, error })
+
+  let check: PolicySessionCheck
   try {
     // Bounded over P2P too, where ocean.js applies no timeout of its own, and whether or
     // not the transport honours the signal: the caller's error waits for this read.
     const signal = AbortSignal.timeout(FAILED_PRESENTATION_READ_TIMEOUT_MS)
-    await Promise.race([
+    check = await Promise.race<PolicySessionCheck>([
       node.checkPolicySession(sessionId, signal),
-      new Promise((_, reject) => {
+      new Promise<never>((_, reject) => {
         if (signal.aborted) reject(signal.reason)
         signal.addEventListener('abort', () => reject(signal.reason), {
           once: true
@@ -356,11 +399,22 @@ async function debugFailedPresentation(
       })
     ])
   } catch (checkError) {
-    debugRaw('policy', 'checkSessionId after the failed presentation failed', {
-      sessionId,
-      error: checkError
-    })
+    if (debugEnabled('sensitive', 'policy'))
+      debugRaw(
+        'policy',
+        'checkSessionId after the failed presentation failed',
+        {
+          sessionId,
+          error: checkError
+        }
+      )
+    return undefined
   }
+
+  return !check.verified &&
+    check.policyResults.some((result) => !result.success)
+    ? check.policyResults
+    : undefined
 }
 
 // #region reply shapes
@@ -385,13 +439,42 @@ function readInitiateReply(reply: PolicyServerReply): {
   }
 }
 
-/** The VC/VP policies the verifier reports as failed, as `" (policy: error; …)"`. */
-function describeFailedPolicies(results: PolicyCheckResult[]): string {
+/**
+ * The reason of a refusal: `REFUSED`, then the VC/VP policies the verifier reports as
+ * failed, as `" (policy: error; …)"`. The node relays them (and the node is the publisher's
+ * choice, for a download), so they are bounded and stripped of control characters in
+ * `readPolicyResults`.
+ *
+ * `PolicyDeniedError` cuts its reason at `MAX_NODE_MESSAGE_LENGTH`, so this one fits as that
+ * error redacts it again (which can lengthen a cut failure: `token=<reda…` becomes
+ * `token=<redacted>`), and the closing parenthesis is never cut: each failure is cut at 80
+ * characters, as many as fit are listed, and the rest counted (`; 2 more in policyResults`).
+ */
+function refusalReason(results: PolicyCheckResult[]): string {
   const failures = results
     .filter((result) => !result.success)
-    .map((result) => [result.policy, result.error].filter(Boolean).join(': '))
+    .map((result) => {
+      const text = [result.policy, result.error].filter(Boolean).join(': ')
+      return text.length > MAX_DESCRIBED_FAILURE
+        ? `${text.slice(0, MAX_DESCRIBED_FAILURE)}…`
+        : text
+    })
+  if (!failures.length) return REFUSED
 
-  return failures.length ? ` (${failures.join('; ')})` : ''
+  const listing = (shown: number) => {
+    const more = failures.length - shown
+    const counted = more
+      ? `${more}${shown ? ' more' : ''} in policyResults`
+      : ''
+    return `${REFUSED} (${[...failures.slice(0, shown), counted].filter(Boolean).join('; ')})`
+  }
+  const fits = (reason: string) =>
+    sanitize(reason, Number.MAX_SAFE_INTEGER, null).length <=
+    MAX_NODE_MESSAGE_LENGTH
+
+  for (let shown = failures.length; shown > 0; shown--)
+    if (fits(listing(shown))) return listing(shown)
+  return listing(0)
 }
 
 // #endregion

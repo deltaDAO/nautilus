@@ -88,6 +88,7 @@ import {
   describeAnswer,
   describeError,
   endSentence,
+  sanitize,
   sanitizedError
 } from './messages.js'
 
@@ -252,7 +253,7 @@ export interface PolicyCheckResult {
   /** The policy's name, e.g. `signature` or `holder-binding`. */
   policy: string
   success: boolean
-  /** Why it failed, as the verifier said it, bounded. */
+  /** Why it failed, as the verifier said it: its first line, at most 100 characters. */
   error?: string
 }
 
@@ -281,11 +282,18 @@ export class PolicyDeniedError extends Error {
   /** The policy server's reason, bounded and without control characters. */
   readonly reason: string
   /**
-   * The verifier's per-policy results, when the presentation was not verified. Only the
-   * policy names, outcomes and errors: never the presentation or its token.
+   * The verifier's per-policy results, when the presentation was not verified, as the node
+   * reports them. Only the policy names, outcomes and errors, bounded and without control
+   * characters: never the presentation or its token. A policy's error can quote a value of
+   * the presented credential, so don't send these to a central log.
    */
   readonly policyResults?: PolicyCheckResult[]
 
+  /**
+   * `cause`: the error of the presentation, when the wallet's `present()` failed and the
+   * verifier's record named the failed policies (a `CredentialPresentationError`, for
+   * example).
+   */
   constructor(params: {
     nodeUri: string
     did: string
@@ -294,12 +302,14 @@ export class PolicyDeniedError extends Error {
     code?: number
     reason: string
     policyResults?: PolicyCheckResult[]
+    cause?: unknown
   }) {
     const reason =
       boundedNodeMessage(params.reason, 'policy') || 'no reason given'
 
     super(
-      `The policy server of ${params.nodeUri} refused service ${params.serviceId} of ${params.did} for ${params.consumerAddress}${params.code ? ` (${params.code})` : ''}: ${endSentence(reason)} Nothing was ordered or paid. Check the asset's credentials (its address allow list and SSIpolicy) with the publisher.`
+      `The policy server of ${params.nodeUri} refused service ${params.serviceId} of ${params.did} for ${params.consumerAddress}${params.code ? ` (${params.code})` : ''}: ${endSentence(reason)} Nothing was ordered or paid. Check the asset's credentials (its address allow list and SSIpolicy) with the publisher.`,
+      params.cause === undefined ? undefined : { cause: params.cause }
     )
     this.name = 'PolicyDeniedError'
     this.did = params.did
@@ -734,6 +744,17 @@ const POLICY_SERVER_INITIALIZE = 'PolicyServerInitialize'
  */
 const MAX_POLICY_REPLY_BYTES = 256 * 1024
 
+/**
+ * How many per-policy results `checkPolicySession` keeps, and how long a policy or
+ * credential type name, and a policy's error, may be. A presentation runs a few policies
+ * per credential; the node relays the record and may be the publisher's. A policy's error
+ * can quote the credential (walt.id's `allowed-issuer`: "No issuer found in credential:
+ * <the credential>"), so it is kept short.
+ */
+const MAX_POLICY_RESULTS = 50
+const MAX_POLICY_NAME_LENGTH = 100
+const MAX_POLICY_ERROR_LENGTH = 100
+
 /** What ocean.js puts before the node's message when a P2P command fails. */
 const P2P_ERROR_PREFIX = /^P2P command error: /
 
@@ -848,6 +869,12 @@ function isSessionRecord(value: unknown): boolean {
  * (`policyResults.results[].policyResults[]`), reduced to name, outcome and error. Each
  * policy's `result` and `args`, and everything else in the record (`tokenResponse` with the
  * `vp_token`, the presentation definition), are dropped.
+ *
+ * The record comes through the node, so every text in it is treated as the node's: the
+ * policy and credential names and the first line of each error are stripped of control
+ * characters, redacted and bounded (100 characters each), and at most `MAX_POLICY_RESULTS` results are kept, in
+ * their order, failures before successes when some must go. The whole record goes to the
+ * debug channel (topic `policy`) in `checkPolicySession`.
  */
 function readPolicyResults(record: unknown): PolicyCheckResult[] {
   const results = (
@@ -857,7 +884,12 @@ function readPolicyResults(record: unknown): PolicyCheckResult[] {
   )?.policyResults?.results
   if (!Array.isArray(results)) return []
 
-  const read: PolicyCheckResult[] = []
+  const found: {
+    credential: unknown
+    policy: string
+    success: boolean
+    error: unknown
+  }[] = []
 
   for (const entry of results) {
     const { credential, policyResults } = (entry ?? {}) as {
@@ -872,25 +904,55 @@ function readPolicyResults(record: unknown): PolicyCheckResult[] {
         is_success?: unknown
         error?: unknown
       }
-      if (typeof policy !== 'string') continue
-
-      const reason =
-        error === undefined || error === null
-          ? undefined
-          : boundedNodeMessage(
-              typeof error === 'string'
-                ? error.split('\n')[0]
-                : ((error as { message?: unknown }).message ?? error),
-              'policy'
-            )
-
-      read.push({
-        ...(typeof credential === 'string' ? { credential } : {}),
-        policy,
-        success: is_success === true,
-        ...(reason ? { error: reason } : {})
-      })
+      if (typeof policy === 'string')
+        found.push({ credential, policy, success: is_success === true, error })
     }
+  }
+
+  // Over the cap, the failures are kept first: they are what a refusal names.
+  let kept = found
+  if (found.length > MAX_POLICY_RESULTS) {
+    const failures = found.filter((result) => !result.success).length
+    let successes = Math.max(0, MAX_POLICY_RESULTS - failures)
+    let failuresLeft = MAX_POLICY_RESULTS
+    kept = found.filter((result) =>
+      result.success ? successes-- > 0 : failuresLeft-- > 0
+    )
+    // The whole record went to the debug channel already (`checkPolicySession`).
+    if (debugEnabled('sensitive', 'policy'))
+      debugRaw('policy', 'per-policy results dropped over the cap', {
+        found: found.length,
+        kept: kept.length
+      })
+  }
+
+  const read: PolicyCheckResult[] = []
+
+  for (const { credential, policy, success, error } of kept) {
+    const name = sanitize(policy, MAX_POLICY_NAME_LENGTH, 'policy')
+    if (!name) continue
+
+    const type =
+      typeof credential === 'string'
+        ? sanitize(credential, MAX_POLICY_NAME_LENGTH, 'policy')
+        : ''
+    const reason =
+      error === undefined || error === null
+        ? undefined
+        : boundedNodeMessage(
+            typeof error === 'string'
+              ? error.split('\n')[0]
+              : ((error as { message?: unknown }).message ?? error),
+            'policy',
+            MAX_POLICY_ERROR_LENGTH
+          )
+
+    read.push({
+      ...(type ? { credential: type } : {}),
+      policy: name,
+      success,
+      ...(reason ? { error: reason } : {})
+    })
   }
 
   return read
