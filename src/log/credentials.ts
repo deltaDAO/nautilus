@@ -55,10 +55,13 @@ const PREFIXED_TOKEN =
   /(?<![A-Za-z0-9])(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|glpat-[\w-]{20,}|xox[abprs]-[\w-]{10,}|sk-[\w-]{20,}|AIza[\w-]{35})/g
 
 /**
- * `scheme://authority/path?query#fragment`, up to whitespace, a quote or a backslash. The
- * scheme is bounded, so a hostile body of letters and dots is scanned in linear time.
+ * `scheme://authority/path?query#fragment`, up to whitespace or a quote. A backslash is
+ * part of the URL unless a quote follows it (`\"` ends a JSON string), so a path such as
+ * `/x\y/v3/<key>` is masked as a whole. The scheme is bounded, so a hostile body of
+ * letters and dots is scanned in linear time.
  */
-const URL_PATTERN = /[a-z][a-z0-9+.-]{0,31}:\/\/[^\s"'<>\\]*/gi
+const URL_PATTERN =
+  /[a-z][a-z0-9+.-]{0,31}:\/\/(?:[^\s"'<>\\]|\\+(?!["'\s<>\\]))*/gi
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const IPFS_CID = /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{50,})$/
@@ -263,8 +266,9 @@ export function maskUrl(url: string, nesting = 0): string {
   const trailing = /[.,;:!?)\]}]*$/.exec(url)?.[0] ?? ''
   const core = url.slice(0, url.length - trailing.length)
 
+  // A backslash ends the authority and splits the path, as a URL parser reads it.
   const match =
-    /^([a-z][a-z0-9+.-]*:\/\/)([^/?#]*)([^?#]*)(\?[^#]*)?(#.*)?$/i.exec(core)
+    /^([a-z][a-z0-9+.-]*:\/\/)([^/?#\\]*)([^?#]*)(\?[^#]*)?(#.*)?$/i.exec(core)
   if (!match)
     return `${core.replace(/\/\/[^/]*@/, `//${REDACTED}@`)}${trailing}`
 
@@ -273,9 +277,9 @@ export function maskUrl(url: string, nesting = 0): string {
   const host = at === -1 ? authority : `${REDACTED}@${authority.slice(at + 1)}`
 
   const maskedPath = path
-    .split('/')
+    .split(/([/\\])/)
     .map((segment) => (isTokenLike(segment) ? REDACTED : segment))
-    .join('/')
+    .join('')
 
   return `${scheme}${host}${maskedPath}${maskParameters(query, nesting)}${maskParameters(fragment, nesting)}${trailing}`
 }
