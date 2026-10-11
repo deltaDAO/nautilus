@@ -687,7 +687,9 @@ export async function publishWithDidIssuer(
  * credential (allow-listed accounts only) and a full service that also requires a credential.
  *
  * Gating is per service as well as per asset in DDO v5, and the policy server merges both
- * when deciding whether a presentation is needed.
+ * when deciding whether a presentation is needed. Everything SSI sits on the gated service
+ * (request credentials, VC and VP policies), so the preview's merged view holds no
+ * `SSIpolicy` at all.
  */
 export async function publishPartiallyGatedDataset(
   nautilus: Nautilus,
@@ -731,6 +733,12 @@ export async function publishPartiallyGatedDataset(
     .addRequestCredentials(CredentialListTypes.ALLOW, [
       requestCredential('VerifiableId', issuers)
     ])
+    // The VC and VP policies sit on the gated service too. On the asset, the policy server
+    // would merge them into the preview, which requests no credential, and refuse every
+    // consumer of it ("SSIpolicy was found, but failed to fetch request credentials");
+    // build() throws for that setup.
+    .setVcPolicies(CredentialListTypes.ALLOW, GATE_VC_POLICIES)
+    .setVpPolicies(CredentialListTypes.ALLOW, GATE_VP_POLICIES)
     .build()
 
   const asset = new AssetBuilder()

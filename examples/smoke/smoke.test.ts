@@ -436,6 +436,25 @@ describe('example commands', () => {
     expect(out).not.toContain('holder-binding')
   })
 
+  it('ssi:publish-partial keeps every SSI policy on the gated service, without a lint event', async () => {
+    const events: LogEvent[] = []
+    Nautilus.configureLogging({ sink: (event) => events.push(event) })
+
+    try {
+      // build() would throw for asset-level policies next to the ungated preview, and warn
+      // for a gate without VP signature. (The stub node gives both services one id, so the
+      // stored policies are checked in the unit tests.)
+      const out = await run('ssi:publish-partial')
+
+      expect(out).toMatch(/Gated Full Access \(.*\) gated=true/)
+      expect(
+        events.filter((event) => event.event.startsWith('identity.policy.'))
+      ).toEqual([])
+    } finally {
+      Nautilus.configureLogging({ sink: undefined })
+    }
+  })
+
   it('ssi:publish-holder-binding publishes and warns about holder-binding at build', async () => {
     const events: LogEvent[] = []
     Nautilus.configureLogging({ sink: (event) => events.push(event) })
@@ -448,9 +467,11 @@ describe('example commands', () => {
       expect(events.map((event) => event.event)).toContain(
         'identity.policy.holder_binding'
       )
-      expect(events.map((event) => event.event)).not.toContain(
-        'identity.policy.no_issuer_trust'
-      )
+      expect(
+        events
+          .map((event) => event.event)
+          .filter((event) => event.startsWith('identity.policy.'))
+      ).toEqual(['identity.policy.holder_binding'])
     } finally {
       Nautilus.configureLogging({ sink: undefined })
     }

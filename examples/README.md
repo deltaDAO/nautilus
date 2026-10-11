@@ -470,10 +470,12 @@ set `identity.ts` uses, and why:
   allow list containing `'*'` leaves no gate at all.
 
 **nautilus checks the policies when it builds the asset.** `AssetBuilder.build()` warns
-(`identity.policy.*` events on stderr) about `holder-binding`, `presentation-definition` with
-`jwt_vc_json` and a requested credential without a per-credential `allowed-issuer`, and throws
-an `SsiPolicyError` for a VC policy with arguments at asset or service level or a bare
-`minimum-credentials`, which cannot work. `setSsiPolicyLint('error')` turns the warnings into
+(`identity.policy.*` events on stderr) about a gate weaker than the set above (no VC or VP
+`signature`, no `minimum-credentials` of at least 1), `'*'` in the allow list of a gated
+service, `holder-binding`, `presentation-definition` with `jwt_vc_json` and a requested
+credential without a per-credential `allowed-issuer`. It throws an `SsiPolicyError` for setups
+that cannot work: an `SSIpolicy` on a service that requests no credential, a VC policy with
+arguments at asset or service level, a bare `minimum-credentials`. `setSsiPolicyLint('error')` turns the warnings into
 errors. `npm start -- ssi:publish-holder-binding` publishes the gate above with
 `holder-binding` added, to show the warning; `npm start -- ssi:holder-binding` also consumes
 it, and with a credential without `sub` (a Gaia-X `vc+jwt`, a URL subject) the consumer is
@@ -483,7 +485,9 @@ presentation of another type (the limitation above).
 
 Gating also works per service, so an asset can offer a preview that needs no credential
 (allow-listed accounts only) and a full service that also requires a credential — see
-`npm start -- ssi:publish-partial`.
+`npm start -- ssi:publish-partial`. Its request credentials and its VC and VP policies all sit
+on the gated service (`ServiceBuilder.setVcPolicies` / `setVpPolicies`): on the asset, the
+policy server would merge them into the preview and refuse every consumer of it.
 
 Gating applies to compute too: `npm start -- ssi:publish-gated-compute <algorithmDid>`
 publishes a gated compute dataset that trusts that algorithm, and
