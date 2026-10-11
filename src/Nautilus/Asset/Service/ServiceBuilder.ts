@@ -18,12 +18,16 @@ import type {
   ConsumerParameterV5,
   CredentialListTypes,
   RemoteObject,
-  RequestCredential
+  RequestCredential,
+  VcPolicy,
+  VpPolicy
 } from '../../../ddo/types.js'
 import {
   addCredentialAddresses,
   addRequestCredentials,
-  normalizeStoredCredentials
+  normalizeStoredCredentials,
+  setVcPolicies,
+  setVpPolicies
 } from '../../../identity/policy.js'
 import {
   type FileTypes,
@@ -364,6 +368,38 @@ export class ServiceBuilder<
       this.service.credentials,
       list,
       requestCredentials
+    )
+    return this
+  }
+
+  /**
+   * Credential-level checks for this service, e.g. `signature`, `not-before`,
+   * `revoked-status-list`. Replaces the service's VC policies (`[]` clears them).
+   *
+   * The policy server merges them with the asset's, so a service gated on its own (with
+   * `addRequestCredentials` here) keeps its policies here and leaves an ungated sibling
+   * service open: asset-level VC or VP policies would make the policy server refuse every
+   * consumer of a service that requests no credential.
+   */
+  setVcPolicies(list: CredentialListTypes, policies: VcPolicy[]) {
+    this.service.credentials = setVcPolicies(
+      this.service.credentials,
+      list,
+      policies
+    )
+    return this
+  }
+
+  /**
+   * Presentation-level checks for this service, e.g. `{ policy: 'signature' }`,
+   * `{ policy: 'minimum-credentials', args: '1' }`. Replaces the service's VP policies
+   * (`[]` clears them). See `setVcPolicies` for why they belong on the gated service.
+   */
+  setVpPolicies(list: CredentialListTypes, policies: VpPolicy[]) {
+    this.service.credentials = setVpPolicies(
+      this.service.credentials,
+      list,
+      policies
     )
     return this
   }

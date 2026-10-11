@@ -166,6 +166,14 @@ export interface IServiceBuilder<S extends ServiceTypes, F extends FileTypes>
     list: CredentialListTypesAlias,
     requestCredentials: RequestCredential[]
   ) => IServiceBuilder<S, F>
+  setVcPolicies: (
+    list: CredentialListTypesAlias,
+    policies: VcPolicy[]
+  ) => IServiceBuilder<S, F>
+  setVpPolicies: (
+    list: CredentialListTypesAlias,
+    policies: VpPolicy[]
+  ) => IServiceBuilder<S, F>
 
   // pricing and datatoken
   setPricing: (pricing: PricingConfigWithoutOwner) => IServiceBuilder<S, F>
