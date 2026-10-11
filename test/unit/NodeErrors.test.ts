@@ -33,7 +33,7 @@ import {
   OceanNodeError
 } from '../../src/node/OceanNodeClient.js'
 import { ASSET_DID, CHAIN_ID, NFT_ADDRESS } from '../fixtures/Asset.js'
-import { cpuTime } from '../helpers.js'
+import { cpuTime, INVISIBLE_CODES } from '../helpers.js'
 import { FAKE } from '../secretScan.js'
 
 const NODE = 'https://node.test.invalid'
@@ -1155,6 +1155,77 @@ describe("the node's text in a message", () => {
       ]
     ])
       expect(redactSecrets(text), text).to.equal(expected)
+  })
+
+  it('shows no part of a URL token split by an invisible character (D28)', () => {
+    const token = FAKE.rpcPathToken
+    const [head, tail] = [token.slice(0, 15), token.slice(15)]
+    const failures: string[] = []
+    for (const code of INVISIBLE_CODES) {
+      const c = String.fromCharCode(code)
+      for (const text of [
+        `see https://${c}rpc.example.org/v3/${token} now`,
+        `see https:/${c}/rpc.example.org/v3/${token} now`,
+        `see https://rpc.example.org/v3/${c}${token} now`,
+        `see https://rpc.example.org/v3/${head}${c}${tail} now`
+      ]) {
+        const shown = sanitize(text, 200, null)
+        if ([token, head, tail].some((part) => shown.includes(part)))
+          failures.push(`U+${code.toString(16)}: ${JSON.stringify(shown)}`)
+      }
+    }
+    // A BOM is whitespace to `\s`: it used to end the URL, and once deleted, joined the
+    // token to the origin (`https://rpc.example.org<token>`).
+    expect(failures).to.deep.equal([])
+    expect(
+      sanitize(`see https://rpc.example.org/v3/\ufeff${token} now`)
+    ).to.equal('see https://rpc.example.org now')
+  })
+
+  it('keeps only the host and port of a URL without a scheme on an IP address, localhost or [IPv6] (D28)', () => {
+    const token = FAKE.rpcPathToken
+    for (const [text, expected] of [
+      [`rpc 127.0.0.1:8545/v3/${token} down`, 'rpc 127.0.0.1:8545 down'],
+      [`rpc localhost:8545/${token}.`, 'rpc localhost:8545.'],
+      [`rpc [::1]:8545/${token}, retry`, 'rpc [::1]:8545, retry'],
+      [`rpc LOCALHOST:8545/${token}`, 'rpc LOCALHOST:8545'],
+      [`rpc 10.0.0.7/v3/${token}?apikey=1`, 'rpc 10.0.0.7'],
+      [`(rpc http://10.0.0.7:8545/v3/${token})`, '(rpc http://10.0.0.7:8545)'],
+      // ethers' "could not detect network" names the URL as it was configured.
+      [
+        `connect ECONNREFUSED 10.0.0.7:8545`,
+        'connect ECONNREFUSED 10.0.0.7:8545'
+      ]
+    ])
+      expect(sanitize(text), text).to.equal(expected)
+
+    // Prose with a colon and a slash, and host names without a scheme, are left alone.
+    for (const prose of [
+      'ratio a:b/c is fine',
+      'see note:12/3',
+      'time 10:30/11:00',
+      'path c:/x/y',
+      'version 4.2.2:8080/x',
+      'v1.2.3.4/x',
+      'node.example.org:8000/api'
+    ])
+      expect(redactSecrets(prose), prose).to.equal(prose)
+  })
+
+  it('keeps the punctuation after a URL in linear time (security regression)', async () => {
+    // Text built to be slow: a run of punctuation inside a URL, which a regular expression
+    // anchored at its end used to rescan from each character (about 150 ms at 16,000).
+    for (const text of [
+      `https://h.example/${';'.repeat(15_000)}a`,
+      `127.0.0.1:1/${')'.repeat(15_000)}a`
+    ]) {
+      let clean = ''
+      const elapsed = await cpuTime(() => {
+        clean = redactMessage(text)
+      })
+      expect(elapsed, text.slice(0, 12)).to.be.below(30)
+      expect(clean).to.match(/^(https:\/\/h\.example|127\.0\.0\.1:1)$/)
+    }
   })
 
   it('redacts a megabyte of hostile text in no time (security regression)', async () => {

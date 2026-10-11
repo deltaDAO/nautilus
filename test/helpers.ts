@@ -63,3 +63,18 @@ export async function cpuTime(run: () => unknown): Promise<number> {
   const { user, system } = process.cpuUsage(started)
   return (user + system) / 1_000
 }
+
+/** The code points `stripControlCharacters` deletes: invisible to a reader. */
+export const INVISIBLE_CODES = [
+  [0x00, 0x08],
+  [0x0e, 0x1f],
+  [0x7f, 0x9f],
+  [0xad, 0xad],
+  [0x200b, 0x200f],
+  [0x202a, 0x202e],
+  [0x2060, 0x2064],
+  [0x2066, 0x2069],
+  [0xfeff, 0xfeff]
+].flatMap(([from, to]) =>
+  Array.from({ length: to - from + 1 }, (_, index) => from + index)
+)
