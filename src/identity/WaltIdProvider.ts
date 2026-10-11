@@ -41,7 +41,7 @@ import type {
   CredentialProvider
 } from './CredentialProvider.js'
 import { requestedCredentialTypes } from './policy.js'
-import { assertHolderBinding } from './preflight.js'
+import { assertCredentialAttributes, assertHolderBinding } from './preflight.js'
 import {
   type WaltIdCredential,
   type WaltIdDidRef,
@@ -86,10 +86,12 @@ export interface WaltIdCredentialProviderOptions {
   /** Choose the holder DID. Defaults to the first. */
   onSelectDid?: (dids: WaltIdDidRef[]) => Promise<string>
   /**
-   * Check the selected credentials against the service's `holder-binding` before presenting,
-   * and throw a `CredentialRejectedLocallyError` for one the verifier would reject (no `sub`,
-   * or a `sub` that is not the holder DID). Default `true`. Set `false` for a verifier whose
-   * rule differs from walt.id's. Credentials that are not plain JWTs are never judged.
+   * Check the selected credentials against the service's `holder-binding` and per-credential
+   * attribute requirements (`schema`) before presenting, and throw a
+   * `CredentialRejectedLocallyError` for one the verifier would reject (no `sub`, a `sub` that
+   * is not the holder DID, a missing or different attribute). Default `true`. Set `false` for
+   * a verifier whose rules differ from walt.id's. Credentials that are not plain JWTs, and
+   * schemas beyond `type`, `required`, `properties`, `const` and `enum`, are never judged.
    */
   preflight?: boolean
   /** Where this provider's log events go. Default: the process-wide logger. */
@@ -243,8 +245,9 @@ export class WaltIdCredentialProvider implements CredentialProvider {
     const did = await this.getDid(walletId, token)
 
     // Before the request is even resolved: a credential the verifier would refuse for
-    // holder-binding costs a presentation and returns only "Presentation failed".
-    if (this.options.preflight !== false)
+    // holder-binding or its attributes costs a presentation and returns only "Presentation
+    // failed".
+    if (this.options.preflight !== false) {
       assertHolderBinding({
         asset: challenge.asset,
         serviceId: challenge.serviceId,
@@ -254,6 +257,13 @@ export class WaltIdCredentialProvider implements CredentialProvider {
           credentialTypes(credential).find((type) => requestedTypes.has(type)),
         logger: this.options.logger
       })
+      assertCredentialAttributes({
+        asset: challenge.asset,
+        serviceId: challenge.serviceId,
+        credentials: selected,
+        logger: this.options.logger
+      })
+    }
 
     const resolved = await this.wallet.resolvePresentationRequest(
       walletId,

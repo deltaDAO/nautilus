@@ -1,3 +1,11 @@
+export {
+  type AttributeSchemaVerdict,
+  type CredentialAttributeRequirement,
+  type CredentialAttributeValue,
+  type CredentialRequirementOptions,
+  credentialAttributeSchema,
+  evaluateAttributeSchema
+} from './attributes.js'
 export * from './CredentialProvider.js'
 export * from './PolicySessionResolver.js'
 export * from './policy.js'

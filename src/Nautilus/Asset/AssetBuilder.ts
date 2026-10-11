@@ -21,14 +21,21 @@ import type {
   VcPolicy,
   VpPolicy
 } from '../../ddo/types.js'
+import type {
+  CredentialAttributeRequirement,
+  CredentialRequirementOptions
+} from '../../identity/attributes.js'
 import {
   addCredentialAccessList,
   addCredentialAddresses,
   addRequestCredentials,
   normalizeStoredCredentials,
   removeCredentialAddresses,
+  requireCredentialAttributes,
+  setRequestCredentials,
   setVcPolicies,
-  setVpPolicies
+  setVpPolicies,
+  trustIssuers
 } from '../../identity/policy.js'
 import {
   applySsiPolicyLint,
@@ -318,6 +325,62 @@ export class AssetBuilder implements IAssetBuilder {
       this.asset.ddo.credentials,
       list,
       requestCredentials
+    )
+    return this
+  }
+
+  /**
+   * Replaces the request credentials, keeping the VC and VP policies. Unlike
+   * `addRequestCredentials`, it can remove a request credential or a per-credential policy,
+   * e.g. on an edit. An empty list removes the credential gate of that list.
+   */
+  setRequestCredentials(
+    list: CredentialListTypes,
+    requestCredentials: RequestCredential[]
+  ) {
+    this.asset.ddo.credentials = setRequestCredentials(
+      this.asset.ddo.credentials,
+      list,
+      requestCredentials
+    )
+    return this
+  }
+
+  /**
+   * Requires attributes of a requested credential, e.g. `[{ path: ['gx:legalAddress',
+   * 'gx:countryCode'], equals: 'DE' }]`, as a per-credential `schema` policy. Calls combine
+   * with AND. Runs only on presented credentials of that type: see the identity guide's
+   * "Known limitation".
+   */
+  requireCredentialAttributes(
+    type: string,
+    requirements: CredentialAttributeRequirement[],
+    options?: CredentialRequirementOptions
+  ) {
+    this.asset.ddo.credentials = requireCredentialAttributes(
+      this.asset.ddo.credentials,
+      type,
+      requirements,
+      options
+    )
+    return this
+  }
+
+  /**
+   * Accepts credentials of `type` only from these issuer DIDs, as a per-credential
+   * `allowed-issuer` policy. Calls add issuers. Runs only on presented credentials of that
+   * type: see the identity guide's "Known limitation".
+   */
+  trustIssuers(
+    type: string,
+    issuers: string[],
+    options?: CredentialRequirementOptions
+  ) {
+    this.asset.ddo.credentials = trustIssuers(
+      this.asset.ddo.credentials,
+      type,
+      issuers,
+      options
     )
     return this
   }

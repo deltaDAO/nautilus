@@ -22,12 +22,19 @@ import type {
   VcPolicy,
   VpPolicy
 } from '../../../ddo/types.js'
+import type {
+  CredentialAttributeRequirement,
+  CredentialRequirementOptions
+} from '../../../identity/attributes.js'
 import {
   addCredentialAddresses,
   addRequestCredentials,
   normalizeStoredCredentials,
+  requireCredentialAttributes,
+  setRequestCredentials,
   setVcPolicies,
-  setVpPolicies
+  setVpPolicies,
+  trustIssuers
 } from '../../../identity/policy.js'
 import {
   type FileTypes,
@@ -391,6 +398,23 @@ export class ServiceBuilder<
   }
 
   /**
+   * Replaces this service's request credentials, keeping its VC and VP policies. Unlike
+   * `addRequestCredentials`, it can remove a request credential or a per-credential policy.
+   * An empty list removes the service's credential gate of that list.
+   */
+  setRequestCredentials(
+    list: CredentialListTypes,
+    requestCredentials: RequestCredential[]
+  ) {
+    this.service.credentials = setRequestCredentials(
+      this.service.credentials,
+      list,
+      requestCredentials
+    )
+    return this
+  }
+
+  /**
    * Presentation-level checks for this service, e.g. `{ policy: 'signature' }`,
    * `{ policy: 'minimum-credentials', args: '1' }`. Replaces the service's VP policies
    * (`[]` clears them). See `setVcPolicies` for why they belong on the gated service.
@@ -400,6 +424,42 @@ export class ServiceBuilder<
       this.service.credentials,
       list,
       policies
+    )
+    return this
+  }
+
+  /**
+   * Requires attributes of a credential this service requests, as a per-credential `schema`
+   * policy (see `AssetBuilder.requireCredentialAttributes`).
+   */
+  requireCredentialAttributes(
+    type: string,
+    requirements: CredentialAttributeRequirement[],
+    options?: CredentialRequirementOptions
+  ) {
+    this.service.credentials = requireCredentialAttributes(
+      this.service.credentials,
+      type,
+      requirements,
+      options
+    )
+    return this
+  }
+
+  /**
+   * Accepts credentials of `type` for this service only from these issuer DIDs, as a
+   * per-credential `allowed-issuer` policy (see `AssetBuilder.trustIssuers`).
+   */
+  trustIssuers(
+    type: string,
+    issuers: string[],
+    options?: CredentialRequirementOptions
+  ) {
+    this.service.credentials = trustIssuers(
+      this.service.credentials,
+      type,
+      issuers,
+      options
     )
     return this
   }

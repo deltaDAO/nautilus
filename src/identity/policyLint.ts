@@ -32,6 +32,9 @@
  *   request, keeping the first one's position (`waltIdPolicyHandler.ts:873-890`). A requested type whose effective list has no
  *   `allowed-issuer` accepts a credential of that type from any issuer, a self-issued one
  *   included; a non-empty list that a later one replaces never runs. Warnings.
+ * - A per-credential `schema` whose arguments are not a JSON Schema object fails every
+ *   presentation: it throws.
+ * - A policy name walt.id does not know: a warning (a deployment may have more).
  *
  * No warning for a missing `presentation-definition`: it would push publishers into the
  * failure above. And nothing here closes the type bypass (a hand-built presentation with a
@@ -45,6 +48,7 @@ import type {
 import type { LogEventName } from '../log/events.js'
 import { type Logger, log } from '../log/logger.js'
 import { sanitize } from '../node/messages.js'
+import { credentialPolicyProblem, KNOWN_SSI_POLICIES } from './attributes.js'
 import { isSsiPolicyCredential } from './policy.js'
 
 /**
@@ -60,6 +64,7 @@ export type SsiPolicyFatalCode =
   | 'vc-policy-arguments'
   | 'vp-policy-arguments'
   | 'credential-policy-arguments'
+  | 'duplicate-request-type'
 
 /** Codes of findings that are warnings, each logged as its own event (see `SsiPolicyFinding.code`). */
 export type SsiPolicyWarningCode =
@@ -71,6 +76,7 @@ export type SsiPolicyWarningCode =
   | 'presentation-definition-vc-jwt'
   | 'no-issuer-trust'
   | 'credential-policies-replaced'
+  | 'unknown-policy-name'
 
 /** One problem the lint found. */
 export interface SsiPolicyFinding {
@@ -95,6 +101,9 @@ export interface SsiPolicyFinding {
    *   `allowed-issuer`;
    * - `credential-policies-replaced`: per-credential policies of a type requested twice that
    *   never run, because walt.id keeps the last non-empty list.
+   * - `duplicate-request-type`: a credential type requested more than once with different
+   *   policies, of which walt.id keeps only the last;
+   * - `unknown-policy-name`: a policy name walt.id does not know.
    */
   code: SsiPolicyFatalCode | SsiPolicyWarningCode
   /** `true` for setups that cannot work: these throw whatever the lint mode. */
@@ -167,7 +176,9 @@ const WARNING_EVENTS: Record<SsiPolicyWarningCode, LogEventName> = {
   'presentation-definition-vc-jwt':
     'identity.policy.presentation_definition_vc_jwt',
   'no-issuer-trust': 'identity.policy.no_issuer_trust',
-  'credential-policies-replaced': 'identity.policy.credential_policies_replaced'
+  'credential-policies-replaced':
+    'identity.policy.credential_policies_replaced',
+  'unknown-policy-name': 'identity.policy.unknown_name'
 }
 
 /** The policy server's environment may add policies nautilus cannot see (D4). */
@@ -241,6 +252,13 @@ export function lintSsiPolicies(
 
     lintValues(asset.where, assetValues, add)
     if (service.where) lintValues(service.where, serviceValues, add)
+    lintRequestTypes(
+      asset.where,
+      assetValues,
+      service.where,
+      serviceValues,
+      add
+    )
 
     lintPresentationDefinition(asset, service, assetValues, merged, add)
     lintRequestedTypes(
@@ -290,6 +308,9 @@ export function applySsiPolicyLint(
     if (event)
       logger.emit(event, finding.message, {
         where: finding.where,
+        ...(finding.code === 'unknown-policy-name'
+          ? { policy: shown(finding.policy) }
+          : {}),
         ...(finding.credentialType !== undefined
           ? { credentialType: finding.credentialType }
           : {})
@@ -316,6 +337,8 @@ function lintValues(
   for (const value of values) {
     for (const raw of toArray(value.vc_policies)) {
       const { name, hasArgs } = readPolicy(raw)
+      if (name && !KNOWN_SSI_POLICIES.has(name))
+        add(unknownName(where, 'VC', name))
       if (!name || !(hasArgs || VC_POLICIES_NEEDING_ARGS.has(name))) continue
 
       const perCredential = VC_POLICIES_NEEDING_ARGS.has(name)
@@ -333,6 +356,7 @@ function lintValues(
     for (const raw of toArray(value.vp_policies)) {
       const { name, args, hasArgs } = readPolicy(raw)
       if (!name) continue
+      if (!KNOWN_SSI_POLICIES.has(name)) add(unknownName(where, 'VP', name))
 
       const problem = vpArgumentProblem(name, parseArgs(args), hasArgs)
       if (problem)
@@ -353,6 +377,28 @@ function lintValues(
           message: `The ${where} VP policy 'holder-binding' requires every presented credential's JWT 'sub' to be the presenter's DID. Credentials without 'sub', such as Gaia-X and other VCDM 2.0 vc+jwt credentials with a URL subject, cannot satisfy it: walt.id refuses them all. Leave it out unless every accepted credential is issued to the holder's DID.`
         })
     }
+
+    for (const credential of requestCredentials(value))
+      for (const raw of toArray(credential.policies)) {
+        const policy = readCredentialPolicy(raw)
+        if (!policy.name) continue
+
+        if (!KNOWN_SSI_POLICIES.has(policy.name))
+          add(
+            unknownName(where, 'per-credential', policy.name, credential.type)
+          )
+
+        const problem = credentialPolicyProblem(policy.name, policy.args)
+        if (problem)
+          add({
+            code: 'credential-policy-arguments',
+            fatal: true,
+            where,
+            policy: policy.name,
+            credentialType: credential.type,
+            message: `The ${where} request for '${shown(credential.type)}' credentials has a per-credential '${shown(policy.name)}' policy that ${problem}. ${policy.name === 'schema' ? 'Pass the schema as an object (not JSON.stringify(schema)), or use requireCredentialAttributes().' : 'Use trustIssuers(type, [did, …]).'}`
+          })
+      }
   }
 }
 
@@ -761,6 +807,84 @@ function readPolicy(raw: unknown): {
 
 function isPlainObject(raw: unknown): raw is Record<string, unknown> {
   return typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+}
+
+/** A per-credential policy's name and arguments: stored JSON-encoded, or as the builder takes it. */
+function readCredentialPolicy(raw: unknown): { name?: string; args?: unknown } {
+  let policy = raw
+  if (typeof raw === 'string')
+    try {
+      policy = JSON.parse(raw)
+    } catch {
+      return { name: raw }
+    }
+
+  if (typeof policy === 'string') return { name: policy }
+  const { name } = readPolicy(policy)
+  return { name, args: (policy as { args?: unknown } | null)?.args }
+}
+
+function unknownName(
+  where: string,
+  level: string,
+  name: string,
+  credentialType?: string
+): SsiPolicyFinding {
+  return {
+    code: 'unknown-policy-name',
+    fatal: false,
+    where,
+    policy: name,
+    ...(credentialType !== undefined ? { credentialType } : {}),
+    message: `The ${where} ${level} policy '${shown(name)}'${credentialType !== undefined ? ` for '${shown(credentialType)}' credentials` : ''} is not one walt.id 90e568f knows. If the verifier doesn't know it either, it fails every presentation. Check the spelling.`
+  }
+}
+
+/**
+ * Throws (as a finding) for a credential type requested more than once, asset and service
+ * merged as the policy server merges them, with different per-credential policies: walt.id
+ * keeps the last non-empty list for the type and drops the others without a word.
+ * Requests the policy server deduplicates (same type, format and policies) count once.
+ */
+function lintRequestTypes(
+  assetWhere: string,
+  assetValues: SsiPolicyValue[],
+  serviceWhere: string,
+  serviceValues: SsiPolicyValue[],
+  add: (finding: SsiPolicyFinding) => void
+): void {
+  const byType = new Map<
+    string,
+    { where: string; key: string; hasPolicies: boolean }[]
+  >()
+
+  for (const [where, values] of [
+    [assetWhere, assetValues],
+    [serviceWhere, serviceValues]
+  ] as const)
+    for (const credential of values.flatMap(requestCredentials)) {
+      const policies = toArray(credential.policies).map(readCredentialPolicy)
+      const key = JSON.stringify([credential.format ?? null, policies])
+      const seen = byType.get(credential.type) ?? []
+      if (!seen.some((entry) => entry.key === key))
+        seen.push({ where, key, hasPolicies: policies.length > 0 })
+      byType.set(credential.type, seen)
+    }
+
+  for (const [type, entries] of byType) {
+    if (entries.length < 2 || !entries.some((entry) => entry.hasPolicies))
+      continue
+
+    const where = entries[entries.length - 1].where || assetWhere
+    add({
+      code: 'duplicate-request-type',
+      fatal: true,
+      where,
+      policy: 'request_credentials',
+      credentialType: type,
+      message: `'${shown(type)}' credentials are requested ${entries.length} times with different formats or policies (${[...new Set(entries.map((entry) => entry.where || assetWhere))].join(', ')}). walt.id keeps only the last request's per-credential policies for a type and silently drops the others, e.g. issuer trust. Request each type once, with all its policies: trustIssuers() and requireCredentialAttributes() add to the one request, setRequestCredentials() replaces the list.`
+    })
+  }
 }
 
 function toArray(raw: unknown): unknown[] {

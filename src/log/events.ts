@@ -374,12 +374,26 @@ export const LOG_EVENTS = {
       "AssetBuilder.build(): a credential-gated service lets every address in ('*' in the allow list, as the policy server reads it), so a hand-built presentation of another credential type (the type bypass) opens it to anyone.",
     fields: ['where']
   },
+  'identity.policy.unknown_name': {
+    level: 'warn',
+    component: 'identity',
+    description:
+      'AssetBuilder.build(): a VC, VP or per-credential policy name is not one walt.id 90e568f knows. A verifier that does not know it fails every presentation; a newer one may.',
+    fields: ['where', 'policy', 'credentialType']
+  },
   'identity.preflight.skipped': {
     level: 'debug',
     component: 'identity',
     description:
-      'WaltIdCredentialProvider could not decode a selected credential (not a plain JWT: SD-JWT, JSON-LD, mdoc), so its holder-binding check before presenting skipped it and the verifier decides. Its raw form goes to the debug channel (wallet topic).',
-    fields: ['serviceId', 'credentialId', 'format']
+      'WaltIdCredentialProvider could not decode a selected credential (not a plain JWT: SD-JWT, JSON-LD, mdoc), so its holder-binding or attribute check before presenting skipped it and the verifier decides. Its raw form goes to the debug channel (wallet topic).',
+    fields: ['serviceId', 'credentialId', 'format', 'policy']
+  },
+  'identity.preflight.schema_skipped': {
+    level: 'debug',
+    component: 'identity',
+    description:
+      "WaltIdCredentialProvider did not check a selected credential against the service's per-credential schema policy before presenting: the schema uses a keyword outside the subset nautilus evaluates (type, required, properties, const, enum), so the verifier decides.",
+    fields: ['serviceId', 'credentialType', 'keyword']
   }
 } as const satisfies Record<string, LogEventSpec>
 

@@ -344,7 +344,10 @@ describe('per-credential policies are stored JSON-encoded', () => {
       {
         type: 'gx:LegalPerson',
         format: 'jwt_vc_json',
-        policies: ['signature', { policy: 'allowed-issuer', args: ['did:x'] }]
+        policies: [
+          'signature',
+          { policy: 'allowed-issuer', args: ['did:web:x.example'] }
+        ]
       }
     ])
 
@@ -354,7 +357,7 @@ describe('per-credential policies are stored JSON-encoded', () => {
         format: 'jwt_vc_json',
         policies: [
           '"signature"',
-          '{"policy":"allowed-issuer","args":["did:x"]}'
+          '{"policy":"allowed-issuer","args":["did:web:x.example"]}'
         ]
       }
     ])

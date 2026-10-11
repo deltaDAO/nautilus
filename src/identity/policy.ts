@@ -8,6 +8,7 @@
 import {
   type AddressCredential,
   CredentialListTypes,
+  type CredentialPolicy,
   type DdoCredential,
   type DdoCredentials,
   type RequestCredential,
@@ -17,6 +18,16 @@ import {
   type VcPolicy,
   type VpPolicy
 } from '../ddo/types.js'
+import {
+  type CredentialAttributeRequirement,
+  type CredentialRequirementOptions,
+  credentialAttributeSchema,
+  credentialPolicyProblem,
+  DEFAULT_REQUEST_FORMAT,
+  isDid,
+  isPlainObject,
+  mergeAttributeSchemas
+} from './attributes.js'
 
 /**
  * nautilus's own default VC policies, mirroring the policy server's
@@ -112,6 +123,237 @@ export function setVpPolicies(
 ): DdoCredentials {
   return updateSsiPolicy(credentials, list, (value) => {
     value.vp_policies = dedupeVpPolicies(vpPolicies)
+  })
+}
+
+/**
+ * Replaces the request credentials on the given list's `SSIpolicy` entry, keeping its VC and
+ * VP policies. Unlike `addRequestCredentials`, this can remove a request credential or a
+ * per-credential policy, e.g. on an edit.
+ *
+ * An empty list removes the list's `SSIpolicy` entry, and with it the credential gate: the
+ * policy server refuses every consumer of an entry that requests no credential. Address and
+ * access-list entries are kept.
+ */
+export function setRequestCredentials(
+  credentials: DdoCredentials,
+  list: CredentialListTypes,
+  requestCredentials: RequestCredential[]
+): DdoCredentials {
+  if (!Array.isArray(requestCredentials))
+    throw new TypeError(
+      'setRequestCredentials takes a list of request credentials.'
+    )
+
+  const encoded = requestCredentials.map(encodeRequestCredential)
+
+  if (!encoded.length) {
+    const entries = credentials[list]
+    return entries
+      ? {
+          ...credentials,
+          [list]: entries.filter((entry) => !isSsiPolicyCredential(entry))
+        }
+      : credentials
+  }
+
+  return updateSsiPolicy(credentials, list, (value) => {
+    value.request_credentials = dedupeRequestCredentials(encoded)
+  })
+}
+
+/**
+ * Requires attributes of a requested credential type, through walt.id's per-credential
+ * `schema` policy on the `allow` list: e.g. `[{ path: ['gx:legalAddress', 'gx:countryCode'],
+ * equals: 'DE' }]` for a `gx:LegalPerson` from Germany. Adds the request credential if it is
+ * not there yet. Requirements of several calls, and an existing `schema` policy, combine
+ * with AND.
+ *
+ * The schema is checked against the credential as walt.id reads it: the JWT payload for
+ * VCDM 2.0, the `vc` claim for VCDM 1.1, both with `credentialSubject` at the root.
+ *
+ * Like every per-credential policy, it runs only on presented credentials of that type: a
+ * hand-built presentation holding a credential of another type is not checked (see the
+ * identity guide, "Known limitation").
+ */
+export function requireCredentialAttributes(
+  credentials: DdoCredentials,
+  type: string,
+  requirements: CredentialAttributeRequirement[],
+  options: CredentialRequirementOptions = {}
+): DdoCredentials {
+  const schema = credentialAttributeSchema(requirements)
+
+  return updateRequestCredential(credentials, type, options, (policies) => {
+    const index = policies.findIndex(
+      (policy) => credentialPolicyName(policy) === 'schema'
+    )
+    if (index === -1) return [...policies, { policy: 'schema', args: schema }]
+
+    const existing = (policies[index] as { args?: unknown }).args
+    if (!isPlainObject(existing))
+      throw new TypeError(
+        `The '${type}' request credential has a 'schema' policy whose arguments are not a JSON Schema object, so the attribute requirements cannot be added to it. Replace it with setRequestCredentials().`
+      )
+
+    const merged = [...policies]
+    merged[index] = {
+      policy: 'schema',
+      args: mergeAttributeSchemas(existing, schema)
+    }
+    return merged
+  })
+}
+
+/**
+ * Trusts only credentials of `type` issued by one of `issuers`, through walt.id's
+ * per-credential `allowed-issuer` policy on the `allow` list. Adds the request credential
+ * if it is not there yet. Issuers of several calls are combined: any of them is trusted.
+ *
+ * Like every per-credential policy, it runs only on presented credentials of that type (see
+ * the identity guide, "Known limitation").
+ */
+export function trustIssuers(
+  credentials: DdoCredentials,
+  type: string,
+  issuers: string[],
+  options: CredentialRequirementOptions = {}
+): DdoCredentials {
+  if (!Array.isArray(issuers) || !issuers.length)
+    throw new TypeError(
+      `trustIssuers('${type}') needs a non-empty list of issuer DIDs: an empty one trusts no issuer and refuses every consumer.`
+    )
+  const bad = issuers.find((issuer) => !isDid(issuer))
+  if (bad !== undefined)
+    throw new TypeError(
+      `trustIssuers('${type}'): ${JSON.stringify(bad)?.slice(0, 100)} is not a DID (did:<method>:<id>, e.g. did:web:example.com).`
+    )
+
+  return updateRequestCredential(credentials, type, options, (policies) => {
+    const index = policies.findIndex(
+      (policy) => credentialPolicyName(policy) === 'allowed-issuer'
+    )
+    if (index === -1)
+      return [{ policy: 'allowed-issuer', args: dedupe(issuers) }, ...policies]
+
+    const existing = (policies[index] as { args?: unknown }).args
+    if (credentialPolicyProblem('allowed-issuer', existing))
+      throw new TypeError(
+        `The '${type}' request credential has an 'allowed-issuer' policy whose arguments are not a list of DIDs, so issuers cannot be added to it. Replace it with setRequestCredentials().`
+      )
+
+    const merged = [...policies]
+    merged[index] = {
+      policy: 'allowed-issuer',
+      args: dedupe([
+        ...(Array.isArray(existing) ? existing : [existing]),
+        ...issuers
+      ])
+    }
+    return merged
+  })
+}
+
+/**
+ * Changes the per-credential policies of one request credential on the `allow` list,
+ * creating it if needed: the one of `type` and `options.format`, or without a format the one
+ * request for `type` already there (walt.id keeps a single policy list per type), else a new
+ * `jwt_vc_json` one. The policies are then ordered issuer trust first, then attribute checks,
+ * then the rest, so the stored form does not depend on the order of the calls.
+ */
+function updateRequestCredential(
+  credentials: DdoCredentials,
+  type: string,
+  options: CredentialRequirementOptions,
+  change: (policies: CredentialPolicy[]) => CredentialPolicy[]
+): DdoCredentials {
+  if (typeof type !== 'string' || !type)
+    throw new TypeError('The credential type must be a non-empty string.')
+  if (
+    options.format !== undefined &&
+    (typeof options.format !== 'string' || !options.format)
+  )
+    throw new TypeError('The credential format must be a non-empty string.')
+
+  return updateSsiPolicy(credentials, CredentialListTypes.ALLOW, (value) => {
+    const requests = [...(value.request_credentials ?? [])]
+    const ofType = requests.filter((credential) => credential.type === type)
+    const format = options.format
+
+    let target =
+      format === undefined
+        ? ofType.length === 1
+          ? ofType[0]
+          : ofType.find(
+              (credential) => credential.format === DEFAULT_REQUEST_FORMAT
+            )
+        : ofType.find((credential) => credential.format === format)
+
+    if (!target) {
+      target = { type, format: format ?? DEFAULT_REQUEST_FORMAT }
+      requests.push(target)
+    }
+
+    const policies = change((target.policies ?? []).map(decodeCredentialPolicy))
+    const updated: StoredRequestCredential = {
+      ...target,
+      policies: orderCredentialPolicies(policies).map(encodeCredentialPolicy)
+    }
+
+    value.request_credentials = dedupeRequestCredentials(
+      requests.map((credential) =>
+        credential === target ? updated : credential
+      )
+    )
+  })
+}
+
+/** Issuer trust first, then attribute checks, then the rest, each group in its order. */
+function orderCredentialPolicies(
+  policies: CredentialPolicy[]
+): CredentialPolicy[] {
+  const rank = (policy: CredentialPolicy) => {
+    const name = credentialPolicyName(policy)
+    return name === 'allowed-issuer' ? 0 : name === 'schema' ? 1 : 2
+  }
+  return policies
+    .map((policy, index) => ({ policy, index }))
+    .sort((a, b) => rank(a.policy) - rank(b.policy) || a.index - b.index)
+    .map(({ policy }) => policy)
+}
+
+function credentialPolicyName(policy: CredentialPolicy): string {
+  return typeof policy === 'string' ? policy : policy.policy
+}
+
+/** A stored (JSON-encoded) per-credential policy as a name or `{ policy, args? }`. */
+function decodeCredentialPolicy(stored: string): CredentialPolicy {
+  const policy: unknown = JSON.parse(readCredentialPolicy(stored))
+  if (typeof policy === 'string') return policy
+  if (isPlainObject(policy) && typeof policy.policy === 'string')
+    return policy as { policy: string; args?: unknown }
+  throw unreadable(
+    'per-credential policy',
+    stored,
+    'a name or { policy, args? }'
+  )
+}
+
+/** A per-credential policy as stored: JSON-encoded, `{ policy, args? }` in that key order. */
+function encodeCredentialPolicy(policy: CredentialPolicy): string {
+  if (typeof policy === 'string') return JSON.stringify(policy)
+  const {
+    policy: name,
+    args,
+    ...rest
+  } = policy as {
+    policy: string
+    args?: unknown
+  }
+  return JSON.stringify({
+    policy: name,
+    ...(args !== undefined ? { args } : {}),
+    ...rest
   })
 }
 
@@ -519,6 +761,8 @@ function readCredentialPolicy(raw: unknown): string {
 function encodeRequestCredential(
   credential: RequestCredential
 ): StoredRequestCredential {
+  assertRequestCredential(credential)
+
   return {
     type: credential.type,
     ...(credential.format !== undefined && { format: credential.format }),
@@ -526,6 +770,45 @@ function encodeRequestCredential(
       policies: credential.policies.map(readCredentialPolicy)
     })
   }
+}
+
+/**
+ * Refuses, with a `TypeError` naming the credential type and the policy, a request
+ * credential walt.id would fail for every presentation: a `schema` whose arguments are not a
+ * JSON Schema object, an `allowed-issuer` without a list of DIDs.
+ */
+function assertRequestCredential(credential: RequestCredential): void {
+  const { type, policies } = (credential ?? {}) as Partial<RequestCredential>
+  if (typeof type !== 'string' || !type)
+    throw new TypeError(
+      "A request credential needs a type, e.g. { type: 'gx:LegalPerson', format: 'jwt_vc_json' }."
+    )
+  if (policies === undefined) return
+  if (!Array.isArray(policies))
+    throw new TypeError(
+      `The '${type}' request credential's policies must be a list.`
+    )
+
+  for (const raw of policies) {
+    const policy = decodeCredentialPolicy(readCredentialPolicy(raw))
+    if (typeof policy === 'string') {
+      const problem = credentialPolicyProblem(policy, undefined)
+      if (problem) throw policyArgumentsError(type, policy, problem)
+      continue
+    }
+    const problem = credentialPolicyProblem(policy.policy, policy.args)
+    if (problem) throw policyArgumentsError(type, policy.policy, problem)
+  }
+}
+
+function policyArgumentsError(
+  type: string,
+  policy: string,
+  problem: string
+): TypeError {
+  return new TypeError(
+    `The '${type}' request credential's '${policy}' policy ${problem}.${policy === 'schema' ? ' Pass the schema as an object, not JSON.stringify(schema), or use requireCredentialAttributes().' : ' Use trustIssuers(type, [did, …]).'}`
+  )
 }
 
 /**

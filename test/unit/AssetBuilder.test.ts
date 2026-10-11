@@ -290,7 +290,10 @@ describe('AssetBuilder', () => {
         {
           type: 'gx:LegalPerson',
           format: 'jwt_vc_json',
-          policies: ['signature', { policy: 'allowed-issuer', args: 'did:x' }]
+          policies: [
+            'signature',
+            { policy: 'allowed-issuer', args: 'did:web:x.example' }
+          ]
         }
       ])
       .setVcPolicies(CredentialListTypes.ALLOW, [

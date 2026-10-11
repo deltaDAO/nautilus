@@ -10,6 +10,10 @@ import type {
   VcPolicy,
   VpPolicy
 } from '../ddo/types.js'
+import type {
+  CredentialAttributeRequirement,
+  CredentialRequirementOptions
+} from '../identity/attributes.js'
 import type { NautilusAsset } from '../Nautilus/Asset/NautilusAsset.js'
 import type {
   FileTypes,
@@ -104,6 +108,20 @@ export interface IAssetBuilder extends IBuilder<NautilusAsset> {
     list: CredentialListTypesAlias,
     requestCredentials: RequestCredential[]
   ) => IAssetBuilder
+  setRequestCredentials: (
+    list: CredentialListTypesAlias,
+    requestCredentials: RequestCredential[]
+  ) => IAssetBuilder
+  requireCredentialAttributes: (
+    type: string,
+    requirements: CredentialAttributeRequirement[],
+    options?: CredentialRequirementOptions
+  ) => IAssetBuilder
+  trustIssuers: (
+    type: string,
+    issuers: string[],
+    options?: CredentialRequirementOptions
+  ) => IAssetBuilder
   setVcPolicies: (
     list: CredentialListTypesAlias,
     policies: VcPolicy[]
@@ -173,6 +191,20 @@ export interface IServiceBuilder<S extends ServiceTypes, F extends FileTypes>
   setVpPolicies: (
     list: CredentialListTypesAlias,
     policies: VpPolicy[]
+  ) => IServiceBuilder<S, F>
+  setRequestCredentials: (
+    list: CredentialListTypesAlias,
+    requestCredentials: RequestCredential[]
+  ) => IServiceBuilder<S, F>
+  requireCredentialAttributes: (
+    type: string,
+    requirements: CredentialAttributeRequirement[],
+    options?: CredentialRequirementOptions
+  ) => IServiceBuilder<S, F>
+  trustIssuers: (
+    type: string,
+    issuers: string[],
+    options?: CredentialRequirementOptions
   ) => IServiceBuilder<S, F>
 
   // pricing and datatoken
