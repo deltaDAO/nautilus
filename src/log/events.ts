@@ -336,8 +336,43 @@ export const LOG_EVENTS = {
     level: 'warn',
     component: 'identity',
     description:
-      'AssetBuilder.build(): a request credential has no per-credential allowed-issuer policy, so a credential of that type from any issuer, a self-issued one included, is accepted.',
+      'AssetBuilder.build(): a requested credential type has no per-credential allowed-issuer among the policies walt.id runs for it (the last non-empty list for the type), so a credential of that type from any issuer, a self-issued one included, is accepted.',
     fields: ['where', 'credentialType']
+  },
+  'identity.policy.credential_policies_replaced': {
+    level: 'warn',
+    component: 'identity',
+    description:
+      'AssetBuilder.build(): a credential type is requested more than once with different per-credential policies. walt.id keeps only the last non-empty policy list per type, so the earlier policies never run.',
+    fields: ['where', 'credentialType']
+  },
+  'identity.policy.no_vc_signature': {
+    level: 'warn',
+    component: 'identity',
+    description:
+      "AssetBuilder.build(): a credential-gated service's VC policies (asset and service merged) have no signature, so a credential that names a trusted issuer but is signed by anyone passes, unless the policy server's operator adds signature.",
+    fields: ['where']
+  },
+  'identity.policy.no_vp_signature': {
+    level: 'warn',
+    component: 'identity',
+    description:
+      "AssetBuilder.build(): a credential-gated service's VP policies (asset and service merged) have no signature, so nothing is sure to check the presentation's own signature, unless the policy server's operator adds it.",
+    fields: ['where']
+  },
+  'identity.policy.no_minimum_credentials': {
+    level: 'warn',
+    component: 'identity',
+    description:
+      "AssetBuilder.build(): a credential-gated service's VP policies have no minimum-credentials of at least 1, so a presentation holding no credential passes the credential check.",
+    fields: ['where']
+  },
+  'identity.policy.wildcard_allow': {
+    level: 'warn',
+    component: 'identity',
+    description:
+      "AssetBuilder.build(): a credential-gated service lets every address in ('*' in the allow list, as the policy server reads it), so a hand-built presentation of another credential type (the type bypass) opens it to anyone.",
+    fields: ['where']
   },
   'identity.preflight.skipped': {
     level: 'debug',

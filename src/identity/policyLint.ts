@@ -5,19 +5,32 @@
  * What the stack does with the policies, and so what is checked (walt.id 90e568f, policy
  * server ea776b7):
  *
+ * - The policy server merges the asset's `allow` list with the accessed service's
+ *   (`waltIdPolicyHandler.ts:698-889`). A service whose merged view holds an `SSIpolicy`
+ *   entry but requests no credential is refused for every consumer ("SSIpolicy was found,
+ *   but failed to fetch request credentials"). That throws here, whatever the lint mode.
  * - The policy server keeps only the **name** of an asset- or service-level VC policy
  *   (`waltIdPolicyHandler.ts:857-868`). A VC policy that needs arguments (`allowed-issuer`,
  *   `schema`, `webhook`, `dynamic`, `credential-status`) then fails in walt.id for every
  *   presentation, and any other VC policy with arguments silently runs without them. Both
- *   throw here, whatever the lint mode: such an asset cannot work as written.
- * - walt.id reads `minimum-credentials`, `maximum-credentials` and `vp_required_credentials`
- *   arguments without a null check, so a bare one fails every presentation. That throws too.
+ *   throw: such an asset cannot work as written.
+ * - walt.id reads the arguments of `minimum-credentials` and `maximum-credentials` as an
+ *   integer and those of `vp_required_credentials` as `{ required: [...] }`, without a
+ *   check, so a bare or misshapen one fails every presentation. That throws too, as does a
+ *   per-credential `allowed-issuer` that admits no issuer (none, `[]`, `'*'`).
+ * - Weaker than PR 1's safe set (D4): no VC `signature` (a credential naming the trusted
+ *   issuer but signed by anyone passes), no VP `signature`, no `minimum-credentials` of at
+ *   least 1 (a presentation holding no credential passes): warnings.
+ * - `'*'` in the address allow list of a credential-gated service: a warning, as a
+ *   hand-built presentation passes the credential check (the type bypass), leaving no gate.
  * - `holder-binding` reads the JWT `sub` of every credential, and fails on credentials
  *   without one (VCDM 2.0 `vc+jwt`, Gaia-X): a warning.
  * - `presentation-definition` filters on `$.vc.type` for `jwt_vc_json` and `jwt_vc`
  *   requests, which VCDM 2.0 credentials do not have: a warning.
- * - A requested credential without a per-credential `allowed-issuer` accepts a credential
- *   of that type from any issuer, a self-issued one included: a warning.
+ * - walt.id keeps one per-credential policy list per requested type, the last non-empty one
+ *   (`VerifierService.kt:104-108`). A requested type whose effective list has no
+ *   `allowed-issuer` accepts a credential of that type from any issuer, a self-issued one
+ *   included; a non-empty list that a later one replaces never runs. Warnings.
  *
  * No warning for a missing `presentation-definition`: it would push publishers into the
  * failure above. And nothing here closes the type bypass (a hand-built presentation with a
@@ -43,20 +56,40 @@ export type SsiPolicyLintMode = 'warn' | 'error' | 'off'
 /** One problem the lint found. */
 export interface SsiPolicyFinding {
   /**
+   * Fatal (throw in every mode):
+   * - `no-request-credentials`: a service whose merged view holds an `SSIpolicy` entry but
+   *   requests no credential, which the policy server refuses for every consumer;
    * - `vc-policy-arguments`: a VC policy at asset or service level that needs or carries
    *   arguments, which the policy server drops;
-   * - `vp-policy-arguments`: a VP policy that needs arguments and has none;
+   * - `vp-policy-arguments`: a VP policy whose arguments walt.id cannot read (missing or of
+   *   the wrong shape);
+   * - `credential-policy-arguments`: a per-credential `allowed-issuer` that admits no issuer.
+   *
+   * Warnings:
+   * - `no-vc-signature`, `no-vp-signature`, `no-minimum-credentials`: a gate weaker than the
+   *   safe set (no VC `signature`, no VP `signature`, no `minimum-credentials` of at least 1);
+   * - `wildcard-allow`: `'*'` in the address allow list of a credential-gated service;
    * - `holder-binding`: `holder-binding` among the VP policies;
    * - `presentation-definition-vc-jwt`: `presentation-definition` with a `jwt_vc_json` or
    *   `jwt_vc` request credential;
-   * - `no-issuer-trust`: a request credential without a per-credential `allowed-issuer`.
+   * - `no-issuer-trust`: a requested type whose effective per-credential policies have no
+   *   `allowed-issuer`;
+   * - `credential-policies-replaced`: per-credential policies of a type requested twice that
+   *   never run, because walt.id keeps the last non-empty list.
    */
   code:
+    | 'no-request-credentials'
     | 'vc-policy-arguments'
     | 'vp-policy-arguments'
+    | 'credential-policy-arguments'
+    | 'no-vc-signature'
+    | 'no-vp-signature'
+    | 'no-minimum-credentials'
+    | 'wildcard-allow'
     | 'holder-binding'
     | 'presentation-definition-vc-jwt'
     | 'no-issuer-trust'
+    | 'credential-policies-replaced'
   /** `true` for setups that cannot work: these throw whatever the lint mode. */
   fatal: boolean
   /** Where it was found: `'asset'`, or `'service <id or name>'`. */
@@ -68,15 +101,24 @@ export interface SsiPolicyFinding {
   message: string
 }
 
+/** At most this many findings are spelled out in an `SsiPolicyError` message. */
+const MAX_LISTED_FINDINGS = 20
+
 /** Raised by `AssetBuilder.build()` for SSI policies that cannot work, or for any finding under `ssiPolicyLint: 'error'`. */
 export class SsiPolicyError extends Error {
+  /** Every finding, the fatal ones first (under `'off'`, the fatal ones only). */
   readonly findings: SsiPolicyFinding[]
 
   constructor(findings: SsiPolicyFinding[]) {
+    const listed = findings
+      .slice(0, MAX_LISTED_FINDINGS)
+      .map((finding) => `- ${finding.message}`)
+    const more = findings.length - listed.length
+
     super(
       findings.length === 1
         ? findings[0].message
-        : `The asset's SSI policies have ${findings.length} problems:\n${findings.map((finding) => `- ${finding.message}`).join('\n')}`
+        : `The asset's SSI policies have ${findings.length} problems:\n${listed.join('\n')}${more ? `\n… and ${more} more (see SsiPolicyError.findings).` : ''}`
     )
     this.name = 'SsiPolicyError'
     this.findings = findings
@@ -85,7 +127,7 @@ export class SsiPolicyError extends Error {
 
 /** One place an `SSIpolicy` block can sit. */
 export interface SsiPolicyScope {
-  /** `'asset'`, or `'service <id or name>'`. */
+  /** `'asset'`, or `'service <id or name>'`, already safe to quote. */
   where: string
   credentials: DdoCredentials | undefined
 }
@@ -99,28 +141,46 @@ const VC_POLICIES_NEEDING_ARGS = new Set([
   'credential-status'
 ])
 
-/** VP policies walt.id reads arguments of without a null check. */
-const VP_POLICIES_NEEDING_ARGS = new Set([
+/** VP policies walt.id reads an integer argument of, without a check. */
+const VP_INTEGER_POLICIES = new Set([
   'minimum-credentials',
-  'maximum-credentials',
-  'vp_required_credentials'
+  'maximum-credentials'
 ])
 
 /** Request formats whose generated presentation definition filters on `$.vc.type`. */
 const VC_TYPE_FILTER_FORMATS = new Set(['jwt_vc_json', 'jwt_vc'])
 
-const WARNING_EVENTS: Record<string, LogEventName> = {
-  'holder-binding': 'identity.policy.holder_binding',
-  'presentation-definition-vc-jwt':
-    'identity.policy.presentation_definition_vc_jwt',
-  'no-issuer-trust': 'identity.policy.no_issuer_trust'
+const WARNING_EVENTS: Partial<Record<SsiPolicyFinding['code'], LogEventName>> =
+  {
+    'no-vc-signature': 'identity.policy.no_vc_signature',
+    'no-vp-signature': 'identity.policy.no_vp_signature',
+    'no-minimum-credentials': 'identity.policy.no_minimum_credentials',
+    'wildcard-allow': 'identity.policy.wildcard_allow',
+    'holder-binding': 'identity.policy.holder_binding',
+    'presentation-definition-vc-jwt':
+      'identity.policy.presentation_definition_vc_jwt',
+    'no-issuer-trust': 'identity.policy.no_issuer_trust',
+    'credential-policies-replaced':
+      'identity.policy.credential_policies_replaced'
+  }
+
+/** The policy server's environment may add policies nautilus cannot see (D4). */
+const OPERATOR_NOTE =
+  "The policy server may add it from its operator's DEFAULT_VC_POLICIES / DEFAULT_VP_POLICIES, which nautilus cannot read; set it on the asset so the check holds whatever the operator set."
+
+/** A request credential with the place it sits and its policies as the policy server parses them. */
+interface PlacedRequest {
+  where: string
+  credential: StoredRequestCredential
+  policies: unknown[]
 }
 
 /**
  * Every finding for an asset-level block and its services' blocks. The policy server merges
- * the asset's `allow` list with the accessed service's, so a block counts only when the
- * merged view requests a credential, and `presentation-definition` is checked against the
- * merged request credentials. Each finding is reported once, where its policy sits.
+ * the asset's `allow` list with the accessed service's, so most checks run on each service's
+ * merged view; a block counts as a gate only when that view requests a credential. Each
+ * finding is reported once, where its policy sits (or, for a missing one, where the
+ * service's policies sit).
  */
 export function lintSsiPolicies(
   asset: SsiPolicyScope,
@@ -139,46 +199,56 @@ export function lintSsiPolicies(
 
   const assetValues = ssiValues(asset.credentials)
   const scopes = services.length ? services : [{ where: '', credentials: {} }]
+  const refused: { where: string; services: string[] }[] = []
 
   for (const service of scopes) {
     const serviceValues = ssiValues(service.credentials)
     const merged = [...assetValues, ...serviceValues]
-    if (!merged.some((value) => requestCredentials(value).length)) continue
+    const serviceHasPolicy = ssiEntries(service.credentials).length > 0
+    const policyWhere = serviceHasPolicy ? service.where : asset.where
+
+    if (!policyServerGates(asset.credentials, service.credentials)) {
+      if (
+        service.where &&
+        (ssiEntries(asset.credentials).length || serviceHasPolicy)
+      ) {
+        if (ssiEntries(asset.credentials).length)
+          addRefused(refused, asset.where, service.where)
+        if (serviceHasPolicy) addRefused(refused, service.where, service.where)
+      }
+      continue
+    }
 
     lintValues(asset.where, assetValues, add)
     if (service.where) lintValues(service.where, serviceValues, add)
 
-    const pdWhere = assetValues.some((value) =>
-      vpPolicyNames(value).includes('presentation-definition')
+    lintPresentationDefinition(asset, service, assetValues, merged, add)
+    lintRequestedTypes(
+      asset.where,
+      assetValues,
+      service.where,
+      serviceValues,
+      add
     )
-      ? asset.where
-      : service.where
-    if (
-      merged.some((value) =>
-        vpPolicyNames(value).includes('presentation-definition')
-      )
-    )
-      for (const credential of merged.flatMap(requestCredentials))
-        if (
-          typeof credential.format === 'string' &&
-          VC_TYPE_FILTER_FORMATS.has(credential.format)
-        )
-          add({
-            code: 'presentation-definition-vc-jwt',
-            fatal: false,
-            where: pdWhere,
-            policy: 'presentation-definition',
-            credentialType: credential.type,
-            message: `The ${pdWhere} VP policy 'presentation-definition' will refuse VCDM 2.0 '${shown(credential.type)}' credentials (${credential.format}): walt.id's generated definition looks for the type at $.vc.type, which vc+jwt credentials such as Gaia-X ones do not have, so every such consumer is refused. Leave it out unless every accepted credential is VCDM 1.1.`
-          })
+    lintSafeSet(policyWhere, merged, add)
+    lintWildcard(asset, service, add)
   }
+
+  for (const { where, services: names } of refused)
+    add({
+      code: 'no-request-credentials',
+      fatal: true,
+      where,
+      policy: 'SSIpolicy',
+      message: `The ${where} has an SSIpolicy entry, but ${names.length === 1 ? `${names[0]} requests` : `${names.join(', ')} request`} no credential: the policy server merges the asset's SSIpolicy entries with the accessed service's and refuses every consumer of a service that holds one without a request credential ("SSIpolicy was found, but failed to fetch request credentials"). Put the VC and VP policies on the gated service only (ServiceBuilder.setVcPolicies / setVpPolicies, next to its addRequestCredentials), or add request credentials.`
+    })
 
   return [...findings.values()]
 }
 
 /**
- * Throws an `SsiPolicyError` for the fatal findings in every mode, and for all of them under
- * `'error'`; logs the others under `'warn'`.
+ * Throws an `SsiPolicyError` when a finding is fatal (every mode), or for any finding under
+ * `'error'`; otherwise logs each finding under `'warn'`.
  */
 export function applySsiPolicyLint(
   findings: SsiPolicyFinding[],
@@ -186,18 +256,33 @@ export function applySsiPolicyLint(
   logger: Logger = log
 ): void {
   const fatal = findings.filter((finding) => finding.fatal)
-  if (fatal.length) throw new SsiPolicyError(fatal)
+  const warnings = findings.filter((finding) => !finding.fatal)
 
-  if (mode === 'off' || !findings.length) return
-  if (mode === 'error') throw new SsiPolicyError(findings)
+  if (fatal.length || (mode === 'error' && warnings.length))
+    throw new SsiPolicyError(mode === 'off' ? fatal : [...fatal, ...warnings])
 
-  for (const finding of findings)
-    logger.emit(WARNING_EVENTS[finding.code], finding.message, {
-      where: finding.where,
-      ...(finding.credentialType !== undefined
-        ? { credentialType: finding.credentialType }
-        : {})
-    })
+  if (mode === 'off') return
+
+  for (const finding of warnings) {
+    const event = WARNING_EVENTS[finding.code]
+    if (event)
+      logger.emit(event, finding.message, {
+        where: finding.where,
+        ...(finding.credentialType !== undefined
+          ? { credentialType: finding.credentialType }
+          : {})
+      })
+  }
+}
+
+function addRefused(
+  refused: { where: string; services: string[] }[],
+  where: string,
+  service: string
+): void {
+  const entry = refused.find((candidate) => candidate.where === where)
+  if (entry) entry.services.push(service)
+  else refused.push({ where, services: [service] })
 }
 
 /** Checks one block's own policies (see `lintSsiPolicies`). */
@@ -211,26 +296,30 @@ function lintValues(
       const { name, hasArgs } = readPolicy(raw)
       if (!name || !(hasArgs || VC_POLICIES_NEEDING_ARGS.has(name))) continue
 
+      const perCredential = VC_POLICIES_NEEDING_ARGS.has(name)
       add({
         code: 'vc-policy-arguments',
         fatal: true,
         where,
         policy: name,
-        message: `The ${where} VC policy '${shown(name)}' ${hasArgs ? 'has arguments' : 'needs arguments'}, and the policy server keeps only the name of an asset- or service-level VC policy: ${VC_POLICIES_NEEDING_ARGS.has(name) ? 'walt.id would fail it for every presentation, refusing every consumer' : 'walt.id would run it without them, a different check'}. Put it on the credential instead: addRequestCredentials(list, [{ type, format, policies: [{ policy: '${shown(name)}', args }] }]).`
+        message: perCredential
+          ? `The ${where} VC policy '${shown(name)}' ${hasArgs ? 'has arguments' : 'needs arguments'}, and the policy server keeps only the name of an asset- or service-level VC policy: walt.id would fail it for every presentation, refusing every consumer. Put it on the credential instead: addRequestCredentials(list, [{ type, format, policies: [{ policy: '${shown(name)}', args }] }]).`
+          : `The ${where} VC policy '${shown(name)}' has arguments, and the policy server keeps only the name of an asset- or service-level VC policy: walt.id would run it without them, a different check from the one written. Drop the arguments and keep '${shown(name)}' in the VC policies, where it runs on every presented credential.`
       })
     }
 
     for (const raw of toArray(value.vp_policies)) {
-      const { name, hasArgs } = readPolicy(raw)
+      const { name, args, hasArgs } = readPolicy(raw)
       if (!name) continue
 
-      if (VP_POLICIES_NEEDING_ARGS.has(name) && !hasArgs)
+      const problem = vpArgumentProblem(name, parseArgs(args), hasArgs)
+      if (problem)
         add({
           code: 'vp-policy-arguments',
           fatal: true,
           where,
           policy: name,
-          message: `The ${where} VP policy '${name}' needs its argument, e.g. { policy: '${name}', args: '1' }: without it walt.id fails it for every presentation, refusing every consumer.`
+          message: `The ${where} VP policy '${shown(name)}' ${problem}: walt.id fails it for every presentation, refusing every consumer. Write it as ${vpArgumentExample(name)}.`
         })
 
       if (name === 'holder-binding')
@@ -242,35 +331,308 @@ function lintValues(
           message: `The ${where} VP policy 'holder-binding' requires every presented credential's JWT 'sub' to be the presenter's DID. Credentials without 'sub', such as Gaia-X and other VCDM 2.0 vc+jwt credentials with a URL subject, cannot satisfy it: walt.id refuses them all. Leave it out unless every accepted credential is issued to the holder's DID.`
         })
     }
+  }
+}
 
-    for (const credential of requestCredentials(value))
+/** `presentation-definition` against the merged view's `jwt_vc_json` / `jwt_vc` requests. */
+function lintPresentationDefinition(
+  asset: SsiPolicyScope,
+  service: SsiPolicyScope,
+  assetValues: SsiPolicyValue[],
+  merged: SsiPolicyValue[],
+  add: (finding: SsiPolicyFinding) => void
+): void {
+  const hasPd = (values: SsiPolicyValue[]) =>
+    values.some((value) =>
+      vpPolicies(value).some(({ name }) => name === 'presentation-definition')
+    )
+  if (!hasPd(merged)) return
+
+  const where = hasPd(assetValues) ? asset.where : service.where
+  for (const credential of merged.flatMap(requestCredentials))
+    if (
+      typeof credential.format === 'string' &&
+      VC_TYPE_FILTER_FORMATS.has(credential.format)
+    )
+      add({
+        code: 'presentation-definition-vc-jwt',
+        fatal: false,
+        where,
+        policy: 'presentation-definition',
+        credentialType: credential.type,
+        message: `The ${where} VP policy 'presentation-definition' will refuse VCDM 2.0 '${shown(credential.type)}' credentials (${shown(credential.format)}): walt.id's generated definition looks for the type at $.vc.type, which vc+jwt credentials such as Gaia-X ones do not have, so every such consumer is refused. Leave it out unless every accepted credential is VCDM 1.1.`
+      })
+}
+
+/**
+ * Per requested type, the per-credential policies walt.id runs: request credentials with no
+ * policies are dropped, and of the others the last for a type wins
+ * (`VerifierService.kt:104-108`), in the policy server's order (asset, then service).
+ */
+function lintRequestedTypes(
+  assetWhere: string,
+  assetValues: SsiPolicyValue[],
+  serviceWhere: string,
+  serviceValues: SsiPolicyValue[],
+  add: (finding: SsiPolicyFinding) => void
+): void {
+  const requests: PlacedRequest[] = [
+    ...placed(assetWhere, assetValues),
+    ...placed(serviceWhere, serviceValues)
+  ]
+
+  for (const type of new Set(
+    requests.map(({ credential }) => credential.type)
+  )) {
+    const ofType = requests.filter(({ credential }) => credential.type === type)
+    const withPolicies = ofType.filter(({ policies }) => policies.length)
+    const effective = withPolicies.at(-1)
+    const where = (effective ?? ofType[ofType.length - 1]).where
+
+    for (const earlier of withPolicies.slice(0, -1))
       if (
-        !toArray(credential.policies).some(
-          (policy) => readCredentialPolicyName(policy) === 'allowed-issuer'
-        )
+        JSON.stringify(earlier.policies) !== JSON.stringify(effective?.policies)
       )
         add({
-          code: 'no-issuer-trust',
+          code: 'credential-policies-replaced',
           fatal: false,
-          where,
-          policy: 'allowed-issuer',
-          credentialType: credential.type,
-          message: `The ${where} request for '${shown(credential.type)}' credentials has no per-credential 'allowed-issuer', so a '${shown(credential.type)}' credential from any issuer, a self-issued one included, is accepted. Add { policy: 'allowed-issuer', args: ['did:…'] } to its policies.`
+          where: earlier.where,
+          policy: policyNames(earlier.policies).join(', ') || 'policies',
+          credentialType: type,
+          message: `The ${earlier.where} request for '${shown(type)}' credentials carries per-credential policies (${policyNames(earlier.policies).map(shown).join(', ')}) that never run: '${shown(type)}' is also requested at ${effective?.where} with other policies, and walt.id keeps only the last non-empty policy list per requested type. Put all of the type's policies on one request.`
         })
+
+    const issuers = (effective?.policies ?? []).filter(
+      (policy) => readPolicy(policy).name === 'allowed-issuer'
+    )
+    if (!issuers.length) {
+      add({
+        code: 'no-issuer-trust',
+        fatal: false,
+        where,
+        policy: 'allowed-issuer',
+        credentialType: type,
+        message: `The ${where} request for '${shown(type)}' credentials has no per-credential 'allowed-issuer' that runs, so a '${shown(type)}' credential from any issuer, a self-issued one included, is accepted. Add { policy: 'allowed-issuer', args: ['did:…'] } to its policies.`
+      })
+      continue
+    }
+
+    if (!issuers.some((policy) => admitsAnIssuer(readPolicy(policy).args)))
+      add({
+        code: 'credential-policy-arguments',
+        fatal: true,
+        where,
+        policy: 'allowed-issuer',
+        credentialType: type,
+        message: `The ${where} per-credential 'allowed-issuer' for '${shown(type)}' credentials names no issuer (it needs a DID or a list of DIDs; '*' is not a wildcard in walt.id), so walt.id refuses every '${shown(type)}' credential and every consumer. Write it as { policy: 'allowed-issuer', args: ['did:…'] }.`
+      })
   }
+}
+
+/** D4's safe set on the merged view: VC and VP `signature`, `minimum-credentials` ≥ 1. */
+function lintSafeSet(
+  where: string,
+  merged: SsiPolicyValue[],
+  add: (finding: SsiPolicyFinding) => void
+): void {
+  const vcNames = merged.flatMap((value) =>
+    toArray(value.vc_policies).flatMap((raw) => readPolicy(raw).name ?? [])
+  )
+  const vp = merged.flatMap(vpPolicies)
+
+  if (!vcNames.includes('signature'))
+    add({
+      code: 'no-vc-signature',
+      fatal: false,
+      where,
+      policy: 'signature',
+      message: `The ${where} VC policies have no 'signature', so nothing is sure to check the presented credentials' signatures: a credential that names a trusted issuer but is signed by anyone passes 'allowed-issuer'. ${OPERATOR_NOTE} Use setVcPolicies(list, ['signature', 'not-before', 'revoked-status-list']).`
+    })
+
+  if (!vp.some(({ name }) => name === 'signature'))
+    add({
+      code: 'no-vp-signature',
+      fatal: false,
+      where,
+      policy: 'signature',
+      message: `The ${where} VP policies have no 'signature', so nothing is sure to check the presentation's own signature: a presentation can name any DID. ${OPERATOR_NOTE} Add { policy: 'signature' } to setVpPolicies.`
+    })
+
+  const minimums = vp.filter(({ name }) => name === 'minimum-credentials')
+  const atLeastOne = minimums.some(({ args }) => {
+    const n = readInteger(parseArgs(args))
+    return n !== undefined && n >= 1
+  })
+  // A minimum whose arguments walt.id cannot read is already fatal.
+  const unreadable = minimums.some(
+    ({ args, hasArgs }) =>
+      !hasArgs || readInteger(parseArgs(args)) === undefined
+  )
+  if (!atLeastOne && !unreadable)
+    add({
+      code: 'no-minimum-credentials',
+      fatal: false,
+      where,
+      policy: 'minimum-credentials',
+      message: `The ${where} VP policies have no 'minimum-credentials' of at least 1, so a presentation holding no credential at all passes the credential check. Add { policy: 'minimum-credentials', args: '1' } to setVpPolicies.`
+    })
+}
+
+/**
+ * `'*'` in the address allow list of a credential-gated service, read as the policy server
+ * reads it (`waltIdPolicyHandler.ts:985-1005`): the asset's list holds `'*'`, and the service
+ * has no address entry or its list holds `'*'` too.
+ */
+function lintWildcard(
+  asset: SsiPolicyScope,
+  service: SsiPolicyScope,
+  add: (finding: SsiPolicyFinding) => void
+): void {
+  const serviceDefines = hasAddressEntry(service.credentials)
+  if (!addressList(asset.credentials).includes('*')) return
+  if (serviceDefines && !addressList(service.credentials).includes('*')) return
+
+  const where = serviceDefines ? service.where : asset.where
+  add({
+    code: 'wildcard-allow',
+    fatal: false,
+    where,
+    policy: 'address',
+    message: `The ${where} address allow list holds '*' on a credential-gated service, so the address check lets everyone in and the credential check is the only gate. A hand-built presentation with a self-issued credential of another type passes that check (the type bypass, see the identity guide's known limitation), so the asset is open to anyone. List the allowed addresses explicitly.`
+  })
+}
+
+/** Whether walt.id's `allowed-issuer` with these arguments can accept any issuer. */
+function admitsAnIssuer(args: unknown): boolean {
+  const issuers =
+    typeof args === 'string' ? [args] : Array.isArray(args) ? args : []
+  return issuers.some(
+    (issuer) =>
+      typeof issuer === 'string' && issuer.trim() !== '' && issuer !== '*'
+  )
+}
+
+/** Why walt.id cannot read a VP policy's arguments, or `undefined` when it can. */
+function vpArgumentProblem(
+  name: string,
+  args: unknown,
+  hasArgs: boolean
+): string | undefined {
+  if (VP_INTEGER_POLICIES.has(name)) {
+    if (!hasArgs) return 'needs its argument'
+    if (readInteger(args) === undefined)
+      return 'needs an integer argument, and walt.id cannot read this one as one'
+    return undefined
+  }
+
+  if (name === 'vp_required_credentials') {
+    if (!hasArgs) return 'needs its argument'
+    const required = isPlainObject(args) ? args.required : undefined
+    if (!Array.isArray(required))
+      return 'needs an argument of the form { required: [...] }, and this one is not'
+    const readable = required.every(
+      (entry) =>
+        isPlainObject(entry) &&
+        ((typeof entry.credential_type === 'string' &&
+          entry.credential_type.trim() !== '') ||
+          (entry.credential_type === undefined &&
+            Array.isArray(entry.any_of) &&
+            entry.any_of.every((type) => typeof type === 'string')))
+    )
+    if (!readable)
+      return "needs each entry of 'required' to be { credential_type: '<type>' } or { any_of: ['<type>', …] }, and this one has another"
+  }
+
+  return undefined
+}
+
+function vpArgumentExample(name: string): string {
+  return name === 'vp_required_credentials'
+    ? `{ policy: 'vp_required_credentials', args: JSON.stringify({ required: [{ credential_type: '<type>' }] }) }`
+    : `{ policy: '${shown(name)}', args: '1' }`
+}
+
+/** An integer as walt.id's `JsonPrimitive.int` reads it, or `undefined`. */
+function readInteger(args: unknown): number | undefined {
+  const n =
+    typeof args === 'number'
+      ? args
+      : typeof args === 'string' && /^[+-]?\d+$/.test(args)
+        ? Number(args)
+        : Number.NaN
+  return Number.isInteger(n) && n >= -(2 ** 31) && n < 2 ** 31 ? n : undefined
+}
+
+/** A VP policy's arguments as the policy server forwards them (`parseArgs`). */
+function parseArgs(args: unknown): unknown {
+  if (typeof args !== 'string') return args
+  try {
+    return JSON.parse(args)
+  } catch {
+    return args
+  }
+}
+
+/**
+ * Whether the policy server opens a verifier session for a service (its
+ * `hasSSIPolicyToBeChecked`): some `SSIpolicy` value of the asset or the service has a
+ * non-empty `request_credentials` array.
+ */
+function policyServerGates(
+  asset: DdoCredentials | undefined,
+  service: DdoCredentials | undefined
+): boolean {
+  return [...ssiEntries(asset), ...ssiEntries(service)].some(
+    (entry) =>
+      Array.isArray(entry.values) &&
+      entry.values.some(
+        (value) =>
+          Array.isArray(
+            (value as SsiPolicyValue | null)?.request_credentials
+          ) && (value as SsiPolicyValue).request_credentials.length > 0
+      )
+  )
+}
+
+/** The `SSIpolicy` entries of a block's `allow` list. */
+function ssiEntries(
+  credentials: DdoCredentials | undefined
+): { type: 'SSIpolicy'; values: unknown }[] {
+  return toArray(credentials?.allow).filter(
+    (entry): entry is { type: 'SSIpolicy'; values: unknown } =>
+      isSsiPolicyCredential(entry as never)
+  )
 }
 
 /** The `SSIpolicy` values of a block's `allow` list. */
 function ssiValues(credentials: DdoCredentials | undefined): SsiPolicyValue[] {
-  return toArray(credentials?.allow)
-    .filter((entry): entry is { type: 'SSIpolicy'; values: unknown } =>
-      isSsiPolicyCredential(entry as never)
-    )
+  return ssiEntries(credentials)
     .flatMap((entry) => toArray(entry.values))
-    .filter(
-      (value): value is SsiPolicyValue =>
-        typeof value === 'object' && value !== null && !Array.isArray(value)
-    )
+    .filter((value): value is SsiPolicyValue => isPlainObject(value))
+}
+
+/** The block's address allow list, as the policy server extracts it. */
+function addressList(credentials: DdoCredentials | undefined): string[] {
+  return toArray(credentials?.allow).flatMap((entry) => {
+    const { type, values } = (entry ?? {}) as {
+      type?: unknown
+      values?: unknown
+    }
+    if (type !== 'address' || !Array.isArray(values)) return []
+    return values.flatMap((value: unknown) => {
+      const address =
+        typeof value === 'string'
+          ? value
+          : (value as { address?: unknown } | null)?.address
+      return typeof address === 'string' ? [address.toLowerCase()] : []
+    })
+  })
+}
+
+function hasAddressEntry(credentials: DdoCredentials | undefined): boolean {
+  return toArray(credentials?.allow).some(
+    (entry) => (entry as { type?: unknown } | null)?.type === 'address'
+  )
 }
 
 function requestCredentials(value: SsiPolicyValue): StoredRequestCredential[] {
@@ -280,35 +642,60 @@ function requestCredentials(value: SsiPolicyValue): StoredRequestCredential[] {
   )
 }
 
-function vpPolicyNames(value: SsiPolicyValue): string[] {
+function placed(where: string, values: SsiPolicyValue[]): PlacedRequest[] {
+  return values.flatMap(requestCredentials).map((credential) => ({
+    where,
+    credential,
+    policies: toArray(credential.policies).flatMap(parseCredentialPolicy)
+  }))
+}
+
+/**
+ * A per-credential policy as the policy server parses it (`parsePolicies`): an object as it
+ * is, a string JSON-parsed, an unparseable string dropped.
+ */
+function parseCredentialPolicy(raw: unknown): unknown[] {
+  if (raw && typeof raw === 'object') return [raw]
+  if (typeof raw !== 'string') return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return parsed === undefined || parsed === null ? [] : [parsed]
+  } catch {
+    return []
+  }
+}
+
+function policyNames(policies: unknown[]): string[] {
+  return policies.flatMap((policy) => readPolicy(policy).name ?? [])
+}
+
+function vpPolicies(
+  value: SsiPolicyValue
+): { name: string; args?: unknown; hasArgs: boolean }[] {
   return toArray(value.vp_policies).flatMap((raw) => {
-    const { name } = readPolicy(raw)
-    return name ? [name] : []
+    const policy = readPolicy(raw)
+    return policy.name ? [{ ...policy, name: policy.name }] : []
   })
 }
 
 /** A policy as a name or `{ policy, args? }`, the way the policy server reads it. */
-function readPolicy(raw: unknown): { name?: string; hasArgs: boolean } {
+function readPolicy(raw: unknown): {
+  name?: string
+  args?: unknown
+  hasArgs: boolean
+} {
   if (typeof raw === 'string') return { name: raw, hasArgs: false }
 
   const { policy, args } = (raw ?? {}) as { policy?: unknown; args?: unknown }
   return {
     name: typeof policy === 'string' ? policy : undefined,
+    args,
     hasArgs: args !== undefined && args !== null && args !== ''
   }
 }
 
-/** A per-credential policy's name: stored JSON-encoded, or as the builder takes it. */
-function readCredentialPolicyName(raw: unknown): string | undefined {
-  let policy = raw
-  if (typeof raw === 'string')
-    try {
-      policy = JSON.parse(raw)
-    } catch {
-      return raw
-    }
-
-  return readPolicy(policy).name
+function isPlainObject(raw: unknown): raw is Record<string, unknown> {
+  return typeof raw === 'object' && raw !== null && !Array.isArray(raw)
 }
 
 function toArray(raw: unknown): unknown[] {
@@ -316,7 +703,7 @@ function toArray(raw: unknown): unknown[] {
   return raw === undefined || raw === null ? [] : [raw]
 }
 
-/** A publisher-supplied name, made safe to quote. */
+/** A publisher- or node-supplied name, made safe to quote; the raw form goes to the debug channel. */
 function shown(text: string): string {
-  return sanitize(text, 100, null)
+  return sanitize(String(text), 100, 'node')
 }

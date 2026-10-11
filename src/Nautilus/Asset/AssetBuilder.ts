@@ -1,4 +1,4 @@
-import type { AssetV5 } from '@oceanprotocol/ddo-js'
+import type { AssetV5, ServiceV5 } from '@oceanprotocol/ddo-js'
 import type {
   AssetState,
   IAssetBuilder,
@@ -13,6 +13,7 @@ import {
 } from '../../ddo/read.js'
 import type {
   CredentialListTypes,
+  DdoCredentials,
   License,
   MatchRule,
   RemoteObject,
@@ -24,6 +25,7 @@ import {
   addCredentialAccessList,
   addCredentialAddresses,
   addRequestCredentials,
+  normalizeStoredCredentials,
   removeCredentialAddresses,
   setVcPolicies,
   setVpPolicies
@@ -34,6 +36,7 @@ import {
   type SsiPolicyLintMode,
   type SsiPolicyScope
 } from '../../identity/policyLint.js'
+import { sanitize } from '../../node/messages.js'
 import { NautilusAsset } from './NautilusAsset.js'
 import { NautilusDDO } from './NautilusDDO.js'
 import type {
@@ -453,17 +456,35 @@ export class AssetBuilder implements IAssetBuilder {
 
     return [
       ...services.map((service, index) => ({
-        where: `service ${service.id || service.name || `#${index + 1}`}`,
+        where: serviceWhere(service.id || service.name || `#${index + 1}`),
         credentials: service.credentials
       })),
       ...this.asset.ddo
         .getBaselineServices()
         .filter((service) => !replaced.has(service.id))
         .map((service) => ({
-          where: `service ${service.id}`,
-          credentials: getServiceCredentials(service)
+          where: serviceWhere(service.id),
+          credentials: storedServiceCredentials(service)
         }))
     ]
+  }
+}
+
+/** A service id or name, which on an edit comes from the node, made safe to quote. */
+function serviceWhere(name: string): string {
+  return `service ${sanitize(String(name), 100, 'node')}`
+}
+
+/**
+ * A kept service's credentials in the form the edit writes (`mergeServices` normalises them),
+ * or as stored when they cannot be read: the publish then refuses them with its own error.
+ */
+function storedServiceCredentials(service: ServiceV5): DdoCredentials {
+  const credentials = getServiceCredentials(service)
+  try {
+    return normalizeStoredCredentials(credentials)
+  } catch {
+    return credentials
   }
 }
 
