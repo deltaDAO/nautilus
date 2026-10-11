@@ -19,7 +19,14 @@ const { ddo } = await nautilus.edit(edited) // [!code focus]
 ```
 
 The builder must be constructed **from a resolved asset** — that is what supplies the
-baseline to merge over. Passing a freshly built asset throws.
+baseline to merge over. Passing a freshly built asset throws. Such a builder refuses what an
+edit cannot change (`setType()`, the NFT setters, the datatoken setters of a loaded service);
+see [What an edit cannot change](/docs/guides/edit#what-an-edit-cannot-change).
+
+The datatoken of each new service goes to the **NFT's owner as the chain reports it**, not to
+the owner the resolved DDO names (the node's last metadata writer), also when a manager-role
+account signs; [`setOwner()`](/docs/api/assetbuilder/setOwner) may name only the signer or
+that owner.
 
 :::info
 The merge is structural, not top-level. Setting one field leaves every other field of the
@@ -95,7 +102,9 @@ Same as [`publish`](/docs/api/nautilus/publish#options-optional).
 
 - **Before any transaction:** an asset not built from a resolved DDO, `encrypt: false`, a
   `DEPRECATED` or `REVOKED_BY_PUBLISHER` state (requested or on chain), a missing
-  `updateMetadata` or `deployERC20` permission, a missing or
+  `updateMetadata` or `deployERC20` permission, an NFT owner the chain does not answer
+  for, an owner named with `setOwner()` that is neither the signer nor the NFT's owner on
+  chain, a missing or
   unsupported remote store, an invalid DDO, a DDO too large for the node to decrypt, an
   unreachable service endpoint or file, a failing store `check()`, or an
   `IndexerNonceStuckError` (see [`checkIndexerNonce`](/docs/api/nautilus/publish#checkindexernonce)).

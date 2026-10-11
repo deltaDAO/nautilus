@@ -4,6 +4,10 @@ Name the datatoken minted for this service.
 
 Defaults to a generated name. Worth setting when an asset has several services, so they are distinguishable on chain.
 
+:::warning[New services only]
+A published service's datatoken exists already, and an edit does not change it. On a `ServiceBuilder` loaded with a published service (`{ asset, serviceId }`), `setDatatokenNameAndSymbol()` throws (earlier releases ignored it there, silently). It stays valid on a new service, including one an edit adds to a published asset: `edit()` creates that service's datatoken with these parameters.
+:::
+
 ## Usage
 
 ```ts twoslash

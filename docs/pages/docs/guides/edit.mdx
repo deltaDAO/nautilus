@@ -48,6 +48,10 @@ signature the node attaches to every indexed DDO, and `accessDetails`, `views` a
 `offchain` are decorations some clients attach to a resolved asset. All of them are removed before the document is signed, so a republish cannot bake in a
 stale snapshot. You do not have to remember to delete them.
 
+So are the JWT claims the previous signer added to the credential (`iss`, `sub`, `jti` and
+the other registered claims): the edit's signature writes its own, so an edit signed by
+another identity does not carry the previous signer's `iss`.
+
 ## Editing metadata
 
 ```ts twoslash
@@ -170,6 +174,73 @@ const withExtra = new AssetBuilder(published)
 
 Only services carrying a **new pricing config** get a new datatoken. That is why
 `setPricing` is required on a genuinely new service and blocked on a loaded one.
+
+## What an edit cannot change
+
+An `AssetBuilder` constructed from a resolved asset is an **edit builder**, and a
+`ServiceBuilder` constructed with `{ asset, serviceId }` edits a published service. They
+refuse, with an error, the setters an edit cannot apply. Earlier releases accepted them and
+ignored them silently:
+
+| Setter | On an edit | Why |
+|---|---|---|
+| `setType()` | throws | A published asset keeps its type; its services were built for it. Publish a new asset to change it. |
+| `setNftData()`, `setNftTokenName()`, `setNftTokenSymbol()`, `setNftTokenUri()`, `setNftTokenTransferable()`, `setNftTokenTemplate()` | throw | The NFT exists already, and an edit does not change it. |
+| `setDatatokenData()`, `setDatatokenNameAndSymbol()` on a loaded service | throw | The service's datatoken exists already. |
+| `setPricing()` on a loaded service | throws | A new datatoken would change the service id; use [`setServicePrice()`](#changing-a-price). |
+
+The datatoken setters stay valid on a **new** service that an edit adds: `edit()` creates its
+datatoken with them.
+
+### Who gets the new datatokens
+
+A new service added by an edit gets a new datatoken. Its minter and payment collector (who
+can mint it freely, and who collects its revenue) is the **NFT's owner as the chain reports
+it** (`ownerOf`), also when a manager-role account signs the edit.
+
+The owner named in the resolved DDO is never used. ocean-node reports there the account that
+wrote the metadata last, not the NFT's owner: after a manager's edit it names the manager,
+after an NFT transfer it still names the old owner until the next edit, and a malicious node
+can name anyone. [`setOwner()`](/docs/api/assetbuilder/setOwner) may name only the signer or
+the on-chain owner; any other address makes `edit()` throw before any transaction. Naming
+the signer when it is not the owner logs a visible warning (`edit.owner.not_nft_owner`): the
+revenue then goes to the signer.
+
+```ts twoslash
+import {
+  AssetBuilder,
+  FileTypes,
+  Nautilus,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+const published = await nautilus.getAsset('did:ope:2a6ebce0af...')
+const managerAddress = '0x0DB823218e337a6817e6D7740eb17635DEAdafAF'
+const extraService = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+  .setServiceEndpoint('https://ocean-node.dev.pontus-x.eu')
+  .addFile({ type: 'url', url: 'https://data.example/x.csv', method: 'GET' })
+  .setPricing({ type: 'free' })
+  .build()
+// ---cut---
+// Signed by a manager: the new datatoken goes to the NFT's owner on chain.
+const edit = new AssetBuilder(published).addService(extraService)
+
+// Or to the manager itself, with a warning. Any third address throws.
+edit.setOwner(managerAddress) // [!code focus]
+```
+
+### Who signs: the issuer
+
+The edit builder starts with the issuer of the published asset, and the edit must be signed
+by that identity. To re-issue the asset under another one — a manager-role account, or the
+new owner after an NFT transfer — call [`setIssuer()`](/docs/api/assetbuilder/setIssuer) with
+the identity that signs the edit. Otherwise signing throws `The DDO declares issuer "…" but
+it is being signed by "…"`. That check runs when the document is signed, after the datatokens
+of new services were created, so set the issuer before calling `edit()`.
 
 ## Changing a price
 

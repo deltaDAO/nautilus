@@ -9,6 +9,10 @@ determines how the NFT behaves on chain and cannot be changed after creation.
 
 The default template is `1`.
 
+:::warning[Publish only]
+An edit cannot change the NFT, which exists already. On an `AssetBuilder` constructed from a resolved asset (an edit builder), `setNftTokenTemplate()` throws. Earlier releases ignored it there, silently. See [What an edit cannot change](/docs/guides/edit#what-an-edit-cannot-change).
+:::
+
 ## Usage
 
 ```ts twoslash

@@ -3,6 +3,10 @@
 Set the type of the asset. This might affect what kind of other metadata is expected for the asset to be valid.
 See a usage example below for both supported cases: `'dataset'` and `'algorithm'`.
 
+:::warning[Publish only]
+A published asset keeps its type: changing it between `dataset` and `algorithm` is not supported, since its services were built for the type it has. On an `AssetBuilder` constructed from a resolved asset (an edit builder), `setType()` throws. Publish a new asset instead. See [What an edit cannot change](/docs/guides/edit#what-an-edit-cannot-change).
+:::
+
 ## Usage
 
 When defining `algorithm` type assets, additional metadata is necessary to be set. Feel free to toggle between the examples below or refer to the [`setAlgorithm() documentation`](/docs/api/assetbuilder/setAlgorithm) for further information.

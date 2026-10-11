@@ -312,6 +312,35 @@ try {
 A free service is still ordered, now with a warning. Only `true` opts in. `compute()` makes
 no such lookup and is unchanged. See [`OrderCheckError`](/docs/api/nautilus/access#ordercheckerror).
 
+### Editing: publish-only setters, and who owns new datatokens
+
+**An edit builder throws for the setters an edit cannot apply**, which it used to ignore
+silently: `setType()`, `setNftData()` and `setNftTokenName()`/`Symbol()`/`Uri()`/
+`Transferable()`/`Template()` on an `AssetBuilder` built from a resolved asset, and
+`setDatatokenData()`/`setDatatokenNameAndSymbol()` on a `ServiceBuilder` loaded with
+`{ asset, serviceId }`. Remove those calls from edit code. The datatoken setters stay valid
+on a new service an edit adds.
+
+**`edit()` gives the datatokens of new services to the NFT's owner on chain.** It used to
+take the owner from the resolved DDO, where ocean-node reports the account that wrote the
+metadata last: after a manager's edit, the owner's next edit adding a service made the
+manager its minter and payment collector. The edit builder no longer carries an owner
+(`build().owner` is `undefined` unless `setOwner()` was called), and `setOwner()` on an
+edit accepts only the signer or the on-chain owner; any other address throws before any
+transaction.
+
+```ts
+// beta.1: ignored on an edit, and the new datatoken went to the DDO's nft.owner
+new AssetBuilder(published).setNftTokenName('Renamed').addService(service).build()
+
+// now: setNftTokenName() throws on an edit; the datatoken goes to ownerOf() on chain
+new AssetBuilder(published).addService(service).build()
+```
+
+**An edit signed by another identity no longer fails at `iss`.** The previous signer's JWT
+claims (`iss`, `sub`, `jti`) are dropped from the edited document, so a manager or a new owner
+can re-issue the asset with `setIssuer()`. See [What an edit cannot change](/docs/guides/edit#what-an-edit-cannot-change).
+
 ## Upgrading from 2.0.0-beta.0
 
 2.0.0-beta.1 makes published and edited assets indexable by an unmodified

@@ -4,6 +4,10 @@ Set every NFT creation parameter at once.
 
 The individual setters — [`setNftTokenName`](/docs/api/assetbuilder/setNftTokenName) and friends — are usually easier; this replaces the whole object.
 
+:::warning[Publish only]
+An edit cannot change the NFT, which exists already. On an `AssetBuilder` constructed from a resolved asset (an edit builder), `setNftData()` throws. Earlier releases ignored it there, silently. See [What an edit cannot change](/docs/guides/edit#what-an-edit-cannot-change).
+:::
+
 ## Usage
 
 ```ts twoslash

@@ -4,6 +4,10 @@ Set every datatoken creation parameter at once.
 
 Most callers only need [`setDatatokenNameAndSymbol`](/docs/api/servicebuilder/setDatatokenNameAndSymbol). Reach for this to change the template, cap or market fees.
 
+:::warning[New services only]
+A published service's datatoken exists already, and an edit does not change it. On a `ServiceBuilder` loaded with a published service (`{ asset, serviceId }`), `setDatatokenData()` throws (earlier releases ignored it there, silently). It stays valid on a new service, including one an edit adds to a published asset: `edit()` creates that service's datatoken with these parameters.
+:::
+
 ## Usage
 
 ```ts twoslash

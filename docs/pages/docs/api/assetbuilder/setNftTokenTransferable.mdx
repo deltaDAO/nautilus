@@ -4,6 +4,10 @@ Enable/disable the ability to transfer the NFT token to another address.
 
 The default value of `transferable` is `false` if `setNftTokenTransferable` is not called.
 
+:::warning[Publish only]
+An edit cannot change the NFT, which exists already. On an `AssetBuilder` constructed from a resolved asset (an edit builder), `setNftTokenTransferable()` throws. Earlier releases ignored it there, silently. See [What an edit cannot change](/docs/guides/edit#what-an-edit-cannot-change).
+:::
+
 ## Usage
 
 ```ts twoslash

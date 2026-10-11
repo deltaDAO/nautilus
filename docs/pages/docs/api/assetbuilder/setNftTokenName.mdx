@@ -4,6 +4,10 @@ Set the name of the NFT.
 
 The default token name is `Nautilus Dataservice NFT`.
 
+:::warning[Publish only]
+An edit cannot change the NFT, which exists already. On an `AssetBuilder` constructed from a resolved asset (an edit builder), `setNftTokenName()` throws. Earlier releases ignored it there, silently. See [What an edit cannot change](/docs/guides/edit#what-an-edit-cannot-change).
+:::
+
 ## Usage
 
 ```ts twoslash
