@@ -32,7 +32,7 @@ import {
   it,
   vi
 } from 'vitest'
-import { Nautilus } from '../../src/index.js'
+import { type LogEvent, Nautilus } from '../../src/index.js'
 import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
 import {
   ASSET_DID,
@@ -434,6 +434,26 @@ describe('example commands', () => {
       /"vp_policies": \[\s*\{\s*"policy": "signature"\s*\},\s*\{\s*"policy": "minimum-credentials",\s*"args": "1"\s*\}\s*\]/
     )
     expect(out).not.toContain('holder-binding')
+  })
+
+  it('ssi:publish-holder-binding publishes and warns about holder-binding at build', async () => {
+    const events: LogEvent[] = []
+    Nautilus.configureLogging({ sink: (event) => events.push(event) })
+
+    try {
+      const out = await run('ssi:publish-holder-binding', 'gx:LegalPerson')
+
+      expect(out).toContain('"policy": "holder-binding"')
+      expect(out).toContain('npm start -- ssi:consume did:ope:')
+      expect(events.map((event) => event.event)).toContain(
+        'identity.policy.holder_binding'
+      )
+      expect(events.map((event) => event.event)).not.toContain(
+        'identity.policy.no_issuer_trust'
+      )
+    } finally {
+      Nautilus.configureLogging({ sink: undefined })
+    }
   })
 
   it('ssi:publish-gated refuses to publish without trusted issuers', async () => {

@@ -417,7 +417,8 @@ is one value — a policy-server session id — which it then carries into the d
 3. Optionally pin them with `SSI_WALLET_ID`, `SSI_WALLET_KEY_ID` and `SSI_WALLET_DID`.
 4. Set `SSI_TRUSTED_ISSUERS` to the DIDs of the issuers whose credentials your gates accept,
    comma-separated (e.g. `did:web:delta-dao.com`). The commands that publish a gate
-   (`ssi:publish-gated`, `ssi:publish-gated-compute`, `ssi:publish-partial`, `ssi:round-trip`)
+   (`ssi:publish-gated`, `ssi:publish-gated-compute`, `ssi:publish-partial`, `ssi:round-trip`,
+   `ssi:publish-holder-binding`, `ssi:holder-binding`)
    refuse to run without it, or with an entry that is not a DID (`did:<method>:<id>`).
 5. Run `npm start -- ssi:round-trip` to publish a gated dataset and consume it in one go.
    Against the local dev stack, also set `SSI_ALLOW_INSECURE_TRANSPORT=true`: its policy
@@ -468,6 +469,18 @@ set `identity.ts` uses, and why:
   The address allow list is the gate that holds, so list the allowed addresses explicitly; an
   allow list containing `'*'` leaves no gate at all.
 
+**nautilus checks the policies when it builds the asset.** `AssetBuilder.build()` warns
+(`identity.policy.*` events on stderr) about `holder-binding`, `presentation-definition` with
+`jwt_vc_json` and a requested credential without a per-credential `allowed-issuer`, and throws
+an `SsiPolicyError` for a VC policy with arguments at asset or service level or a bare
+`minimum-credentials`, which cannot work. `setSsiPolicyLint('error')` turns the warnings into
+errors. `npm start -- ssi:publish-holder-binding` publishes the gate above with
+`holder-binding` added, to show the warning; `npm start -- ssi:holder-binding` also consumes
+it, and with a credential without `sub` (a Gaia-X `vc+jwt`, a URL subject) the consumer is
+refused **before anything is presented** with a `CredentialRejectedLocallyError`
+(`policy: 'holder-binding'`, `reason: 'no-sub'`). Neither check stops a hand-built
+presentation of another type (the limitation above).
+
 Gating also works per service, so an asset can offer a preview that needs no credential
 (allow-listed accounts only) and a full service that also requires a credential — see
 `npm start -- ssi:publish-partial`.
@@ -482,6 +495,11 @@ does for an open asset. nautilus opens the policy-server session itself **before
 is placed, so a policy you cannot satisfy costs nothing. An asset gated by addresses only needs
 no wallet; configure a credential provider once for assets whose `SSIpolicy` asks for
 credentials.
+
+If the service requires `holder-binding` and your credential cannot pass it (no `sub`, or
+another DID's), the provider throws a `CredentialRejectedLocallyError` before presenting, with
+nothing ordered; the message says what to ask the publisher. Every other refusal comes from the
+verifier.
 
 Selection is headless by default — every matching credential, the wallet's first DID — so
 scripts work unattended. Pass `{ interactive: true }` to `createCredentialProvider` to see the

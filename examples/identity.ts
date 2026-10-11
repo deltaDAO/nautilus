@@ -3,6 +3,7 @@ import {
   type ComputeEnvironment,
   CredentialListTypes,
   type CredentialProvider,
+  CredentialRejectedLocallyError,
   type DdoSigner,
   type FileTypes,
   getCredentials,
@@ -357,7 +358,7 @@ function requestCredential(
   }
 }
 
-/** Checked on every presented credential: the policy server's own defaults. */
+/** Checked on every presented credential: the values the policy server ships as defaults. */
 const GATE_VC_POLICIES: VcPolicy[] = [
   'signature',
   'not-before',
@@ -393,8 +394,9 @@ const GATE_VP_POLICIES: VpPolicy[] = [
  * one.
  *
  * **VC policies** check each presented credential; **VP policies** check the presentation as
- * a whole. The policy server's defaults are `signature`, `not-before` and
- * `revoked-status-list`. Valid names can be listed from the verifier's
+ * a whole. The policy server ships `signature`, `not-before` and `revoked-status-list` as
+ * defaults, and adds its operator's `DEFAULT_VC_POLICIES` and `DEFAULT_VP_POLICIES` to every
+ * session. Valid names can be listed from the verifier's
  * `/openid4vc/policy-list` endpoint. Issuer trust (`SSI_TRUSTED_ISSUERS`) sits on the
  * requested credential; see `requestCredential`.
  *
@@ -411,7 +413,11 @@ export async function publishGatedDataset(
   networkConfig: NetworkConfig,
   pricingConfig: { [key: string]: PricingConfigWithoutOwner },
   owner: string,
-  credentialType = 'VerifiableId'
+  credentialType = 'VerifiableId',
+  options: {
+    /** Also require `holder-binding`: only for `ssi:publish-holder-binding`. */
+    holderBinding?: boolean
+  } = {}
 ) {
   const issuers = trustedIssuers()
 
@@ -453,7 +459,13 @@ export async function publishGatedDataset(
       requestCredential(credentialType, issuers)
     ])
     .setVcPolicies(CredentialListTypes.ALLOW, GATE_VC_POLICIES)
-    .setVpPolicies(CredentialListTypes.ALLOW, GATE_VP_POLICIES)
+    .setVpPolicies(
+      CredentialListTypes.ALLOW,
+      options.holderBinding
+        ? [...GATE_VP_POLICIES, { policy: 'holder-binding' }]
+        : GATE_VP_POLICIES
+    )
+    // build() checks the policies: here a warning for holder-binding when it is asked for.
     .build()
 
   const result = await publishAsset(nautilus, asset)
@@ -464,6 +476,84 @@ export async function publishGatedDataset(
   )
 
   return result
+}
+
+/**
+ * Publishes the gate of `publishGatedDataset` with `holder-binding` added, to show nautilus's
+ * guard rails for it on both sides. Don't publish such a gate for real credentials.
+ *
+ * - Publishing: `build()` logs the warning `identity.policy.holder_binding`: walt.id's
+ *   `holder-binding` requires every credential JWT's `sub` to be the presenter's DID, which
+ *   Gaia-X and other VCDM 2.0 `vc+jwt` credentials with a URL subject do not have.
+ * - Consuming (`ssi:consume`, or `ssi:holder-binding` for both halves): with such a
+ *   credential, `WaltIdCredentialProvider` throws a `CredentialRejectedLocallyError` before it
+ *   presents anything, so nothing is ordered or paid. A credential issued to the consumer's
+ *   DID passes.
+ */
+export async function publishHolderBindingDataset(
+  nautilus: Nautilus,
+  networkConfig: NetworkConfig,
+  pricingConfig: { [key: string]: PricingConfigWithoutOwner },
+  owner: string,
+  credentialType = 'VerifiableId'
+) {
+  const result = await publishGatedDataset(
+    nautilus,
+    networkConfig,
+    pricingConfig,
+    owner,
+    credentialType,
+    { holderBinding: true }
+  )
+
+  console.log(
+    `\nConsume it: npm start -- ssi:consume ${result.ddo.id}\n  A ${credentialType} credential without 'sub', or with another DID's, is refused before anything is presented.`
+  )
+
+  return result
+}
+
+/**
+ * `ssi:publish-holder-binding`, then consume it as the consumer: with a credential the
+ * verifier would refuse for `holder-binding`, nautilus refuses it first and says why.
+ */
+export async function runHolderBindingCheck(credentialType = 'VerifiableId') {
+  // Before anything is sent: a gate with a malformed issuer would refuse everyone.
+  trustedIssuers()
+
+  const { nautilus, networkConfig, pricingConfig, owner } =
+    await setupWithIdentity({ withRemoteStore: true })
+
+  publishSession.command = 'ssi:publish-holder-binding'
+  publishSession.args = [credentialType]
+
+  const published = await publishHolderBindingDataset(
+    nautilus,
+    networkConfig,
+    pricingConfig,
+    owner,
+    credentialType
+  )
+  const did = published.ddo.id as string
+
+  console.log('\n--- now consuming it ---\n')
+
+  const consumer = await setupWithIdentity({ role: 'consumer' })
+
+  try {
+    await consumeGatedAsset(consumer.nautilus, did)
+    console.log(
+      '\nholder-binding passed: the credential was issued to the presenting DID.'
+    )
+    return { did, refused: false }
+  } catch (error) {
+    if (!(error instanceof CredentialRejectedLocallyError)) throw error
+
+    console.log(
+      `\nRefused before presenting (${error.policy}, ${error.reason}):\n  ${error.message}`
+    )
+    return { did, refused: true, reason: error.reason }
+  }
 }
 
 /**

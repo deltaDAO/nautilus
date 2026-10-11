@@ -55,9 +55,11 @@ import {
   explainCredentialFailure,
   publishGatedComputeDataset,
   publishGatedDataset,
+  publishHolderBindingDataset,
   publishPartiallyGatedDataset,
   publishWithDidIssuer,
   runGatedPublishAndConsume,
+  runHolderBindingCheck,
   setupWithIdentity,
   trustedIssuers
 } from './identity'
@@ -521,6 +523,37 @@ export const COMMANDS: Record<string, Command> = {
         credentialType
       )
     }
+  },
+  'ssi:publish-holder-binding': {
+    usesStore: true,
+    summary:
+      'Publish a gated dataset that also requires holder-binding: build() warns, consuming with a URL-subject credential is refused locally',
+    args: ['credentialType?'],
+    requires: 'none',
+    identity: true,
+    run: async (_ctx, credentialType = 'VerifiableId') => {
+      // Before anything is sent: a gate with a malformed issuer would refuse everyone.
+      trustedIssuers()
+      const identity = await setupWithIdentity({ withRemoteStore: true })
+
+      return publishHolderBindingDataset(
+        identity.nautilus,
+        identity.networkConfig,
+        identity.pricingConfig,
+        identity.owner,
+        credentialType
+      )
+    }
+  },
+  'ssi:holder-binding': {
+    usesStore: true,
+    summary:
+      'ssi:publish-holder-binding, then consume it: shows the refusal before presenting',
+    args: ['credentialType?'],
+    requires: 'none',
+    identity: true,
+    run: (_ctx, credentialType = 'VerifiableId') =>
+      runHolderBindingCheck(credentialType)
   },
   'ssi:publish-gated-compute': {
     usesStore: true,
