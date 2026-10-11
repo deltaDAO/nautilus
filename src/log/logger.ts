@@ -8,6 +8,7 @@
  * with options (`Nautilus.create({ logger })`) overrides it for one instance.
  */
 
+import { id } from 'ethers'
 import {
   type LoggingEnv,
   type LoggingEnvProblem,
@@ -44,6 +45,11 @@ import type {
 
 /** How many `once` keys a logger remembers; the oldest are forgotten first. */
 export const MAX_ONCE_KEYS = 1_000
+/**
+ * How long a `once` key is kept as it is. A longer one (it can hold a node's text, such as
+ * an environment id or an asset name) is kept as its keccak256 hash.
+ */
+const MAX_ONCE_KEY_LENGTH = 256
 
 interface Settings {
   level: LoggingLevel
@@ -200,7 +206,7 @@ export class Logger {
     if (!printed && !tap) return
 
     const onceKey =
-      options.once === undefined ? undefined : `${name}\u0000${options.once}`
+      options.once === undefined ? undefined : onceKeyOf(name, options.once)
     if (onceKey !== undefined && this.shown.has(onceKey)) return
 
     const event = safeBuild(name, msg, fields, printed)
@@ -263,6 +269,11 @@ export function loggerFor(options?: LoggingOptions | Logger): Logger {
 }
 
 /** `build`, else the event with its fields replaced by `fieldsError`, else nothing. */
+/** The key a `once` event is remembered by: the event's name and its key, bounded. */
+function onceKeyOf(name: LogEventName, key: string): string {
+  return `${name}\u0000${key.length > MAX_ONCE_KEY_LENGTH ? id(key) : key}`
+}
+
 function safeBuild(
   name: LogEventName,
   msg: string | (() => string),

@@ -150,7 +150,8 @@ export async function compute(
   const maxJobDuration = resolveMaxJobDuration(
     environment,
     config.maxJobDuration,
-    logger
+    logger,
+    node.nodeUri
   )
 
   // 1. Open every input's policy session, the algorithm's included, before any escrow,
@@ -573,7 +574,8 @@ function resolveResources(
 function resolveMaxJobDuration(
   environment: ComputeEnvironment,
   requested: number | undefined,
-  logger: Logger
+  logger: Logger,
+  nodeUri: string
 ): number {
   const ceiling = environment.maxJobDuration
 
@@ -583,7 +585,12 @@ function resolveMaxJobDuration(
     logger.emit(
       'compute.duration.capped',
       `The requested maxJobDuration ${requested}s exceeds the environment limit ${ceiling}s; capping.`,
-      { requested, ceiling }
+      { requested, ceiling },
+      // A server starting many jobs with the same duration is told once per environment
+      // (of a node: two nodes can name theirs alike).
+      {
+        once: JSON.stringify([nodeUri, environment.id, requested, ceiling])
+      }
     )
     return ceiling
   }

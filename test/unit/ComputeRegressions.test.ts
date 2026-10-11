@@ -34,7 +34,7 @@ import {
   poisonedProviderFee,
   signedProviderFee
 } from '../fixtures/ProviderFee.js'
-import { expectThrowsAsync } from '../helpers.js'
+import { captureLog, expectThrowsAsync } from '../helpers.js'
 
 // Ordering runs against the chain; stub it so each order returns a tx id derived from the
 // datatoken, which lets the tests tell apart orders for different services of one asset.
@@ -605,5 +605,63 @@ describe('default compute resources', () => {
     expect(calls.computeStart[0].resources).to.deep.equal([
       { id: 'ram', amount: 0 }
     ])
+  })
+})
+
+describe('a requested maxJobDuration above the environment limit', () => {
+  it('is capped, with a warning once per environment and duration', async () => {
+    const log = captureLog()
+    const { client, calls } = createComputeNodeMock({
+      [ASSET_DID]: getComputeAssetFixture(),
+      [ALGO_DID]: accessOnlyAlgorithm()
+    })
+    const start = (maxJobDuration: number) =>
+      computeAllowed(
+        {
+          dataset: { did: ASSET_DID },
+          algorithm: { did: ALGO_DID },
+          maxJobDuration
+        },
+        computeContext(client)
+      )
+
+    await start(9000)
+    await start(9000)
+    await start(7200)
+
+    expect(
+      calls.computeStart.map(
+        (call) => (call as { maxJobDuration?: number }).maxJobDuration
+      )
+    ).to.deep.equal([3600, 3600, 3600])
+    expect(
+      log.named('compute.duration.capped').map((event) => event.fields)
+    ).to.deep.equal([
+      { requested: 9000, ceiling: 3600 },
+      { requested: 7200, ceiling: 3600 }
+    ])
+  })
+
+  it('warns again for an environment of the same name on another node', async () => {
+    const log = captureLog()
+    const { client } = createComputeNodeMock({
+      [ASSET_DID]: getComputeAssetFixture(),
+      [ALGO_DID]: accessOnlyAlgorithm()
+    })
+    const start = () =>
+      computeAllowed(
+        {
+          dataset: { did: ASSET_DID },
+          algorithm: { did: ALGO_DID },
+          maxJobDuration: 9000
+        },
+        computeContext(client)
+      )
+
+    await start()
+    ;(client as { nodeUri: string }).nodeUri = 'https://other-node.test.invalid'
+    await start()
+
+    expect(log.named('compute.duration.capped')).to.have.length(2)
   })
 })

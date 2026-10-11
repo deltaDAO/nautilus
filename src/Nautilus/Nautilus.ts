@@ -47,10 +47,16 @@ import type { CredentialProvider } from '../identity/CredentialProvider.js'
 import { PolicySessionResolver } from '../identity/PolicySessionResolver.js'
 import { isAddressCredential } from '../identity/policy.js'
 import type { SessionStore } from '../identity/session.js'
-import { type DebugOptions, setDebug } from '../log/debug.js'
+import {
+  type DebugOptions,
+  debugEnabled,
+  debugRaw,
+  setDebug
+} from '../log/debug.js'
 import { fromOceanLogLevel } from '../log/levels.js'
 import { configureLogging, type Logger, loggerFor } from '../log/logger.js'
 import type { LoggingConfig, LoggingOptions } from '../log/types.js'
+import { sanitize, stripControlCharacters } from '../node/messages.js'
 import {
   IndexerNonceStuckError,
   isIndexerNonceSignable,
@@ -62,6 +68,7 @@ import {
   assertDid,
   assertEncryptOption,
   assertWritableState,
+  expectedDid,
   readMetadataState,
   readMetadataStatus
 } from '../publish/envelope.js'
@@ -349,6 +356,49 @@ export interface CompletePublishOptions extends PublishOptions {
    * only the signer's pending transaction count guards against a second write.
    */
   metadataTxHash?: string
+}
+
+/** How much of a job's status goes into a message or an error. */
+const MAX_JOB_STATUS_LENGTH = 200
+/** How much of a job's result list goes into a message or an error. */
+const MAX_JOB_RESULTS_LENGTH = 1_000
+
+/**
+ * A job's status as messages show it, `status 70: Job finished`: the node's text without
+ * control characters, redacted and bounded. The raw text goes to the `compute` debug topic
+ * when that changed it.
+ */
+function jobStatus(job: Pick<NodeComputeJob, 'status' | 'statusText'>): string {
+  return sanitize(
+    `status ${job.status}: ${job.statusText}`,
+    MAX_JOB_STATUS_LENGTH,
+    'compute'
+  )
+}
+
+/**
+ * The results a job lists, as JSON, made safe the same way: a node can list any number of
+ * results with any names, and a warning or an error must not carry all of them. When the
+ * list is cut, how many results there are is said, and where to read them all. The whole
+ * list, as the node sent it, goes to the `compute` debug topic when the text was cut or
+ * cleaned.
+ */
+function jobResults(job: Pick<NodeComputeJob, 'results'>): string {
+  const raw = JSON.stringify(job.results) ?? String(job.results)
+  // Each string cleaned before it is quoted: JSON would only escape an ANSI sequence or a
+  // line break (`\u001b[2J`, `\r\n`), leaving its text in the message.
+  const text =
+    JSON.stringify(job.results, (_key, value: unknown) =>
+      typeof value === 'string' ? stripControlCharacters(value) : value
+    ) ?? raw
+  const clean = sanitize(text, MAX_JOB_RESULTS_LENGTH, null)
+  // Compared with the list as the node sent it, so a list only cleaned of control
+  // characters is handed over too.
+  if (clean !== raw && debugEnabled('sensitive', 'compute'))
+    debugRaw('compute', 'job results before redaction', job.results)
+  if (text.length <= MAX_JOB_RESULTS_LENGTH || !Array.isArray(job.results))
+    return clean
+  return `${clean} (${job.results.length} results; getComputeStatus() lists them all)`
 }
 
 /** Whether the asset-level `allow` list has an `address` entry naming at least one address. */
@@ -870,7 +920,7 @@ export class Nautilus {
       })
       await remoteStore.check?.()
       await this.warnIfPublisherIsNode()
-      await this.warnIfPolicyServerDeniesAll(asset)
+      await this.warnIfPolicyServerDeniesAll(asset, nftAddress)
       await this.assertIndexerNotStuck(options)
 
       // Every reused datatoken is on its service before the first transaction, so a retry
@@ -1395,20 +1445,36 @@ export class Nautilus {
    * address that is not on it, so it refuses every consumer: the asset is published, but
    * nobody can download it or run compute on it.
    *
-   * The nodes asked are the configured one and each service's `serviceEndpoint`. Best
-   * effort: a node whose status cannot be read is skipped. Never throws.
+   * The nodes asked are the configured one and each service's `serviceEndpoint`; each
+   * node that has a policy server warns. Best effort: a node whose status cannot be read is
+   * skipped. Never throws.
+   *
+   * Once per node and asset, so a server that publishes or edits the same asset again is
+   * not told again. The asset is its DID when it has one (an edit, or `completePublish`
+   * with its NFT); before the mint there is no DID, so it is the publisher's address and
+   * the asset's name: assets with the same name and publisher warn once per node. A
+   * publish and a later edit of the same asset therefore warn once each. Endpoints that
+   * differ only in a trailing slash are one node.
    */
   private async warnIfPolicyServerDeniesAll(
-    asset: NautilusAsset
+    asset: NautilusAsset,
+    nftAddress?: string
   ): Promise<void> {
     if (hasAddressAllowList(asset.ddo.credentials)) return
 
-    const endpoints = new Set([
-      this.node.nodeUri,
-      ...asset.ddo.services
-        .map((service) => service.serviceEndpoint)
+    const did =
+      asset.ddo.id ||
+      (nftAddress ? expectedDid(nftAddress, this.config.chainId) : undefined)
+    const name = asset.ddo.metadata.name ?? ''
+    const endpoints = new Set(
+      [
+        this.node.nodeUri,
+        ...asset.ddo.services.map((service) => service.serviceEndpoint)
+      ]
         .filter(Boolean)
-    ])
+        .map((endpoint) => endpoint.replace(/\/+$/, ''))
+    )
+    let subject: string | undefined = did
 
     for (const endpoint of endpoints) {
       let configured: boolean | undefined
@@ -1423,14 +1489,19 @@ export class Nautilus {
         continue
       }
 
-      if (configured) {
-        this.log.emit(
-          'publish.preflight.denies_all',
-          `${endpoint} has a policy server, and this asset's credentials have no address allow list (credentials: {}, or an allow list without an 'address' entry). The policy server checks the consumer's address against that list first, so it denies every consumer: the asset will be published, but nobody can download it or compute on it. Add the consumers' addresses with addCredentialAddresses(CredentialListTypes.ALLOW, [...]) before publishing.`,
-          { endpoint }
-        )
-        return
-      }
+      if (!configured) continue
+      // Before the mint: the publisher and the name, so another publisher's asset of the
+      // same name (another tenant of a server) is still warned about.
+      subject ??= JSON.stringify([
+        await this.signer.getAddress().catch(() => ''),
+        name
+      ])
+      this.log.emit(
+        'publish.preflight.denies_all',
+        `${endpoint} has a policy server, and this asset's credentials have no address allow list (credentials: {}, or an allow list without an 'address' entry). The policy server checks the consumer's address against that list first, so it denies every consumer: the asset will be published, but nobody can download it or compute on it. Add the consumers' addresses with addCredentialAddresses(CredentialListTypes.ALLOW, [...]) before publishing.`,
+        did ? { endpoint, did } : { endpoint, name },
+        { once: JSON.stringify(['denies-all', endpoint, subject]) }
+      )
     }
   }
 
@@ -1467,7 +1538,9 @@ export class Nautilus {
       this.log.emit(
         'publish.preflight.indexer_nonce_will_stick',
         `The indexer of ${this.node.nodeUri} will sign its second decrypt call for this asset with nonce ${state.nextNonce + 1}, which the node does not accept: unless another decrypt moves the nonce first, this asset will not be indexed and the indexer nonce will be stuck until the operator advances it.`,
-        { nodeUri: this.node.nodeUri, decryptNonce: state.nextNonce + 1 }
+        { nodeUri: this.node.nodeUri, decryptNonce: state.nextNonce + 1 },
+        // Until the nonce moves, every publish onto this node would say the same.
+        { once: `${this.node.nodeUri}:${state.nextNonce + 1}` }
       )
   }
 
@@ -1840,7 +1913,15 @@ export class Nautilus {
           ? 'compute.result.not_ready'
           : 'compute.result.unavailable',
         result.reason,
-        { jobId: config.jobId }
+        { jobId: config.jobId },
+        // A job that will not get there answers the same every time it is asked: say it
+        // once per node, job and kind of reason, not on every poll. A job the node did not
+        // know and that later has no output is told about twice.
+        result.retry
+          ? {}
+          : {
+              once: JSON.stringify([node.nodeUri, config.jobId, result.kind])
+            }
       )
       return undefined
     }
@@ -1899,7 +1980,7 @@ export class Nautilus {
 
     if (index === undefined)
       throw new Error(
-        `[compute] the job has finished (status ${job.status}: ${job.statusText}) and has no 'algorithmLog' result. Results: ${JSON.stringify(job.results)}`
+        `[compute] the job has finished (${jobStatus(job)}) and has no 'algorithmLog' result. Results: ${jobResults(job)}`
       )
 
     return node.getComputeResult(job.jobId, index)
@@ -1938,7 +2019,13 @@ export class Nautilus {
     node: OceanNodeClient,
     config: ComputeResultConfig
   ): Promise<
-    { jobId: string; index: number } | { reason: string; retry: boolean }
+    | { jobId: string; index: number }
+    | {
+        reason: string
+        retry: boolean
+        /** What kind of reason, for a `once` key: each kind is said once. */
+        kind?: 'unknown' | 'no-output'
+      }
   > {
     if (config.resultIndex !== undefined) assertResultIndex(config.resultIndex)
 
@@ -1947,10 +2034,11 @@ export class Nautilus {
     if (!job)
       return {
         reason: `${nodeLabel(node.nodeUri)} does not know the job`,
-        retry: false
+        retry: false,
+        kind: 'unknown'
       }
 
-    const status = `status ${job.status}: ${job.statusText}`
+    const status = jobStatus(job)
 
     if (!isJobFinished(job))
       return { reason: `the job is not finished yet (${status})`, retry: true }
@@ -1966,8 +2054,9 @@ export class Nautilus {
       }
 
     return {
-      reason: `the job has no 'output' result (${status}); pass resultIndex to read another. Results: ${JSON.stringify(job.results)}`,
-      retry: false
+      reason: `the job has no 'output' result (${status}); pass resultIndex to read another. Results: ${jobResults(job)}`,
+      retry: false,
+      kind: 'no-output'
     }
   }
 

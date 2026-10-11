@@ -104,8 +104,9 @@ export const LOG_EVENTS = {
     level: 'warn',
     component: 'publish',
     description:
-      "A node that checks this asset has a policy server, and the asset's credentials have no address allow list: the policy server will refuse every consumer.",
-    fields: ['endpoint']
+      "A node that checks this asset has a policy server, and the asset's credentials have no address allow list: the policy server will refuse every consumer. Once per node and asset: the asset's DID, or before the mint the publisher's address and the asset's name (a publisher's same-named assets warn once per node).",
+    fields: ['endpoint', 'did', 'name'],
+    once: true
   },
   'publish.preflight.policy_server_unknown': {
     level: 'debug',
@@ -125,8 +126,9 @@ export const LOG_EVENTS = {
     level: 'warn',
     component: 'publish',
     description:
-      "The indexer's second decrypt call for this asset will be signed with a nonce the node does not accept: unless another decrypt moves the nonce first, the asset will not be indexed and the indexer nonce will be stuck.",
-    fields: ['nodeUri', 'decryptNonce']
+      "The indexer's second decrypt call for this asset will be signed with a nonce the node does not accept: unless another decrypt moves the nonce first, the asset will not be indexed and the indexer nonce will be stuck. Once per node and nonce.",
+    fields: ['nodeUri', 'decryptNonce'],
+    once: true
   },
   'publish.preflight.pending_unreadable': {
     level: 'warn',
@@ -219,8 +221,9 @@ export const LOG_EVENTS = {
     level: 'warn',
     component: 'compute',
     description:
-      "The requested maxJobDuration exceeds the environment's limit and was capped to it.",
-    fields: ['requested', 'ceiling']
+      "The requested maxJobDuration exceeds the environment's limit and was capped to it. Once per node, environment, requested duration and limit.",
+    fields: ['requested', 'ceiling'],
+    once: true
   },
   'compute.escrow.not_quoted': {
     level: 'debug',
@@ -257,8 +260,9 @@ export const LOG_EVENTS = {
     level: 'warn',
     component: 'compute',
     description:
-      'getComputeResult() found no result and will not: the node does not know the job, or the job has no such result.',
-    fields: ['jobId']
+      'getComputeResult() found no result and will not: the node does not know the job, or the job has no such result. Once per node, job and reason.',
+    fields: ['jobId'],
+    once: true
   },
 
   // node
