@@ -85,7 +85,7 @@ function toCredential(
     !isSameIssuer(declared, issuer)
   )
     throw new Error(
-      `The DDO declares issuer "${declared}" but it is being signed by "${issuer}". Either remove setIssuer(), or sign with the identity you declared.`
+      `The DDO declares issuer "${declared}" but it is being signed by "${issuer}". Sign with the identity it declares, or call setIssuer() with the signing identity (on an edit, the declared issuer is the published one).`
     )
 
   return credentialClaims(ddo, issuer)

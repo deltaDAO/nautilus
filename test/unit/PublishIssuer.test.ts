@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { Wallet } from 'ethers'
 import { describe, expect, it, vi } from 'vitest'
+import type { AssetV5 } from '../../src/ddo/index.js'
 import { AssetBuilder } from '../../src/Nautilus/Asset/AssetBuilder.js'
 import { Nautilus } from '../../src/Nautilus/Nautilus.js'
 import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
@@ -8,6 +9,7 @@ import { type PreparedWrite, writeMetadata } from '../../src/publish/index.js'
 import type { RemoteStore } from '../../src/remote/RemoteStore.js'
 import type { DdoSigner } from '../../src/signing/vc.js'
 import {
+  ASSET_DID,
   CHAIN_ID,
   DATATOKEN_ADDRESS,
   getAssetFixture,
@@ -182,6 +184,31 @@ describe('writeAsset issuer rules', () => {
     const response = await nautilus.edit(asset)
 
     expect(response.ddo.issuer).to.equal(wallet.address)
+    expect(response.credential?.issuer).to.equal(wallet.address)
+  })
+
+  it('re-issues an asset another identity signed, under setIssuer()', async () => {
+    // A node serves the credential's JWT claims with the DDO: `iss` names whoever signed
+    // last (the owner, before a transfer or a manager's edit). Carried into the edit, it
+    // made every edit by another identity fail the signed-payload check at `iss`.
+    const { nautilus, wallet } = await createNautilus()
+    const previous = OWNER_ADDRESS
+
+    const asset = new AssetBuilder(
+      getAssetFixture({
+        issuer: previous,
+        iss: previous,
+        sub: ASSET_DID,
+        jti: ASSET_DID
+      } as Partial<AssetV5>)
+    )
+      .setIssuer(wallet.address)
+      .build()
+
+    const response = await nautilus.edit(asset)
+
+    expect(response.ddo.issuer).to.equal(wallet.address)
+    expect(response.ddo).not.to.have.property('iss')
     expect(response.credential?.issuer).to.equal(wallet.address)
   })
 

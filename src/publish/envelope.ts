@@ -12,7 +12,11 @@ import type { Nft, StorageObject } from '@oceanprotocol/lib'
 import { getAddress, getBytes, isHexString, toBeHex } from 'ethers'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
 import { isCid } from '../remote/cid.js'
-import { CREDENTIAL_TYPE, credentialClaims } from '../signing/claims.js'
+import {
+  CREDENTIAL_TYPE,
+  credentialClaims,
+  REGISTERED_CLAIMS
+} from '../signing/claims.js'
 import { decodeCredential } from '../signing/vc.js'
 
 /** The metadata flags nautilus writes: always `0x02`, ECIES-encrypted by the node. */
@@ -548,13 +552,6 @@ export function pointerPlaintext(pointer: StorageObject): {
 }
 
 /**
- * The JWT registered claims (RFC 7519 §4.1). A signer may add them to the payload: the
- * built-in signers set `iss`, `sub` and `jti`, and a custom one may set the others. They
- * are not compared with the DDO unless the DDO itself has them.
- */
-const REGISTERED_CLAIMS = ['iss', 'sub', 'aud', 'exp', 'nbf', 'iat', 'jti']
-
-/**
  * Steps 14 and 16 on the signer's output: whatever a `DdoSigner` returned (a walt.id wallet,
  * a custom service) must be a compact JWS whose payload, `vc` unwrapped as the node does, is
  * the DDO that was validated. That payload is the document the node indexes, and nautilus
@@ -562,7 +559,7 @@ const REGISTERED_CLAIMS = ['iss', 'sub', 'aud', 'exp', 'nbf', 'iat', 'jti']
  *
  * Every field is compared with the validated DDO as JSON (key order aside), except:
  *
- *   - the registered claims (`REGISTERED_CLAIMS`) the DDO does not have itself;
+ *   - the JWT registered claims (`REGISTERED_CLAIMS`) the DDO does not have itself;
  *   - `type`, which may also be `['VerifiableCredential']`, as the built-in signers write it;
  *   - `issuer`, which may differ from the DDO's in the case of an Ethereum address, as the
  *     signer's own checksummed address; or be any non-empty string when the DDO declares

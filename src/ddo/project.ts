@@ -11,6 +11,7 @@ import {
   type ServiceV5
 } from '@oceanprotocol/ddo-js'
 import { normalizeStoredCredentials } from '../identity/policy.js'
+import { REGISTERED_CLAIMS } from '../signing/claims.js'
 import { type LanguageOptions, toLanguageValue } from './language.js'
 import { getServiceCredentials } from './read.js'
 import type {
@@ -232,13 +233,19 @@ const DERIVED_TOP_LEVEL_FIELDS = [
   'proof'
 ] as const
 
-/** Returns a copy with every indexer-derived and consumer-side field removed. */
+/**
+ * Returns a copy with every indexer-derived and consumer-side field removed, and the JWT
+ * registered claims (`iss`, `sub`, `jti`, ...) the previous signer added: the next signature
+ * writes its own, and a carried-over `iss` names the previous signer, so an edit signed by
+ * anyone else would not match it.
+ */
 export function stripDerivedFields(
   ddo: Record<string, unknown>
 ): Record<string, unknown> {
   const copy: Record<string, unknown> = structuredClone(ddo)
 
   for (const field of DERIVED_TOP_LEVEL_FIELDS) delete copy[field]
+  for (const claim of REGISTERED_CLAIMS) delete copy[claim]
 
   const subject = copy.credentialSubject as Record<string, unknown> | undefined
   if (subject) for (const field of DERIVED_SUBJECT_FIELDS) delete subject[field]

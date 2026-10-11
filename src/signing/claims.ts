@@ -4,6 +4,20 @@
  * check what a signer returned.
  */
 
+/**
+ * The JWT registered claims (RFC 7519 §4.1). A signer may add them to the payload: the
+ * built-in signers set `iss`, `sub` and `jti`, and a custom one may set the others.
+ */
+export const REGISTERED_CLAIMS = [
+  'iss',
+  'sub',
+  'aud',
+  'exp',
+  'nbf',
+  'iat',
+  'jti'
+]
+
 /** `type` as `Eip191VcSigner` and `WaltIdVcSigner` write it, whatever the DDO declared. */
 export const CREDENTIAL_TYPE = ['VerifiableCredential']
 
