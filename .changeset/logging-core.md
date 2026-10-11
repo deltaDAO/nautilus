@@ -59,9 +59,8 @@ nautilus has its own logger, and its warnings are now visible by default.
   levels `silent`, `error`, `warn` (default), `info`, `debug`, `trace`; `format` `'pretty'` or
   `'json'`; `components` to narrow `info`/`debug`/`trace` output; `sink(event)` to hand the
   redacted events to your own logger (pino, winston, the browser console) instead of stderr.
-  `oceanjs` is accepted but not active yet: ocean.js prints as before, unredacted, at its own
-  level, and every mode (`'capture'` included) warns once. To silence ocean.js now, call
-  `LoggerInstance.setLevel(LogLevel.None)`.
+  `oceanjs` decides what happens to ocean.js's own lines (see the `capture-oceanjs-logs`
+  entry).
 - `Nautilus.create(signer, { logger })`: one instance's own level, format, components or
   sink, e.g. per tenant, as options or as a logger from `createLogger(options)` that several
   instances share. `S3RemoteStore`'s warnings always go to the process-wide configuration.
