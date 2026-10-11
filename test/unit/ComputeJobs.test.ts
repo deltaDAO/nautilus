@@ -28,7 +28,7 @@ import {
 import { Nautilus } from '../../src/index.js'
 import { type DebugEvent, setDebug } from '../../src/log/debug.js'
 import { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
-import { captureLog, expectThrowsAsync } from '../helpers.js'
+import { captureLog, cpuTime, expectThrowsAsync } from '../helpers.js'
 import { FAKE } from '../secretScan.js'
 
 const ADDRESS = '0x0000000000000000000000000000000000000001'
@@ -546,13 +546,14 @@ describe('Nautilus compute jobs', () => {
     // The debug channel, when a user turns it on, gets the whole list: not timed here.
     setDebug({ level: 'off' })
 
-    const started = performance.now()
-    await nautilus.getComputeResult({ jobId: JOB_ID })
-    const streamed = (await nautilus
-      .streamComputeResult({ jobId: JOB_ID })
-      .catch((error) => error)) as Error
-    await nautilus.getComputeLogs({ jobId: JOB_ID }).catch(() => undefined)
-    const elapsed = performance.now() - started
+    let streamed = new Error()
+    const elapsed = await cpuTime(async () => {
+      await nautilus.getComputeResult({ jobId: JOB_ID })
+      streamed = (await nautilus
+        .streamComputeResult({ jobId: JOB_ID })
+        .catch((error) => error)) as Error
+      await nautilus.getComputeLogs({ jobId: JOB_ID }).catch(() => undefined)
+    })
 
     // About 30 ms; 150 ms when the cut word was found by a regular expression.
     expect(elapsed).to.be.below(100)

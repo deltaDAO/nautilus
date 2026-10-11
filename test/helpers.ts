@@ -50,3 +50,16 @@ export function captureLog(
     named: (name) => events.filter((event) => event.event === name)
   }
 }
+
+/**
+ * The processor time `run` takes, in ms: user and system time of this test process (a
+ * worker of its own, one test at a time). Timing tests bound this rather than the time on
+ * the clock, which grows whenever other processes, the suite's other workers among them,
+ * hold the processor.
+ */
+export async function cpuTime(run: () => unknown): Promise<number> {
+  const started = process.cpuUsage()
+  await run()
+  const { user, system } = process.cpuUsage(started)
+  return (user + system) / 1_000
+}
