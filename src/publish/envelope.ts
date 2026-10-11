@@ -9,7 +9,8 @@
  */
 import { createHash } from 'node:crypto'
 import type { Nft, StorageObject } from '@oceanprotocol/lib'
-import { getAddress, getBytes, isHexString, toBeHex } from 'ethers'
+import { getAddress, getBytes, isAddress, isHexString, toBeHex } from 'ethers'
+import { debugRaw } from '../log/debug.js'
 import { sanitize } from '../node/messages.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
 import { isCid } from '../remote/cid.js'
@@ -713,13 +714,68 @@ export function assertDid(
 
   if (did !== expected)
     throw new Error(
-      `The DDO id ${JSON.stringify(did)} is not the DID of NFT ${nftAddress} on chain ${chainId} (${expected}); the node would reject it.`
+      `The DDO id ${shownId(did)} is not the DID of NFT ${nftAddress} on chain ${chainId} (${expected}); the node would reject it.`
     )
+}
+
+/**
+ * The NFT a resolved DDO's edit writes to, checksummed: its `nftAddress` (in v5 under
+ * `credentialSubject`, so read with `ddo/read.js`), once that is an address, the DDO's
+ * `chainId` is `chainId`, and its `id` is the NFT's DID on that chain (`expectedDid`). The DDO is node-served, so this binds the NFT to the DID asked for
+ * (`OceanNodeClient.resolve` checks the id) before the NFT's owner is read or anything is
+ * sent: a DDO naming another NFT would make that NFT's owner the minter and payment
+ * collector of the datatokens an edit creates. The node-supplied values are shown
+ * sanitised; the raw ones go to the debug channel.
+ */
+export function boundNftAddress(
+  ddo: { id?: unknown; chainId?: unknown; nftAddress?: unknown },
+  chainId: number,
+  operation: string
+): string {
+  const refuse = (reason: string): never => {
+    debugRaw('node', `${operation}: the DDO's NFT is not bound to its DID`, {
+      id: ddo.id,
+      chainId: ddo.chainId,
+      nftAddress: ddo.nftAddress
+    })
+    throw new Error(`${operation}: ${reason} Nothing was sent.`)
+  }
+
+  const { nftAddress } = ddo
+
+  if (typeof nftAddress !== 'string' || !isAddress(nftAddress))
+    return refuse(
+      typeof nftAddress === 'string'
+        ? `the DDO's nftAddress "${sanitize(nftAddress, 100, null)}" is not an address.`
+        : 'the DDO has no nftAddress.'
+    )
+
+  if (ddo.chainId !== chainId)
+    return refuse(
+      `the DDO is for chain ${sanitize(String(ddo.chainId), 40, null)}, not the configured chain ${chainId}.`
+    )
+
+  const nft = getAddress(nftAddress)
+  const expected = expectedDid(nft, chainId)
+
+  if (ddo.id !== expected)
+    return refuse(
+      `the DDO id ${shownId(ddo.id)} is not the DID of its NFT ${nft} on chain ${chainId} (${expected}), so the node served a DDO that is not the asset's own.`
+    )
+
+  return nft
 }
 
 /** A value a signer returned, for a message: sanitised and bounded. */
 function shown(value: unknown): string {
   return sanitize(String(JSON.stringify(value)), 100, null)
+}
+
+/** A DDO id for a message: node-supplied, so sanitised and bounded. */
+function shownId(id: unknown): string {
+  return typeof id === 'string'
+    ? `"${sanitize(id, 100, null)}"`
+    : sanitize(String(JSON.stringify(id)), 100, null)
 }
 
 /**

@@ -16,7 +16,8 @@ import {
   isAddress,
   isHexString,
   type Signer,
-  type TransactionReceipt
+  type TransactionReceipt,
+  ZeroAddress
 } from 'ethers'
 import type {
   AccessConfig,
@@ -40,7 +41,12 @@ import {
   isJobFinished,
   isOutputPending
 } from '../compute/jobs.js'
-import { getLifecycleState, getNftAddress } from '../ddo/read.js'
+import {
+  getChainId as getDdoChainId,
+  getDid,
+  getLifecycleState,
+  getNftAddress
+} from '../ddo/read.js'
 import type { DdoCredentials } from '../ddo/types.js'
 import { assertValid } from '../ddo/validate.js'
 import type { CredentialProvider } from '../identity/CredentialProvider.js'
@@ -62,6 +68,7 @@ import {
   assertDid,
   assertEncryptOption,
   assertWritableState,
+  boundNftAddress,
   readMetadataState,
   readMetadataStatus
 } from '../publish/envelope.js'
@@ -80,6 +87,7 @@ import {
 import { pricingMismatches, readExistingPricing } from '../publish/reuse.js'
 import { NodePersistentRemoteStore } from '../remote/NodePersistentRemoteStore.js'
 import type { RemoteStore } from '../remote/RemoteStore.js'
+import { assertSameIssuer } from '../signing/claims.js'
 import { type DdoSigner, Eip191VcSigner } from '../signing/vc.js'
 import {
   editPrice,
@@ -1014,10 +1022,12 @@ export class Nautilus {
 
   /**
    * The minter and payment collector of the datatokens `edit()` creates: the NFT's owner as
-   * the chain reports it, or the address `setOwner()` named, which must then be the signer
-   * or that owner. Never the owner in the resolved DDO: the node reports the last metadata
-   * writer there, and a stale or malicious node can name anyone, who would then mint the
-   * datatoken freely and collect its revenue. Refused before any transaction.
+   * the configured RPC reports it (`ownerOf`), or the address `setOwner()` named, which must
+   * then be the signer or that owner. Never the owner in the resolved DDO: the node reports
+   * the last metadata writer there, and a stale or malicious node can name anyone, who would
+   * then mint the datatoken freely and collect its revenue. When the edit mints, an owner
+   * other than the signer must hold `deployERC20` on the NFT, or the mint would revert.
+   * Refused before any transaction.
    */
   private async ownerForEdit(
     asset: NautilusAsset,
@@ -1025,14 +1035,11 @@ export class Nautilus {
     minting: boolean
   ): Promise<string> {
     const signer = getAddress(await this.signer.getAddress())
+    const nft = new Nft(this.signer, this.config.chainId, this.config)
 
     let onChain: unknown
     try {
-      onChain = await new Nft(
-        this.signer,
-        this.config.chainId,
-        this.config
-      ).getNftOwner(nftAddress)
+      onChain = await nft.getNftOwner(nftAddress)
     } catch (error) {
       debugRaw('rpc', 'edit: the NFT owner read failed', {
         nftAddress,
@@ -1040,31 +1047,62 @@ export class Nautilus {
       })
     }
 
-    if (typeof onChain !== 'string' || !isAddress(onChain))
+    // No NFT has the zero address as its owner: an RPC answering it has no answer.
+    if (
+      typeof onChain !== 'string' ||
+      !isAddress(onChain) ||
+      getAddress(onChain) === ZeroAddress
+    )
       throw new Error(
         `edit: the owner of NFT ${nftAddress} could not be read from the chain, and the datatokens an edit creates are given to it. Nothing was sent. Try again, or check the RPC.`
       )
 
     const nftOwner = getAddress(onChain)
-    const requested = asset.owner
+    let owner = nftOwner
 
-    if (!requested) return nftOwner
+    if (asset.owner) {
+      const named = isAddress(asset.owner) ? getAddress(asset.owner) : undefined
 
-    const named = isAddress(requested) ? getAddress(requested) : undefined
+      if (named !== signer && named !== nftOwner)
+        throw new Error(
+          `edit: setOwner() names ${named ?? 'a value that is not an address'}, which is neither the signer ${signer} nor the owner of NFT ${nftAddress} on chain, ${nftOwner}. The datatokens an edit creates make it their minter and payment collector, so only those two are accepted. Nothing was sent.`
+        )
 
-    if (named !== signer && named !== nftOwner)
-      throw new Error(
-        `edit: setOwner() names ${named ?? 'a value that is not an address'}, which is neither the signer ${signer} nor the owner of NFT ${nftAddress} on chain, ${nftOwner}. The datatokens an edit creates make it their minter and payment collector, so only those two are accepted. Nothing was sent.`
-      )
+      owner = named
+    }
 
-    if (minting && named !== nftOwner)
+    // The signer's deployERC20 was checked with its other permissions.
+    if (minting && owner !== signer) {
+      let permissions: { deployERC20?: boolean } | undefined
+      try {
+        permissions = await nft.getNftPermissions(nftAddress, owner)
+      } catch (error) {
+        debugRaw('rpc', "edit: the NFT owner's permissions read failed", {
+          nftAddress,
+          owner,
+          error
+        })
+      }
+
+      if (!permissions)
+        throw new Error(
+          `edit: the permissions of ${owner}, the owner of NFT ${nftAddress}, could not be read from the chain, and the datatokens an edit creates make it their minter. Nothing was sent. Try again, or check the RPC.`
+        )
+
+      if (!permissions.deployERC20)
+        throw new Error(
+          `edit: ${owner}, the owner of NFT ${nftAddress} on chain, lacks the deployERC20 permission, and the datatokens an edit creates make it their minter and payment collector, so creating them would revert. Nothing was sent. The owner can grant it (addToCreateERC20List), or call setOwner('${signer}') to make the signer their minter and payment collector.`
+        )
+    }
+
+    if (minting && owner !== nftOwner)
       this.log.emit(
         'edit.owner.not_nft_owner',
-        `edit: the datatokens this edit creates get ${named} as their minter and payment collector, as setOwner() asked, not the owner of NFT ${nftAddress}, ${nftOwner}. Their revenue goes to ${named}.`,
-        { nftAddress, owner: named, nftOwner }
+        `edit: the datatokens this edit creates get ${owner} as their minter and payment collector (it receives the payments for priced services), as setOwner() asked, not the owner of NFT ${nftAddress}, ${nftOwner}.`,
+        { nftAddress, owner, nftOwner }
       )
 
-    return named
+    return owner
   }
 
   /**
@@ -1205,9 +1243,12 @@ export class Nautilus {
    *
    * Only services carrying a new pricing config get a new datatoken; everything else is
    * merged over the published document, so changing one field does not require resupplying
-   * the rest. Before any datatoken is minted, the remote store is checked, and so are the
-   * NFT's lifecycle state and the signer's permissions, under the per-NFT lock. A failure
-   * after a datatoken was created names it, as `error.datatokens`.
+   * the rest. Before any datatoken is minted, the DDO's id must be the DID of its NFT on the
+   * configured chain; then, under the per-NFT lock, the NFT's lifecycle state and the
+   * signer's permissions are checked, the owner of the new datatokens is read on chain
+   * (`ownerOf`; see `ownerForEdit`), the declared issuer is checked against the signer, and
+   * the remote store is checked. A failure after a datatoken was created names it, as
+   * `error.datatokens`.
    */
   async edit(
     asset: NautilusAsset,
@@ -1223,7 +1264,19 @@ export class Nautilus {
     assertEncryptOption(options)
     assertWritableState(asset.lifecycleState ?? 0, 'the asset')
 
-    const nftAddress = getNftAddress(baseline)
+    // The DDO is node-served: its NFT must be the one its DID names, on this chain, before
+    // that NFT's owner is read or anything is sent. Otherwise a node could serve another
+    // NFT's DDO and make that NFT's owner the minter and payment collector of the new
+    // datatokens. `resolve()` already refuses a DDO whose id is not the DID asked for.
+    const nftAddress = boundNftAddress(
+      {
+        id: getDid(baseline),
+        chainId: getDdoChainId(baseline),
+        nftAddress: getNftAddress(baseline)
+      },
+      this.config.chainId,
+      'edit'
+    )
     const priced = asset.ddo.services.filter((service) => service.pricing)
 
     const response = await this.withNftLock(nftAddress, async () => {
@@ -1599,7 +1652,10 @@ export class Nautilus {
       datatokenAddress: PLACEHOLDER_ADDRESS
     })
 
+    // The signature would refuse a declared issuer the signer is not, but only once the
+    // NFT or the new datatokens exist.
     if (!preflight.issuer) preflight.issuer = params.issuer
+    else assertSameIssuer(preflight.issuer, params.issuer, ' Nothing was sent.')
 
     await assertValid(preflight)
 

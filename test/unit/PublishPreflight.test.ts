@@ -11,7 +11,13 @@
  * also pin the thing that makes it affordable: it costs no extra node round trip.
  */
 import type { StorageObject } from '@oceanprotocol/lib'
-import { FetchRequest, FetchResponse, makeError, Wallet } from 'ethers'
+import {
+  FetchRequest,
+  FetchResponse,
+  makeError,
+  Wallet,
+  ZeroAddress
+} from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PublishedNotIndexed } from '../../src/@types/Publish.js'
 import { CredentialListTypes } from '../../src/ddo/types.js'
@@ -66,7 +72,7 @@ import {
   ASSET_DID,
   CHAIN_ID,
   DATATOKEN_ADDRESS,
-  getAssetFixture,
+  getAssetFixture as getSharedAssetFixture,
   NFT_ADDRESS,
   OWNER_ADDRESS
 } from '../fixtures/Asset.js'
@@ -88,11 +94,18 @@ const nftState = vi.hoisted(() => ({
   owner: '',
   /** Thrown by `getNftOwner()` instead of answering, when set. */
   ownerError: undefined as Error | undefined,
+  /** The reads made, in order: `getMetadata`, `getNftOwner`, `getNftPermissions:<address>`. */
+  calls: [] as string[],
   /** What `ERC721Factory.erc721List(nft)` answers; `''` means "the NFT itself". */
   factoryListed: '',
   datatokens: [] as string[],
   /** What `getNftPermissions(nft, signer)` answers. */
   permissions: { updateMetadata: true, deployERC20: true },
+  /** What `getNftPermissions(nft, address)` answers for other addresses, lower-cased. */
+  permissionsOf: {} as Record<
+    string,
+    { updateMetadata: boolean; deployERC20: boolean }
+  >,
   /** Metadata events in the receipt's block, for the same-block check. */
   blockEvents: undefined as
     | { transactionHash: string; index: number }[]
@@ -112,6 +125,7 @@ vi.mock('@oceanprotocol/lib', async (importOriginal) => {
     ...actual,
     Nft: class {
       async getMetadata() {
+        nftState.calls.push('getMetadata')
         return [
           'https://node.test.invalid',
           OWNER_ADDRESS,
@@ -120,11 +134,18 @@ vi.mock('@oceanprotocol/lib', async (importOriginal) => {
         ]
       }
       async getNftOwner() {
+        nftState.calls.push('getNftOwner')
         if (nftState.ownerError) throw nftState.ownerError
         return nftState.owner
       }
-      async getNftPermissions() {
-        return { manager: true, store: true, ...nftState.permissions }
+      async getNftPermissions(_nft: string, address: string) {
+        nftState.calls.push(`getNftPermissions:${address}`)
+        return {
+          manager: true,
+          store: true,
+          ...(nftState.permissionsOf[address.toLowerCase()] ??
+            nftState.permissions)
+        }
       }
     },
     NftFactory: class {
@@ -232,6 +253,13 @@ const STORED_CID = vi.hoisted(
   () => 'bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy'
 )
 const SIGNER_ADDRESS = new Wallet(PRIVATE_KEY).address
+/**
+ * The shared fixture, issued by this suite's signer: publish and edit refuse a declared
+ * issuer the signer is not, before any transaction.
+ */
+const getAssetFixture = (
+  overrides: Parameters<typeof getSharedAssetFixture>[0] = {}
+) => getSharedAssetFixture({ issuer: SIGNER_ADDRESS, ...overrides })
 /** A metadata transaction an earlier, failed attempt sent. */
 const EARLIER_TX = `0xe4${'11'.repeat(31)}`
 const SECOND_DATATOKEN = '0x1111111111111111111111111111111111111111'
@@ -326,9 +354,11 @@ beforeEach(() => {
   nftState.state = 0
   nftState.owner = SIGNER_ADDRESS
   nftState.ownerError = undefined
+  nftState.calls = []
   nftState.factoryListed = ''
   nftState.datatokens = [DATATOKEN_ADDRESS]
   nftState.permissions = { updateMetadata: true, deployERC20: true }
+  nftState.permissionsOf = {}
   // The metadata transaction is alone in its block, unless a test says otherwise.
   nftState.blockEvents = []
   nftState.nonces = { pending: 4, latest: 4 }
@@ -392,6 +422,32 @@ describe('publish pre-transaction validation', () => {
 })
 
 describe('publish before the first transaction', () => {
+  it('mints nothing when the declared issuer is not the signer, nor completes on an NFT', async () => {
+    const { nautilus } = await createNautilus()
+    const asset = () =>
+      new AssetBuilder()
+        .setType('dataset')
+        .setName('Preflight Dataset')
+        .setProvidedBy('deltaDAO AG')
+        .setDescription('A description')
+        .setIssuer('did:jwk:someone-else')
+        .addService(service())
+        .build()
+    const refused =
+      /^The DDO declares issuer "did:jwk:someone-else" but it is being signed by "0x[0-9a-fA-F]{40}"\..*Nothing was sent\.$/
+
+    await expectThrowsAsync(() => nautilus.publish(asset()), refused)
+    expect(vi.mocked(createNftWithService)).not.toHaveBeenCalled()
+
+    await expectThrowsAsync(
+      () => nautilus.completePublish(NFT_ADDRESS, asset()),
+      refused
+    )
+    expect(vi.mocked(createDatatokenForService)).not.toHaveBeenCalled()
+    expect(vi.mocked(prepareMetadataForWrite)).not.toHaveBeenCalled()
+    expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+  })
+
   it('mints nothing for a DDO too large for the node to decrypt', async () => {
     // The node accepts decrypt requests up to 100 KB.
     const { nautilus, node } = await createNautilus()
@@ -1324,9 +1380,108 @@ describe('edit', () => {
     expect(vi.mocked(writeMetadata)).toHaveBeenCalledTimes(1)
   })
 
+  it('refuses a declared issuer the signer is not, before minting anything', async () => {
+    const { nautilus } = await createNautilus()
+    // The shared fixture declares did:jwk:test-issuer; this suite signs as SIGNER_ADDRESS.
+    const asset = new AssetBuilder(getSharedAssetFixture())
+      .addService(service('https://files.test.invalid/b.csv'))
+      .build()
+
+    await expectThrowsAsync(
+      () => nautilus.edit(asset),
+      /^The DDO declares issuer "did:jwk:test-issuer" but it is being signed by "0x[0-9a-fA-F]{40}"\..*setIssuer\(\).*Nothing was sent\.$/
+    )
+    expect(vi.mocked(createDatatokenForService)).not.toHaveBeenCalled()
+    expect(vi.mocked(createPricingForDatatoken)).not.toHaveBeenCalled()
+    expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+
+    // setIssuer() with the signing identity is the way through.
+    await nautilus.edit(
+      new AssetBuilder(getSharedAssetFixture())
+        .setIssuer(SIGNER_ADDRESS.toLowerCase())
+        .addService(service('https://files.test.invalid/b.csv'))
+        .build()
+    )
+    expect(vi.mocked(writeMetadata)).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows a node-served declared issuer sanitised', async () => {
+    const { nautilus } = await createNautilus()
+    const thrown = (await nautilus
+      .edit(
+        new AssetBuilder(
+          getSharedAssetFixture({
+            issuer: `did:x:abc\n[nautilus] forged log line ${FAKE.rpcUrl}`
+          })
+        ).build()
+      )
+      .catch((error) => error)) as Error
+
+    expect(thrown.message).to.match(/^The DDO declares issuer "did:x:abc/)
+    expect(thrown.message).not.to.contain('\n')
+    expect(thrown.message).not.to.contain(FAKE.rpcQueryToken)
+    expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+  })
+
+  describe('the NFT it writes to', () => {
+    /** Another NFT, e.g. one an attacker granted the signer roles on. */
+    const OTHER_NFT = '0x5eED00000000000000000000000000000000baD1'
+
+    /** The fixture (ASSET_DID) with `subject` changed: what a node may serve for it. */
+    function served(subject: Record<string, unknown>) {
+      const ddo = getAssetFixture()
+      Object.assign(ddo.credentialSubject as unknown as object, subject)
+      return new AssetBuilder(ddo)
+        .addService(service('https://files.test.invalid/b.csv'))
+        .build()
+    }
+
+    function nothingSent() {
+      expect(nftState.calls).not.to.include('getNftOwner')
+      expect(vi.mocked(createDatatokenForService)).not.toHaveBeenCalled()
+      expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+    }
+
+    it("must be the NFT the DDO's DID names: another NFT served for this DID is refused before its owner is read", async () => {
+      nftState.owner = '0xa77ac4E7a77Ac4e7a77AC4E7a77ac4E7A77aC4e7'
+      const { nautilus } = await createNautilus()
+
+      await expectThrowsAsync(
+        () => nautilus.edit(served({ nftAddress: OTHER_NFT })),
+        /^edit: the DDO id "did:ope:7e03.*" is not the DID of its NFT 0x5eED00000000000000000000000000000000baD1 on chain 32456 \(did:ope:[0-9a-f]{64}\).*Nothing was sent\.$/
+      )
+      nothingSent()
+    })
+
+    it('must be on the configured chain', async () => {
+      const { nautilus } = await createNautilus()
+
+      await expectThrowsAsync(
+        () => nautilus.edit(served({ chainId: 1 })),
+        /^edit: the DDO is for chain 1, not the configured chain 32456\. Nothing was sent\.$/
+      )
+      nothingSent()
+    })
+
+    it('must be an address, shown sanitised when it is not', async () => {
+      const { nautilus } = await createNautilus()
+
+      const thrown = (await nautilus
+        .edit(served({ nftAddress: `0x12\n${FAKE.rpcUrl}` }))
+        .catch((error) => error)) as Error
+
+      expect(thrown.message).to.match(
+        /^edit: the DDO's nftAddress "0x12.*" is not an address\. Nothing was sent\.$/
+      )
+      expect(thrown.message).not.to.contain(FAKE.rpcQueryToken)
+      nothingSent()
+    })
+  })
+
   describe('the owner of the datatokens it creates', () => {
     /** Holds a role on the NFT, but neither owns it nor signs. */
-    const ON_CHAIN_OWNER = '0x3333333333333333333333333333333333333333'
+    // Mixed case: checksummed, so a lower-cased form differs from it.
+    const ON_CHAIN_OWNER = '0x3c3D0e4b5A6f7a8B9c0D1e2F3a4B5c6D7E8f9A0b'
     const FOREIGN = '0x4444444444444444444444444444444444444444'
 
     function withNewService(configure = (builder: AssetBuilder) => builder) {
@@ -1389,6 +1544,9 @@ describe('edit', () => {
       expect(ownerPassed()).to.equal(SIGNER_ADDRESS)
       const [warning] = log.named('edit.owner.not_nft_owner')
       expect(warning.level).to.equal('warn')
+      expect(warning.msg).to.match(
+        /minter and payment collector \(it receives the payments for priced services\)/
+      )
       expect(warning.fields).to.deep.include({
         owner: SIGNER_ADDRESS,
         nftOwner: ON_CHAIN_OWNER
@@ -1408,6 +1566,45 @@ describe('edit', () => {
 
       expect(ownerPassed()).to.equal(ON_CHAIN_OWNER)
       expect(log.named('edit.owner.not_nft_owner')).to.have.length(0)
+    })
+
+    it('refuses an on-chain owner without deployERC20, pointing to setOwner(signer), before any transaction', async () => {
+      nftState.owner = ON_CHAIN_OWNER
+      nftState.permissionsOf[ON_CHAIN_OWNER.toLowerCase()] = {
+        updateMetadata: false,
+        deployERC20: false
+      }
+      const { nautilus } = await createNautilus()
+
+      for (const configure of [
+        (builder: AssetBuilder) => builder,
+        (builder: AssetBuilder) => builder.setOwner(ON_CHAIN_OWNER)
+      ])
+        await expectThrowsAsync(
+          () => nautilus.edit(withNewService(configure)),
+          new RegExp(
+            `^edit: ${ON_CHAIN_OWNER}, the owner of NFT .* lacks the deployERC20 permission.*Nothing was sent\\..*setOwner\\('${SIGNER_ADDRESS}'\\)`
+          )
+        )
+      expect(vi.mocked(createDatatokenForService)).not.toHaveBeenCalled()
+      expect(vi.mocked(writeMetadata)).not.toHaveBeenCalled()
+
+      // The way out it names.
+      await nautilus.edit(
+        withNewService((builder) => builder.setOwner(SIGNER_ADDRESS))
+      )
+      expect(ownerPassed()).to.equal(SIGNER_ADDRESS)
+    })
+
+    it('treats a zero-address owner as unreadable', async () => {
+      nftState.owner = ZeroAddress
+      const { nautilus } = await createNautilus()
+
+      await expectThrowsAsync(
+        () => nautilus.edit(withNewService()),
+        /edit: the owner of NFT .* could not be read from the chain.*Nothing was sent/
+      )
+      expect(vi.mocked(createDatatokenForService)).not.toHaveBeenCalled()
     })
 
     it('checks a named owner even when the edit creates no datatoken', async () => {
@@ -1462,6 +1659,43 @@ describe('edit', () => {
       expect(raw.topic).to.equal('rpc')
       expect(JSON.stringify(raw.data)).to.contain('header not found')
     })
+  })
+
+  it('reads the NFT owner only when it mints or setOwner() was called', async () => {
+    const { nautilus } = await createNautilus()
+
+    await nautilus.edit(new AssetBuilder(getAssetFixture()).build())
+
+    expect(vi.mocked(writeMetadata)).toHaveBeenCalledTimes(1)
+    expect(nftState.calls).not.to.include('getNftOwner')
+  })
+
+  it('reads the NFT owner inside the NFT lock, after the permission check', async () => {
+    const { nautilus } = await createNautilus()
+    vi.mocked(writeMetadata).mockImplementation(async () => {
+      nftState.calls.push('write:start')
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      nftState.calls.push('write:end')
+      return { hash: '0xsetmetadata', blockNumber: 100 } as never
+    })
+    const edit = () =>
+      nautilus.edit(
+        new AssetBuilder(getAssetFixture())
+          .addService(service('https://files.test.invalid/b.csv'))
+          .build()
+      )
+
+    await Promise.all([edit(), edit()])
+
+    const { calls } = nftState
+    const at = (call: string, nth = 0) =>
+      calls.flatMap((value, index) => (value === call ? [index] : []))[nth]
+    expect(at(`getNftPermissions:${SIGNER_ADDRESS}`)).to.be.below(
+      at('getNftOwner')
+    )
+    expect(at('getMetadata')).to.be.below(at('getNftOwner'))
+    // The second edit reads the owner only once the first edit's write has finished.
+    expect(at('getNftOwner', 1)).to.be.above(at('write:end'))
   })
 
   it('does not wait for the indexer between sequential writes', async () => {
