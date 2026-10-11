@@ -42,7 +42,9 @@ ocean.js no longer prints "No config found" during an order.
   that cut splits is dropped, so a cut JWT or URL never shows in part. A URL with a backslash in its path
   (`https://host/x\y/v3/<key>`) now keeps only its origin in messages, and its path token is
   masked in the `sensitive` debug tier as well; before, the text after the backslash was
-  printed.
+  printed. So does a URL with a BOM or a zero-width character in its path (the token after
+  it used to be printed), and a URL without a scheme on an IP address, `localhost` or an
+  IPv6 address in brackets (`127.0.0.1:8545/v3/<key>` reads `127.0.0.1:8545`).
 - **No more `No config found for given network 'undefined'`.** The `FixedRateExchange` and
   `Dispenser` that nautilus builds for orders, prices and `editPrice` now get the chain id and
   the chain config, as the datatoken and the NFT already did. ocean.js used to print the line

@@ -15,6 +15,11 @@
 import { type DebugTopic, debugEnabled, debugRaw } from '../log/debug.js'
 import { isErrorCode, SECRET_KEYS } from '../log/keys.js'
 import { redactKeyValues } from '../log/keyValues.js'
+import {
+  INVISIBLE_CHARACTERS,
+  SCHEMELESS_URL,
+  trailingPunctuation
+} from '../log/textShapes.js'
 
 /** A non-2xx answer of the node. A `FetchedText` is one. */
 export interface NodeAnswer {
@@ -34,10 +39,12 @@ const MIN_READ_LENGTH = 8_192
  * slashes JSON-escaped (`https:\/\/host\/path`, as a body quoted in JSON has it). A
  * backslash is part of the URL unless a quote follows it (`\"` ends a JSON string), so a
  * path such as `/x\y/v3/<key>` is not cut at the backslash with its key left in the text.
- * The scheme is bounded, so hostile text of letters and dots is scanned in linear time.
+ * A BOM is part of it too, though `\s` matches it: `stripControlCharacters` deletes it, which
+ * would join what follows it (`/v3/\ufeff<key>`) to the origin left of the URL. The
+ * scheme is bounded, so hostile text of letters and dots is scanned in linear time.
  */
 const URL_PATTERN =
-  /[a-z][a-z0-9+.-]{0,31}:(?:\\*\/){2}(?:[^\s"'<>\\]|\\+(?!["'\s<>\\]))*/gi
+  /[a-z][a-z0-9+.-]{0,31}:(?:\\*\/){2}(?:[^\s"'<>\\]|\ufeff|\\+(?!["'\s<>\\]))*/gi
 
 /** A `Bearer` or `Basic` credential, wherever it stands. */
 const BEARER = /((?:Bearer|Basic)\s+)[\w.~+/=-]+/gi
@@ -59,15 +66,6 @@ const SIGNED_TRANSACTION = /\b0x(?:0[1-4])?f[89a][0-9a-f]{196,}(?![0-9a-f])/gi
 const ANSI_ESCAPE =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: matching them is the point
   /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|[@-Z\\-_])/g
-/**
- * Invisible characters: C0 controls but the whitespace ones, DEL, C1 controls, the soft
- * hyphen, zero-width characters, word joiners, the BOM, and the bidi marks, overrides and
- * isolates. They are deleted, not turned into a space, so none can split a key
- * (`session\0Id=…`) or a value out of the redaction's view.
- */
-const INVISIBLE_CHARACTERS =
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: matching them is the point
-  /[\u0000-\u0008\u000e-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]+/g
 
 /**
  * `text` with credentials replaced by `<redacted>`:
@@ -85,9 +83,14 @@ const INVISIBLE_CHARACTERS =
  *
  * A URL keeps its origin only: its path and query (an openid4vp `request_uri`, a policy
  * server's redirect URI, an internal path) are dropped, and so are its user and password.
+ * So does a URL without a scheme on an IP address, `localhost` or an IPv6 address in
+ * brackets (`127.0.0.1:8545/v3/<key>` reads `127.0.0.1:8545`): see `SCHEMELESS_URL`.
  */
 export function redactSecrets(text: string): string {
-  return redactKeyValues(text.replace(URL_PATTERN, originOnly), SECRET_KEYS)
+  return redactKeyValues(
+    text.replace(URL_PATTERN, originOnly).replace(SCHEMELESS_URL, hostOnly),
+    SECRET_KEYS
+  )
     .replace(BEARER, '$1<redacted>')
     .replace(JWT, '<redacted>')
     .replace(HEX_SIGNATURE, '<redacted>')
@@ -99,7 +102,7 @@ export { isErrorCode }
 
 /** A URL as `scheme://host[:port]`, with the punctuation that ended its sentence kept. */
 function originOnly(url: string): string {
-  const trailing = /[.,;:!?)\]}]*$/.exec(url)?.[0] ?? ''
+  const trailing = trailingPunctuation(url)
   const core = url.slice(0, url.length - trailing.length).replace(/\\+\//g, '/')
   // A backslash ends the authority, as a URL parser reads `https://host\path`.
   const [, scheme, authority = ''] = /^([^:]+):\/\/([^/?#\\]*)/.exec(core) ?? []
@@ -108,9 +111,16 @@ function originOnly(url: string): string {
   return `${scheme}://${host}${trailing}`
 }
 
+/** A `SCHEMELESS_URL` as its host and port, with the punctuation that ended its sentence. */
+function hostOnly(url: string, host: string): string {
+  return `${host}${trailingPunctuation(url)}`
+}
+
 /**
- * `text` without ANSI escapes and invisible characters, whitespace runs (line breaks
- * included) as one space.
+ * `text` without ANSI escapes and invisible characters (`INVISIBLE_CHARACTERS`), whitespace
+ * runs (line breaks included) as one space. Invisible characters are deleted, not turned
+ * into a space, so none can split a key (`session\0Id=…`) or a value out of the
+ * redaction's view.
  */
 export function stripControlCharacters(text: string): string {
   return text

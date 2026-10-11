@@ -47,7 +47,9 @@ Nautilus.setDebug({ level: 'off' }) // [!code focus]
 | `secrets` | everything in `sensitive`, plus long-lived credentials: the RPC URL's token, S3 secret keys, IPFS (Pinata) JWTs, `Authorization` headers | store or RPC authentication problems |
 
 `sensitive` still hides long-lived credentials, **best effort, by name and shape**: an RPC URL
-reads `https://rpc.example.org/v3/<redacted>`, and so does any value under a name ending in
+reads `https://rpc.example.org/v3/<redacted>` (a local one without a scheme too,
+`127.0.0.1:8545/v3/<redacted>`, also with a BOM or a zero-width character in its path), and
+so does any value under a name ending in
 `token`, `key`, `secret`, `password`, `auth`, `cookie`, `jwt` or `credential(s)` (`apiToken`,
 `pinataGatewayToken`, drpc's `dkey`, `S3_SECRET_KEY=`, `PINATA_JWT=`, a `Cookie` header), in
 URLs, objects and text, also in JSON quoted inside JSON. Session-scoped values stay readable

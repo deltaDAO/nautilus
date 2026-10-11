@@ -19,14 +19,18 @@
  *   (20 or more letters, digits, `-` and `_`, with both letters and digits; a UUID, a `0x`
  *   hex value or an IPFS CID is kept): the token of an RPC URL such as `https://…/v3/<key>`.
  *   That heuristic also masks other long ids in a path (a 64-hex compute job id without
- *   `0x`, an Arweave id, an S3 object key segment);
+ *   `0x`, an Arweave id, an S3 object key segment). A URL without a scheme on an IP
+ *   address, `localhost` or an IPv6 address in brackets (`127.0.0.1:8545/v3/<key>`) is
+ *   masked the same way;
  * - `Bearer`, `Basic` and `Token` credentials, and provider tokens known by their prefix
  *   (`ghp_…`, `glpat-…`, `xoxb-…`, `sk-…`, `AIza…`) wherever they stand;
  * - in free text, the value of a credential named before it, as `key=value`, `key: value`,
  *   a JSON field or a JSON field inside a JSON string (the scanner of the log redaction,
  *   `keyValues.ts`); an `Authorization` or `Cookie` header to the end of its line. The text
  *   is also read with its JSON escapes undone (`https:\/\/…`, `\\\"apiToken\\\"`), and when
- *   that finds more, the unescaped text, masked, is what is shown;
+ *   that finds more, the unescaped text, masked, is what is shown. So is it without its
+ *   invisible characters (a BOM, a zero-width space, a NUL), which a reader does not see
+ *   but which split a URL or a token out of the patterns' view;
  * - in an object, the value of a key named like a credential;
  * - any string the caller names as a credential (a store's configured header values and
  *   secret keys), also percent-encoded and in base64.
@@ -41,6 +45,11 @@ import {
   NEVER_SHOWN_KEYS
 } from './keys.js'
 import { redactKeyValues } from './keyValues.js'
+import {
+  INVISIBLE_CHARACTERS,
+  SCHEMELESS_URL,
+  trailingPunctuation
+} from './textShapes.js'
 
 export const REDACTED = '<redacted>'
 
@@ -167,6 +176,19 @@ export function maskText(
   const known = credentials.filter(
     (credential) => typeof credential === 'string' && credential.length >= 4
   )
+  const masked = maskEscaped(text, known)
+  const visible = text.replace(INVISIBLE_CHARACTERS, '')
+  if (visible === text) return masked
+
+  // Invisible characters split a URL (`https:/\u200b/…`) or a token (`/v3/ab\ufeffcd`)
+  // that a reader sees whole: the text is masked without them too, and shown so when that
+  // hides more.
+  const deep = maskEscaped(visible, known)
+  return masked.replace(INVISIBLE_CHARACTERS, '') === deep ? masked : deep
+}
+
+/** `maskText` of the text as it is, and with its JSON escapes undone. */
+function maskEscaped(text: string, known: readonly string[]): string {
   const once = maskOnce(text, known)
   const unescaped = unescapeJson(text)
   if (unescaped === text) return once
@@ -185,6 +207,7 @@ function maskOnce(text: string, known: readonly string[]): string {
   return redactKeyValues(
     masked
       .replace(URL_PATTERN, (url) => maskUrl(url))
+      .replace(SCHEMELESS_URL, (url) => maskUrl(`x://${url}`).slice(4))
       .replace(AUTH_SCHEME, `$1 ${REDACTED}`)
       .replace(PREFIXED_TOKEN, REDACTED),
     LONG_LIVED_CREDENTIALS
@@ -263,7 +286,7 @@ export function credentialsInUrl(url: string | undefined): string[] {
 /** A URL with its credentials replaced and everything else kept (see the module comment). */
 export function maskUrl(url: string, nesting = 0): string {
   // Punctuation that ended the sentence is not part of the URL.
-  const trailing = /[.,;:!?)\]}]*$/.exec(url)?.[0] ?? ''
+  const trailing = trailingPunctuation(url)
   const core = url.slice(0, url.length - trailing.length)
 
   // A backslash ends the authority and splits the path, as a URL parser reads it.

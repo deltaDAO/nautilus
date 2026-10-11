@@ -58,7 +58,7 @@ import {
   OWNER_ADDRESS,
   SERVICE_ID
 } from '../fixtures/Asset.js'
-import { captureLog } from '../helpers.js'
+import { captureLog, INVISIBLE_CODES } from '../helpers.js'
 import {
   allowMadeUpFields,
   CREDENTIAL_SHAPES,
@@ -1460,5 +1460,52 @@ describe('round-2 fixes', () => {
     expect(sanitize('passed=3 bypass: yes pkg=nautilus', 500, null)).to.equal(
       'passed=3 bypass: yes pkg=nautilus'
     )
+  })
+})
+
+describe('D28: invisible characters and URLs without a scheme', () => {
+  const token = FAKE.rpcPathToken
+  const [head, tail] = [token.slice(0, 15), token.slice(15)]
+
+  it('the sensitive tier shows no part of a URL token split by an invisible character', () => {
+    const failures: string[] = []
+    for (const code of INVISIBLE_CODES) {
+      const c = String.fromCharCode(code)
+      for (const text of [
+        `see https://${c}rpc.example.org/v3/${token} now`,
+        `see https:/${c}/rpc.example.org/v3/${token} now`,
+        `see https://rpc.example.org/v3/${c}${token} now`,
+        `see https://rpc.example.org/v3/${head}${c}${tail} now`
+      ]) {
+        const shown = maskText(text)
+        if ([token, head, tail].some((part) => shown.includes(part)))
+          failures.push(`U+${code.toString(16)}: ${JSON.stringify(shown)}`)
+      }
+    }
+    expect(failures).to.deep.equal([])
+    // Without one, the text keeps its invisible characters: only what hides more changes.
+    expect(maskText('a\u200bb https://rpc.example.org/v3/x')).to.equal(
+      'a\u200bb https://rpc.example.org/v3/x'
+    )
+  })
+
+  it('the sensitive tier masks the token of a URL without a scheme on an IP address, localhost or [IPv6]', () => {
+    for (const [text, expected] of [
+      [
+        `rpc 127.0.0.1:8545/v3/${token} down`,
+        'rpc 127.0.0.1:8545/v3/<redacted> down'
+      ],
+      [`rpc localhost:8545/${token}.`, 'rpc localhost:8545/<redacted>.'],
+      [`rpc [::1]:8545/${token}`, 'rpc [::1]:8545/<redacted>'],
+      [`rpc 10.0.0.7/x?apikey=${token}`, 'rpc 10.0.0.7/x?apikey=<redacted>']
+    ])
+      expect(maskText(text), text).to.equal(expected)
+
+    for (const prose of [
+      'ratio a:b/c is fine',
+      'version 4.2.2:8080/x',
+      'node.example.org:8000/api'
+    ])
+      expect(maskText(prose), prose).to.equal(prose)
   })
 })
