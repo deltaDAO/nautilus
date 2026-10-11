@@ -306,6 +306,38 @@ longer required: the address is read from the token's `address` claim, as ocean.
 **`PolicyDeniedError.consumerAddress` is the address sent**, which for a `Signer` is its own
 address, not the one in the request.
 
+### Access: no silent second payment
+
+**`access()` throws an `OrderCheckError` instead of ordering anew when it cannot check for
+an order you already hold.** When the on-chain lookup of a previous order fails (the RPC
+rate-limits it, does not answer, or answers with an error) or stops short (it cannot read
+back over the whole order window) and the service costs anything, nothing is bought:
+buying without the check could pay twice. Nothing was ordered or paid, and
+`error.retryable` is `true`. "No previous order found" still orders, as before.
+
+A paid service whose orders never expire (`timeout: 0`), or whose timeout is longer than
+100 000 blocks, now needs `orderOnLookupFailure: true` for a purchase when no order is
+found in the last 100 000 blocks: an older one may still be in force.
+
+```ts
+// beta.1: a failed lookup ordered anew, silently
+const { url } = await nautilus.access({ assetDid })
+
+// now
+try {
+  const { url } = await nautilus.access({ assetDid })
+} catch (error) {
+  if (error instanceof OrderCheckError) {
+    // error.reason: 'rate-limited' | 'unreachable' | 'incomplete' | 'rpc-error'
+    // retry later or with another RPC, or accept a possible second payment:
+    await nautilus.access({ assetDid, orderOnLookupFailure: true })
+  } else throw error
+}
+```
+
+A free service is still ordered, now with a warning. Only `true` opts in. `compute()` makes
+no such lookup and is unchanged. See [`OrderCheckError`](https://nautilus.delta-dao.com/docs/api/nautilus/access#ordercheckerror).
+
 ## Upgrading from 2.0.0-beta.0
 
 2.0.0-beta.1 makes published and edited assets indexable by an unmodified

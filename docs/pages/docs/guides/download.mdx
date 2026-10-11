@@ -57,6 +57,30 @@ free download and a paid one. The node does not report that order, so nautilus f
 the datatoken's events; see
 [the order on chain](/docs/guides/pricing#downloads-the-order-on-chain).
 
+## Why access() can stop before paying
+
+Finding no previous order is normal: nautilus buys one. But when the lookup itself **fails**
+(the RPC rate-limits it, does not answer, or answers with an error) or **stops short** (it
+cannot read back over the whole order window), nautilus cannot tell whether you already
+hold a valid order. Buying anyway could make you pay twice, so for a
+service that costs anything `access()` stops before paying and throws an
+[`OrderCheckError`](/docs/api/nautilus/access#ordercheckerror). Nothing was ordered or paid,
+and the message names the price, the cause and what to do:
+
+```text
+access() stopped before paying for service "Download (JSON)" of asset "Weather" (did:ope:59a18b63…): it could not check whether 0x4C84…4A52 already holds a valid order, and buying without that check could make you pay twice (1.002 devEURAU). Nothing was ordered or paid; it is safe to retry. Cause: the RPC rate-limited the check (HTTP 429). Retry in a minute or use another RPC. To buy anyway, pass `orderOnLookupFailure: true`.
+```
+
+`error.retryable` is `true` and `error.reason` says why (`'rate-limited'`, `'unreachable'`,
+`'incomplete'` or `'rpc-error'`). Retry after a pause or with another RPC; to accept the
+risk of a second payment, pass `orderOnLookupFailure: true`. An `incomplete` lookup stopped
+by the lookup's depth (a service whose orders never expire, or whose timeout is longer than
+about 100 000 blocks) ends the same way on every retry, and the message says so: if you
+have not bought the service in that window, buying with `orderOnLookupFailure: true` is
+safe. A free service is ordered anyway,
+with one warning, since a second order costs only gas. To see the RPC's unredacted answer,
+run with `NAUTILUS_DEBUG=sensitive` (topic `order`; see [debugging](/docs/guides/debugging)).
+
 :::warning
 v1 returned a bare URL string here. The object form exists so the order backing the download
 is visible to the caller.

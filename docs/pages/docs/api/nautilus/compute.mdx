@@ -81,7 +81,13 @@ What happens in order:
    current locks. A standing allowance or authorisation that already covers the job is left
    as it is. Nothing is approved for more than is deposited.
 6. Each input is ordered as planned in step 4 — reusing an existing order where the node
-   says one is valid — allowed to pay exactly the provider fee approved there.
+   says one is valid — allowed to pay exactly the provider fee approved there. `compute()`
+   does not look previous orders up on chain the way [`access()`](/docs/api/nautilus/access)
+   does, so it has no `orderOnLookupFailure` option and does not throw an
+   [`OrderCheckError`](/docs/api/nautilus/access#ordercheckerror). In practice nothing is
+   reused: ocean-node reports a valid order only for a `transferTxId` it is sent, and
+   `compute()` sends none, so **every input that costs anything is bought again on every
+   job** (see [the pricing guide](/docs/guides/pricing#downloads-the-order-on-chain)).
 7. The job starts. The node locks the job's payment in escrow when it accepts the job.
 
 Steps 5 to 7, with the escrow reads they depend on, run one job at a time per chain, payer,
@@ -355,5 +361,8 @@ lock as `context.escrowLock`.
   - `'no-limit'`, `'over-limit'` or `'declined'`: the amount was not allowed.
 - An `Error` when an input's pricing cannot be ordered, or the `payer` is not the signer.
 - An `Error` when the wallet cannot cover the deposit.
+
+Not an `OrderCheckError`: that one is thrown by [`access`](/docs/api/nautilus/access#ordercheckerror)
+when its on-chain lookup of a previous order fails. `compute()` makes no such lookup.
 
 All of these are thrown before any approval, deposit or order.
