@@ -26,8 +26,8 @@ import type { WaltIdCredential } from './waltid/client.js'
  * Why a credential was rejected locally, as `CredentialRejectedLocallyError.reason`:
  *
  * - `no-sub`: the service requires `holder-binding`, and the credential JWT has no `sub`;
- * - `sub-mismatch`: the service requires `holder-binding`, and the credential's `sub` is not
- *   the presenter's DID.
+ * - `sub-mismatch`: the service requires `holder-binding`, and the credential's `sub` (up to
+ *   a `#`) is not the presenter's DID: another DID, empty, or not a string.
  */
 export type CredentialRejectedLocallyReason = 'no-sub' | 'sub-mismatch'
 
@@ -140,11 +140,12 @@ export function assertHolderBinding(params: {
       continue
     }
 
+    // walt.id reads `sub` as JSON text, so a number or null is present but never a DID.
     const sub = payload.sub
     const subject = typeof sub === 'string' ? sub.split('#')[0] : undefined
     if (subject === holderDid) continue
 
-    const reason = subject === undefined ? 'no-sub' : 'sub-mismatch'
+    const reason = sub === undefined ? 'no-sub' : 'sub-mismatch'
     const credentialType = params.typeOf(credential)
 
     if (debugEnabled('sensitive', 'wallet'))
@@ -161,6 +162,7 @@ export function assertHolderBinding(params: {
         holderDid,
         credentialType,
         reason,
+        sub,
         urlSubject: hasUrlSubject(payload)
       }),
       { policy: 'holder-binding', reason, credentialType, serviceId }
@@ -174,17 +176,23 @@ function holderBindingMessage(params: {
   holderDid: string
   credentialType?: string
   reason: CredentialRejectedLocallyReason
+  sub: unknown
   urlSubject: boolean
 }): string {
   const credential = params.credentialType
-    ? `\`${shown(params.credentialType)}\` credential`
+    ? `\`${shown(params.credentialType, 'node')}\` credential`
     : 'credential'
+  const url = params.urlSubject ? ' (its subject is a URL)' : ''
   const problem =
     params.reason === 'no-sub'
-      ? `has no \`sub\`${params.urlSubject ? ' (its subject is a URL)' : ''}`
-      : 'has a `sub` that is another DID'
+      ? `has no \`sub\`${url}`
+      : params.sub === ''
+        ? `has an empty \`sub\`${url}`
+        : typeof params.sub === 'string'
+          ? 'has a `sub` that is another DID'
+          : 'has a `sub` that is not a DID'
 
-  return `Service ${shown(params.serviceId)} of ${shown(params.assetDid)} requires \`holder-binding\`: each presented credential's subject (\`sub\`) must be your DID (${shown(params.holderDid)}). Your ${credential} ${problem}, so the verifier would reject it. Nothing was ordered or paid. Ask the publisher to drop \`holder-binding\` for this credential type, or present a credential issued to your DID.`
+  return `Service ${shown(params.serviceId, 'node')} of ${shown(params.assetDid, 'node')} requires \`holder-binding\`: each presented credential's subject (\`sub\`) must be your DID (${shown(params.holderDid, 'wallet')}). Your ${credential} ${problem}, so the verifier would reject it. Nothing was ordered or paid. Ask the publisher to drop \`holder-binding\` (it applies to every credential in the presentation), or present a credential issued to your DID.`
 }
 
 /**
@@ -246,7 +254,7 @@ function toArray(raw: unknown): unknown[] {
   return raw === undefined || raw === null ? [] : [raw]
 }
 
-/** Wallet- or publisher-supplied text, made safe to quote. */
-function shown(text: string): string {
-  return sanitize(text, 200, null)
+/** Wallet- or node-supplied text, made safe to quote; the raw form goes to the debug channel. */
+function shown(text: string, topic: 'node' | 'wallet'): string {
+  return sanitize(text, 200, topic)
 }
