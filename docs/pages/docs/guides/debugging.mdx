@@ -85,9 +85,9 @@ credential is never shown in part. A cut string ends in `…(cut: N of M charact
 
 ```
 [nautilus] WARNING: sensitive debug logging is ON: the output contains session ids, signatures and request data. Don't use it in production, and don't share the output.
-[nautilus:debug:sensitive] [policy] 2026-10-10T13:36:58.561Z policy-server session opened (initiate) {…}
-[nautilus:debug:sensitive] [wallet] 2026-10-10T13:36:58.759Z answer HTTP 400 to wallet/…/exchange/usePresentationRequest {"status":400,"statusText":"Bad Request","body":"{\"redirectUri\":\"…/error?id=…\",…}"}
-[nautilus:debug:sensitive] [policy] 2026-10-10T13:36:58.772Z verifier per-policy results (checkSessionId) {…,"policies":[…,"VerifiablePresentation holder-binding: failed (java.lang.NullPointerException)"]}
+[nautilus:debug:sensitive] [policy] 2026-10-10T13:36:58.561Z [access 3f9a2c1b] policy-server session opened (initiate) {…}
+[nautilus:debug:sensitive] [wallet] 2026-10-10T13:36:58.759Z [access 3f9a2c1b] answer HTTP 400 to wallet/…/exchange/usePresentationRequest {"status":400,"statusText":"Bad Request","body":"{\"redirectUri\":\"…/error?id=…\",…}"}
+[nautilus:debug:sensitive] [policy] 2026-10-10T13:36:58.772Z [access 3f9a2c1b] verifier per-policy results (checkSessionId) {…,"policies":[…,"VerifiablePresentation holder-binding: failed (java.lang.NullPointerException)"]}
 ```
 
 The error your code catches is the same with the channel on or off: here a
@@ -98,7 +98,10 @@ session id are in the debug lines only. Turning the channel on changes nothing i
 nautilus sends.
 
 To route the events elsewhere, pass a `sink`; it receives `{ time, tier, topic, message,
-data }`.
+data }`, and within an operation its `opId` and `operation`. In Node, a debug line made
+during a call shows the call and its `opId` after the time (`[access 3f9a2c1b]`), the same
+`opId` as the call's log events and as `error.opId` on the error it throws, so the raw data
+of one failing call can be picked out of a busy log.
 
 ## The warnings
 

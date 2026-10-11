@@ -102,6 +102,8 @@ Each event is a `LogEvent`:
 | `event` | `string` | The catalogued name, `component.step.outcome`. Stable: filter and alert on it, not on `msg`. |
 | `component` | `LogComponent` | |
 | `msg` | `string` | A readable sentence. It may change between versions. |
+| `opId` | `string` | The [operation](#telling-operations-apart) the event belongs to: 8 random hex characters, the same on every event of one call. Unset outside one. |
+| `operation` | `string` | The call `opId` belongs to, e.g. `publish` or `getComputeResult`. |
 | `did`, `txHash`, `durationMs` | | Set when the event is about an asset, a transaction or a timed step. |
 | `fields` | `Record<string, unknown>` | The event's own data. |
 
@@ -211,3 +213,56 @@ its own level, components or sink, e.g. one sink per tenant in a multi-tenant se
 options, or a logger made with `createLogger(options)` to share one between instances.
 Warnings of an [`S3RemoteStore`](/docs/api/remote/S3RemoteStore) always go to the
 process-wide configuration set here.
+
+## Telling operations apart
+
+Each call of `publish`, `completePublish`, `edit`, `setServicePrice`,
+`setAssetLifecycleState`, `access`, `compute`, `freeCompute`, `stopCompute`,
+`getComputeStatus`, `getComputeResult` and `waitForIndexer` is an **operation** with its own
+`opId`. Every event the call causes carries it, with the call's name as `operation`, so the
+lines of calls that run at the same time (a `Promise.all`, a server handling several
+requests) can be told apart:
+
+```
+[nautilus] [compute] info: compute finished in 4210 ms. (compute.operation.finished opId=3f9a2c1b operation=compute durationMs=4210)
+```
+
+The error a call throws carries the same id as `error.opId`, so an error in a bug report
+leads straight to its log lines:
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+declare const nautilus: Nautilus
+// ---cut---
+try {
+  await nautilus.access({ assetDid: 'did:ope:…' })
+} catch (error) {
+  console.error((error as { opId?: string }).opId, error) // [!code focus]
+}
+```
+
+`error.opId` is not enumerable: the error compares, prints and serialises as before. An error
+that already had an `opId` keeps it, and a frozen error or a thrown value that is not an
+object gets none.
+
+Each operation starts with a `…started` event (`debug`) and ends with `…finished` or
+`…failed`, with its `durationMs`; `failed` also has the redacted `error`. They are `info`
+(`publish.operation.*`, `edit.operation.*`, `lifecycle.operation.*`, `access.operation.*`,
+`compute.operation.*`, `node.operation.*` for `waitForIndexer`), except for the job reads
+apps poll, `getComputeStatus` and `getComputeResult`, whose `compute.query.*` events are all
+`debug`. A call made from inside another, e.g. from a `confirmProviderFees` callback, joins
+that operation and has no events or `opId` of its own.
+
+The `opId` is random and the operation one of the names above: neither carries data of
+yours, of the node or of the chain. Both go through the same redaction as every other field.
+
+In Node, the operation follows the call through every `await`, timer and callback
+(`AsyncLocalStorage`), so the node client's events, an instance logger's, the process-wide
+logger's and the [debug channel](/docs/api/nautilus/setDebug)'s all carry it. A browser has
+no `AsyncLocalStorage`: there the call hands its logger, bound to the operation, to the
+steps it runs (orders, escrow, the NFT mint, price changes, compute start), and their
+events carry
+the `opId`; events of code that is not handed that logger (the node client, the
+policy-session resolver, publish's checks before the first transaction, an
+`S3RemoteStore`) and the debug channel's have none, never a wrong one. `error.opId` is set
+everywhere.

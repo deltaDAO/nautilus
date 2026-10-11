@@ -91,5 +91,10 @@ main().catch((error) => {
   if (reason && !String(error?.message).includes(reason))
     console.error('  cause:', reason)
 
+  // The call that failed: the same id is on each of its log lines (`opId=` at info or
+  // debug), so `grep <opId>` finds them.
+  const opId = (error as { opId?: unknown } | undefined)?.opId
+  if (typeof opId === 'string') console.error('  opId:', opId)
+
   process.exitCode = 1
 })

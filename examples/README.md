@@ -189,6 +189,11 @@ The warnings you may see while running these commands:
 The paid commands (`access:order`, `access:download` on a fixed-price asset) no longer print
 ocean.js's `No config found for given network 'undefined'`.
 
+Each nautilus call (`publish`, `access`, `compute`, …) has its own `opId`, on every line it
+logs and on the error it throws. When a command fails, it prints the `opId` after the
+error; with `NAUTILUS_LOG_LEVEL=debug`, `grep <opId>` then picks that call's lines out of
+the output.
+
 | Variable | Values |
 | --- | --- |
 | `NAUTILUS_LOG_LEVEL` | `silent`, `error`, `warn` (the default), `info`, `debug`, `trace`. `VERBOSE=true` is `debug`. |
