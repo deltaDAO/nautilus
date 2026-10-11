@@ -6,8 +6,14 @@
  * escrow, then sends the orders, so an input that cannot be ordered is refused before the
  * escrow deposit. `planSettlement` and `sendSettlement` are not exported from the package.
  */
-import type { Config, ProviderFees } from '@oceanprotocol/lib'
-import type { Signer } from 'ethers'
+import {
+  type Config,
+  type ProviderFees,
+  unitsToAmount
+} from '@oceanprotocol/lib'
+import { Decimal } from 'decimal.js'
+import { Contract, type Signer } from 'ethers'
+import { debugRaw } from '../log/debug.js'
 import { type Logger, log } from '../log/logger.js'
 import {
   checkOrder,
@@ -26,13 +32,24 @@ import { findPreviousOrder } from '../utils/previousOrder.js'
 import {
   getOrderPrice,
   getPricingInfo,
-  hasReusableOrder
+  hasReusableOrder,
+  type OrderPrice,
+  type PricingInfo
 } from '../utils/pricing.js'
 import {
   assertProviderFeeSignature,
   isFeeDue,
   type ProviderFeeLike
 } from '../utils/providerFee.js'
+import {
+  classifyLookupFailure,
+  lookupFailedWarning,
+  OrderCheckError,
+  type OrderCheckPrice,
+  type OrderSubject,
+  safeName,
+  shortHex
+} from './orderCheck.js'
 
 export type SettleOrderParams = {
   signer: Signer
@@ -44,14 +61,25 @@ export type SettleOrderParams = {
   payer?: string
   /**
    * The service, to look up a previous order on chain when the node reports no
-   * `validOrder`. Without it only the node's `validOrder` is reused.
+   * `validOrder`. Without it only the node's `validOrder` is reused. Its `name` is used in
+   * an `OrderCheckError`.
    */
-  service?: { id: string; timeout?: number }
+  service?: { id: string; timeout?: number; name?: string }
   /**
    * The asset's DID, named with `service.id` in the fee passed to `confirmProviderFees`
    * and in a `ProviderFeeNotAllowedError`.
    */
   did?: string
+  /** The asset's name, used in an `OrderCheckError`. */
+  assetName?: string
+  /**
+   * When the previous-order lookup fails or stops short (an RPC error or an incomplete
+   * scan, not "no order found") on a service that costs anything, place a new order anyway,
+   * with a warning, instead of throwing an `OrderCheckError`. A new order may pay twice for
+   * an order the account already holds. Only `true` opts in. Default `false`. A free
+   * service is ordered either way, with a warning.
+   */
+  orderOnLookupFailure?: boolean
   /** Where this call's log events go. Default: the process-wide logger. */
   logger?: Logger
 } & ProviderFeeLimits
@@ -84,13 +112,22 @@ export type SettlementPlan =
  * extended or placed. The plan then allows exactly that fee.
  */
 export async function planSettlement(
-  params: SettleOrderParams
+  params: SettleOrderParams,
+  /** The public call the plan is made for, as an `OrderCheckError` names it. */
+  operation = 'settleOrder()'
 ): Promise<SettlementPlan> {
   const { signer, chainConfig, datatokenAddress, serviceIndex, initialized } =
     params
 
   const providerFee = initialized.providerFee as ProviderFeeLike | undefined
-  const previous = await reusableOrder(params)
+  // The pricing of a new order, read once: by a failed lookup to tell whether a new order
+  // costs anything, and for the order itself.
+  const quote = once(async () => {
+    const pricing = await getPricingInfo(signer, datatokenAddress, chainConfig)
+    const price = await getOrderPrice(signer, pricing, chainConfig)
+    return { pricing, price }
+  })
+  const previous = await reusableOrder(params, quote, operation)
 
   // An order in force and no new fee needed: reuse the transaction as it stands. Nothing
   // is sent, so no fee is checked or asked for, whatever the node quoted.
@@ -146,8 +183,7 @@ export async function planSettlement(
       }
     }
 
-  const pricing = await getPricingInfo(signer, datatokenAddress, chainConfig)
-  const price = await getOrderPrice(signer, pricing, chainConfig)
+  const { pricing, price } = await quote()
 
   const request: OrderRequest = {
     signer,
@@ -175,10 +211,16 @@ export async function planSettlement(
  * fee is non-zero. Otherwise, given the service, the account's newest order on chain that
  * the node would accept at download (see `findPreviousOrder`): as it stands when one of
  * its transactions carries a fee the node still accepts, or extended with the fee quoted
- * now. A lookup that fails places a fresh order, as without one.
+ * now.
+ *
+ * A lookup that fails or stops short (not one that finds nothing) throws an
+ * `OrderCheckError` when a new order costs anything, unless `orderOnLookupFailure` is
+ * `true`; otherwise it places a fresh order, with a warning.
  */
 async function reusableOrder(
-  params: SettleOrderParams
+  params: SettleOrderParams,
+  quote: () => Promise<Quote>,
+  operation: string
 ): Promise<{ transferTxId: string; feeDue: boolean } | undefined> {
   const { initialized, service } = params
   const logger = params.logger ?? log
@@ -206,14 +248,7 @@ async function reusableOrder(
       providerFee?.providerFeeAddress === undefined
         ? undefined
         : String(providerFee.providerFeeAddress)
-  }).catch((error: unknown) => {
-    logger.emit(
-      'access.order.lookup_failed',
-      `Could not look up a previous order of ${params.datatokenAddress}; ordering anew.`,
-      { did: params.did, datatokenAddress: params.datatokenAddress, error }
-    )
-    return undefined
-  })
+  }).catch((error: unknown) => onLookupFailure(params, error, quote, operation))
 
   if (!previous) return undefined
 
@@ -230,6 +265,139 @@ async function reusableOrder(
   return previous.usableTxId
     ? { transferTxId: previous.usableTxId, feeDue: false }
     : { transferTxId: previous.orderTxId, feeDue: true }
+}
+
+type Quote = { pricing: PricingInfo; price: OrderPrice }
+
+/**
+ * The previous-order lookup failed: refuse to buy a service that costs anything, unless
+ * the caller opted in (with `true`, nothing else), before anything is sent; otherwise warn
+ * and order anew. When the pricing cannot be read either (the same failing RPC), nothing
+ * can be bought: the service counts as paid and the refusal names no price, whatever the
+ * opt-in, so the pricing read's raw error (with its RPC URL) never reaches the caller.
+ */
+async function onLookupFailure(
+  params: SettleOrderParams,
+  error: unknown,
+  quote: () => Promise<Quote>,
+  operation: string
+): Promise<undefined> {
+  const logger = params.logger ?? log
+  const failure = classifyLookupFailure(error)
+  const costs = await quote().then(
+    ({ pricing, price }) => costsOfNewOrder(params, pricing, price),
+    (priceError: unknown) => {
+      debugRaw('order', 'price read error before redaction', priceError)
+      return undefined
+    }
+  )
+
+  const subject: OrderSubject = {
+    did: params.did,
+    serviceId: params.service?.id ?? '',
+    serviceName: params.service?.name,
+    assetName: params.assetName,
+    consumer: params.consumer
+  }
+
+  if (!costs || (costs.length && params.orderOnLookupFailure !== true))
+    throw new OrderCheckError(subject, costs, failure, operation)
+
+  logger.emit(
+    'access.order.lookup_failed',
+    lookupFailedWarning(subject, failure, costs),
+    {
+      did: params.did,
+      datatokenAddress: params.datatokenAddress,
+      serviceId: params.service?.id,
+      reason: failure.reason,
+      free: !costs.length,
+      error: failure.cause.message
+    }
+  )
+
+  return undefined
+}
+
+/**
+ * What a new order pays besides gas, each part in its own token, as `order()` pays it: the
+ * datatoken's price in its base token (exchange fees included), the publish-market fee and
+ * the provider fee quoted now, those that are not zero. Empty when it costs nothing.
+ */
+async function costsOfNewOrder(
+  params: SettleOrderParams,
+  pricing: PricingInfo,
+  price: OrderPrice
+): Promise<OrderCheckPrice[]> {
+  const { signer } = params
+  const costs: OrderCheckPrice[] = []
+
+  if (notZero(price.total))
+    costs.push({
+      amount: price.total,
+      symbol: await symbolOf(signer, pricing.baseTokenAddress)
+    })
+
+  if (notZero(price.publishMarketFee))
+    costs.push({
+      amount: price.publishMarketFee,
+      symbol: await symbolOf(
+        signer,
+        pricing.publishMarketFee?.publishMarketFeeToken
+      )
+    })
+
+  const fee = params.initialized.providerFee as ProviderFeeLike | undefined
+  if (isFeeDue(fee) && fee?.providerFeeToken !== undefined) {
+    const token = String(fee.providerFeeToken)
+    const units = String(fee.providerFeeAmount)
+    const amount = await unitsToAmount(signer, token, units).catch(
+      () => `${units} base units`
+    )
+    costs.push({ amount, symbol: await symbolOf(signer, token) })
+  }
+
+  return costs
+}
+
+/**
+ * Whether an amount is not provably zero: one that cannot be read (`NaN`, not a number)
+ * counts as a cost, so a malformed price never makes a paid service look free.
+ */
+function notZero(amount: string | undefined): boolean {
+  try {
+    return !new Decimal(amount || 0).isZero()
+  } catch {
+    return true
+  }
+}
+
+/** The token's symbol, or its shortened address when it cannot be read. */
+async function symbolOf(
+  signer: Signer,
+  token: string | undefined
+): Promise<string> {
+  if (!token) return 'tokens'
+  try {
+    const symbol: unknown = await new Contract(
+      token,
+      ['function symbol() view returns (string)'],
+      signer
+    ).symbol()
+    if (typeof symbol === 'string' && symbol.trim()) return safeName(symbol, 20)
+  } catch {
+    // The symbol is only for the message: the address names the token as well.
+  }
+  return `tokens of ${shortHex(token)}`
+}
+
+/** `read`, called at most once; every call gets its result. */
+function once<T>(read: () => Promise<T>): () => Promise<T> {
+  let result: Promise<T> | undefined
+  return () => {
+    result ??= read()
+    return result
+  }
 }
 
 /**
@@ -254,12 +422,19 @@ export async function sendSettlement(
  * needed, otherwise extended with `reuseOrder`. Without one, places a fresh order.
  *
  * Every path but the first sends the node's provider fee to the datatoken, so it throws a
- * `ProviderFeeSignatureError` before any pricing read or transaction when that fee is
- * missing, incomplete, or carries a signature the datatoken would reject. Those paths also
+ * `ProviderFeeSignatureError` before any transaction (and before any pricing read, unless
+ * the lookup on chain failed and the pricing was read to tell whether a new order costs
+ * anything) when that fee is missing, incomplete, or carries a signature the datatoken
+ * would reject. Those paths also
  * throw for a `payer` other than the signer (see `OrderRequest.payer`), and refuse a
  * non-zero fee `maxProviderFee` / `confirmProviderFees` do not allow with a
  * `ProviderFeeNotAllowedError`, before their first approval. An order used as it stands
  * pays no fee, so neither is consulted.
+ *
+ * When the lookup on chain fails or stops short (an RPC error or an incomplete scan, not
+ * "no order found") and a new order costs anything, it throws an `OrderCheckError` before
+ * anything is sent, unless `orderOnLookupFailure` is `true`. That error is thrown before the
+ * fee checks above, so it wins over them: retrying is what to do first either way.
  */
 export async function settleOrder(
   params: SettleOrderParams
