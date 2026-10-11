@@ -348,6 +348,139 @@ export const LOG_EVENTS = {
     once: true
   },
 
+  // operations: one started and one finished or failed event per public call
+  'publish.operation.started': {
+    level: 'debug',
+    component: 'publish',
+    description:
+      "A call of publish() or completePublish() started; the event's operation names the call, and its opId is on every event of the call."
+  },
+  'publish.operation.finished': {
+    level: 'info',
+    component: 'publish',
+    description:
+      'A call of publish() or completePublish() returned, after durationMs.'
+  },
+  'publish.operation.failed': {
+    level: 'info',
+    component: 'publish',
+    description:
+      'A call of publish() or completePublish() threw, after durationMs; the error it threw carries the same opId (error.opId).',
+    fields: ['error']
+  },
+  'edit.operation.started': {
+    level: 'debug',
+    component: 'edit',
+    description:
+      "A call of edit() or setServicePrice() started; the event's operation names the call, and its opId is on every event of the call."
+  },
+  'edit.operation.finished': {
+    level: 'info',
+    component: 'edit',
+    description:
+      'A call of edit() or setServicePrice() returned, after durationMs.'
+  },
+  'edit.operation.failed': {
+    level: 'info',
+    component: 'edit',
+    description:
+      'A call of edit() or setServicePrice() threw, after durationMs; the error it threw carries the same opId (error.opId).',
+    fields: ['error']
+  },
+  'lifecycle.operation.started': {
+    level: 'debug',
+    component: 'lifecycle',
+    description:
+      "A call of setAssetLifecycleState() started; the event's operation names the call, and its opId is on every event of the call."
+  },
+  'lifecycle.operation.finished': {
+    level: 'info',
+    component: 'lifecycle',
+    description:
+      'A call of setAssetLifecycleState() returned, after durationMs.'
+  },
+  'lifecycle.operation.failed': {
+    level: 'info',
+    component: 'lifecycle',
+    description:
+      'A call of setAssetLifecycleState() threw, after durationMs; the error it threw carries the same opId (error.opId).',
+    fields: ['error']
+  },
+  'access.operation.started': {
+    level: 'debug',
+    component: 'access',
+    description:
+      "A call of access() started; the event's operation names the call, and its opId is on every event of the call."
+  },
+  'access.operation.finished': {
+    level: 'info',
+    component: 'access',
+    description: 'A call of access() returned, after durationMs.'
+  },
+  'access.operation.failed': {
+    level: 'info',
+    component: 'access',
+    description:
+      'A call of access() threw, after durationMs; the error it threw carries the same opId (error.opId).',
+    fields: ['error']
+  },
+  'compute.operation.started': {
+    level: 'debug',
+    component: 'compute',
+    description:
+      "A call of compute(), freeCompute() or stopCompute() started; the event's operation names the call, and its opId is on every event of the call."
+  },
+  'compute.operation.finished': {
+    level: 'info',
+    component: 'compute',
+    description:
+      'A call of compute(), freeCompute() or stopCompute() returned, after durationMs.'
+  },
+  'compute.operation.failed': {
+    level: 'info',
+    component: 'compute',
+    description:
+      'A call of compute(), freeCompute() or stopCompute() threw, after durationMs; the error it threw carries the same opId (error.opId).',
+    fields: ['error']
+  },
+  'compute.query.started': {
+    level: 'debug',
+    component: 'compute',
+    description:
+      "A call of getComputeStatus() or getComputeResult(), which apps poll started; the event's operation names the call, and its opId is on every event of the call."
+  },
+  'compute.query.finished': {
+    level: 'debug',
+    component: 'compute',
+    description:
+      'A call of getComputeStatus() or getComputeResult(), which apps poll returned, after durationMs.'
+  },
+  'compute.query.failed': {
+    level: 'debug',
+    component: 'compute',
+    description:
+      'A call of getComputeStatus() or getComputeResult(), which apps poll threw, after durationMs; the error it threw carries the same opId (error.opId).',
+    fields: ['error']
+  },
+  'node.operation.started': {
+    level: 'debug',
+    component: 'node',
+    description:
+      "A call of waitForIndexer() started; the event's operation names the call, and its opId is on every event of the call."
+  },
+  'node.operation.finished': {
+    level: 'info',
+    component: 'node',
+    description: 'A call of waitForIndexer() returned, after durationMs.'
+  },
+  'node.operation.failed': {
+    level: 'info',
+    component: 'node',
+    description:
+      'A call of waitForIndexer() threw, after durationMs; the error it threw carries the same opId (error.opId).',
+    fields: ['error']
+  },
+
   // store
   'store.s3.shared_credentials': {
     level: 'warn',

@@ -1,3 +1,4 @@
+export type { OperationName } from './context.js'
 export type {
   DebugEvent,
   DebugLevel,
