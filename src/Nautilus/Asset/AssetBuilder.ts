@@ -6,7 +6,11 @@ import type {
 } from '../../@types/Nautilus.js'
 import type { NftCreateDataWithoutOwner } from '../../@types/Publish.js'
 import { DEFAULT_DIRECTION, DEFAULT_LANGUAGE } from '../../ddo/language.js'
-import { getLifecycleState, getOwner } from '../../ddo/read.js'
+import {
+  getLifecycleState,
+  getOwner,
+  getServiceCredentials
+} from '../../ddo/read.js'
 import type {
   CredentialListTypes,
   License,
@@ -24,6 +28,12 @@ import {
   setVcPolicies,
   setVpPolicies
 } from '../../identity/policy.js'
+import {
+  applySsiPolicyLint,
+  lintSsiPolicies,
+  type SsiPolicyLintMode,
+  type SsiPolicyScope
+} from '../../identity/policyLint.js'
 import { NautilusAsset } from './NautilusAsset.js'
 import { NautilusDDO } from './NautilusDDO.js'
 import type {
@@ -49,6 +59,7 @@ import type {
 export class AssetBuilder implements IAssetBuilder {
   private asset: NautilusAsset
   private readonly source?: AssetV5
+  private ssiPolicyLint: SsiPolicyLintMode = 'warn'
 
   constructor(asset?: AssetV5) {
     this.source = asset
@@ -329,6 +340,22 @@ export class AssetBuilder implements IAssetBuilder {
   }
 
   /**
+   * What `build()` does when the SSI policies of the asset or its services check less than
+   * they seem to, or refuse common credentials: `'warn'` (the default) logs a warning event
+   * for each, `'error'` throws an `SsiPolicyError` instead, `'off'` skips them. Policies that
+   * cannot work at all (a VC policy with arguments at asset or service level, a bare
+   * `minimum-credentials`) throw in every mode. Kept across `reset()`.
+   */
+  setSsiPolicyLint(mode: SsiPolicyLintMode) {
+    if (!['warn', 'error', 'off'].includes(mode))
+      throw new TypeError(
+        `ssiPolicyLint must be 'warn', 'error' or 'off', not ${JSON.stringify(mode)}.`
+      )
+    this.ssiPolicyLint = mode
+    return this
+  }
+
+  /**
    * How multiple rules combine. Defaults, applied by the policy server, are
    * `match_allow: 'all'` and `match_deny: 'any'`.
    */
@@ -396,6 +423,14 @@ export class AssetBuilder implements IAssetBuilder {
         )
     }
 
+    applySsiPolicyLint(
+      lintSsiPolicies(
+        { where: 'asset', credentials: this.asset.ddo.credentials },
+        this.serviceScopes()
+      ),
+      this.ssiPolicyLint
+    )
+
     if (!this.asset.ddo.language.language)
       this.asset.ddo.language = {
         language: DEFAULT_LANGUAGE,
@@ -403,6 +438,32 @@ export class AssetBuilder implements IAssetBuilder {
       }
 
     return this.asset
+  }
+
+  /**
+   * The credentials of every service the built asset will have: the builder's own, and on an
+   * edit the published ones it neither replaces nor removes.
+   */
+  private serviceScopes(): SsiPolicyScope[] {
+    const { services, removeServices } = this.asset.ddo
+    const replaced = new Set([
+      ...removeServices,
+      ...services.flatMap((service) => (service.id ? [service.id] : []))
+    ])
+
+    return [
+      ...services.map((service, index) => ({
+        where: `service ${service.id || service.name || `#${index + 1}`}`,
+        credentials: service.credentials
+      })),
+      ...this.asset.ddo
+        .getBaselineServices()
+        .filter((service) => !replaced.has(service.id))
+        .map((service) => ({
+          where: `service ${service.id}`,
+          credentials: getServiceCredentials(service)
+        }))
+    ]
   }
 }
 

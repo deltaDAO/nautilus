@@ -317,6 +317,27 @@ export const LOG_EVENTS = {
     description:
       'persistPresentedSessions is on: presented policy-server sessions are kept in the sessionStore, and their ids let anyone read the presentation through the node.',
     once: true
+  },
+  'identity.policy.holder_binding': {
+    level: 'warn',
+    component: 'identity',
+    description:
+      "AssetBuilder.build(): the asset or a service requires the VP policy holder-binding, which refuses every credential whose JWT 'sub' is not the presenter's DID, such as Gaia-X and other VCDM 2.0 vc+jwt credentials with a URL subject.",
+    fields: ['where']
+  },
+  'identity.policy.presentation_definition_vc_jwt': {
+    level: 'warn',
+    component: 'identity',
+    description:
+      "AssetBuilder.build(): the VP policy presentation-definition is combined with a jwt_vc_json (or jwt_vc) request credential. walt.id's generated definition looks for the type at $.vc.type, which VCDM 2.0 vc+jwt credentials do not have, so their holders are all refused.",
+    fields: ['where', 'credentialType']
+  },
+  'identity.policy.no_issuer_trust': {
+    level: 'warn',
+    component: 'identity',
+    description:
+      'AssetBuilder.build(): a request credential has no per-credential allowed-issuer policy, so a credential of that type from any issuer, a self-issued one included, is accepted.',
+    fields: ['where', 'credentialType']
   }
 } as const satisfies Record<string, LogEventSpec>
 

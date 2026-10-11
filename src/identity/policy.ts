@@ -18,7 +18,13 @@ import {
   type VpPolicy
 } from '../ddo/types.js'
 
-/** The policy server's own defaults, from `policy-server/default-verification-policies`. */
+/**
+ * nautilus's own default VC policies, mirroring the policy server's
+ * `default-verification-policies` file. That file is not what a deployment runs: the policy
+ * server adds the `DEFAULT_VC_POLICIES` and `DEFAULT_VP_POLICIES` of its environment to every
+ * session (its `.env.example` lists `expired,signature,revoked-status-list,not-before` for
+ * both), which its operator sets and nautilus cannot read.
+ */
 export const DEFAULT_VC_POLICIES: VcPolicy[] = [
   'signature',
   'not-before',
