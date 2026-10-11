@@ -10,6 +10,7 @@
 import { createHash } from 'node:crypto'
 import type { Nft, StorageObject } from '@oceanprotocol/lib'
 import { getAddress, getBytes, isHexString, toBeHex } from 'ethers'
+import { sanitize } from '../node/messages.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
 import { isCid } from '../remote/cid.js'
 import {
@@ -559,7 +560,9 @@ export function pointerPlaintext(pointer: StorageObject): {
  *
  * Every field is compared with the validated DDO as JSON (key order aside), except:
  *
- *   - the JWT registered claims (`REGISTERED_CLAIMS`) the DDO does not have itself;
+ *   - the JWT registered claims (`REGISTERED_CLAIMS`) the DDO does not have itself; of
+ *     those, `iss` must still be an accepted form of the payload's `issuer`, and `sub` and
+ *     `jti` the DDO's id, when present (as `credentialClaims` writes them);
  *   - `type`, which may also be `['VerifiableCredential']`, as the built-in signers write it;
  *   - `issuer`, which may differ from the DDO's in the case of an Ethereum address, as the
  *     signer's own checksummed address; or be any non-empty string when the DDO declares
@@ -594,6 +597,21 @@ export function assertSignedDdo(
     if (payload[field] !== ddo[field])
       throw new Error(
         `The DDO signer signed a document with ${field} ${JSON.stringify(payload[field])}, not the validated DDO's ${JSON.stringify(ddo[field])}.`
+      )
+
+  // The registered claims the DDO has no field for are not compared below, but the ones
+  // the built-in signers write (`credentialClaims`) must, when a signer sets them, name the
+  // issuer the payload declares and the DDO itself: the node indexes them with the DDO, and
+  // a consumer reading `iss` must not find an identity the publisher never declared.
+  if (has(payload, 'iss') && !isAcceptedIssuer(payload.iss, payload.issuer))
+    throw new Error(
+      `The DDO signer signed iss ${shown(payload.iss)}, which is not the issuer the payload declares, ${shown(payload.issuer)}. The signed payload is what the node indexes, so nautilus stores only a credential whose iss is its issuer.`
+    )
+
+  for (const claim of ['sub', 'jti'] as const)
+    if (has(payload, claim) && payload[claim] !== ddo.id)
+      throw new Error(
+        `The DDO signer signed ${claim} ${shown(payload[claim])}, not the validated DDO's id ${JSON.stringify(ddo.id)}. The signed payload is what the node indexes, so nautilus stores only a credential whose ${claim} is the DDO's id.`
       )
 
   // As the signer received it: `undefined` fields dropped.
@@ -697,6 +715,11 @@ export function assertDid(
     throw new Error(
       `The DDO id ${JSON.stringify(did)} is not the DID of NFT ${nftAddress} on chain ${chainId} (${expected}); the node would reject it.`
     )
+}
+
+/** A value a signer returned, for a message: sanitised and bounded. */
+function shown(value: unknown): string {
+  return sanitize(String(JSON.stringify(value)), 100, null)
 }
 
 /**

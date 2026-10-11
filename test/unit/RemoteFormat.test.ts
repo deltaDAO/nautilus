@@ -1259,6 +1259,60 @@ describe('what nautilus takes from stores, signers and the chain', () => {
     )
   })
 
+  it('refuses an iss that is not the payload issuer, and a sub or jti that is not the DDO id', async () => {
+    const ddo = signableDdo()
+    const issuer = ddo.issuer as string
+    const signing = (payload: unknown) => ({
+      getIssuer: async () => issuer,
+      sign: async () => ({
+        jwt: `${base64url({ alg: 'ES256' })}.${base64url(payload)}.sig`,
+        issuer
+      })
+    })
+    const claims = { iss: issuer, sub: ddo.id, jti: ddo.id }
+
+    for (const [changed, refused] of [
+      [
+        { iss: 'did:evil:other\n[nautilus] forged' },
+        /^The DDO signer signed iss "did:evil:other\\n\[nautilus\] forged", which is not the issuer the payload declares/
+      ],
+      [
+        { sub: 'did:ope:other' },
+        /^The DDO signer signed sub "did:ope:other", not the validated DDO's id/
+      ],
+      [
+        { jti: 'urn:uuid:1' },
+        /^The DDO signer signed jti "urn:uuid:1", not the validated DDO's id/
+      ]
+    ] as const) {
+      const { store, stored } = capturingStore()
+
+      await expectThrowsAsync(
+        () =>
+          prepareMetadata({
+            node: createNodeMock().client,
+            ddo,
+            signer: signing({ ...ddo, ...claims, ...changed }),
+            remoteStore: store,
+            did: ASSET_DID
+          }),
+        refused
+      )
+      expect(stored).to.have.length(0)
+    }
+
+    // An address iss in another case is the same issuer.
+    const { store, stored } = capturingStore()
+    await prepareMetadata({
+      node: createNodeMock().client,
+      ddo,
+      signer: signing({ ...ddo, ...claims, iss: issuer.toLowerCase() }),
+      remoteStore: store,
+      did: ASSET_DID
+    })
+    expect(stored).to.have.length(1)
+  })
+
   it('accepts what the built-in signers and walt.id add, and nothing more', async () => {
     const ddo = signableDdo()
     const issuer = ddo.issuer as string

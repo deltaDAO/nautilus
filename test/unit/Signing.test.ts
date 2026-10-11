@@ -1,12 +1,14 @@
 import { Wallet } from 'ethers'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { WaltIdWallet } from '../../src/identity/waltid/client.js'
+import { type DebugEvent, setDebug } from '../../src/log/debug.js'
 import {
   decodeCredential,
   Eip191VcSigner,
   WaltIdVcSigner
 } from '../../src/signing/vc.js'
 import { getAssetFixture } from '../fixtures/Asset.js'
+import { FAKE } from '../secretScan.js'
 
 const PRIVATE_KEY =
   '0x0123456789012345678901234567890123456789012345678901234567890123'
@@ -190,6 +192,38 @@ describe('declared issuers', () => {
 
     expect(message).to.match(/declares issuer/i)
     expect(message).to.contain('did:web:someone-else.example')
+  })
+
+  it('shows a declared issuer sanitised, with the raw value on the debug channel', async () => {
+    // On an edit the declared issuer is the one the node served.
+    const events: DebugEvent[] = []
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    setDebug({
+      level: 'sensitive',
+      topics: ['node'],
+      sink: (event) => events.push(event)
+    })
+    const source = {
+      ...ddo(),
+      issuer: `did:x:abc\n[nautilus] forged log line ${FAKE.rpcUrl}`
+    }
+
+    const message = await new Eip191VcSigner(new Wallet(PRIVATE_KEY))
+      .sign(source)
+      .then(
+        () => '',
+        (error: Error) => error.message
+      )
+
+    expect(message).to.match(
+      /^The DDO declares issuer "did:x:abc \[nautilus\] forged log line .*" but it is being signed by "0x/
+    )
+    expect(message).not.to.contain('\n')
+    expect(message).not.to.contain(FAKE.rpcQueryToken)
+    expect(JSON.stringify(events.map((event) => event.data))).to.contain(
+      'forged log line'
+    )
+    vi.restoreAllMocks()
   })
 
   it('reports the identity each signer issues as', async () => {

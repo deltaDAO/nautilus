@@ -11,6 +11,7 @@ import {
 } from '../../src/ddo/project.js'
 import { getMetadata } from '../../src/ddo/read.js'
 import { assertValid } from '../../src/ddo/validate.js'
+import { REGISTERED_CLAIMS } from '../../src/signing/claims.js'
 import {
   ASSET_DID,
   CHAIN_ID,
@@ -278,6 +279,34 @@ describe('stripDerivedFields', () => {
     // What the publisher actually authored is untouched.
     expect(subject.metadata).to.be.an('object')
     expect(subject.services).to.have.length(1)
+  })
+
+  it("removes the previous credential's JWT claims, and keeps the declared issuer", () => {
+    const claims = {
+      iss: '0x0DB823218e337a6817e6D7740eb17635DEAdafAF',
+      sub: ASSET_DID,
+      jti: ASSET_DID,
+      aud: ['x'],
+      exp: 1,
+      nbf: 1,
+      iat: 1
+    }
+    const stripped = stripDerivedFields({
+      ...(getAssetFixture() as unknown as Record<string, unknown>),
+      ...claims
+    })
+
+    for (const claim of REGISTERED_CLAIMS)
+      expect(stripped).to.not.have.property(claim)
+    expect(Object.keys(claims)).to.have.members([...REGISTERED_CLAIMS])
+    expect(stripped.issuer).to.equal('did:jwk:test-issuer')
+    expect(stripped.id).to.equal(ASSET_DID)
+  })
+
+  it('shares a list of claims no caller can change', () => {
+    // @ts-expect-error REGISTERED_CLAIMS is readonly
+    void (() => REGISTERED_CLAIMS.push('issuer'))
+    expect(REGISTERED_CLAIMS).not.to.include('issuer')
   })
 
   it('does not mutate its input', () => {

@@ -16,7 +16,7 @@
  */
 import type { Signer } from 'ethers'
 import type { WaltIdWallet } from '../identity/waltid/client.js'
-import { credentialClaims } from './claims.js'
+import { assertSameIssuer, credentialClaims } from './claims.js'
 
 export interface SignedCredential {
   /** The compact JWT. */
@@ -42,26 +42,6 @@ export interface DdoSigner {
   sign(ddo: Record<string, unknown>): Promise<SignedCredential>
 }
 
-/**
- * Whether a DDO-declared issuer names the same identity as the signer.
- *
- * Ethereum addresses are compared case-insensitively — `getAddress()` returns the
- * checksummed form, and failing a publish because the caller typed it lowercase would be
- * pedantry. Everything else (DIDs) is compared exactly, since their method-specific ids
- * are case-sensitive.
- */
-function isSameIssuer(declared: string, actual: string): boolean {
-  if (declared === actual) return true
-
-  const isAddress = (value: string) => /^0x[0-9a-fA-F]{40}$/.test(value)
-
-  return (
-    isAddress(declared) &&
-    isAddress(actual) &&
-    declared.toLowerCase() === actual.toLowerCase()
-  )
-}
-
 function base64url(value: string): string {
   return Buffer.from(value, 'utf8').toString('base64url')
 }
@@ -77,16 +57,7 @@ function toCredential(
   // A declared issuer is an assertion about who signs, not a free-text field: the spread
   // below would silently overwrite it, so `setIssuer()` would appear to work while the
   // signed claims said something else entirely. Fail loudly instead.
-  const declared = ddo.issuer
-
-  if (
-    typeof declared === 'string' &&
-    declared &&
-    !isSameIssuer(declared, issuer)
-  )
-    throw new Error(
-      `The DDO declares issuer "${declared}" but it is being signed by "${issuer}". Sign with the identity it declares, or call setIssuer() with the signing identity (on an edit, the declared issuer is the published one).`
-    )
+  assertSameIssuer(ddo.issuer, issuer)
 
   return credentialClaims(ddo, issuer)
 }
