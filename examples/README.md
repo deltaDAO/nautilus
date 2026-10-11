@@ -393,7 +393,9 @@ guard: its transactions go out one at a time with consecutive nonces, a transact
 for its nonce is waited for when the chain already has it and sent again when that is
 provably safe, and a failed send says why instead of "ocean.js returned no transaction". An
 order that cannot be proven unsent stops with a `NonceGuardError` ("may have been sent"):
-check the account's transactions before you retry it. The guard covers **one process**: give
+check the account's transactions before you retry it. Proving that takes a second RPC:
+set `VERIFICATION_RPC_URL` in `.env` (passed as `verificationProvider`), else an order
+refused for its nonce is never sent again. The guard covers **one process**: give
 each process (a server, a script, a CI job) its own key. To watch its decisions, run with
 `NAUTILUS_DEBUG=sensitive NAUTILUS_DEBUG_TOPICS=nonce` (the output holds signed
 transactions: keep it to yourself). `nonceManagement: 'off'` in `Nautilus.create` turns the
