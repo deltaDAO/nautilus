@@ -88,7 +88,7 @@ export const LOG_EVENTS = {
     level: 'warn',
     component: 'chain',
     description:
-      'A transaction was refused for its nonce (a collision with another send of the same key, or a stale nonce from the RPC) and the chain does not have it: the nonce guard sends the same transaction again with the nonce in nextNonce. A transaction that moves value is sent again only once it is proven it can never be mined.',
+      'A transaction was refused for its nonce (a collision with another send of the same key, or a stale nonce from the RPC) and the chain does not have it: the nonce guard sends the same transaction again with the nonce in nextNonce. A transaction that moves value is sent again only once it is proven, through the verificationProvider as well, that it can never be mined (another transaction of the account holds its nonce).',
     fields: ['address', 'txNonce', 'nextNonce', 'code']
   },
   'chain.nonce.already_sent': {
@@ -102,22 +102,22 @@ export const LOG_EVENTS = {
     level: 'warn',
     component: 'chain',
     description:
-      "The nonce guard stopped after a refusal for the nonce: it could not prove the transaction was never sent (reason 'may-have-been-sent'), it was refused three times, the refusal named no transaction of this send, or the nonce was not nautilus's to set. The error says which.",
-    fields: ['reason', 'code', 'attempts', 'moneySend']
+      "The nonce guard stopped after a refusal for the nonce: it could not prove the transaction was never sent, or a resend failed for another reason (reason 'may-have-been-sent'), it was refused three times, the refusal named no transaction of this send, or the nonce was not nautilus's to set. The error says which. attemptsComplete: whether attempts lists every transaction the send may have broadcast.",
+    fields: ['reason', 'code', 'attempts', 'attemptsComplete', 'moneySend']
   },
   'chain.nonce.counter_reset': {
     level: 'warn',
     component: 'chain',
     description:
-      "The nonce guard's counter was ahead of the RPC's pending count, and the RPC no longer knows the last transaction it counted (dropped): the counter falls back to the pending count.",
+      "The nonce guard's counter was ahead of the RPC's pending count, and the last transaction it counted is dropped: sent more than a minute ago, unknown by hash on two reads, and the account has not mined past its nonce. The counter falls back to the pending count.",
     fields: ['address', 'txNonce', 'pending']
   },
   'chain.send.failed': {
     level: 'debug',
     component: 'chain',
     description:
-      'A transaction was not sent, for a reason other than its nonce (a wallet rejection, insufficient funds, a timeout, a network error). Not retried: it may have landed. confirmTransaction() names this cause when ocean.js returns no transaction.',
-    fields: ['code']
+      'A send failed for a reason other than its nonce (a wallet rejection, insufficient funds, a timeout, a network error). Not retried. maySent: whether the transaction may still have reached the chain (false only for a refusal before the broadcast). confirmTransaction() names this cause when ocean.js returns no transaction and it was the only recent send to that contract.',
+    fields: ['code', 'maySent']
   },
 
   'node.indexer_nonce.zero_byte_accepted': {

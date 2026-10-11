@@ -155,7 +155,8 @@ export async function createNftWithService(params: {
   const tx = await confirmTransaction(
     'createNftWithDatatoken',
     response,
-    signer
+    signer,
+    chainConfig.nftFactoryAddress
   )
 
   const nftCreated = getEventFromTx(tx, 'NFTCreated')
@@ -222,7 +223,7 @@ export async function createDatatokenForService(params: {
   } catch (error) {
     // ocean.js says only "Failed to send createDatatoken transaction"; the nonce guard
     // recorded why.
-    throw withSendFailure(signer, error)
+    throw withSendFailure(signer, error, nftAddress)
   }
 
   if (typeof datatokenAddress !== 'string')
@@ -313,7 +314,7 @@ export async function createPricingForDatatoken(params: {
     )
   }
 
-  return confirmTransaction('createPricing', response, signer)
+  return confirmTransaction('createPricing', response, signer, datatokenAddress)
 }
 
 /**
@@ -754,7 +755,7 @@ export async function writeMetadata(params: {
     const response = await nft.setMetadata(...args)
     params.onProgress?.('sent', hashOf(response))
 
-    return confirmTransaction('setMetadata', response, signer)
+    return confirmTransaction('setMetadata', response, signer, nftAddress)
   }
 
   // Throws before anything is sent: the permission read or the gas estimate failed.
@@ -768,18 +769,22 @@ export async function writeMetadata(params: {
     response = await signer.sendTransaction(request)
   } catch (error) {
     // Thrown straight to here, not swallowed by ocean.js: nothing else reads the record.
-    guardOf(signer)?.takeLastFailure()
+    guardOf(signer)?.sends.forget(error)
 
     const refused = refusedAttempts(error)
     if (refused) {
-      const proven = await provenNotWritten({
-        signer,
-        publisher,
-        attempts: refused,
-        nftAddress,
-        metadataHash: prepared.metadataHash,
-        fromBlock
-      })
+      const { attempts } = refused
+      // A send whose transactions are not all known cannot be proven unsent.
+      const proven =
+        refused.complete &&
+        (await provenNotWritten({
+          signer,
+          publisher,
+          attempts,
+          nftAddress,
+          metadataHash: prepared.metadataHash,
+          fromBlock
+        }))
       logger.emit(
         'publish.metadata.nonce_refused',
         proven
@@ -787,17 +792,18 @@ export async function writeMetadata(params: {
           : 'The metadata transaction was refused for its nonce, and it cannot be proven that it was never mined: the stored envelope is kept.',
         {
           nftAddress,
-          attempts: refused.map((attempt) => attempt.hash),
+          attempts: attempts.map((attempt) => attempt.hash),
           proven
         }
       )
-      if (!proven) params.onProgress?.('sent', refused.at(-1)?.hash)
+      if (!proven) params.onProgress?.('sent', attempts.at(-1)?.hash)
     } else if (!neverBroadcast(error))
       params.onProgress?.('sent', sentTransactionHash(error))
 
     throw withoutSignedTransaction(error)
   }
   params.onProgress?.('sent', response.hash)
+  guardOf(signer)?.sends.settle(response.hash)
 
   let receipt: TransactionReceipt | null
   let sped: TransactionReceipt | undefined
@@ -847,20 +853,28 @@ export async function writeMetadata(params: {
 
 /**
  * The signed transactions of a send refused for its nonce: the nonce guard's attempts, or
- * the one an ethers refusal carries (none when it carries none). `undefined` when the
- * failure is not a refusal for the nonce.
+ * the one an ethers refusal carries (none when it carries none), and whether they are all
+ * the transactions the send may have broadcast (`complete`). `undefined` when the failure
+ * is not a refusal for the nonce.
  */
-function refusedAttempts(error: unknown): SentAttempt[] | undefined {
-  if (error instanceof NonceGuardError) return error.attempts
+function refusedAttempts(
+  error: unknown
+): { attempts: SentAttempt[]; complete: boolean } | undefined {
+  if (error instanceof NonceGuardError)
+    return { attempts: error.attempts, complete: error.attemptsComplete }
   if (!nonceRefusalOf(error)) return undefined
 
   const raw = signedTransactionOf(error)
-  if (!raw) return []
   try {
-    const decoded = Transaction.from(raw)
-    return decoded.hash ? [{ hash: decoded.hash, nonce: decoded.nonce }] : []
+    const decoded = raw ? Transaction.from(raw) : undefined
+    return decoded?.hash
+      ? {
+          attempts: [{ hash: decoded.hash, nonce: decoded.nonce }],
+          complete: true
+        }
+      : { attempts: [], complete: false }
   } catch {
-    return []
+    return { attempts: [], complete: false }
   }
 }
 
@@ -869,8 +883,11 @@ function refusedAttempts(error: unknown): SentAttempt[] | undefined {
  * can be removed: (a) none of its transactions known on two reads (the second through the
  * `verificationProvider` when configured), (b) the publisher's mined count past their
  * nonces, so other transactions used them, and (c) no `MetadataCreated`/`MetadataUpdated`
- * of the NFT carrying this `metadataHash` since just before the send. Anything not proven,
- * including a read that fails, keeps the envelope.
+ * of the NFT carrying this `metadataHash` since just before the send. (c) is read from
+ * each provider up to a block it names (`toBlock` its head, not `'latest'`, which a
+ * load-balanced RPC may answer from a backend further behind), at which the publisher's
+ * mined count is past the nonces too: so the logs cover the block that used each nonce.
+ * Anything not proven, including a read that fails, keeps the envelope.
  */
 async function provenNotWritten(params: {
   signer: Signer
@@ -881,29 +898,41 @@ async function provenNotWritten(params: {
   fromBlock?: number
 }): Promise<boolean> {
   const provider = params.signer.provider
-  if (!provider || params.fromBlock === undefined || !params.attempts.length)
-    return false
+  const { fromBlock, attempts, publisher } = params
+  if (!provider || fromBlock === undefined || !attempts.length) return false
+
+  const second = guardOf(params.signer)?.verificationProvider
 
   if (
     !(await provenNeverSent({
       provider,
-      second: guardOf(params.signer)?.verificationProvider,
-      address: params.publisher,
-      attempts: params.attempts
+      second,
+      address: publisher,
+      attempts
     }))
   )
     return false
 
-  try {
-    const logs = await provider.getLogs({
-      address: params.nftAddress,
-      fromBlock: params.fromBlock,
-      toBlock: 'latest',
-      topics: [METADATA_EVENT_TOPICS]
-    })
-    const hash = params.metadataHash.replace(/^0x/i, '').toLowerCase()
+  const highest = Math.max(...attempts.map((attempt) => attempt.nonce))
+  const hash = params.metadataHash.replace(/^0x/i, '').toLowerCase()
 
-    return !logs.some((entry) => entry.data.toLowerCase().includes(hash))
+  try {
+    for (const each of new Set([provider, second ?? provider])) {
+      const head = await each.getBlockNumber()
+      if (head < fromBlock) return false
+      if ((await each.getTransactionCount(publisher, head)) <= highest)
+        return false
+
+      const logs = await each.getLogs({
+        address: params.nftAddress,
+        fromBlock,
+        toBlock: head,
+        topics: [METADATA_EVENT_TOPICS]
+      })
+      if (logs.some((entry) => entry.data.toLowerCase().includes(hash)))
+        return false
+    }
+    return true
   } catch {
     return false
   }

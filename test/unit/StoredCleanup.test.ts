@@ -29,6 +29,11 @@ import {
 } from '../../src/publish/index.js'
 import type { RemoteStore } from '../../src/remote/RemoteStore.js'
 import { Eip191VcSigner } from '../../src/signing/vc.js'
+import {
+  NonceGuardError,
+  NonceGuardSigner,
+  NonceGuardState
+} from '../../src/utils/nonceGuard.js'
 import { ASSET_DID, getAssetFixture, NFT_ADDRESS } from '../fixtures/Asset.js'
 import { createNodeMock } from '../mocks/node.js'
 
@@ -665,12 +670,18 @@ describe('writeMetadata', () => {
     function refusingChain(options: {
       code?: 'NONCE_EXPIRED' | 'REPLACEMENT_UNDERPRICED'
       latest?: number
+      /** The pending count, when it differs from `latest` (what the nonce guard reads). */
+      pending?: number
       known?: boolean
       eventWithHash?: boolean
       withRaw?: boolean
+      logsThrow?: boolean
+      /** How the broadcasts after the first fail: a refusal for the nonce by default. */
+      resendError?: 'INSUFFICIENT_FUNDS' | 'TIMEOUT'
     }) {
       let metadataHash = ''
       let signedHash = ''
+      let broadcasts = 0
       chain.setMetadataTx = async (...args: unknown[]) => {
         metadataHash = String(args[7])
         return METADATA_REQUEST
@@ -678,18 +689,35 @@ describe('writeMetadata', () => {
       const provider = {
         getNetwork: async () => ({ chainId: 32456n }),
         getBlockNumber: async () => 100,
-        getTransactionCount: async () => options.latest ?? 818,
+        getTransactionCount: async (_address: string, tag: unknown) =>
+          tag === 'pending'
+            ? (options.pending ?? options.latest ?? 818)
+            : (options.latest ?? 818),
         getTransaction: async (hash: string) =>
           options.known && hash === signedHash ? { hash } : null,
         getTransactionReceipt: async () => null,
-        getLogs: vi.fn(async () =>
-          options.eventWithHash
+        getLogs: vi.fn(async () => {
+          if (options.logsThrow)
+            throw makeError(
+              'query returned more than 10000 results',
+              'UNKNOWN_ERROR',
+              {} as never
+            )
+          return options.eventWithHash
             ? [{ data: `0x${'00'.repeat(64)}${metadataHash.slice(2)}` }]
             : []
-        ),
+        }),
         broadcastTransaction: async (raw: string) => {
           signedHash = (await import('ethers')).Transaction.from(raw)
             .hash as string
+          if (broadcasts++ > 0 && options.resendError)
+            throw makeError(
+              `failed: ${options.resendError}`,
+              options.resendError,
+              {
+                transaction: raw
+              } as never
+            )
           throw makeError(
             'nonce has already been used',
             options.code ?? 'NONCE_EXPIRED',
@@ -739,6 +767,74 @@ describe('writeMetadata', () => {
       expect(provider.getLogs).toHaveBeenCalledWith(
         expect.objectContaining({ address: NFT_ADDRESS, fromBlock: 100 })
       )
+    })
+
+    it('keeps it when the metadata events cannot be read', async () => {
+      const { signer, provider } = refusingChain({ logsThrow: true })
+
+      expect((await writeWith(signer)).progress).to.deep.equal(['sent'])
+      expect(provider.getLogs).toHaveBeenCalled()
+    })
+
+    it('reads the metadata events up to a named block, not "latest" (security review m1)', async () => {
+      const { signer, provider } = refusingChain({})
+
+      await writeWith(signer)
+
+      expect(provider.getLogs).toHaveBeenCalledWith(
+        expect.objectContaining({ fromBlock: 100, toBlock: 100 })
+      )
+    })
+
+    /** The same chain behind the nonce guard: a stale pending count, so it resends once. */
+    function guardedChain(options: Parameters<typeof refusingChain>[0]) {
+      const { signer, provider } = refusingChain({ pending: 765, ...options })
+      return {
+        provider,
+        signer: new NonceGuardSigner(signer, {
+          state: new NonceGuardState(),
+          sleep: async () => undefined
+        })
+      }
+    }
+
+    it("proves every transaction of the guard's resends before removing it", async () => {
+      // Attempt 1 (nonce 765) refused for its nonce and resent; the resend refused before
+      // its broadcast. The envelope goes only with the proofs for attempt 1.
+      const { signer, provider } = guardedChain({
+        resendError: 'INSUFFICIENT_FUNDS'
+      })
+
+      const { error, progress } = await writeWith(signer)
+
+      expect(error).to.be.instanceOf(NonceGuardError)
+      expect((error as NonceGuardError).attempts).to.have.length(1)
+      expect(progress).to.deep.equal([])
+      expect(provider.getLogs).toHaveBeenCalled()
+    })
+
+    it('keeps it when a resend is refused before its broadcast and the first transaction is not proven (security review M3)', async () => {
+      // The old guard threw the resend's plain INSUFFICIENT_FUNDS, which reads as "never
+      // broadcast": the envelope went although the first transaction may be mined.
+      const { signer } = guardedChain({
+        resendError: 'INSUFFICIENT_FUNDS',
+        eventWithHash: true
+      })
+
+      const { progress, hashes } = await writeWith(signer)
+
+      expect(progress).to.deep.equal(['sent'])
+      expect(hashes[0]).to.match(/^0x[0-9a-f]{64}$/)
+    })
+
+    it('keeps it, without proofs, when a resend may have been broadcast', async () => {
+      const { signer, provider } = guardedChain({ resendError: 'TIMEOUT' })
+
+      const { error, progress } = await writeWith(signer)
+
+      expect((error as NonceGuardError).attemptsComplete).to.equal(false)
+      expect(progress).to.deep.equal(['sent'])
+      expect(provider.getLogs).not.toHaveBeenCalled()
     })
 
     it('keeps it for REPLACEMENT_UNDERPRICED without a signed transaction to check', async () => {

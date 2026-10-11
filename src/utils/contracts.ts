@@ -64,7 +64,8 @@ export async function editPrice(params: {
   return confirmTransaction(
     'setRate',
     await exchange.setRate(pricing.exchangeId, newPrice),
-    signer
+    signer,
+    chainConfig.fixedRateExchangeAddress
   )
 }
 
@@ -88,7 +89,8 @@ export async function setMetadataState(params: {
   return confirmTransaction(
     'setMetadataState',
     await nft.setMetadataState(nftAddress, await signer.getAddress(), state),
-    signer
+    signer,
+    nftAddress
   )
 }
 
