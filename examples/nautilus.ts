@@ -494,6 +494,16 @@ async function assertChain(signer: Signer, networkConfig: NetworkConfig) {
     )
 }
 
+/**
+ * The second RPC from `VERIFICATION_RPC_URL`, if set: the nonce guard reads it before it
+ * sends an order or payment again after a nonce refusal, and never sends one again
+ * without it (see "Concurrency and nonces" in the config guide).
+ */
+function verificationProvider(): JsonRpcProvider | undefined {
+  const url = process.env.VERIFICATION_RPC_URL?.trim()
+  return url ? new JsonRpcProvider(url) : undefined
+}
+
 /** Builds ready-to-use nautilus instances for the network named in `.env`. */
 export async function setup(options: SetupOptions = {}): Promise<Setup> {
   const { name, networkConfig, pricingConfig } = resolveNetwork()
@@ -514,6 +524,9 @@ export async function setup(options: SetupOptions = {}): Promise<Setup> {
   console.log(`Publisher:  ${owner}`)
 
   const remoteStore = options.withRemoteStore ? getRemoteStore() : undefined
+  const verifier = verificationProvider()
+
+  if (verifier) console.log('Second RPC: VERIFICATION_RPC_URL (nonce proofs)')
 
   if (remoteStore) console.log(`DDO store:  ${describeRemoteStore()}`)
 
@@ -525,6 +538,7 @@ export async function setup(options: SetupOptions = {}): Promise<Setup> {
     remoteStore,
     credentials: options.credentials,
     ddoSigner: options.ddoSigner,
+    verificationProvider: verifier,
     ...paymentLimits()
   })
 
@@ -547,6 +561,7 @@ export async function setup(options: SetupOptions = {}): Promise<Setup> {
   const consumer = await Nautilus.create(consumerSigner, {
     config: networkConfig,
     credentials: options.credentials,
+    verificationProvider: verifier,
     ...paymentLimits()
   })
 
