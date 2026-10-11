@@ -22,7 +22,7 @@ import {
   toUtf8Bytes
 } from 'ethers'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { access, OrderCheckError } from '../../src/access/index.js'
+import { access, OrderCheckError, settleOrder } from '../../src/access/index.js'
 import { compute } from '../../src/compute/index.js'
 import type { AssetV5 } from '../../src/ddo/index.js'
 import { type DebugEvent, setDebug } from '../../src/log/debug.js'
@@ -32,6 +32,7 @@ import {
   findPreviousOrder,
   IncompleteOrderLookupError
 } from '../../src/utils/previousOrder.js'
+import { getOrderPrice } from '../../src/utils/pricing.js'
 import {
   ASSET_DID,
   CHAIN_ID,
@@ -43,7 +44,12 @@ import {
 } from '../fixtures/Asset.js'
 import { signedProviderFee } from '../fixtures/ProviderFee.js'
 import { captureLog } from '../helpers.js'
-import { FAKE, findCredentials, findSecrets } from '../secretScan.js'
+import {
+  CREDENTIAL_SHAPES,
+  FAKE,
+  findCredentials,
+  findSecrets
+} from '../secretScan.js'
 
 // #region stubs
 
@@ -152,8 +158,10 @@ function accessNode() {
   return client
 }
 
-function download(options: { orderOnLookupFailure?: boolean } = {}) {
-  const client = accessNode()
+function download(
+  options: { orderOnLookupFailure?: boolean } = {},
+  client = accessNode()
+) {
   const running = access(
     { assetDid: ASSET_DID, ...options },
     { node: client as unknown as OceanNodeClient, signer, chainConfig }
@@ -368,6 +376,24 @@ describe('access() on a paid service whose previous order cannot be checked', ()
       expectNothingRaw(cause.message)
       expect(cause.message.length).to.be.at.most(201)
     })
+
+  it('names a service without a name by its id, without control characters', async () => {
+    const client = accessNode()
+    const asset = await client.resolve()
+    const service = asset.credentialSubject.services[0]
+    service.name = undefined as unknown as string
+    service.id = 'svc\u001b[2J\nFAKE-INJECTED'
+    vi.mocked(findPreviousOrder).mockRejectedValue(
+      await FAILURES['a timeout'].error()
+    )
+
+    const thrown = await download({}, client).running.catch((caught) => caught)
+
+    expect(thrown).to.be.instanceOf(OrderCheckError)
+    expect(thrown.message).to.contain('for service svc FAKE-INJECTED of asset')
+    expect(thrown.message).not.to.contain('\u001b')
+    expect(thrown.message).not.to.contain('\n')
+  })
 
   it('names the hours checked of an incomplete scan, as fields too', async () => {
     vi.mocked(findPreviousOrder).mockRejectedValue(
@@ -611,6 +637,86 @@ describe('access() names every part of what a new order costs', () => {
     expect(vi.mocked(order)).not.toHaveBeenCalled()
     expect(thrown).to.be.instanceOf(OrderCheckError)
   })
+  it('treats an empty or missing price as paid', async () => {
+    for (const total of ['', undefined]) {
+      vi.clearAllMocks()
+      vi.mocked(getOrderPrice).mockResolvedValueOnce({
+        total,
+        baseTokenAmount: '0',
+        opcFee: '0',
+        publishMarketFee: '0',
+        consumeMarketFee: '0'
+      } as never)
+      vi.mocked(findPreviousOrder).mockRejectedValue(
+        await FAILURES['a timeout'].error()
+      )
+
+      const thrown = await download().running.catch((caught) => caught)
+
+      expect(vi.mocked(order)).not.toHaveBeenCalled()
+      expect(thrown).to.be.instanceOf(OrderCheckError)
+    }
+  })
+
+  it('refuses with no price when reading the costs throws, without the raw error', async () => {
+    vi.mocked(getOrderPrice).mockResolvedValueOnce({
+      total: '1.002',
+      baseTokenAmount: '1.002',
+      opcFee: '0',
+      get publishMarketFee(): string {
+        throw new Error(`fee read failed at ${FAKE.rpcUrl}`)
+      },
+      consumeMarketFee: '0'
+    })
+    vi.mocked(findPreviousOrder).mockRejectedValue(
+      await FAILURES['a timeout'].error()
+    )
+
+    const thrown = await download().running.catch((caught) => caught)
+
+    expect(vi.mocked(order)).not.toHaveBeenCalled()
+    expect(thrown).to.be.instanceOf(OrderCheckError)
+    expect(thrown).to.include({ price: undefined })
+    expect(thrown.costs).to.deep.equal([])
+    expectNothingRaw(thrown.message)
+  })
+
+  it('sanitises and bounds the provider fee the node quoted, in settleOrder()', async () => {
+    // settleOrder() checks the fee after the lookup: the refusal must not carry its text.
+    pricing.total = '0'
+    pricing.symbol = undefined
+    vi.mocked(findPreviousOrder).mockRejectedValue(
+      await FAILURES['a timeout'].error()
+    )
+    const fee = signedProviderFee({ providerFeeAmount: '30' })
+
+    const thrown = await settleOrder({
+      signer,
+      chainConfig,
+      datatokenAddress: DATATOKEN_ADDRESS,
+      serviceIndex: 0,
+      initialized: {
+        providerFee: {
+          ...fee,
+          providerFeeAmount: `1\u001b[2J\u001b[31m\nFAKE-INJECTED-LINE ${'Z'.repeat(5000)}`,
+          providerFeeToken: 'evil.eth\u001b[0m\nFAKE-TOKEN-LINE'
+        }
+      },
+      consumer: CONSUMER,
+      service: { id: SERVICE_ID, timeout: 86400 }
+    } as never).catch((caught) => caught)
+
+    expect(thrown).to.be.instanceOf(OrderCheckError)
+    expect(vi.mocked(order)).not.toHaveBeenCalled()
+    expect(thrown.message).not.to.contain('\u001b')
+    expect(thrown.message).not.to.contain('\n')
+    expect(thrown.message).not.to.contain('Z'.repeat(41))
+    expect(thrown.message.length).to.be.below(1000)
+    for (const cost of thrown.costs) {
+      expect(cost.amount.length).to.be.at.most(60)
+      expect(cost.symbol.length).to.be.at.most(60)
+    }
+  })
 })
 
 describe('access() and orderOnLookupFailure', () => {
@@ -735,6 +841,56 @@ describe('the cause of a failed lookup', () => {
       'keys ending in key or token',
       'bad request dkey=TOKENSECRET1 api_token=T2SECRET',
       ['TOKENSECRET1', 'T2SECRET']
+    ],
+    [
+      'a URL with a backslash in its path',
+      'upstream https://rpc.example.org/x\\y/v3/TOKENSECRET1 failed',
+      ['TOKENSECRET1', 'rpc.example.org']
+    ],
+    [
+      'a URL with a backslash before its token',
+      'upstream https://rpc.example.org/v3\\TOKENSECRET1 failed',
+      ['TOKENSECRET1', 'rpc.example.org']
+    ],
+    [
+      'keys split by an invisible character',
+      'bad request apiKey\u0000=TOKENSECRET1 sess\u200bionId=T2SECRET pass\u200bword=T3SECRET',
+      ['TOKENSECRET1', 'T2SECRET', 'T3SECRET']
+    ],
+    [
+      'a JWT split by a zero-width space',
+      `auth failed ${FAKE.jwt.slice(0, 8)}\u200b${FAKE.jwt.slice(8)}`,
+      ['eyJhbGci', 'eyJzdWIi']
+    ],
+    [
+      'a Bearer credential split by a zero-width space',
+      'auth Bearer\u200b TOKENSECRET1',
+      ['TOKENSECRET1']
+    ],
+    [
+      'a URL whose scheme is split by a zero-width space',
+      'see http:/\u200b/10.1.2.3:8545/v3/TOKENSECRET1',
+      ['TOKENSECRET1', '10.1.2.3']
+    ],
+    [
+      'a URL token after a byte-order mark',
+      'see https://rpc.example.org/v3/\ufeffTOKENSECRET1',
+      ['TOKENSECRET1', 'rpc.example.org']
+    ],
+    [
+      'a JWT the read limit cuts, after a long URL',
+      `failed at https://rpc.example.org/${'a'.repeat(8120)} then ${FAKE.jwt}`,
+      ['eyJhbGci', 'eyJzdWIi']
+    ],
+    [
+      'a JWT at character 2000, after a long URL',
+      `failed at https://rpc.example.org/${'a'.repeat(1920)} then ${FAKE.jwt}`,
+      ['eyJhbGci', 'eyJzdWIi']
+    ],
+    [
+      'a policy-server session id at character 2000, after a long URL',
+      `failed at https://rpc.example.org/${'a'.repeat(1940)} id ${FAKE.policySessionId}`,
+      ['5e555e555e55', '0dd50dd50dd5']
     ]
   ] as const)
     it(`redacts ${name} in the RPC's answer`, async () => {
@@ -747,6 +903,38 @@ describe('the cause of a failed lookup', () => {
         expect(thrown.message).not.to.contain(secret)
         expect(thrown.cause.message).not.to.contain(secret)
       }
+      expect(findSecrets(thrown.message)).to.deep.equal([])
+      expect(thrown.cause.message.length).to.be.at.most(201)
+    })
+
+  // Each credential shape the suite's secret scan knows, as the first line of the RPC's
+  // answer: in the error, its cause, and the warning of an order placed with the opt-in.
+  for (const [index, line] of CREDENTIAL_SHAPES.split('\n').entries())
+    it(`redacts credential shape ${index} in the RPC's answer, also in the warning`, async () => {
+      const failure = await rpcFailure(
+        rpcAnswer({ code: -32000, message: `upstream failed: ${line}` })
+      )
+
+      const thrown = await causeOf(failure)
+      expect(thrown).to.be.instanceOf(OrderCheckError)
+      for (const text of [
+        thrown.message,
+        thrown.cause.message,
+        JSON.stringify(thrown)
+      ]) {
+        expect(findSecrets(text)).to.deep.equal([])
+        expect(findCredentials(text)).to.deep.equal([])
+      }
+
+      vi.mocked(findPreviousOrder).mockImplementation(() =>
+        Promise.reject(failure)
+      )
+      const log = captureLog()
+      await download({ orderOnLookupFailure: true }).running
+      const [warning] = log.named('access.order.lookup_failed')
+      const text = JSON.stringify(warning)
+      expect(findSecrets(text)).to.deep.equal([])
+      expect(findCredentials(text)).to.deep.equal([])
     })
 })
 

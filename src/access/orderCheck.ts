@@ -13,7 +13,7 @@
 import { debugRaw } from '../log/debug.js'
 import {
   isErrorCode,
-  redactSecrets,
+  sanitize,
   stripControlCharacters
 } from '../node/messages.js'
 import {
@@ -100,18 +100,15 @@ const NETWORK_CODES = new Set([
 const NETWORK =
   /\b(?:timeout|timed out|fetch failed|socket hang up|network error|connection (?:refused|reset|closed))\b/i
 
-/** A URL: `scheme://…`, also with its slashes JSON-escaped (`https:\/\/host\/path`). */
+/**
+ * A URL: `scheme://…`, also with its slashes JSON-escaped (`https:\/\/host\/path`). Applied
+ * only to `sanitize`'s output, where a URL is down to its origin already: this drops the
+ * origin too.
+ */
 const URL_TEXT = /[a-z][a-z0-9+.-]{0,31}:(?:\\*\/){2}(?:[^\s"'<>\\]|\\+\/)*/gi
 /** A URL without its scheme: `host.tld[:port]/path…`. */
 const HOST_PATH =
   /\b(?:[a-z0-9-]{1,63}\.)+[a-z]{2,24}(?::\d{1,5})?\\*\/(?:[^\s"'<>\\]|\\+\/)*/gi
-/** A `Basic` credential. */
-const BASIC = /\b(Basic\s+)[\w.~+/=-]+/gi
-/** `…key=…`, `…token: …`, `…secret=…`: a credential under a name RPCs use (`dkey`, `api_token`). */
-const KEY_VALUE =
-  /\b([\w-]{0,40}(?:key|token|secret|password|passwd))(\s*[=:]\s*)[^\s&"',;)}\]]+/gi
-/** How much of the RPC's first line is read before redaction (the result is shorter). */
-const MAX_SCANNED_LENGTH = 2000
 
 /**
  * Thrown by `access()` (and `settleOrder()`) before it pays for a service when it could not
@@ -305,7 +302,7 @@ function classify(error: unknown): LookupFailure {
 function describeSubject(subject: OrderSubject): string {
   const service = subject.serviceName
     ? `service "${safeName(subject.serviceName)}"`
-    : `service ${shortHex(subject.serviceId)}`
+    : `service ${safeName(shortHex(subject.serviceId))}`
   const did = subject.did ? shortDid(subject.did) : undefined
 
   if (subject.assetName)
@@ -369,9 +366,10 @@ function hours(value: number, round: 'down' | 'nearest'): string {
 
 /**
  * The error's most specific text, made safe to show: the RPC's own JSON-RPC message when
- * there is one, else ethers' short message, else the message; first line only, URLs
- * (also JSON-escaped or without a scheme) removed, credentials redacted (`Basic`, any
- * `…key=` / `…token=` / `…secret=`), long hex shortened, at most 200 characters. Keeps the
+ * there is one, else ethers' short message, else the message; first line only, through
+ * `sanitize` (credentials redacted before and after invisible characters are stripped, at
+ * most 200 characters, a word split by the cut dropped), then with every URL removed, also
+ * one without a scheme (`sanitize` keeps a URL's origin), and long hex shortened. Keeps the
  * name, and an error code such as `SERVER_ERROR` or `-32000`.
  */
 function redactedError(error: unknown): Error {
@@ -381,21 +379,16 @@ function redactedError(error: unknown): Error {
   const texts = chain.map(messageOf).filter((text) => text !== undefined)
   const raw = texts.length ? texts[texts.length - 1] : String(error)
 
-  const firstLine = (raw.split(/\r?\n/)[0] ?? '').slice(0, MAX_SCANNED_LENGTH)
-  const text = bounded(
-    stripControlCharacters(
-      redactSecrets(
-        firstLine
-          .replace(URL_TEXT, '<url>')
-          .replace(HOST_PATH, '<url>')
-          .replace(BASIC, '$1<redacted>')
-          .replace(KEY_VALUE, '$1$2<redacted>')
-      )
-    ).replace(
+  // Redaction first, on the RPC's whole first line: the URL removal below cannot cut a URL
+  // short of a token in it (`https://host/x\y/v3/<token>`) before `sanitize` sees it. The
+  // raw error is in the debug channel already (`classifyLookupFailure`).
+  const text = sanitize(raw.split(/\r?\n/)[0] ?? '', MAX_DETAIL_LENGTH, null)
+    .replace(URL_TEXT, '<url>')
+    .replace(HOST_PATH, '<url>')
+    .replace(
       /\b0x[0-9a-f]{16,}\b/gi,
       (hex) => `${hex.slice(0, 6)}…${hex.slice(-4)}`
     )
-  )
 
   const safe = new Error(text || 'unknown error')
   const first = chain[0]
@@ -404,10 +397,4 @@ function redactedError(error: unknown): Error {
   if (code) Object.assign(safe, { code })
 
   return safe
-}
-
-function bounded(text: string): string {
-  return text.length > MAX_DETAIL_LENGTH
-    ? `${text.slice(0, MAX_DETAIL_LENGTH)}…`
-    : text
 }
