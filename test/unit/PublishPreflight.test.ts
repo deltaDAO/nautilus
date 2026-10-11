@@ -2075,4 +2075,22 @@ describe('indexer nonce preflight', () => {
     expect(warnings).to.have.length(1)
     expect(warnings[0].msg).to.match(/second decrypt call/)
   })
+
+  it('reports at info, instead of warning, when the node says it is 4.2.2 or later (D9)', async () => {
+    // The version is self-reported and only the OE fork's 4.2.2 has the fix: the skip is
+    // an info event, not a debug line.
+    const log = captureLog({ level: 'info' })
+    const { nautilus } = await createNautilus({
+      node: { indexerNonce: { ...oneAwayState(), nodeVersion: '4.2.2' } }
+    })
+
+    await nautilus.publish(validAsset())
+
+    expect(
+      log.named('publish.preflight.indexer_nonce_will_stick')
+    ).to.deep.equal([])
+    const [skipped] = log.named('node.indexer_nonce.zero_byte_accepted')
+    expect(skipped.level).to.equal('info')
+    expect(skipped.msg).to.match(/self-reported.*OE fork/)
+  })
 })

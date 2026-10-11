@@ -368,12 +368,22 @@ const STUCK_INDEXER_NONCE_HINT =
 
 /**
  * Whether an ocean-node of this version accepts a decrypt call whose signed message hash
- * starts with a zero byte: 4.2.2 and later verify that signature form too
- * (`nonceHandler.ts`, oe-ocean-node c69ddd4e). An unknown or unparsable version, and a
- * pre-release of 4.2.2, count as older.
+ * starts with a zero byte: 4.2.2 and later of the OE fork (`oe-ocean-node`, commit
+ * c69ddd4e, `nonceHandler.ts`) verify that signature form too. An unknown or unparsable
+ * version, and a pre-release of 4.2.2, count as older; build metadata (`4.2.2+abc`) is
+ * ignored.
+ *
+ * Two limits: the version is what the node says about itself in `GET /`, and it is the OE
+ * fork's numbering. Upstream `oceanprotocol/ocean-node` uses the same 4.x numbers without
+ * the fix, so such a node at 4.2.2 or later is wrongly taken to accept the nonce: its
+ * asset is not indexed and its indexer nonce sticks. That costs no funds (the node simply
+ * does not index), and the preflight reports each such skip as
+ * `node.indexer_nonce.zero_byte_accepted` at `info`.
  */
 export function nodeAcceptsZeroByteNonce(version: string | undefined): boolean {
-  const match = /^v?(\d+)\.(\d+)\.(\d+)(-\S*)?$/.exec(version?.trim() ?? '')
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(-[^\s+]*)?(\+\S*)?$/.exec(
+    version?.trim() ?? ''
+  )
   if (!match) return false
 
   const [major, minor, patch] = match.slice(1, 4).map(Number)
@@ -1762,9 +1772,10 @@ export class OceanNodeClient {
         typeof address === 'string' && isAddress(address)
           ? getAddress(address)
           : undefined,
+      // Node-supplied: shown in messages, so control characters and secrets are removed.
       version:
         typeof version === 'string' && version.length <= 64
-          ? version
+          ? sanitize(version, 64) || undefined
           : undefined
     }
   }
@@ -1828,8 +1839,8 @@ export class OceanNodeClient {
     )
       this.log.emit(
         'node.indexer_nonce.zero_byte_accepted',
-        `The next indexer nonce ${nextNonce} of ${this.nodeUri} hashes to a zero byte, which older nodes refuse; this node reports version ${nodeVersion}, which accepts it, so it is not reported as stuck.`,
-        { nodeUri: this.nodeUri, nodeVersion, nextNonce }
+        `The next indexer nonce ${nextNonce} of ${this.nodeUri} hashes to a zero byte, which ocean-node before 4.2.2 refuses; the node reports version ${nodeVersion} (self-reported; the fix is in the OE fork), so it is not reported as stuck. If assets stop being indexed, check the node's logs for 'consumer address and nonce signature mismatch'.`,
+        { nodeUri: this.nodeUri, nodeVersion, nonce: nextNonce }
       )
 
     return {

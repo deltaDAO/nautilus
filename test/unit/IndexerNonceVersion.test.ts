@@ -6,6 +6,8 @@
  */
 import { Wallet } from 'ethers'
 import { describe, expect, it, vi } from 'vitest'
+import { createLogger } from '../../src/log/logger.js'
+import type { LogEvent } from '../../src/log/types.js'
 import {
   isIndexerNonceSignable,
   nodeAcceptsZeroByteNonce,
@@ -41,6 +43,9 @@ describe('isIndexerNonceSignable (D1: version-aware)', () => {
         version
       ).to.equal(true)
     expect(nodeAcceptsZeroByteNonce('4.10.0')).to.equal(true)
+    // Build metadata is no pre-release.
+    expect(nodeAcceptsZeroByteNonce('4.2.2+oe.35b864f6')).to.equal(true)
+    expect(nodeAcceptsZeroByteNonce('4.2.2-rc1+oe')).to.equal(false)
   })
 
   it("getIndexerNonceState reads the node's version: a 4.2.2 node is not stuck on a zero-byte nonce", async () => {
@@ -69,6 +74,41 @@ describe('isIndexerNonceSignable (D1: version-aware)', () => {
       } finally {
         vi.unstubAllGlobals()
       }
+    }
+  })
+
+  it('reports the skipped refusal at info, with the version sanitised (D9)', async () => {
+    const events: LogEvent[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const body = url.endsWith('/')
+          ? { providerAddress: NODE, version: '4.2.2\u001b[31m' }
+          : { nonce: String(zeroByteNonce - 1) }
+        return new Response(JSON.stringify(body), { status: 200 })
+      })
+    )
+    try {
+      const client = new OceanNodeClient({
+        nodeUri: 'https://node.test.invalid',
+        chainId: 8996,
+        auth: Wallet.createRandom(),
+        logger: createLogger({
+          level: 'info',
+          sink: (event) => events.push(event)
+        })
+      })
+      const state = await client.getIndexerNonceState()
+
+      expect(state?.stuck).to.equal(false)
+      expect(state?.nodeVersion).to.equal('4.2.2')
+      const skipped = events.find(
+        (event) => event.event === 'node.indexer_nonce.zero_byte_accepted'
+      )
+      expect(skipped?.level).to.equal('info')
+      expect(skipped?.msg).to.match(/self-reported/)
+    } finally {
+      vi.unstubAllGlobals()
     }
   })
 })

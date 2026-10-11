@@ -61,6 +61,7 @@ import { sanitize, stripControlCharacters } from '../node/messages.js'
 import {
   IndexerNonceStuckError,
   isIndexerNonceSignable,
+  nodeAcceptsZeroByteNonce,
   OceanNodeClient,
   type WaitForIndexerOptions
 } from '../node/OceanNodeClient.js'
@@ -1583,19 +1584,34 @@ export class Nautilus {
     if (!state) return
     if (state.stuck) throw new IndexerNonceStuckError(state)
 
+    const decryptNonce = state.nextNonce + 1
     if (
+      state.nodeVersion &&
+      nodeAcceptsZeroByteNonce(state.nodeVersion) &&
+      !isIndexerNonceSignable(state.nodeAddress, decryptNonce)
+    )
+      this.log.emit(
+        'node.indexer_nonce.zero_byte_accepted',
+        `The indexer of ${this.node.nodeUri} will sign its second decrypt call for this asset with nonce ${decryptNonce}, whose hash starts with a zero byte, which ocean-node before 4.2.2 refuses; the node reports version ${state.nodeVersion} (self-reported; the fix is in the OE fork), so nautilus does not warn. If this asset is not indexed, check the node's logs for 'consumer address and nonce signature mismatch'.`,
+        {
+          nodeUri: this.node.nodeUri,
+          nodeVersion: state.nodeVersion,
+          nonce: decryptNonce
+        }
+      )
+    else if (
       !isIndexerNonceSignable(
         state.nodeAddress,
-        state.nextNonce + 1,
+        decryptNonce,
         state.nodeVersion
       )
     )
       this.log.emit(
         'publish.preflight.indexer_nonce_will_stick',
-        `The indexer of ${this.node.nodeUri} will sign its second decrypt call for this asset with nonce ${state.nextNonce + 1}, which the node does not accept: unless another decrypt moves the nonce first, this asset will not be indexed and the indexer nonce will be stuck until the operator advances it.`,
-        { nodeUri: this.node.nodeUri, decryptNonce: state.nextNonce + 1 },
+        `The indexer of ${this.node.nodeUri} will sign its second decrypt call for this asset with nonce ${decryptNonce}, which the node does not accept: unless another decrypt moves the nonce first, this asset will not be indexed and the indexer nonce will be stuck until the operator advances it.`,
+        { nodeUri: this.node.nodeUri, decryptNonce },
         // Until the nonce moves, every publish onto this node would say the same.
-        { once: `${this.node.nodeUri}:${state.nextNonce + 1}` }
+        { once: `${this.node.nodeUri}:${decryptNonce}` }
       )
   }
 
