@@ -23,6 +23,7 @@ import {
 } from '../../src/node/OceanNodeClient.js'
 import { ASSET_DID, CHAIN_ID, NFT_ADDRESS } from '../fixtures/Asset.js'
 import { captureLog, expectThrowsAsync } from '../helpers.js'
+import { FAKE } from '../secretScan.js'
 
 const NODE = 'https://node.test.invalid/'
 const TX = `0x${'12'.repeat(32)}`
@@ -390,6 +391,82 @@ describe('waitForIndexer', () => {
         maxConsecutiveFailures: 3
       })
     ).to.deep.equal(indexedAsset())
+  })
+
+  describe("refuses a DDO that is not the requested DID's, at once", () => {
+    /**
+     * Another NFT's self-consistent DDO, served for ASSET_DID: an edit built from it would
+     * mint on, and send the revenue of, the other NFT. A node can copy any txid into it.
+     */
+    const OTHER_DID = `did:ope:${'e0de'.repeat(16)}`
+    const forged = (txid = TX) => ({
+      ...indexedAsset(txid),
+      id: `${OTHER_DID}\n[nautilus] forged log line ${FAKE.rpcUrl}`,
+      credentialSubject: { id: OTHER_DID, nftAddress: NFT_ADDRESS }
+    })
+    const refusal =
+      /^\[ocean-node\] waitForIndexer: the node answered with a DDO whose id is "did:ope:e0de.*", not the DID asked for, did:ope:7e03.*Refused/
+
+    const expectRefused = (thrown: Error) => {
+      expect(thrown).to.be.instanceOf(OceanNodeError)
+      expect(thrown).not.to.be.instanceOf(IndexingError)
+      expect(thrown.message).to.match(refusal)
+      expect(thrown.message).not.to.contain('\n')
+      expect(thrown.message).not.to.contain(FAKE.rpcQueryToken)
+    }
+
+    for (const txid of [TX, undefined])
+      it(`over HTTP, ${txid ? 'with' : 'without'} a txid`, async () => {
+        const fetch = stubNode({
+          lookups: [{ status: 200, body: forged() }]
+        })
+
+        const thrown = await client()
+          .waitForIndexer(ASSET_DID, txid, {
+            intervalMs: 1,
+            timeoutMs: 60_000,
+            maxConsecutiveFailures: 3
+          })
+          .catch((caught) => caught)
+
+        expectRefused(thrown)
+        // Not polled again, and not counted as a failed lookup.
+        expect(
+          urls(fetch).filter((url) => url.includes('/assets/ddo/'))
+        ).to.have.length(1)
+      })
+
+    it('over HTTP, a DDO without an id', async () => {
+      stubNode({ lookups: [{ status: 200, body: 'null' }] })
+
+      const thrown = await client()
+        .waitForIndexer(ASSET_DID, undefined, { intervalMs: 1 })
+        .catch((caught) => caught)
+
+      expect(thrown).to.be.instanceOf(OceanNodeError)
+      expect(thrown.message).to.contain('whose id is missing')
+    })
+
+    it('over P2P', async () => {
+      const lookup = vi
+        .spyOn(Aquarius.prototype, 'waitForIndexer')
+        .mockResolvedValue(forged() as never)
+
+      const thrown = await client('16Uiu2HAmPeerIdOnly')
+        .waitForIndexer(ASSET_DID, TX, { intervalMs: 1, timeoutMs: 60_000 })
+        .catch((caught) => caught)
+
+      expectRefused(thrown)
+      expect(lookup).toHaveBeenCalledTimes(1)
+    })
+
+    it('accepts the did:op: form of the same DID', async () => {
+      stubNode({ lookups: [{ status: 200, body: indexedAsset() }] })
+
+      expect(await client().waitForIndexer(DID_OP, TX)).to.deep.equal(
+        indexedAsset()
+      )
+    })
   })
 
   it('refuses timing options that are negative or not finite', async () => {

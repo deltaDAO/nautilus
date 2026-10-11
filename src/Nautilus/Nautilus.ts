@@ -659,7 +659,8 @@ export class Nautilus {
    * Blocks until the indexer has the asset, or the update identified by `txid`.
    *
    * Throws an `IndexingError` with the node's message when the node records that it
-   * could not index it, and an `OceanNodeError` once `timeoutMs` (default 5 minutes) is up.
+   * could not index it, and an `OceanNodeError` once `timeoutMs` (default 5 minutes) is up,
+   * or at once when the node serves a DDO whose `id` is not `did`.
    */
   async waitForIndexer(
     did: string,

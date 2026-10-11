@@ -1366,6 +1366,9 @@ export class OceanNodeClient {
    * indexed". When `timeoutMs` is up, one last lookup runs; then this throws an
    * `OceanNodeError`. Throws an `OceanNodeError` for a timing option that is negative or not
    * finite, and rejects with the signal's reason when `signal` aborts.
+   *
+   * As in `resolve`, a DDO whose `id` is not `did` is refused with an `OceanNodeError` at
+   * once, over HTTP and P2P: its `nftAddress` names another NFT.
    */
   async waitForIndexer(
     did: string,
@@ -1544,6 +1547,10 @@ export class OceanNodeClient {
 
       const asset = JSON.parse(response.body) as AssetV5
 
+      // The node chooses what it serves: a DDO with another `id` names another NFT, and
+      // an edit built from it would mint on that NFT. Asking again won't change that.
+      assertServedDid('waitForIndexer', [did], asset)
+
       if (!txid) return { kind: 'indexed', asset }
 
       // v5 keeps the event under `indexedMetadata`; v4 had it at the top level.
@@ -1560,6 +1567,7 @@ export class OceanNodeClient {
         : { kind: 'pending' }
     } catch (error) {
       if (signal?.aborted) throw signal.reason
+      if (error instanceof ServedDidError) throw error
 
       // The request's own error: `waitForIndexer` names the operation itself.
       return {
@@ -1615,11 +1623,13 @@ export class OceanNodeClient {
         stopped
       ])
 
-      return asset
-        ? { kind: 'indexed', asset: asset as unknown as AssetV5 }
-        : { kind: 'pending' }
+      if (!asset) return { kind: 'pending' }
+
+      assertServedDid('waitForIndexer', [did], asset)
+      return { kind: 'indexed', asset: asset as unknown as AssetV5 }
     } catch (error) {
       if (signal?.aborted) throw signal.reason
+      if (error instanceof ServedDidError) throw error
 
       return { kind: 'failed', error }
     } finally {
@@ -3030,7 +3040,6 @@ export class OceanNodeClient {
   // #endregion
 }
 
-/** The path of `GET /api/aquarius/assets/ddo/<did>`. */
 /** The hash of a `did:op:` or `did:ope:` DID, lower-cased, or `undefined`. */
 function didHash(did: string): string | undefined {
   return /^did:ope?:([0-9a-f]{64})$/i.exec(did.trim())?.[1].toLowerCase()
@@ -3044,6 +3053,12 @@ function isSameDid(a: string, b: string): boolean {
     ? hashA === hashB
     : a.trim().toLowerCase() === b.trim().toLowerCase()
 }
+
+/**
+ * A served DDO that is not the one asked for. Internal: callers see an `OceanNodeError`;
+ * `waitForIndexer` tells it apart from a failed lookup, so it fails the wait at once.
+ */
+class ServedDidError extends OceanNodeError {}
 
 /**
  * Throws unless the DDO the node served has the `id` of one of the DIDs asked for. The id
@@ -3063,12 +3078,13 @@ function assertServedDid(
     dids,
     id
   })
-  throw new OceanNodeError(
+  throw new ServedDidError(
     operation,
     `the node answered with a DDO whose id is ${typeof id === 'string' ? `"${sanitize(id, 100, null)}"` : 'missing'}, not ${dids.length === 1 ? `the DID asked for, ${dids[0]}` : 'one of the DIDs asked for'}. Refused: its nftAddress names another asset's NFT.`
   )
 }
 
+/** The path of `GET /api/aquarius/assets/ddo/<did>`. */
 function ddoPath(did: string): string {
   return `/api/aquarius/assets/ddo/${encodeURIComponent(did)}`
 }
