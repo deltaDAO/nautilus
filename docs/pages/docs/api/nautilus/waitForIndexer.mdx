@@ -131,6 +131,9 @@ The indexed asset.
   404), so a wrong node URI or a node answering 500 is reported as such instead of being
   waited out. A 404 counts as "not indexed yet", and a rate-limit answer (`429`, or `403`
   "Too many active connections") makes the wait back off; neither is a failure.
+- `OceanNodeError` — the node served a DDO whose `id` is not `did` (the `did:op:` and
+  `did:ope:` forms of one DID match), over HTTP or P2P. Thrown at once, not waited out: it
+  describes another asset, and its `nftAddress` names another NFT.
 - The signal's `reason`, when `signal` aborts the wait.
 
 A failing or missing state endpoint does not throw: the wait just loses its early exit and

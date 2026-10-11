@@ -348,8 +348,8 @@ only when signing (`The DDO declares issuer "…" but it is being signed by "…
 now ends with "Nothing was sent." A custom `DdoSigner` whose payload carries `iss`, `sub` or
 `jti` must make `iss` its `issuer` and `sub`/`jti` the DDO's id, as the built-in signers do.
 
-**`getAsset()` and `getAssets()` refuse a DDO whose id is not a DID asked for**, with an
-`OceanNodeError`, and `edit()` refuses, before any transaction, a DDO whose id is not the DID
+**`getAsset()`, `getAssets()` and `waitForIndexer()` refuse a DDO whose id is not a DID
+asked for**, with an `OceanNodeError` (`waitForIndexer()` at once, without polling on), and `edit()` refuses, before any transaction, a DDO whose id is not the DID
 of its `nftAddress` on the configured chain. A correct node never serves either. `getOwner()`
 returns the account that wrote the metadata last; read `ownerOf` on chain for the owner.
 

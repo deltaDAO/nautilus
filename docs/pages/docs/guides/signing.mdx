@@ -149,7 +149,11 @@ DDO, the payload may carry:
 - with a `vc` wrapper, any claims outside `vc`, which the node does not index.
 
 Anything else that differs is refused. The built-in signers already sign exactly this, and
-walt.id signs the credential it is sent unchanged.
+walt.id signs the credential it is sent unchanged. `iss`, `sub` and `jti` are not free,
+though: when present, `iss` must be the payload's `issuer` and `sub` and `jti` the DDO's
+id. A mismatch is refused only when the signed document is checked, after the NFT (on
+publish) or the new datatokens (on edit) are minted, so a JWT library's random `jti` costs
+that gas.
 
 Before the first transaction, nautilus sizes the signed envelope from the DDO plus 1024
 characters for the JWS header and signature, and refuses a DDO that could exceed the node's

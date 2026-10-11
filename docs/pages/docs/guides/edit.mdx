@@ -210,9 +210,13 @@ the signer when it is not the owner logs a visible warning (`edit.owner.not_nft_
 payments then go to the signer.
 
 The NFT whose owner is read is tied to the DID you resolved, so a node cannot point an edit
-at another NFT. [`getAsset()`](/docs/api/nautilus/getAsset) refuses a DDO whose id is not
-the DID asked for, and `edit()` refuses, before any transaction, a DDO whose id is not the
-DID of its `nftAddress` on the configured chain.
+at another NFT. [`getAsset()`](/docs/api/nautilus/getAsset),
+[`getAssets()`](/docs/api/nautilus/getAssets) and
+[`waitForIndexer()`](/docs/api/nautilus/waitForIndexer) refuse a DDO whose id is not the
+DID asked for, and `edit()` refuses, before any transaction, a DDO whose id is not the DID
+of its `nftAddress` on the configured chain. [`query()`](/docs/api/nautilus/query) results
+are not checked against any DID: `edit()` still ties such a DDO's NFT to its own id, but
+check that the id is the DID you mean to edit.
 
 ```ts twoslash
 import {

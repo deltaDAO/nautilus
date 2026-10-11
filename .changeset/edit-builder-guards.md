@@ -27,19 +27,21 @@ apply instead of ignoring them.
   address, stops the edit before any transaction; the raw RPC error goes to the debug
   channel (topic `rpc`). An owner without the `deployERC20` permission is refused before
   any transaction, naming `setOwner(<signer>)` as the way out.
-- **`getAsset()` and `getAssets()` throw an `OceanNodeError` for a DDO whose `id` is not a
-  DID asked for** (the `did:op:` and `did:ope:` forms of one DID match), and **`edit()`
+- **`getAsset()`, `getAssets()` and `waitForIndexer()` throw an `OceanNodeError` for a DDO
+  whose `id` is not a DID asked for** (the `did:op:` and `did:ope:` forms of one DID match;
+  `waitForIndexer()` throws at once, over HTTP and P2P), and **`edit()`
   refuses, before any transaction, a DDO whose `id` is not the DID of its `nftAddress` on
   the configured chain.** Before, a malicious node could serve another NFT's DDO for a DID,
   and the edit then minted on that NFT with its owner as minter and payment collector. The
   node-supplied values are shown sanitised; the raw ones go to the debug channel (`node`).
+  `query()` results are not checked against a requested DID.
 - **A declared issuer the signer is not is refused before any transaction** by `publish()`,
   `completePublish()` and `edit()`, with the message `The DDO declares issuer "…" but it is
   being signed by "…". … Nothing was sent.` Before, the NFT or the new datatokens were
   created first and signing failed. The declared issuer is shown sanitised.
 - **A signed payload's `iss` must be its `issuer`, and its `sub` and `jti` the DDO's id**,
   when present. A custom `DdoSigner` that sets them otherwise is refused before anything is
-  stored.
+  stored, but after the NFT (publish) or the new datatokens (edit) are minted.
 - `getOwner()` is documented as what it is: the account that wrote the metadata last, as
   the node reports it.
 

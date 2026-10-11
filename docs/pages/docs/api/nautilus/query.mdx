@@ -40,7 +40,8 @@ The node's raw response — typically `{ hits: { hits: [{ _source }] } }`. It is
 because the shape depends on the node's database backend.
 
 For the common case of resolving several known DIDs, use
-[`getAssets`](/docs/api/nautilus/getAssets) instead, which unwraps the response for you.
+[`getAssets`](/docs/api/nautilus/getAssets) instead, which unwraps the response for you and
+refuses a DDO whose `id` is not a DID asked for. `query()` checks no hit against any DID.
 
 ## Parameters
 
