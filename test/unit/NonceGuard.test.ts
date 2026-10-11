@@ -8,6 +8,8 @@
  * carries a real signed transaction, as `eth_sendRawTransaction` errors do.
  */
 
+import { createServer, type Server } from 'node:http'
+import { inspect } from 'node:util'
 import { wrapEthersSigner } from '@oasisprotocol/sapphire-ethers-v6'
 import {
   Datatoken,
@@ -19,14 +21,16 @@ import {
 } from '@oceanprotocol/lib'
 import {
   FetchRequest,
+  FetchResponse,
   Interface,
+  JsonRpcProvider,
   JsonRpcSigner,
   makeError,
   Transaction,
   type TransactionRequest,
   Wallet
 } from 'ethers'
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { Nautilus } from '../../src/index.js'
 import {
   isMoneySend,
@@ -35,6 +39,7 @@ import {
   NonceGuardState,
   nonceRefusalOf,
   provenNeverSent,
+  SendLog,
   withoutSignedTransaction
 } from '../../src/utils/nonceGuard.js'
 import { confirmTransaction } from '../../src/utils/order.js'
@@ -53,7 +58,13 @@ const LONG_HEX = /0x[0-9a-f]{130,}/i
 type Broadcast = (raw: string, tx: Transaction) => Promise<unknown>
 
 /** A mined transaction as a block lists it. */
-type MinedTx = { from: string; nonce: number; hash: string }
+type MinedTx = {
+  from: string
+  nonce: number
+  hash: string
+  to?: string | null
+  data?: string
+}
 
 /**
  * A chain with `latest` mined transactions of the wallet, a pending count that may lag
@@ -127,8 +138,18 @@ function fakeChain(options: {
   }
 }
 
-/** A second RPC on the chain: its own mined count, and the hashes it knows. */
-function secondRpc(latest: number, known = new Set<string>()) {
+/**
+ * A second RPC on the chain: its own mined count, and the hashes it knows; with `blocksOf`,
+ * the blocks of that chain.
+ */
+function secondRpc(
+  latest: number,
+  known = new Set<string>(),
+  blocksOf?: Pick<
+    ReturnType<typeof fakeChain>['provider'],
+    'getBlockNumber' | 'getBlock'
+  >
+) {
   return {
     getNetwork: async () => ({ chainId: BigInt(CHAIN_ID) }),
     getTransactionCount: vi.fn(async () => latest),
@@ -137,22 +158,41 @@ function secondRpc(latest: number, known = new Set<string>()) {
     ),
     getTransactionReceipt: vi.fn(async () => null),
     getBlockNumber: async () => {
-      throw new Error('not asked in these tests')
-    }
+      if (!blocksOf) throw new Error('not asked in these tests')
+      return blocksOf.getBlockNumber()
+    },
+    getBlock: vi.fn(async (number: number) => {
+      if (!blocksOf) throw new Error('not asked in these tests')
+      return blocksOf.getBlock(number)
+    })
   }
 }
 
-/** Another transaction of the wallet with `nonce`, as another process would send it. */
-async function otherTx(nonce: number): Promise<MinedTx> {
+/**
+ * Another transaction of the wallet with `nonce`, as another process would send it: by
+ * default another call to the same contract; `data` makes it the same call (with a higher
+ * fee, as a wallet's speed-up).
+ */
+async function otherTx(
+  nonce: number,
+  data = `0xc0ffee00${'00'.repeat(32)}`
+): Promise<MinedTx> {
   const wallet = new Wallet(PRIVATE_KEY)
   const signed = Transaction.from(
     await wallet.signTransaction({
-      ...request(`0xc0ffee00${'00'.repeat(32)}`),
+      ...request(data),
+      maxFeePerGas: 9n,
       nonce,
       chainId: CHAIN_ID
     })
   )
-  return { from: wallet.address, nonce, hash: signed.hash as string }
+  return {
+    from: wallet.address,
+    nonce,
+    hash: signed.hash as string,
+    to: signed.to,
+    data: signed.data
+  }
 }
 
 function response(hash: string, nonce = 0) {
@@ -215,6 +255,27 @@ function refuseFirst(
     if (left-- > 0) throw refusal(code, rpcMessage, raw)
     return undefined
   }
+}
+
+/** The error ethers 6.17's `FetchResponse.assertOk()` throws for an HTTP failure. */
+function httpError(
+  status: number,
+  statusText: string,
+  request: FetchRequest,
+  body?: string
+): Error {
+  try {
+    new FetchResponse(
+      status,
+      statusText,
+      {},
+      body === undefined ? null : new TextEncoder().encode(body),
+      request
+    ).assertOk()
+  } catch (error) {
+    return error as Error
+  }
+  throw new Error('assertOk did not throw')
 }
 
 async function failure(promise: Promise<unknown>): Promise<Error> {
@@ -776,7 +837,7 @@ describe('NonceGuardSigner: money sends', () => {
     const chain = await collidingOrder()
 
     await guard(chain, {
-      verificationProvider: secondRpc(11) as never
+      verificationProvider: secondRpc(11, undefined, chain.provider) as never
     }).sendTransaction(request(ORDER_CALL))
 
     expect(chain.broadcasts.map((tx) => tx.nonce)).to.deep.equal([10, 11])
@@ -897,6 +958,122 @@ describe('NonceGuardSigner: money sends', () => {
     )) as NonceGuardError
 
     expect(error.reason).to.equal('may-have-been-sent')
+    expect(chain.broadcasts).to.have.length(1)
+  })
+
+  /**
+   * The order at nonce 10 is refused, and each RPC's blocks since the send show what
+   * holds nonce 10 on its chain: `primary` on the signer's RPC, `verifier` on the second
+   * (`null`: the RPC returns no block). Both RPCs' hash indexes lag; both count 11 mined.
+   */
+  async function slotProof(holders: {
+    primary: MinedTx | 'ours'
+    verifier: MinedTx | 'ours' | null
+  }) {
+    const chain = fakeChain({ latest: 10, head: 100 })
+    const second = fakeChain({ latest: 10, head: 100 })
+    chain.provider.broadcastTransaction.mockImplementationOnce(
+      async (raw: string) => {
+        const tx = Transaction.from(raw)
+        chain.broadcasts.push(tx)
+        const ours = {
+          from: tx.from as string,
+          nonce: 10,
+          hash: tx.hash as string
+        }
+        chain.mineBlock(holders.primary === 'ours' ? ours : holders.primary)
+        if (holders.verifier === null) {
+          second.mineBlock()
+          second.provider.getBlock.mockResolvedValue(null)
+        } else
+          second.mineBlock(
+            holders.verifier === 'ours' ? ours : holders.verifier
+          )
+        chain.setLatest(11)
+        second.setLatest(11)
+        throw refusal('NONCE_EXPIRED', 'nonce too low', raw)
+      }
+    )
+    const outcome = await guard(chain, {
+      verificationProvider: second.provider as never
+    })
+      .sendTransaction(request(ORDER_CALL))
+      .then(
+        () => undefined,
+        (error: NonceGuardError) => error
+      )
+    return { chain, second, outcome }
+  }
+
+  it('resends an order when both RPCs show another call in its slot (control)', async () => {
+    const other = await otherTx(10)
+    const { chain, second, outcome } = await slotProof({
+      primary: other,
+      verifier: other
+    })
+
+    expect(outcome).to.equal(undefined)
+    expect(chain.broadcasts.map((tx) => tx.nonce)).to.deep.equal([10, 11])
+    expect(second.provider.getBlock).toHaveBeenCalled()
+  })
+
+  it("does not resend an order on the primary's word when the second RPC's chain has it mined (security review round 2, R2-M1, S3)", async () => {
+    // A fork: the signer's RPC shows another transaction at nonce 10, the second RPC the
+    // order itself. If the second one's fork wins, a resend pays twice.
+    const { chain, second, outcome } = await slotProof({
+      primary: await otherTx(10),
+      verifier: 'ours'
+    })
+
+    expect(outcome?.reason).to.equal('may-have-been-sent')
+    expect(chain.broadcasts).to.have.length(1)
+    expect(second.provider.getBlock).toHaveBeenCalled()
+  })
+
+  it('does not resend an order when the second RPC returns no blocks (security review round 2, R2-M1, S4)', async () => {
+    const { chain, outcome } = await slotProof({
+      primary: await otherTx(10),
+      verifier: null
+    })
+
+    expect(outcome?.reason).to.equal('may-have-been-sent')
+    expect(chain.broadcasts).to.have.length(1)
+  })
+
+  it('does not resend an order when a block read of the second RPC fails', async () => {
+    const other = await otherTx(10)
+    const chain = fakeChain({ latest: 10, head: 100 })
+    const second = fakeChain({ latest: 11, head: 101 })
+    second.provider.getBlock.mockRejectedValue(new Error('backend gone'))
+    chain.provider.broadcastTransaction.mockImplementationOnce(
+      async (raw: string) => {
+        chain.broadcasts.push(Transaction.from(raw))
+        chain.mineBlock(other)
+        chain.setLatest(11)
+        throw refusal('NONCE_EXPIRED', 'nonce too low', raw)
+      }
+    )
+
+    const error = (await failure(
+      guard(chain, {
+        verificationProvider: second.provider as never
+      }).sendTransaction(request(ORDER_CALL))
+    )) as NonceGuardError
+
+    expect(error.reason).to.equal('may-have-been-sent')
+    expect(chain.broadcasts).to.have.length(1)
+  })
+
+  it('does not resend an order whose slot holds the same call (security review round 2, m1, S5)', async () => {
+    // The same call at the nonce, with another fee: a wallet's speed-up of this order, or
+    // another process's retry of it. Sent again, the order would land twice.
+    const sameCall = await otherTx(10, ORDER_CALL)
+    const { chain, outcome } = await slotProof({
+      primary: sameCall,
+      verifier: sameCall
+    })
+
+    expect(outcome?.reason).to.equal('may-have-been-sent')
     expect(chain.broadcasts).to.have.length(1)
   })
 
@@ -1092,24 +1269,37 @@ describe('reporting', () => {
     expect(error.message).to.match(/^startOrder failed: insufficient funds/)
   })
 
-  it('drops the HTTP request and response of a failed send (security review m4)', async () => {
-    // ethers' SERVER_ERROR for an HTTP 500 on eth_sendRawTransaction carries the
-    // FetchRequest, whose body is the signed transaction.
+  it('drops the HTTP request and response of a failed send, and the URL path (security review m4, round 2 R2-M2)', async () => {
+    // ethers' SERVER_ERROR for an HTTP 500 on eth_sendRawTransaction, as ethers 6.17's
+    // `FetchResponse.assertOk()` builds it: the FetchRequest (its body is the signed
+    // transaction), the response, and `info.requestUrl` (the RPC's key) and
+    // `info.responseBody`, all of it also in the message.
     const chain = fakeChain({ latest: 10 })
     chain.provider.broadcastTransaction.mockImplementation(
       async (raw: string) => {
-        const fetch = new FetchRequest('https://rpc.example.org/k3y')
+        const fetch = new FetchRequest('https://rpc.example.org/v3/k3y')
         fetch.body = { method: 'eth_sendRawTransaction', params: [raw] }
-        throw makeError('server response 500', 'SERVER_ERROR', {
-          request: fetch,
-          response: { statusCode: 500 }
-        } as never)
+        throw httpError(
+          500,
+          'Internal Server Error',
+          fetch,
+          `upstream failed for ${raw}`
+        )
       }
     )
+    const signer = guard(chain)
 
     const error = (await failure(
-      guard(chain).sendTransaction(request())
-    )) as Error & { code?: string; request?: unknown; response?: unknown }
+      signer.sendTransaction(request(ORDER_CALL))
+    )) as Error & {
+      code?: string
+      request?: unknown
+      response?: unknown
+      info?: { requestUrl?: unknown; responseBody?: unknown }
+    }
+    const confirmed = await failure(
+      confirmTransaction('startOrder', null, signer, TO)
+    )
 
     expect(error.code).to.equal('SERVER_ERROR')
     for (const field of [error.request, error.response]) {
@@ -1117,7 +1307,18 @@ describe('reporting', () => {
       expect(field).not.to.match(LONG_HEX)
       expect(field).not.to.match(/k3y/)
     }
-    expect(error.message).not.to.match(LONG_HEX)
+    expect(error.info?.requestUrl).to.equal('https://rpc.example.org')
+    expect(error.info?.responseBody).to.match(/omitted/)
+    for (const text of [
+      inspect(error, { depth: 12 }),
+      inspect(confirmed, { depth: 12 }),
+      JSON.stringify(confirmed.cause)
+    ]) {
+      expect(text).not.to.match(/k3y/)
+      expect(text).not.to.match(LONG_HEX)
+    }
+    expect(confirmed.cause).not.to.equal(error)
+    expect((confirmed.cause as { code?: string }).code).to.equal('SERVER_ERROR')
   })
 
   it('keeps the generic message without a recorded failure, and reads a failure once', async () => {
@@ -1196,7 +1397,252 @@ describe('reporting', () => {
       nonceRefusalOf(makeError('timeout', 'TIMEOUT', {} as never))
     ).to.equal(undefined)
     expect(nonceRefusalOf(new Error('nonce too low'))).to.equal(undefined)
+    // Code review round 2, n1: no "known transaction" inside "unknown transaction".
+    expect(
+      nonceRefusalOf(refusal('UNKNOWN_ERROR', 'unknown transaction type', raw))
+    ).to.equal(undefined)
+    expect(
+      nonceRefusalOf(refusal('UNKNOWN_ERROR', 'known transaction: 0x12', raw))
+    ).to.equal('already-known')
   })
+
+  it('a nonce read that fails after a refusal stops with the refused transaction on record (code review round 2, m2)', async () => {
+    let reads = 0
+    const chain = fakeChain({
+      latest: 10,
+      broadcast: refuseFirst(1, 'NONCE_EXPIRED', 'nonce too low')
+    })
+    chain.provider.getTransactionCount.mockImplementation(async () => {
+      if (++reads > 1)
+        throw httpError(
+          503,
+          'Service Unavailable',
+          new FetchRequest('https://rpc.example.org/v3/k3y')
+        )
+      return 10
+    })
+    const signer = guard(chain)
+
+    const error = (await failure(
+      signer.sendTransaction(request())
+    )) as NonceGuardError
+    const confirmed = await failure(
+      confirmTransaction('setMetadata', null, signer, TO)
+    )
+
+    expect(error).to.be.instanceOf(NonceGuardError)
+    expect(error.reason).to.equal('may-have-been-sent')
+    expect(error.attempts).to.have.length(1)
+    expect(error.attempts[0].hash).to.equal(chain.broadcasts[0].hash)
+    expect(chain.broadcasts).to.have.length(1)
+    expect(confirmed.message).to.match(
+      /^setMetadata failed: .*may have been sent/
+    )
+    for (const text of [inspect(error, { depth: 12 }), confirmed.message])
+      expect(text).not.to.match(/k3y/)
+  })
+
+  it('a nonce read that fails before the send is thrown without the RPC URL (code review round 2, m2)', async () => {
+    const chain = fakeChain({ latest: 10 })
+    chain.provider.getTransactionCount.mockImplementation(async () => {
+      throw httpError(
+        429,
+        'Too Many Requests',
+        new FetchRequest('https://rpc.example.org/v3/k3y')
+      )
+    })
+
+    const error = await failure(guard(chain).sendTransaction(request()))
+
+    expect((error as { code?: string }).code).to.equal('SERVER_ERROR')
+    expect(inspect(error, { depth: 12 })).not.to.match(/k3y/)
+    expect(chain.broadcasts).to.have.length(0)
+  })
+})
+
+describe('the send record (code review round 2 m1, security review round 2 m4)', () => {
+  const OTHER = '0x00000000000000000000000000000000000000bb'
+  const funds = () =>
+    makeError('insufficient funds', 'INSUFFICIENT_FUNDS', {} as never)
+
+  it('keeps an unconfirmed broadcast past a minute: a later failure is not named for it', async () => {
+    // Order A is broadcast to TO and takes more than a minute to mine; another send to TO
+    // fails before its broadcast; then A's wait fails and ocean.js returns null for A.
+    let now = 1_000_000
+    const chain = fakeChain({ latest: 10 })
+    const signer = guard(chain, { now: () => now })
+    await signer.sendTransaction(request(ORDER_CALL))
+    now += 61_000
+    chain.provider.broadcastTransaction.mockImplementationOnce(async () => {
+      throw funds()
+    })
+    await signer.sendTransaction(request(ORDER_CALL)).catch(() => null)
+    now += 2_000
+
+    const error = await failure(
+      confirmTransaction('startOrder', null, signer, TO)
+    )
+
+    expect(error.message).to.match(/ocean\.js returned no transaction/)
+  })
+
+  it("names a later call's failure once the earlier transaction's wait() resolved", async () => {
+    const chain = fakeChain({ latest: 10 })
+    const signer = guard(chain)
+    const first = await signer.sendTransaction(request(ORDER_CALL))
+    await first.wait() // as ocean.js does
+    chain.provider.broadcastTransaction.mockImplementationOnce(async () => {
+      throw funds()
+    })
+    await signer.sendTransaction(request(ORDER_CALL)).catch(() => null)
+
+    const error = await failure(
+      confirmTransaction('startOrder', null, signer, TO)
+    )
+
+    expect(error.message).to.match(/^startOrder failed: insufficient funds/)
+  })
+
+  it('drops failures first when full, and expires only failures', () => {
+    let now = 0
+    const log = new SendLog(() => now)
+    const failed = (text: string) => ({
+      error: new Error(text),
+      text,
+      maySent: false
+    })
+    log.sent(TO, '0x01')
+    for (let index = 0; index < 64; index++)
+      log.failed(OTHER, failed(`other ${index}`))
+    log.failed(TO, failed('mine'))
+
+    // The broadcast to TO is still on record: two sends there, none named.
+    expect(log.take(TO)).to.equal(undefined)
+
+    now += 61_000
+    log.failed(OTHER, failed('late'))
+    expect(log.take(OTHER)?.text).to.equal('late')
+  })
+
+  it('leaves a contract ambiguous when an unconfirmed broadcast to it had to go', () => {
+    const log = new SendLog(() => 0)
+    log.sent(TO, '0x01')
+    for (let index = 0; index < 64; index++)
+      log.sent(OTHER, `0x${(index + 2).toString(16)}`)
+    log.failed(TO, { error: new Error('mine'), text: 'mine', maySent: false })
+
+    expect(log.take(TO)).to.equal(undefined)
+  })
+})
+
+describe('no RPC URL or signed transaction on a failed send, through a real JsonRpcProvider (security review round 2, R2-M2)', () => {
+  const TOKEN = 'FAKERPCTOKENnonceguard'
+  let server: Server
+  let url = ''
+  let mode = ''
+  let lastRaw = ''
+
+  beforeAll(async () => {
+    server = createServer((incoming, outgoing) => {
+      let body = ''
+      incoming.on('data', (chunk) => {
+        body += chunk
+      })
+      incoming.on('end', () => {
+        const message = JSON.parse(body)
+        const reply = (result: unknown) =>
+          outgoing.end(
+            JSON.stringify({ jsonrpc: '2.0', id: message.id, result })
+          )
+        const fail = (text: string) =>
+          outgoing.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: message.id,
+              error: { code: -32000, message: text }
+            })
+          )
+        switch (message.method) {
+          case 'eth_chainId':
+            return reply(`0x${CHAIN_ID.toString(16)}`)
+          case 'eth_blockNumber':
+            return reply('0x64')
+          case 'eth_getTransactionCount':
+            return reply('0xa')
+          case 'eth_sendRawTransaction':
+            lastRaw = message.params[0]
+            if (mode === 'http-500') {
+              outgoing.statusCode = 500
+              return outgoing.end(`upstream failed for ${lastRaw}`)
+            }
+            if (mode === 'replay-protected')
+              return fail(
+                'only replay-protected (EIP-155) transactions allowed over RPC'
+              )
+            if (mode === 'echo-unknown')
+              return fail(`invalid transaction ${lastRaw}`)
+            if (mode === 'echo-funds')
+              return fail(
+                `insufficient funds for gas * price + value: tx 0x${lastRaw.slice(2).toUpperCase()}`
+              )
+            return fail(`rate limited at https://rpc.example.org/v3/${TOKEN}`)
+          default:
+            return reply(null)
+        }
+      })
+    })
+    await new Promise<void>((resolve) =>
+      server.listen(0, '127.0.0.1', () => resolve())
+    )
+    const { port } = server.address() as { port: number }
+    url = `http://127.0.0.1:${port}/v3/${TOKEN}`
+  })
+
+  afterAll(async () => {
+    await new Promise((resolve) => server.close(resolve))
+  })
+
+  for (const [shape, code] of [
+    ['http-500', 'SERVER_ERROR'],
+    ['replay-protected', 'UNSUPPORTED_OPERATION'],
+    ['echo-unknown', 'UNKNOWN_ERROR'],
+    ['echo-funds', 'INSUFFICIENT_FUNDS'],
+    ['echo-url', 'UNKNOWN_ERROR']
+  ] as const)
+    it(`${shape}: neither the thrown error nor confirmTransaction's error and cause`, async () => {
+      mode = shape
+      const provider = new JsonRpcProvider(url, CHAIN_ID, {
+        staticNetwork: true,
+        batchMaxCount: 1
+      })
+      try {
+        const signer = new NonceGuardSigner(
+          new Wallet(PRIVATE_KEY).connect(provider),
+          { state: new NonceGuardState(), sleep: async () => undefined }
+        )
+
+        const thrown = await failure(
+          signer.sendTransaction(request(ORDER_CALL))
+        )
+        const confirmed = await failure(
+          confirmTransaction('startOrder', null, signer, TO)
+        )
+
+        expect((thrown as { code?: string }).code).to.equal(code)
+        expect((confirmed.cause as { code?: string }).code).to.equal(code)
+        const signed = lastRaw.slice(2).toLowerCase()
+        for (const text of [
+          inspect(thrown, { depth: 12 }),
+          inspect(confirmed, { depth: 12 }),
+          JSON.stringify(confirmed.cause)
+        ]) {
+          expect(text).not.to.include(TOKEN)
+          expect(text.toLowerCase()).not.to.include(signed.slice(0, 120))
+        }
+      } finally {
+        provider.destroy()
+      }
+    })
 })
 
 describe('Nautilus.create: the verification provider', () => {
