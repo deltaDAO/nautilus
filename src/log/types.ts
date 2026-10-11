@@ -1,3 +1,4 @@
+import type { OperationName } from './context.js'
 import type { LogFormat } from './env.js'
 import type { LogComponent, LogEventName } from './events.js'
 import type { LoggingLevel, LogLevelName } from './levels.js'
@@ -17,8 +18,15 @@ export interface LogEvent {
   component: LogComponent
   /** A human-readable sentence. It may change between versions; `event` does not. */
   msg: string
-  /** The operation the event belongs to. Not set yet. */
+  /**
+   * The operation (the public call) the event belongs to: 8 random hex characters, the
+   * same on every event of one call and on the error it throws (`error.opId`). Unset
+   * outside an operation, and in a browser on events of code the call does not hand its
+   * logger (see `configureLogging`).
+   */
   opId?: string
+  /** The public call `opId` belongs to, e.g. `publish` or `getComputeResult`. */
+  operation?: OperationName
   /** The asset the event is about, when it has one. */
   did?: string
   /** The transaction the event is about, when there is one. */

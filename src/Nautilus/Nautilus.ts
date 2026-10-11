@@ -48,6 +48,7 @@ import type { CredentialProvider } from '../identity/CredentialProvider.js'
 import { PolicySessionResolver } from '../identity/PolicySessionResolver.js'
 import { isAddressCredential } from '../identity/policy.js'
 import type { SessionStore } from '../identity/session.js'
+import { type OperationName, runOperation } from '../log/context.js'
 import {
   type DebugOptions,
   debugEnabled,
@@ -778,7 +779,9 @@ export class Nautilus {
     txid?: string,
     options?: WaitForIndexerOptions
   ): Promise<AssetV5> {
-    return this.node.waitForIndexer(did, txid, options)
+    return this.operation('waitForIndexer', () =>
+      this.node.waitForIndexer(did, txid, options)
+    )
   }
 
   // #endregion
@@ -795,6 +798,17 @@ export class Nautilus {
   async publish(
     asset: NautilusAsset,
     options: PublishOptions = {}
+  ): Promise<PublishResponse> {
+    return this.operation('publish', (log) =>
+      this.runPublish(asset, options, log)
+    )
+  }
+
+  /** `publish()`, within its operation. */
+  private async runPublish(
+    asset: NautilusAsset,
+    options: PublishOptions,
+    log: Logger
   ): Promise<PublishResponse> {
     assertEncryptOption(options)
     assertWritableState(asset.lifecycleState ?? 0, 'the asset')
@@ -847,7 +861,7 @@ export class Nautilus {
       nftParams: asset.getNftParams(owner),
       service: first,
       owner,
-      logger: this.log
+      logger: log
     })
 
     first.datatokenAddress = created.datatokenAddress
@@ -918,6 +932,17 @@ export class Nautilus {
     nftAddress: string,
     asset: NautilusAsset,
     options: CompletePublishOptions = {}
+  ): Promise<PublishResponse> {
+    return this.operation('completePublish', () =>
+      this.runCompletePublish(nftAddress, asset, options)
+    )
+  }
+
+  /** `completePublish()`, within its operation. */
+  private async runCompletePublish(
+    nftAddress: string,
+    asset: NautilusAsset,
+    options: CompletePublishOptions
   ): Promise<PublishResponse> {
     assertEncryptOption(options)
     assertWritableState(asset.lifecycleState ?? 0, 'the asset')
@@ -1277,6 +1302,14 @@ export class Nautilus {
   async edit(
     asset: NautilusAsset,
     options: PublishOptions = {}
+  ): Promise<PublishResponse> {
+    return this.operation('edit', () => this.runEdit(asset, options))
+  }
+
+  /** `edit()`, within its operation. */
+  private async runEdit(
+    asset: NautilusAsset,
+    options: PublishOptions
   ): Promise<PublishResponse> {
     const baseline = asset.ddo.getOriginalDDO()
 
@@ -1838,14 +1871,16 @@ export class Nautilus {
     )
       throw new Error('newPrice must be a numeric string, e.g. "2.5".')
 
-    return editPrice({
-      asset,
-      serviceId,
-      newPrice,
-      chainConfig: this.config,
-      signer: this.signer,
-      logger: this.log
-    })
+    return this.operation('setServicePrice', (log) =>
+      editPrice({
+        asset,
+        serviceId,
+        newPrice,
+        chainConfig: this.config,
+        signer: this.signer,
+        logger: log
+      })
+    )
   }
 
   /** Changes the asset's lifecycle state on its NFT. */
@@ -1853,10 +1888,21 @@ export class Nautilus {
     asset: AssetV5,
     state: AssetState
   ): Promise<TransactionReceipt | undefined> {
+    return this.operation('setAssetLifecycleState', (log) =>
+      this.runSetAssetLifecycleState(asset, state, log)
+    )
+  }
+
+  /** `setAssetLifecycleState()`, within its operation. */
+  private async runSetAssetLifecycleState(
+    asset: AssetV5,
+    state: AssetState,
+    log: Logger
+  ): Promise<TransactionReceipt | undefined> {
     const current = getLifecycleState(asset)
 
     if (current === state) {
-      this.log.emit(
+      log.emit(
         'lifecycle.state.unchanged',
         `Asset ${asset.id} is already in state ${state}; nothing to do.`,
         { did: asset.id, state }
@@ -1918,13 +1964,15 @@ export class Nautilus {
 
   /** Orders a service if needed and returns a one-time download URL. */
   async access(config: AccessConfig): Promise<AccessResult> {
-    return access(this.withProviderFeeDefaults(config), {
-      node: this.node,
-      signer: this.signer,
-      chainConfig: this.config,
-      policySessions: this.policySessions,
-      logger: this.log
-    })
+    return this.operation('access', (log) =>
+      access(this.withProviderFeeDefaults(config), {
+        node: this.node,
+        signer: this.signer,
+        chainConfig: this.config,
+        policySessions: this.policySessions,
+        logger: log
+      })
+    )
   }
 
   // #endregion
@@ -1945,17 +1993,16 @@ export class Nautilus {
 
   /** Starts a paid compute job: orders inputs, funds escrow, then starts. */
   async compute(config: ComputeConfig): Promise<ComputeResult> {
-    return compute(
-      this.withEscrowDefaults(this.withProviderFeeDefaults(config)),
-      {
+    return this.operation('compute', (log) =>
+      compute(this.withEscrowDefaults(this.withProviderFeeDefaults(config)), {
         node: this.node,
         signer: this.signer,
         chainConfig: this.config,
         policySessions: this.policySessions,
         escrow: this.explicitEscrow,
         escrowLock: this.escrowLock,
-        logger: this.log
-      }
+        logger: log
+      })
     )
   }
 
@@ -1963,13 +2010,15 @@ export class Nautilus {
   async freeCompute(
     config: FreeComputeConfig
   ): Promise<Omit<ComputeResult, 'initializeResults' | 'orders'>> {
-    return freeCompute(config, {
-      node: this.node,
-      signer: this.signer,
-      chainConfig: this.config,
-      policySessions: this.policySessions,
-      logger: this.log
-    })
+    return this.operation('freeCompute', (log) =>
+      freeCompute(config, {
+        node: this.node,
+        signer: this.signer,
+        chainConfig: this.config,
+        policySessions: this.policySessions,
+        logger: log
+      })
+    )
   }
 
   /**
@@ -1982,7 +2031,9 @@ export class Nautilus {
   async getComputeStatus(
     config: ComputeStatusConfig
   ): Promise<NodeComputeJob | undefined> {
-    return this.nodeFor(config.nodeUri).getComputeJob(config.jobId)
+    return this.operation('getComputeStatus', () =>
+      this.nodeFor(config.nodeUri).getComputeJob(config.jobId)
+    )
   }
 
   /**
@@ -1996,11 +2047,21 @@ export class Nautilus {
   async getComputeResult(
     config: ComputeResultConfig
   ): Promise<string | undefined> {
+    return this.operation('getComputeResult', (log) =>
+      this.runGetComputeResult(config, log)
+    )
+  }
+
+  /** `getComputeResult()`, within its operation. */
+  private async runGetComputeResult(
+    config: ComputeResultConfig,
+    log: Logger
+  ): Promise<string | undefined> {
     const node = this.nodeFor(config.nodeUri)
     const result = await this.findResult(node, config)
 
     if ('reason' in result) {
-      this.log.emit(
+      log.emit(
         result.retry
           ? 'compute.result.not_ready'
           : 'compute.result.unavailable',
@@ -2080,9 +2141,8 @@ export class Nautilus {
 
   /** Asks the node to stop a job, and returns the jobs as they stand after the request. */
   async stopCompute(config: StopComputeConfig): Promise<NodeComputeJob[]> {
-    return this.nodeFor(config.nodeUri).computeStop(
-      config.jobId,
-      config.agreementId
+    return this.operation('stopCompute', () =>
+      this.nodeFor(config.nodeUri).computeStop(config.jobId, config.agreementId)
     )
   }
 
@@ -2150,6 +2210,19 @@ export class Nautilus {
       retry: false,
       kind: 'no-output'
     }
+  }
+
+  /**
+   * Runs `run` as the operation `name` (`src/log/context.ts`): every event it causes, and
+   * the error it throws, carry the operation's `opId`. `run` gets this instance's logger
+   * bound to the operation; hand it to the functions it calls, which is how the `opId`
+   * reaches their events where there is no `AsyncLocalStorage` (a browser).
+   */
+  private operation<T>(
+    name: OperationName,
+    run: (log: Logger) => Promise<T>
+  ): Promise<T> {
+    return runOperation(this.log, name, run)
   }
 
   /** A client for another node, when a job runs somewhere other than the default. */

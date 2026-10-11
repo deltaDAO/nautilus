@@ -10,6 +10,11 @@
 
 import { id } from 'ethers'
 import {
+  currentOperation,
+  type OperationContext,
+  type OperationName
+} from './context.js'
+import {
   type LoggingEnv,
   type LoggingEnvProblem,
   processEnv,
@@ -165,6 +170,8 @@ export interface EmitOptions {
 export class Logger {
   private readonly options: LoggingOptions
   private readonly shown = new Set<string>()
+  /** The operation this logger is bound to, see `withOperation`. */
+  private readonly operation?: OperationContext
 
   /** Options left out follow the process-wide configuration (`configureLogging`). */
   constructor(options: LoggingOptions = {}) {
@@ -209,7 +216,13 @@ export class Logger {
       options.once === undefined ? undefined : onceKeyOf(name, options.once)
     if (onceKey !== undefined && this.shown.has(onceKey)) return
 
-    const event = safeBuild(name, msg, fields, printed)
+    const event = safeBuild(
+      name,
+      msg,
+      fields,
+      printed,
+      this.operation ?? currentOperation()
+    )
     if (!event) return
     tap?.(event, printed, { once: options.once !== undefined })
     if (!printed) return
@@ -220,6 +233,17 @@ export class Logger {
     } catch {
       // stderr (or the console) refused the line: logging must not fail the operation.
     }
+  }
+
+  /**
+   * This logger, bound to `operation`: its events carry the operation's `opId` even
+   * where `AsyncLocalStorage` cannot tell (a browser). Shares this logger's options and
+   * its `once` memory. @internal
+   */
+  withOperation(operation: OperationContext): Logger {
+    const bound = Object.create(this) as Logger
+    Object.defineProperty(bound, 'operation', { value: operation })
+    return bound
   }
 
   /** Forgets which `once` events were printed. @internal */
@@ -278,17 +302,19 @@ function safeBuild(
   name: LogEventName,
   msg: string | (() => string),
   fields: LogFields | undefined,
-  printed: boolean
+  printed: boolean,
+  operation: OperationContext | undefined
 ): LogEvent | undefined {
   try {
-    return build(name, msg, fields, printed)
+    return build(name, msg, fields, printed, operation)
   } catch (error) {
     try {
       return build(
         name,
         typeof msg === 'string' ? msg : name,
         { fieldsError: redactError(error) },
-        false
+        false,
+        operation
       )
     } catch {
       return undefined
@@ -297,14 +323,16 @@ function safeBuild(
 }
 
 /**
- * The event, redacted. When it is `printed`, what the redaction removed goes to the
- * sensitive debug channel (`debugUnredacted`), if that is on.
+ * The event, redacted, with the `operation`'s `opId` and name. When it is `printed`, what
+ * the redaction removed goes to the sensitive debug channel (`debugUnredacted`), if that
+ * is on.
  */
 function build(
   name: LogEventName,
   msg: string | (() => string),
   fields: LogFields | undefined,
-  printed: boolean
+  printed: boolean,
+  operation: OperationContext | undefined
 ): LogEvent {
   const spec = LOG_EVENTS[name]
   let text: string
@@ -324,6 +352,7 @@ function build(
     event: name,
     component: spec.component,
     msg: redactMessage(String(text)),
+    ...stamp(operation),
     fields: redactFields(rest)
   }
 
@@ -337,6 +366,24 @@ function build(
     debugUnredacted(name, spec.component, String(text), raw, event.msg)
 
   return event
+}
+
+/**
+ * The `opId` and `operation` an event carries. Random and from a fixed list, but redacted
+ * like every other field all the same.
+ */
+function stamp(
+  operation: OperationContext | undefined
+): Pick<LogEvent, 'opId' | 'operation'> {
+  if (!operation) return {}
+  const { opId, operation: name } = redactFields({
+    opId: operation.opId,
+    operation: operation.operation
+  })
+  return {
+    ...(typeof opId === 'string' && { opId }),
+    ...(typeof name === 'string' && { operation: name as OperationName })
+  }
 }
 
 function assertOptions(options: LoggingConfig, where: string): void {

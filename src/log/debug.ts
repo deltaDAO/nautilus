@@ -23,6 +23,7 @@
  *
  * When off, `debugEnabled` is one comparison and no raw value is copied or kept.
  */
+import { currentOperation, type OperationName } from './context.js'
 import { CutText, maskCredentials, maskNeverShown } from './credentials.js'
 import {
   DEBUG_LEVELS,
@@ -52,6 +53,13 @@ export interface DebugEvent {
   topic: DebugTopic
   /** What the data is, e.g. `node answer HTTP 400 Bad Request`. */
   message: string
+  /**
+   * The operation the event belongs to, as on the log events (`LogEvent.opId`). Only
+   * where `AsyncLocalStorage` tells it (Node); unset in a browser.
+   */
+  opId?: string
+  /** The public call `opId` belongs to. */
+  operation?: OperationName
   /**
    * The raw value, as plain data (strings, numbers, booleans, `null`, arrays, objects):
    * an error becomes `{ name, message, code, …, cause }`. Long strings are cut at 32,768
@@ -245,11 +253,16 @@ function deliver(
   message: string,
   data: unknown
 ): void {
+  const operation = currentOperation()
   const event: DebugEvent = {
     time: new Date().toISOString(),
     tier,
     topic,
     message,
+    ...(operation && {
+      opId: operation.opId,
+      operation: operation.operation
+    }),
     ...(data === undefined ? {} : { data })
   }
   tap?.(event)
@@ -278,7 +291,8 @@ export function debugPrefix(tier: DebugTier): string {
 
 /**
  * One line, whatever the data holds:
- * `[nautilus:debug:sensitive] [node] <time> <message> <data as JSON>`. Line breaks,
+ * `[nautilus:debug:sensitive] [node] <time> [publish 3f9a2c1b] <message> <data as JSON>`,
+ * the operation only within one. Line breaks,
  * terminal escapes and other control characters are written as JSON escapes (`\n`,
  * `\u001b`).
  */
@@ -287,7 +301,11 @@ export function formatDebugLine(event: DebugEvent): string {
     event.data === undefined
       ? ''
       : ` ${escapeControls(JSON.stringify(event.data))}`
-  return `${debugPrefix(event.tier)} [${event.topic}] ${event.time} ${escapeControls(event.message)}${data}`
+  const operation =
+    event.opId === undefined
+      ? ''
+      : ` [${escapeControls(`${event.operation ?? 'operation'} ${event.opId}`)}]`
+  return `${debugPrefix(event.tier)} [${event.topic}] ${event.time}${operation} ${escapeControls(event.message)}${data}`
 }
 
 /** Control characters, DEL, C1, the line and paragraph separators and bidi controls. */

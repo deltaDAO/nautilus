@@ -34,13 +34,15 @@ export function formatJson(event: LogEvent): string {
 }
 
 /**
- * `[nautilus] [publish] warn: <message> (publish.preflight.denies_all endpoint=https://…)`.
+ * `[nautilus] [publish] warn: <message> (publish.preflight.denies_all opId=3f9a2c1b
+ * operation=publish endpoint=https://…)`, on one line.
  */
 export function formatPretty(event: LogEvent): string {
   const details = [
     event.event,
     ...pairs({
       opId: event.opId,
+      operation: event.operation,
       did: event.did,
       txHash: event.txHash,
       durationMs: event.durationMs,
