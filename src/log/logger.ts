@@ -34,6 +34,13 @@ import {
   passes
 } from './levels.js'
 import {
+  DEFAULT_OCEANJS_MODE,
+  describeLine,
+  OCEANJS_EVENT,
+  type OceanJsMethod,
+  setOceanJsMode
+} from './oceanjs.js'
+import {
   debugUnredacted,
   redactError,
   redactFields,
@@ -61,7 +68,7 @@ interface Settings {
   format?: LoggingOptions['format']
   components?: LogComponent[]
   sink?: LoggingOptions['sink']
-  oceanjs?: OceanJsLogMode
+  oceanjs: OceanJsLogMode
 }
 
 /** What the environment set at import. */
@@ -77,7 +84,8 @@ function fromEnvironment(): Settings {
   return {
     level: environment.settings.level ?? DEFAULT_LOGGING_LEVEL,
     format: environment.settings.format,
-    components: environment.settings.components
+    components: environment.settings.components,
+    oceanjs: DEFAULT_OCEANJS_MODE
   }
 }
 
@@ -119,14 +127,8 @@ export function configureLogging(options: LoggingConfig): void {
       : defaults.components
   if ('sink' in options) settings.sink = options.sink
   if ('oceanjs' in options) {
-    settings.oceanjs = options.oceanjs
-    if (options.oceanjs)
-      log.emit(
-        'config.oceanjs.not_active',
-        `oceanjs: '${options.oceanjs}' is not active yet: ocean.js still prints its own lines, unredacted, at its own level (errors only by default). To silence them now, call LoggerInstance.setLevel(LogLevel.None) from @oceanprotocol/lib.`,
-        { mode: options.oceanjs },
-        { once: options.oceanjs }
-      )
+    settings.oceanjs = options.oceanjs ?? defaults.oceanjs
+    setOceanJsMode(settings.oceanjs, captureOceanJsLine)
   }
 }
 
@@ -148,6 +150,7 @@ export function getLoggingConfig(): Readonly<LoggingConfig> & {
 export function resetLogging(env?: Record<string, string | undefined>): void {
   environment = env === undefined ? atImport : readLoggingEnv(env)
   settings = fromEnvironment()
+  setOceanJsMode(settings.oceanjs, captureOceanJsLine)
   log.forget()
   reportEnvironment()
 }
@@ -316,9 +319,10 @@ function safeBuild(
     return build(name, msg, fields, printed, operation)
   } catch (error) {
     try {
+      // `msg` again: `build` falls back to the event's name if it throws this time.
       return build(
         name,
-        typeof msg === 'string' ? msg : name,
+        msg,
         { fieldsError: redactError(error) },
         false,
         operation
@@ -443,3 +447,36 @@ function reportEnvironment(): void {
 }
 
 reportEnvironment()
+
+// #region ocean.js
+
+/**
+ * The logger a captured ocean.js line goes to: the process-wide one, because ocean.js's
+ * `LoggerInstance` is process-wide too.
+ *
+ * HOOK (10c, operation context): a line ocean.js logs during a nautilus operation belongs to
+ * that operation. Once the operation context exists, take its logger here (the instance's
+ * own, from `Nautilus.create({ logger })`) so the line follows that instance's level and
+ * sink; the context's `opId` reaches the event through `build`, like any other event's.
+ */
+function oceanJsLogger(): Logger {
+  return log
+}
+
+/** One line ocean.js logged, as an `oceanjs.logger.*` event, built only when printed. */
+function captureOceanJsLine(method: OceanJsMethod, args: unknown[]): void {
+  let line: ReturnType<typeof describeLine> | undefined
+  const read = () => {
+    line ??= describeLine(method, args)
+    return line
+  }
+  oceanJsLogger().emit(
+    OCEANJS_EVENT[method],
+    () => read().msg,
+    () => read().fields
+  )
+}
+
+// #endregion
+
+setOceanJsMode(settings.oceanjs, captureOceanJsLine)

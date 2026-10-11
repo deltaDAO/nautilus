@@ -991,27 +991,6 @@ describe('regressions (V f)', () => {
     })
   })
 
-  describe("configureLogging's oceanjs option (not active yet)", () => {
-    it("warns once per mode, 'capture' included", () => {
-      const log = captureLog()
-
-      configureLogging({ oceanjs: 'capture' })
-      configureLogging({ oceanjs: 'silent' })
-      configureLogging({ oceanjs: 'silent' })
-      configureLogging({ oceanjs: 'passthrough' })
-
-      expect(
-        log.events.map((event) => [event.event, event.fields.mode])
-      ).to.deep.equal([
-        ['config.oceanjs.not_active', 'capture'],
-        ['config.oceanjs.not_active', 'silent'],
-        ['config.oceanjs.not_active', 'passthrough']
-      ])
-      expect(log.events[0].msg).to.contain('LoggerInstance.setLevel')
-      expect(getLoggingConfig().oceanjs).to.equal('passthrough')
-    })
-  })
-
   describe('Nautilus.setLogLevel (deprecated)', () => {
     it("maps ocean.js's levels and still sets ocean.js's own", () => {
       const cases: [LogLevel, string][] = [
