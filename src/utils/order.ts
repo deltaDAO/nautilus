@@ -774,8 +774,9 @@ async function approveSpend(params: {
  * With the signer the transaction was sent with, and when that is the nonce guard
  * `Nautilus.create()` installs, a `null` names the send failure the guard recorded (the
  * wallet's or RPC's refusal, or the guard's `NonceGuardError`), which is also the error's
- * `cause`; with `to`, the contract the call went to, only a failure of a send to that
- * contract, and only when it was the only recent send there (concurrent calls to one
+ * `cause` (a sanitised copy of a wallet's or RPC's error: no URL, request or signed
+ * transaction); with `to`, the contract the call went to, only a failure of a send to that
+ * contract, and only when it is the only send there on record (concurrent calls to one
  * contract cannot be told apart, and keep the generic message).
  */
 async function confirm(

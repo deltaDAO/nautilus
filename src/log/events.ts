@@ -88,7 +88,7 @@ export const LOG_EVENTS = {
     level: 'warn',
     component: 'chain',
     description:
-      'A transaction was refused for its nonce (a collision with another send of the same key, or a stale nonce from the RPC) and the chain does not have it: the nonce guard sends the same transaction again with the nonce in nextNonce. A transaction that moves value is sent again only once it is proven, through the verificationProvider as well, that it can never be mined (another transaction of the account holds its nonce).',
+      'A transaction was refused for its nonce (a collision with another send of the same key, or a stale nonce from the RPC) and the chain does not have it: the nonce guard sends the same transaction again with the nonce in nextNonce. A transaction that moves value is sent again only once it is proven, through the verificationProvider as well, that it can never be mined (on both RPCs, another call of the account holds its nonce in the blocks since the send).',
     fields: ['address', 'txNonce', 'nextNonce', 'code']
   },
   'chain.nonce.already_sent': {
@@ -116,7 +116,7 @@ export const LOG_EVENTS = {
     level: 'debug',
     component: 'chain',
     description:
-      'A send failed for a reason other than its nonce (a wallet rejection, insufficient funds, a timeout, a network error). Not retried. maySent: whether the transaction may still have reached the chain (false only for a refusal before the broadcast). confirmTransaction() names this cause when ocean.js returns no transaction and it was the only recent send to that contract.',
+      'A send failed for a reason other than its nonce (a wallet rejection, insufficient funds, a timeout, a network error). Not retried. maySent: whether the transaction may still have reached the chain (false only for a refusal before the broadcast). confirmTransaction() names this cause when ocean.js returns no transaction and it is the only send to that contract on record.',
     fields: ['code', 'maySent']
   },
 

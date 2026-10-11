@@ -50,7 +50,7 @@ import {
 } from 'ethers'
 import { debug, debugRaw } from '../log/debug.js'
 import { type Logger, log } from '../log/logger.js'
-import { sanitize } from '../node/messages.js'
+import { redactSecrets, sanitize } from '../node/messages.js'
 import { createKeyedLock } from './keyedLock.js'
 
 /**
@@ -140,10 +140,13 @@ const NO_VALUE_SELECTORS = new Set([
 /** At most this many signed transactions per send. */
 const MAX_ATTEMPTS = 3
 
-/** How long a recorded send stays available to `confirmTransaction()`. */
+/** How long a recorded failure stays available to `confirmTransaction()`. */
 const FAILURE_TTL_MS = 60_000
 
-/** At most this many recorded sends per guard (and its `connect()` copies). */
+/**
+ * At most this many recorded sends per guard (and its `connect()` copies), and at most
+ * this many contracts remembered as ambiguous (see `SendLog`).
+ */
 const MAX_RECORDED_SENDS = 64
 
 /**
@@ -212,6 +215,10 @@ export interface NonceGuardOptions {
 
 /** A failed send as `confirmTransaction()` reports it. */
 interface RecordedFailure {
+  /**
+   * The failure, for `cause`: the guard's `NonceGuardError`, or a sanitised copy of the
+   * wallet's or RPC's error (`sanitizedSendError`), never the raw error.
+   */
   error: unknown
   /** The error's message, sanitised. */
   text: string
@@ -220,11 +227,16 @@ interface RecordedFailure {
 }
 
 /**
- * The recent sends of a guard, by contract (`to`): each one's hash once broadcast, or its
+ * The sends of a guard, by contract (`to`): each one's hash once broadcast, or its
  * failure. `confirmTransaction()` names a failure only when it is the only send to that
- * contract in the last minute; with two (`Promise.all` of two orders of one asset, or a
- * success whose `wait()` then failed next to another call's failure) it cannot tell which
- * call the failure belongs to, and keeps its generic message.
+ * contract on record; with two (`Promise.all` of two orders of one asset, or a success
+ * whose `wait()` then failed next to another call's failure) it cannot tell which call the
+ * failure belongs to, and keeps its generic message.
+ *
+ * A broadcast stays on record until it is confirmed (its `wait()` resolved, or
+ * `confirmTransaction()` got it), however long that takes; a failure for a minute. When
+ * the record is full, failures go first; a broadcast that still has to go leaves its
+ * contract ambiguous, so a later failure there is never named for the wrong call.
  */
 export class SendLog {
   private records: Array<{
@@ -232,7 +244,12 @@ export class SendLog {
     to?: string
     hash?: string
     failure?: RecordedFailure
+    /** The error as thrown, for `forget`. */
+    source?: unknown
   }> = []
+
+  /** Contracts (`''` without one) of unconfirmed broadcasts dropped from a full record. */
+  private readonly ambiguous = new Set<string>()
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -240,8 +257,12 @@ export class SendLog {
     this.add({ to, hash })
   }
 
-  failed(to: string | undefined, failure: RecordedFailure): void {
-    this.add({ to, failure })
+  failed(
+    to: string | undefined,
+    failure: RecordedFailure,
+    source: unknown = failure.error
+  ): void {
+    this.add({ to, failure, source })
   }
 
   /** The send of `hash` was confirmed: it no longer competes with a failure. */
@@ -252,17 +273,21 @@ export class SendLog {
   /** The caller handled `error` itself (it was thrown to it, not swallowed). */
   forget(error: unknown): void {
     this.records = this.records.filter(
-      (record) => record.failure?.error !== error
+      (record) => !record.failure || record.source !== error
     )
   }
 
   /**
-   * The failure of the only recent send to `to` (of the only recent send at all, without
-   * `to`), once; `undefined` when that send succeeded or there was more than one.
+   * The failure of the only send on record to `to` (of the only send on record at all,
+   * without `to`), once; `undefined` when that send succeeded, there was more than one, or
+   * an unconfirmed send to `to` was dropped from a full record.
    */
   take(to?: string): RecordedFailure | undefined {
     this.prune()
     const target = to?.toLowerCase()
+    if (target === undefined ? this.ambiguous.size : this.ambiguous.has(target))
+      return undefined
+
     const candidates = this.records.filter(
       (record) => target === undefined || record.to === target
     )
@@ -277,6 +302,7 @@ export class SendLog {
     to?: string
     hash?: string
     failure?: RecordedFailure
+    source?: unknown
   }) {
     this.prune()
     this.records.push({
@@ -284,12 +310,28 @@ export class SendLog {
       to: record.to?.toLowerCase(),
       at: this.now()
     })
-    if (this.records.length > MAX_RECORDED_SENDS) this.records.shift()
+    if (this.records.length <= MAX_RECORDED_SENDS) return
+
+    const failure = this.records.findIndex((each) => each.failure)
+    if (failure >= 0) {
+      this.records.splice(failure, 1)
+      return
+    }
+    // Only unconfirmed broadcasts: the oldest goes, and its contract stays ambiguous.
+    const dropped = this.records.shift()
+    const key = dropped?.to ?? ''
+    this.ambiguous.delete(key)
+    this.ambiguous.add(key)
+    if (this.ambiguous.size > MAX_RECORDED_SENDS)
+      this.ambiguous.delete(this.ambiguous.values().next().value as string)
   }
 
+  /** Drops the failures older than `FAILURE_TTL_MS`; broadcasts stay until confirmed. */
   private prune(): void {
     const oldest = this.now() - FAILURE_TTL_MS
-    this.records = this.records.filter((record) => record.at >= oldest)
+    this.records = this.records.filter(
+      (record) => !record.failure || record.at >= oldest
+    )
   }
 }
 
@@ -336,8 +378,8 @@ export function nonceRefusalOf(error: unknown): NonceRefusal | undefined {
   if (isError(error, 'REPLACEMENT_UNDERPRICED')) return 'underpriced'
 
   const texts = refusalTexts(error).join('\n')
-  // Nethermind answers "AlreadyKnown".
-  if (/already ?known|known transaction|already imported/i.test(texts))
+  // Nethermind answers "AlreadyKnown"; "unknown transaction type" is no such answer.
+  if (/already ?known|\bknown transaction\b|already imported/i.test(texts))
     return 'already-known'
   if (/nonce too low|nonce has already been used/i.test(texts))
     return 'nonce-expired'
@@ -354,11 +396,13 @@ export function signedTransactionOf(error: unknown): string | undefined {
   const value = error as {
     transaction?: unknown
     payload?: { params?: unknown[] }
-    info?: { payload?: { params?: unknown[] } }
+    info?: { transaction?: unknown; payload?: { params?: unknown[] } }
   } | null
   return [
     value?.transaction,
     value?.payload?.params?.[0],
+    // "only replay-protected transactions" (`UNSUPPORTED_OPERATION`) keeps it here.
+    value?.info?.transaction,
     value?.info?.payload?.params?.[0]
   ].find(
     (candidate): candidate is string =>
@@ -404,65 +448,170 @@ export function notBroadcast(error: unknown): boolean {
   return NOT_BROADCAST_CODES.some((code) => isError(error, code))
 }
 
+/** Errors `withoutSignedTransaction` already scrubbed. */
+const scrubbedErrors = new WeakSet<object>()
+
+/** The fields of an ethers error that can carry a signed transaction, a URL or RPC text. */
+interface ScrubbedFields {
+  message?: unknown
+  stack?: unknown
+  shortMessage?: unknown
+  transaction?: unknown
+  request?: unknown
+  response?: unknown
+  payload?: { params?: unknown[] }
+  error?: { message?: unknown }
+  info?: {
+    transaction?: unknown
+    requestUrl?: unknown
+    responseBody?: unknown
+    payload?: { params?: unknown[] }
+    error?: { message?: unknown }
+    info?: { error?: { message?: unknown } }
+  }
+}
+
 /**
- * An ethers send error without the signed transaction: its message names the
- * transaction's hash instead, and `transaction` (or the payload's parameter) holds the
- * hash. The signed bytes go to the debug channel (`nonce`): an unmined signed transaction
- * can be broadcast by anyone who reads it. The HTTP request and response of a failed
- * `eth_sendRawTransaction` (ethers' `SERVER_ERROR`) are dropped too: the request's body
- * is the signed transaction, and its URL may carry the RPC's token.
+ * A failed send's error made safe to throw and print, in place (an unmined signed
+ * transaction can be broadcast by anyone who reads it, and an RPC's URL may carry its
+ * API key):
+ *
+ * - the signed transaction, wherever ethers puts it (`transaction`, the payload's
+ *   parameter, `info.transaction`) and wherever a message quotes it (an RPC's echo too, in
+ *   any letter case), becomes `<signed transaction 0x…hash>`;
+ * - the HTTP request and response of a failed request (ethers' `SERVER_ERROR`: `request`,
+ *   `response`, `info.responseBody`) become a note, and `info.requestUrl` its origin;
+ * - every message (the error's, and its copy at the top of the stack; `shortMessage`; the
+ *   RPC's own in `error` and `info.error`) is redacted as `redactSecrets` does: URLs to
+ *   their origin, credentials.
+ *
+ * The raw error goes to the debug channel (`nonce`) first. Fields a frozen error does not
+ * let go are kept. `confirmTransaction()`'s `cause` is a sanitised copy instead
+ * (`sanitizedSendError`).
  */
 export function withoutSignedTransaction(error: unknown): unknown {
-  if (!error || typeof error !== 'object') return error
-  withoutTransport(error as { request?: unknown; response?: unknown })
+  if (!error || typeof error !== 'object' || scrubbedErrors.has(error))
+    return error
+  scrubbedErrors.add(error)
 
   const raw = signedTransactionOf(error)
-  if (!raw) return error
-
-  debugRaw('nonce', 'signed transaction of a failed send', raw)
+  if (raw) debugRaw('nonce', 'signed transaction of a failed send', raw)
+  debugRaw('nonce', 'failed send before redaction', error)
 
   let hash = 'unknown'
   try {
-    hash = Transaction.from(raw).hash ?? hash
+    if (raw) hash = Transaction.from(raw).hash ?? hash
   } catch {
     // Not decodable: still removed.
   }
-
   const replacement = `<signed transaction ${hash}>`
-  const target = error as {
-    message?: unknown
-    transaction?: unknown
-    payload?: { params?: unknown[] }
-    info?: { payload?: { params?: unknown[] } }
+  // The RPC may echo it in any letter case, with or without its `0x`.
+  const quoted = raw ? new RegExp(`(?:0x)?${raw.slice(2)}`, 'gi') : undefined
+  const clean = (text: string) =>
+    redactSecrets(quoted ? text.replace(quoted, replacement) : text)
+
+  const target = error as ScrubbedFields
+  const set = (write: () => void) => {
+    try {
+      write()
+    } catch {
+      // A frozen error, or a read-only field, keeps it.
+    }
   }
-  try {
-    if (typeof target.message === 'string')
-      target.message = target.message.split(raw).join(replacement)
-    if (target.transaction === raw) target.transaction = replacement
+
+  const message = target.message
+  if (typeof message === 'string') {
+    const cleaned = clean(message)
+    set(() => {
+      target.message = cleaned
+    })
+    // The stack starts with the message as it was (its frames are left as they are).
+    if (typeof target.stack === 'string' && cleaned !== message) {
+      const stack = target.stack.split(message).join(cleaned)
+      set(() => {
+        target.stack = quoted ? stack.replace(quoted, replacement) : stack
+      })
+    }
+  }
+  const shortMessage = target.shortMessage
+  if (typeof shortMessage === 'string')
+    set(() => {
+      target.shortMessage = clean(shortMessage)
+    })
+  for (const nested of [
+    target.error,
+    target.info?.error,
+    target.info?.info?.error
+  ]) {
+    const text = nested?.message
+    if (nested && typeof text === 'string')
+      set(() => {
+        nested.message = clean(text)
+      })
+  }
+
+  if (raw) {
+    if (target.transaction === raw)
+      set(() => {
+        target.transaction = replacement
+      })
+    if (target.info?.transaction === raw) {
+      const info = target.info
+      set(() => {
+        info.transaction = replacement
+      })
+    }
     for (const params of [target.payload?.params, target.info?.payload?.params])
-      if (Array.isArray(params) && params[0] === raw) params[0] = replacement
-  } catch {
-    // A frozen error keeps its fields.
+      if (Array.isArray(params) && params[0] === raw)
+        set(() => {
+          params[0] = replacement
+        })
   }
+
+  for (const field of ['request', 'response'] as const)
+    if (target[field] !== undefined)
+      set(() => {
+        target[field] = `<${field} omitted: NAUTILUS_DEBUG, topic nonce>`
+      })
+  const info = target.info
+  if (info && typeof info.requestUrl === 'string') {
+    const url = info.requestUrl
+    set(() => {
+      info.requestUrl = redactSecrets(url)
+    })
+  }
+  if (info && info.responseBody !== undefined && info.responseBody !== null)
+    set(() => {
+      info.responseBody = '<response body omitted: NAUTILUS_DEBUG, topic nonce>'
+    })
 
   return error
 }
 
-/** Drops `request` and `response` from an ethers error, to the debug channel. */
-function withoutTransport(error: { request?: unknown; response?: unknown }) {
-  if (error.request === undefined && error.response === undefined) return
+/**
+ * A copy of a failed send's error that is safe to keep on `cause`: its name, `code`, and
+ * its message and `shortMessage` sanitised (bounded, credentials, URLs and signed
+ * transactions redacted), without the ethers error's request, response, payload or
+ * transaction. The guard's own `NonceGuardError` carries none of those and is kept as it
+ * is. The raw error went to the debug channel when it was redacted
+ * (`withoutSignedTransaction`).
+ */
+function sanitizedSendError(error: unknown): unknown {
+  if (error instanceof NonceGuardError) return error
 
-  debugRaw('nonce', 'request and response of a failed send', () => ({
-    request: error.request,
-    response: error.response
-  }))
-  try {
-    for (const field of ['request', 'response'] as const)
-      if (error[field] !== undefined)
-        error[field] = `<${field} omitted: NAUTILUS_DEBUG, topic nonce>`
-  } catch {
-    // A frozen error keeps its fields.
+  const value = error as {
+    name?: unknown
+    code?: unknown
+    shortMessage?: unknown
   }
+  const copy = new Error(
+    sanitize(error instanceof Error ? error.message : String(error), 600, null)
+  ) as Error & { code?: string; shortMessage?: string }
+  if (typeof value?.name === 'string') copy.name = value.name
+  if (typeof value?.code === 'string') copy.code = value.code
+  if (typeof value?.shortMessage === 'string')
+    copy.shortMessage = sanitize(value.shortMessage, 200, null)
+  return copy
 }
 
 /** Whether the chain knows the transaction by hash: pending, or mined (by its receipt). */
@@ -573,56 +722,90 @@ export async function provenNeverSent(params: {
 /**
  * Positive proof that none of `attempts` was mined: for each one's nonce, the transaction
  * of `address` with that nonce found in the blocks since the send (`fromBlock`, read just
- * before the first broadcast, minus one), and it is another transaction. Reads the blocks
- * from each provider in turn until every nonce is accounted for; a block a provider does
- * not return, more than `MAX_PROOF_BLOCKS` blocks, or one of `attempts` itself found in a
- * block, is no proof. A nonce taken before the send (the stale read of the beta.2 run) is
- * not in those blocks either, so such a send stops with "may have been sent".
+ * before the first broadcast, minus one), and it is another call. **Every** provider must
+ * show this for every nonce on its own: a provider on another fork, or one that forged a
+ * block, cannot prove it alone. No proof when any provider shows one of `attempts` in a
+ * block, does not return a block up to its head, has more than `MAX_PROOF_BLOCKS` blocks
+ * to read, or fails a read; nor when the transaction holding a nonce makes the same call
+ * (`call`: same recipient and same function), which may be this send sped up in a wallet
+ * or retried by another process, so this send would land twice. A nonce taken before the
+ * send (the stale read of the beta.2 run) is not in those blocks either, so such a send
+ * stops with "may have been sent".
  */
 export async function provenSlotsTaken(params: {
   providers: Provider[]
   address: string
   attempts: SentAttempt[]
   fromBlock?: number
+  /** The call `attempts` make: their recipient and calldata. */
+  call?: { to: string | null; data: string }
 }): Promise<boolean> {
-  const { address, attempts } = params
+  const { address, attempts, call } = params
   if (params.fromBlock === undefined || !attempts.length) return false
 
   const ours = new Set(attempts.map((attempt) => attempt.hash.toLowerCase()))
-  const open = new Set(attempts.map((attempt) => attempt.nonce))
+  const nonces = attempts.map((attempt) => attempt.nonce)
   const start = Math.max(0, params.fromBlock - 1)
-  const takenBy: Record<number, string> = {}
+  const takenBy: Record<number, string>[] = []
+  const verdict = (proven: boolean, why: string) => {
+    debug('sensitive', 'nonce', 'slots-taken proof', {
+      address,
+      attempts,
+      fromBlock: start,
+      takenBy,
+      proven,
+      why
+    })
+    return proven
+  }
 
-  for (const provider of [...new Set(params.providers)]) {
-    try {
+  try {
+    for (const provider of [...new Set(params.providers)]) {
       const head = await provider.getBlockNumber()
-      if (head - start + 1 > MAX_PROOF_BLOCKS) continue
+      if (head - start + 1 > MAX_PROOF_BLOCKS)
+        return verdict(false, 'too many blocks since the send')
 
+      const open = new Set(nonces)
+      const taken: Record<number, string> = {}
+      takenBy.push(taken)
       for (let number = start; number <= head && open.size; number++) {
         const block = await provider.getBlock(number, true)
-        if (!block) break
+        if (!block) return verdict(false, `block ${number} not returned`)
 
         for (const tx of block.prefetchedTransactions) {
           if (tx.from.toLowerCase() !== address.toLowerCase()) continue
-          if (ours.has(tx.hash.toLowerCase())) return false
-          if (open.delete(tx.nonce)) takenBy[tx.nonce] = tx.hash
+          if (ours.has(tx.hash.toLowerCase()))
+            return verdict(false, `${tx.hash} is ours, mined`)
+          if (!open.has(tx.nonce)) continue
+          if (call && sameCall(tx, call))
+            return verdict(false, `${tx.hash} makes the same call`)
+          open.delete(tx.nonce)
+          taken[tx.nonce] = tx.hash
         }
       }
-    } catch {
-      // This provider proves nothing; the next may.
+      if (open.size)
+        return verdict(
+          false,
+          `nonces ${[...open].join(', ')} not accounted for`
+        )
     }
-    if (!open.size) break
+  } catch {
+    return verdict(false, 'a read failed')
   }
 
-  debug('sensitive', 'nonce', 'slots-taken proof', {
-    address,
-    attempts,
-    fromBlock: start,
-    takenBy,
-    unproven: [...open]
-  })
+  return verdict(true, 'every slot taken by another call on every provider')
+}
 
-  return open.size === 0
+/** Whether `tx` calls the same function of the same contract as `call`. */
+function sameCall(
+  tx: { to?: string | null; data?: string },
+  call: { to: string | null; data: string }
+): boolean {
+  return (
+    (tx.to?.toLowerCase() ?? null) === (call.to?.toLowerCase() ?? null) &&
+    (tx.data ?? '0x').slice(0, 10).toLowerCase() ===
+      call.data.slice(0, 10).toLowerCase()
+  )
 }
 
 /** The latest block number, or `undefined` when it cannot be read. */
@@ -647,7 +830,7 @@ export class NonceGuardSigner extends AbstractSigner {
   readonly signer: Signer
   readonly nonceManagement: NonceManagement
   readonly verificationProvider?: Provider
-  /** The recent sends, shared with this guard's `connect()` copies. */
+  /** The sends on record, shared with this guard's `connect()` copies. */
   readonly sends: SendLog
   private readonly options: NonceGuardOptions
   private readonly state: NonceGuardState
@@ -698,8 +881,7 @@ export class NonceGuardSigner extends AbstractSigner {
   }
 
   /**
-   * The failure of the only send to contract `to` within the last minute, once (see
-   * `SendLog`): read by `confirmTransaction()` when ocean.js returned no transaction.
+   * The failure of the only send to contract `to` on record, once (see `SendLog`): read by `confirmTransaction()` when ocean.js returned no transaction.
    */
   takeFailure(
     to?: string
@@ -713,7 +895,13 @@ export class NonceGuardSigner extends AbstractSigner {
 
     const provider = this.requireProvider()
     const address = getAddress(await this.signer.getAddress())
-    const { chainId } = await provider.getNetwork()
+    let chainId: bigint
+    try {
+      ;({ chainId } = await provider.getNetwork())
+    } catch (error) {
+      // Nothing was sent: the chain could not be read.
+      throw this.fail(error, to, { notSent: true })
+    }
     const key = `${chainId}:${address.toLowerCase()}`
 
     return this.state.lock(key, () =>
@@ -739,15 +927,44 @@ export class NonceGuardSigner extends AbstractSigner {
     }
   }
 
+  /**
+   * Records the broadcast `response` for `confirmTransaction()` until it is confirmed:
+   * when its `wait()` resolves (ocean.js waits for every transaction it sends), or when
+   * `confirmTransaction()` gets it. A `wait()` that throws leaves it on record, so another
+   * call's failure to the same contract is not named for this one.
+   */
+  private track(
+    to: string | undefined,
+    response: TransactionResponse
+  ): TransactionResponse {
+    this.sends.sent(to, response.hash)
+    const wait = response.wait
+    if (typeof wait !== 'function') return response
+
+    const sends = this.sends
+    try {
+      Object.defineProperty(response, 'wait', {
+        configurable: true,
+        writable: true,
+        value: async (...args: Parameters<TransactionResponse['wait']>) => {
+          const receipt = await wait.apply(response, args)
+          sends.settle(response.hash)
+          return receipt
+        }
+      })
+    } catch {
+      // A frozen response stays on record until `confirmTransaction()` gets it.
+    }
+    return response
+  }
+
   /** The wallet sets the nonce: send, and only check a nonce refusal for "already sent". */
   private async sendUnmanaged(
     tx: TransactionRequest,
     to: string | undefined
   ): Promise<TransactionResponse> {
     try {
-      const response = await this.signer.sendTransaction(tx)
-      this.sends.sent(to, response.hash)
-      return response
+      return this.track(to, await this.signer.sendTransaction(tx))
     } catch (error) {
       const outcome = await this.recover({
         error,
@@ -756,10 +973,7 @@ export class NonceGuardSigner extends AbstractSigner {
         attempt: MAX_ATTEMPTS,
         resend: false
       })
-      if ('response' in outcome) {
-        this.sends.sent(to, outcome.response.hash)
-        return outcome.response
-      }
+      if ('response' in outcome) return this.track(to, outcome.response)
       throw this.fail('error' in outcome ? outcome.error : error, to)
     }
   }
@@ -792,7 +1006,7 @@ export class NonceGuardSigner extends AbstractSigner {
           nonce
         })
         this.advance(key, { hash: response.hash, nonce })
-        this.sends.sent(to, response.hash)
+        this.track(to, response)
         debug('sensitive', 'nonce', 'broadcast', {
           address,
           nonce,
@@ -813,10 +1027,7 @@ export class NonceGuardSigner extends AbstractSigner {
           fromBlock
         })
 
-        if ('response' in outcome) {
-          this.sends.sent(to, outcome.response.hash)
-          return outcome.response
-        }
+        if ('response' in outcome) return this.track(to, outcome.response)
         if ('nonce' in outcome) {
           nonce = outcome.nonce
           await this.sleep(500 + Math.floor(Math.random() * 1500))
@@ -922,8 +1133,9 @@ export class NonceGuardSigner extends AbstractSigner {
     const refusal = nonceRefusalOf(error)
     const code = (error as { code?: unknown } | null)?.code
     const raw = signedTransactionOf(error)
+    // Read before the error is redacted: the redaction can take the number with it.
+    const suggested = suggestedNonce(error)
 
-    if (raw) debugRaw('nonce', 'signed transaction of a refused send', raw)
     debug('sensitive', 'nonce', 'send refused', {
       code,
       refusal: refusal ?? 'not a nonce refusal',
@@ -962,9 +1174,10 @@ export class NonceGuardSigner extends AbstractSigner {
       )
     }
 
-    // The refusal itself (with the RPC's unredacted text) goes to the debug channel only:
-    // the error names its code and the RPC's message, redacted.
-    debugRaw('nonce', 'refusal', () => withoutSignedTransaction(error))
+    // The refusal itself (with the RPC's unredacted text and the signed transaction) goes
+    // to the debug channel only: it is redacted in place, and the errors below name its
+    // code and the RPC's message, redacted.
+    withoutSignedTransaction(error)
 
     const decoded = raw ? decode(raw) : undefined
 
@@ -1051,7 +1264,8 @@ export class NonceGuardSigner extends AbstractSigner {
           providers: [provider, second],
           address,
           attempts,
-          fromBlock: params.fromBlock
+          fromBlock: params.fromBlock,
+          call: { to: decoded.to, data: decoded.data }
         }))
       )
         return stop(
@@ -1060,13 +1274,21 @@ export class NonceGuardSigner extends AbstractSigner {
         )
     }
 
-    const [pending, latest] = await Promise.all([
-      provider.getTransactionCount(address, 'pending'),
-      provider.getTransactionCount(address, 'latest')
-    ])
+    let pending: number
+    let latest: number
+    try {
+      ;[pending, latest] = await Promise.all([
+        provider.getTransactionCount(address, 'pending'),
+        provider.getTransactionCount(address, 'latest')
+      ])
+    } catch (readError) {
+      return stop(
+        'may-have-been-sent',
+        `Transaction ${sent.hash} (nonce ${sent.nonce}) of ${address} was refused for its nonce (${describeRefusal(error)}), and the RPC could not be asked for the account's next nonce (${describeFailure(withoutSignedTransaction(readError))}): nautilus did not send it again. It may have been sent: check the account's latest transactions before retrying.`
+      )
+    }
     const local = this.state.next.get(params.key)?.next ?? 0
     const floor = Math.max(local, pending, latest, sent.nonce + 1)
-    const suggested = suggestedNonce(error)
     // A hint far above every other source is a garbled message, not a nonce.
     const nonce =
       suggested !== undefined && suggested <= floor + MAX_HINT_AHEAD
@@ -1125,21 +1347,28 @@ export class NonceGuardSigner extends AbstractSigner {
   }
 
   /**
-   * Records the failure for `confirmTransaction()` and reports it; returns the error to
-   * throw. `notSent`: nothing was broadcast (the nonce could not be read).
+   * Records the failure for `confirmTransaction()` (a sanitised copy, for its `cause`) and
+   * reports it; returns the error to throw, redacted in place (`withoutSignedTransaction`:
+   * no signed transaction, no RPC URL path, no HTTP request). `notSent`: nothing was
+   * broadcast (the nonce could not be read).
    */
   private fail(
     error: unknown,
     to: string | undefined,
     options: { notSent?: boolean } = {}
   ): unknown {
+    withoutSignedTransaction(error)
     const text = sanitize(
       error instanceof Error ? error.message : String(error),
       600,
       'nonce'
     )
     const maySent = !options.notSent && !notBroadcast(error)
-    this.sends.failed(to, { error, text, maySent })
+    this.sends.failed(
+      to,
+      { error: sanitizedSendError(error), text, maySent },
+      error
+    )
 
     if (error instanceof NonceGuardError)
       this.log.emit('chain.nonce.gave_up', error.message, {
@@ -1215,7 +1444,8 @@ export function failureText(failure: {
  * `error`, naming the send failure the guard of `signer` recorded for contract `to`, if
  * there is exactly one (see `SendLog`): for an ocean.js call that throws a generic error
  * of its own when the send fails (`createDatatoken`'s "Failed to send createDatatoken
- * transaction", `approveWei` returning nothing). The recorded failure becomes the cause.
+ * transaction", `approveWei` returning nothing). The recorded failure (the guard's
+ * `NonceGuardError`, or a sanitised copy of the wallet's or RPC's error) becomes the cause.
  */
 export function withSendFailure(
   signer: unknown,
