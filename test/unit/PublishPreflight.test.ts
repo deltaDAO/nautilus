@@ -2092,5 +2092,9 @@ describe('indexer nonce preflight', () => {
     const [skipped] = log.named('node.indexer_nonce.zero_byte_accepted')
     expect(skipped.level).to.equal('info')
     expect(skipped.msg).to.match(/self-reported.*OE fork/)
+
+    // The nonce has not moved: the same line, not again (code review round 2, n5).
+    await nautilus.publish(validAsset())
+    expect(log.named('node.indexer_nonce.zero_byte_accepted')).to.have.length(1)
   })
 })

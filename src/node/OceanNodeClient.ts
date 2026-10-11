@@ -1840,7 +1840,9 @@ export class OceanNodeClient {
       this.log.emit(
         'node.indexer_nonce.zero_byte_accepted',
         `The next indexer nonce ${nextNonce} of ${this.nodeUri} hashes to a zero byte, which ocean-node before 4.2.2 refuses; the node reports version ${nodeVersion} (self-reported; the fix is in the OE fork), so it is not reported as stuck. If assets stop being indexed, check the node's logs for 'consumer address and nonce signature mismatch'.`,
-        { nodeUri: this.nodeUri, nodeVersion, nonce: nextNonce }
+        { nodeUri: this.nodeUri, nodeVersion, nonce: nextNonce },
+        // Until the nonce moves, every read of this node would say the same.
+        { once: `${this.nodeUri}:${nextNonce}` }
       )
 
     return {

@@ -125,7 +125,8 @@ export const LOG_EVENTS = {
     component: 'node',
     description:
       "The node's next indexer nonce (or this publish's second decrypt nonce) hashes to a zero byte, which ocean-node before 4.2.2 refuses (a stuck indexer); the node reports 4.2.2 or later, so the publish preflight neither refuses nor warns. The version is self-reported, and only the OE fork's 4.2.2 has the fix: an upstream ocean-node with the same number would leave the asset unindexed.",
-    fields: ['nodeUri', 'nodeVersion', 'nonce']
+    fields: ['nodeUri', 'nodeVersion', 'nonce'],
+    once: true
   },
 
   // publish (also edit and completePublish, which write metadata the same way)

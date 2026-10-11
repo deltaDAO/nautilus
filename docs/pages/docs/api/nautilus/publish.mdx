@@ -173,7 +173,7 @@ Which nonces a node does not accept depends on its version (the `version` of its
 before 4.2.2 it refuses a decrypt call whose signed message hash starts with a zero byte,
 so a next nonce with such a hash sticks the indexer; 4.2.2 and later accept it, so it is
 neither refused nor warned about. Instead nautilus logs `node.indexer_nonce.zero_byte_accepted`
-at `info`. A node that reports no version, or a pre-release of 4.2.2, is treated as older.
+at `info`, once per node and nonce. A node that reports no version, or a pre-release of 4.2.2, is treated as older.
 
 :::warning
 The version is what the node reports about itself, and the fix is in the OE fork of
