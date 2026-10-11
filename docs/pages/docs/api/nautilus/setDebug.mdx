@@ -99,7 +99,7 @@ Each event is a `DebugEvent`:
 | `tier` | `'sensitive' \| 'secrets'` | `secrets` when the data holds a long-lived credential (only with `level: 'secrets'`). |
 | `topic` | `DebugTopic` | |
 | `message` | `string` | What the data is, e.g. `answer HTTP 400 Bad Request`. |
-| `data` | `unknown` | The raw value as plain data. An error becomes `{ name, message, …, cause }`. After masking, strings are cut at 32,768 characters and the event at about 256 KB, each cut marked. |
+| `data` | `unknown` | The raw value as plain data. An error becomes `{ name, message, …, cause }`. After masking, strings are cut at 32,768 characters and the event at about 256 KB. A string longer than 65,536 characters, or past the event's size, is read only up to the last word before that point, so no credential is shown in part. Each cut ends in ` …(cut: N of M characters shown)`, M being the length as given. |
 
 ## Output
 

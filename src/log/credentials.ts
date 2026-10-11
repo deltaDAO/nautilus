@@ -71,6 +71,20 @@ const MAX_URL_NESTING = 3
 
 export { isNeverShownKey }
 
+/**
+ * A string the debug channel read only in part (`debug.ts`): `text` is its start, up to
+ * the last space or punctuation before the cut, so a credential the cut went through is
+ * left out whole rather than shown in part; `total` is the whole string's length. Masked
+ * like any string; the cut is marked only after masking, so the marker can neither be
+ * masked away nor stick to a value and change its shape.
+ */
+export class CutText {
+  constructor(
+    readonly text: string,
+    readonly total: number
+  ) {}
+}
+
 /** Whether the value of `key` is a long-lived credential (or never shown), at any value. */
 export function isCredentialKey(key: string): boolean {
   return isLongLivedCredential(key, '')
@@ -106,17 +120,17 @@ function mask(
 ): unknown {
   if (typeof value === 'string')
     return known ? maskText(value, known) : maskNeverShownText(value)
+  if (value instanceof CutText)
+    return new CutText(mask(value.text, known, hidden) as string, value.total)
   if (Array.isArray(value))
     return value.map((entry) => mask(entry, known, hidden))
   if (!value || typeof value !== 'object') return value
 
   const out: Record<string, unknown> = {}
   for (const [key, entry] of Object.entries(value)) {
+    const read = entry instanceof CutText ? entry.text : entry
     const masked =
-      hidden(key, entry) &&
-      entry !== undefined &&
-      entry !== null &&
-      entry !== ''
+      hidden(key, read) && read !== undefined && read !== null && read !== ''
         ? REDACTED
         : mask(entry, known, hidden)
     // A `__proto__` own key (from `JSON.parse`) is kept as a key, not as the prototype.
