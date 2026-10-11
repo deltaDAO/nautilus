@@ -2,7 +2,7 @@
 
 Set the checks applied to each presented credential.
 
-The policy server's defaults are `signature`, `not-before` and `revoked-status-list`. Valid names can be enumerated from the walt.id verifier's `/openid4vc/policy-list` endpoint.
+nautilus's `DEFAULT_VC_POLICIES` are `signature`, `not-before` and `revoked-status-list`, the values the policy server ships in its `default-verification-policies` file. A deployment can run more: the policy server adds the `DEFAULT_VC_POLICIES` and `DEFAULT_VP_POLICIES` of its environment to every session, which nautilus cannot see. Valid names can be enumerated from the walt.id verifier's `/openid4vc/policy-list` endpoint.
 
 ## Usage
 
@@ -27,6 +27,10 @@ VC policy and drops any arguments, so a policy that needs one fails in the verif
 presentation and denies every consumer. Put argument-bearing policies, such as issuer trust
 (`allowed-issuer`) or walt.id's `schema`, on the credential instead, in the `policies` of
 [`addRequestCredentials`](/docs/api/assetbuilder/addRequestCredentials).
+
+[`build()`](/docs/api/assetbuilder/build) throws an `SsiPolicyError` for such a list: any
+entry with arguments, and `allowed-issuer`, `schema`, `webhook`, `dynamic` or
+`credential-status`, which cannot work without them.
 :::
 
 :::info

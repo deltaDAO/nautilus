@@ -157,6 +157,40 @@ policy server (400), a network error, a timeout or a 5xx.
 If the wallet holds nothing that matches, the provider's error carries the credentials you are
 *missing*, rather than just reporting no match.
 
+### Refused before presenting
+
+Before it presents anything, `WaltIdCredentialProvider` checks the one policy whose outcome it
+can decide from what it holds: `holder-binding`. When the service requires it and a selected
+credential's JWT has no `sub`, or a `sub` (up to a `#`) that is not the DID you present as, the
+verifier would refuse the presentation, so the provider throws a
+`CredentialRejectedLocallyError` instead, with nothing presented, ordered or paid:
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { CredentialRejectedLocallyError, Nautilus } from '@deltadao/nautilus'
+const signer = new Wallet('0x1234', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const nautilus = await Nautilus.create(signer, {
+  config: { oceanNodeUri: 'https://node.example.org' }
+})
+// ---cut---
+try {
+  await nautilus.access({ assetDid: 'did:ope:1234abcd...' })
+} catch (error) {
+  if (error instanceof CredentialRejectedLocallyError) // [!code focus]
+    console.log(error.policy, error.reason, error.credentialType) // [!code focus]
+  // @log: holder-binding no-sub gx:LegalPerson
+  else throw error
+}
+```
+
+`reason` is `'no-sub'` or `'sub-mismatch'`, and the message says what to do: ask the publisher
+to drop `holder-binding` for that credential type, or present a credential issued to your DID.
+Credentials the provider cannot decode (SD-JWT, JSON-LD, anything but a plain JWT) are not
+judged: they are presented, and a `debug` event `identity.preflight.skipped` says so. Pass
+`preflight: false` to the provider for a verifier whose rule differs from walt.id's. Every
+other refusal still comes from the verifier, as above. This check helps honest consumers; it
+is no access control, which stays with the verifier and the address allow list.
+
 ### What the wallet trusts
 
 For a download, the presentation request comes from the node in the service's
@@ -270,8 +304,10 @@ assetBuilder
 ```
 
 **VC policies** check each presented credential; **VP policies** check the presentation as a
-whole. The policy server's defaults are `signature`, `not-before` and
-`revoked-status-list`. Valid names can be listed from the verifier's
+whole. nautilus's `DEFAULT_VC_POLICIES` are `signature`, `not-before` and
+`revoked-status-list`, the values the policy server ships; a deployment can run more, because
+the policy server adds the `DEFAULT_VC_POLICIES` and `DEFAULT_VP_POLICIES` of its environment
+to every session, which nautilus cannot see. Valid names can be listed from the verifier's
 `/openid4vc/policy-list` endpoint.
 
 VC policies are names, while every VP policy is an object, `{ policy }` or
@@ -325,6 +361,47 @@ type at `$.vc.type`. A VCDM 2.0 `vc+jwt` credential such as `gx:LegalPerson` car
 out of `vp_policies` until the policy server forwards a definition that matches VCDM 2.0
 credentials.
 :::
+
+### Choosing VP and VC policies
+
+What each policy checks, and where it belongs, with walt.id and the policy server as deployed:
+
+| Policy | Where | Checks | In the set above |
+| --- | --- | --- | --- |
+| `signature` | VC policies | Each credential's signature, by its issuer's key | Yes |
+| `not-before` | VC policies | Each credential is past its start date | Yes |
+| `revoked-status-list` | VC policies | Each credential with a status list is not revoked | Yes |
+| `expired` | VC policies | Each credential is before its expiry date | Optional |
+| `allowed-issuer` | Per credential, with `args: ['did:…']` | The credential's issuer is one of these | Yes |
+| `schema` | Per credential, with a JSON Schema object as `args` | The credential's content | When you need it |
+| `signature` | VP policies | The presentation is signed by the DID it names | Yes |
+| `minimum-credentials` | VP policies, with `args: '1'` | At least that many credentials, of any type | Yes |
+| `holder-binding` | VP policies | Every credential's JWT `sub` is the presenter's DID | No: refuses `vc+jwt` credentials without `sub` |
+| `presentation-definition` | VP policies | The credentials match walt.id's generated definition | No: refuses VCDM 2.0 credentials |
+
+Policies that take arguments go on the credential or among the VP policies; at asset or
+service level, VC policies are names only.
+
+**`build()` checks this for you.** [`AssetBuilder.build()`](/docs/api/assetbuilder/build)
+reads the SSI policies of the asset and of each service, merged as the policy server merges
+them, and:
+
+| Finding | What happens |
+| --- | --- |
+| A VC policy at asset or service level with arguments, or one that needs them (`allowed-issuer`, `schema`, `webhook`, `dynamic`, `credential-status`) | Throws an `SsiPolicyError`: the policy server keeps only the name, so the check fails every presentation or silently becomes another one |
+| `minimum-credentials`, `maximum-credentials` or `vp_required_credentials` without `args` | Throws an `SsiPolicyError`: walt.id fails it for every presentation |
+| `holder-binding` | Warns: `identity.policy.holder_binding` |
+| `presentation-definition` with a `jwt_vc_json` or `jwt_vc` credential | Warns: `identity.policy.presentation_definition_vc_jwt` |
+| A requested credential without a per-credential `allowed-issuer` | Warns: `identity.policy.no_issuer_trust` (a self-issued credential of that type is accepted) |
+
+The warnings are log events at `warn` level. With
+[`setSsiPolicyLint('error')`](/docs/api/assetbuilder/setSsiPolicyLint) they throw an
+`SsiPolicyError` instead, and `'off'` silences them; the throws happen in every mode.
+`SsiPolicyError.findings` lists each problem with `code`, `where`, `policy` and
+`credentialType`. There is deliberately no warning for a missing `presentation-definition`.
+
+nautilus adds no policy on its own: what the asset requires stays what you wrote. None of
+these checks closes the limitation below.
 
 ### Known limitation: credentials of another type
 

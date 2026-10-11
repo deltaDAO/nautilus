@@ -22,7 +22,9 @@ assetBuilder.setVpPolicies(CredentialListTypes.ALLOW, [ // [!code focus]
 ```
 
 `minimum-credentials` needs its argument: a bare `{ policy: 'minimum-credentials' }` fails in
-the walt.id verifier for every presentation.
+the walt.id verifier for every presentation, so [`build()`](/docs/api/assetbuilder/build)
+throws an `SsiPolicyError` for it (and for a bare `maximum-credentials` or
+`vp_required_credentials`).
 
 **Check the presentation's own signature** with `{ policy: 'signature' }` among the VP
 policies. walt.id runs only the VP policies the session lists, so without it nothing checks
@@ -45,7 +47,9 @@ Neither belongs in the default set:
 - `presentation-definition` refuses VCDM 2.0 `vc+jwt` credentials, because the definition
   walt.id generates for `jwt_vc_json` matches the type at `$.vc.type`, which they do not have.
 
-See [the identity guide](/docs/guides/identity#publishing-a-gated-asset) for the recommended
+[`build()`](/docs/api/assetbuilder/build) warns about both (see
+[`setSsiPolicyLint`](/docs/api/assetbuilder/setSsiPolicyLint)). See
+[the identity guide](/docs/guides/identity#choosing-vp-and-vc-policies) for the recommended
 policies and why.
 :::
 

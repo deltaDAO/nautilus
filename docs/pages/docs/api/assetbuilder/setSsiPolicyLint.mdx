@@ -1,0 +1,66 @@
+# setSsiPolicyLint
+
+Choose what [`build()`](/docs/api/assetbuilder/build) does when the asset's SSI policies
+check less than they seem to, or refuse common credentials.
+
+`build()` checks the `SSIpolicy` of the asset and of every service the built asset will have
+(on an edit, the published services it keeps too), the way the policy server merges them for
+a service. It warns when:
+
+| Event | When |
+| --- | --- |
+| `identity.policy.holder_binding` | `holder-binding` is among the VP policies. It requires every credential's JWT `sub` to be the presenter's DID, so it refuses Gaia-X and other VCDM 2.0 `vc+jwt` credentials with a URL subject. |
+| `identity.policy.presentation_definition_vc_jwt` | `presentation-definition` is combined with a `jwt_vc_json` (or `jwt_vc`) request credential. walt.id's generated definition looks for the type at `$.vc.type`, which VCDM 2.0 credentials do not have. |
+| `identity.policy.no_issuer_trust` | A request credential has no per-credential `allowed-issuer`, so a credential of that type from any issuer, a self-issued one included, is accepted. |
+
+Each event carries `where` (`'asset'` or `'service <id>'`) and, where it applies,
+`credentialType`.
+
+## Usage
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+assetBuilder.setSsiPolicyLint('error') // [!code focus]
+```
+
+## Parameters
+
+### mode
+
+- Type: `'warn' | 'error' | 'off'`
+
+- `'warn'` (the default): each finding is logged as a `warn` event. Existing assets keep
+  building.
+- `'error'`: `build()` throws an `SsiPolicyError` whose `findings` list them all.
+- `'off'`: no warnings.
+
+Any other value throws a `TypeError`. The mode is kept across [`reset()`](/docs/api/assetbuilder/reset).
+
+:::warning[Some setups throw in every mode]
+`build()` throws an `SsiPolicyError` whatever the mode for policies that cannot work as
+written:
+
+- a VC policy at asset or service level that needs arguments (`allowed-issuer`, `schema`,
+  `webhook`, `dynamic`, `credential-status`) or carries any: the policy server keeps only the
+  name, so walt.id fails it for every presentation, or runs it without its arguments. Put it on
+  the credential, in the `policies` of
+  [`addRequestCredentials`](/docs/api/assetbuilder/addRequestCredentials);
+- `minimum-credentials`, `maximum-credentials` or `vp_required_credentials` without `args`:
+  walt.id fails it for every presentation.
+:::
+
+:::info
+The warnings go to the process-wide logger ([`configureLogging`](/docs/api/nautilus/configureLogging)),
+not to a `Nautilus` instance's own: the builder has none. The lint does not close the
+[type bypass](/docs/guides/identity#known-limitation-credentials-of-another-type): it checks
+what the asset asks for, not what a hand-built presentation sends.
+:::
+
+## Returns
+
+- Type: [`AssetBuilder`](/docs/api/AssetBuilder)
+
+The asset builder instance, to chain further calls with.

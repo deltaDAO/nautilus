@@ -312,6 +312,44 @@ try {
 A free service is still ordered, now with a warning. Only `true` opts in. `compute()` makes
 no such lookup and is unchanged. See [`OrderCheckError`](/docs/api/nautilus/access#ordercheckerror).
 
+### SSI policy checks
+
+**`AssetBuilder.build()` checks the asset's SSI policies.** It throws an `SsiPolicyError` for
+policies that cannot work as written, which earlier versions published:
+
+- a VC policy at asset or service level (`setVcPolicies()`, or a stored asset being edited)
+  that needs arguments (`allowed-issuer`, `schema`, `webhook`, `dynamic`,
+  `credential-status`) or carries any. The policy server keeps only the name, so walt.id
+  failed it for every presentation, or ran it without its arguments. Move it into the
+  `policies` of the requested credential;
+- `minimum-credentials`, `maximum-credentials` or `vp_required_credentials` without `args`.
+
+```diff
+ builder
+   .addRequestCredentials(CredentialListTypes.ALLOW, [
+-    { type: 'gx:LegalPerson', format: 'jwt_vc_json' }
++    {
++      type: 'gx:LegalPerson',
++      format: 'jwt_vc_json',
++      policies: [{ policy: 'allowed-issuer', args: ['did:web:delta-dao.com'] }]
++    }
+   ])
+-  .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'allowed-issuer'])
++  .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'not-before', 'revoked-status-list'])
+```
+
+It also logs a warning (`identity.policy.*` events) for `holder-binding`, for
+`presentation-definition` with `jwt_vc_json` credentials and for a requested credential
+without a per-credential `allowed-issuer`. `setSsiPolicyLint('error')` turns those into an
+`SsiPolicyError`, `'off'` silences them. See [`setSsiPolicyLint`](/docs/api/assetbuilder/setSsiPolicyLint).
+
+**`WaltIdCredentialProvider` checks `holder-binding` before presenting.** When a service
+requires it and a selected credential has no `sub`, or a `sub` that is not your DID, the
+provider throws a `CredentialRejectedLocallyError` (`policy: 'holder-binding'`,
+`reason: 'no-sub' | 'sub-mismatch'`) instead of presenting a credential the verifier would
+reject. Nothing is presented, ordered or paid. Pass `preflight: false` to the provider for a
+verifier whose rule differs from walt.id's.
+
 ## Upgrading from 2.0.0-beta.0
 
 2.0.0-beta.1 makes published and edited assets indexable by an unmodified

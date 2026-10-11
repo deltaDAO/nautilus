@@ -345,6 +345,10 @@ export const sidebar = {
               text: 'setProvidedBy',
               link: '/docs/api/assetbuilder/setProvidedBy'
             },
+            {
+              text: 'setSsiPolicyLint',
+              link: '/docs/api/assetbuilder/setSsiPolicyLint'
+            },
             { text: 'setType', link: '/docs/api/assetbuilder/setType' },
             {
               text: 'setVcPolicies',

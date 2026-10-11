@@ -19,6 +19,16 @@ assetBuilder.build() // [!code focus]
 // @log: }
 ```
 
+## Checks
+
+`build()` throws for a new asset without `name`, `type`, `providedBy` or a service. It also
+checks the SSI policies of the asset and its services, see
+[`setSsiPolicyLint`](/docs/api/assetbuilder/setSsiPolicyLint): it logs a warning for
+`holder-binding`, for `presentation-definition` with `jwt_vc_json` credentials and for request
+credentials without per-credential issuer trust, and throws an `SsiPolicyError` for policies
+the policy server would weaken or walt.id would fail on every presentation (a VC policy with
+arguments at asset or service level, a bare `minimum-credentials`).
+
 ## Returns
 
 - `NautilusAsset`
