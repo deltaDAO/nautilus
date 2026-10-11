@@ -120,8 +120,13 @@ With the default `nonceManagement: 'auto'` and a signer that signs locally (an e
     attempts, 0.5 to 2 seconds apart (`chain.nonce.resending`);
   - an **order, purchase, approval or escrow payment** (any call not known to move no
     value) is sent again only with proof from **two RPCs** that the first one can never be
-    mined: the account's mined count past its nonce on both, its hash unknown on both, and
-    another transaction of the account holding that nonce in the blocks since the send.
+    mined: the account's mined count past its nonce on both, its hash unknown on both, and,
+    in the blocks since the send **on each RPC**, another transaction of the account
+    holding that nonce. One RPC's blocks are not enough (it may be on another fork); a
+    block either RPC does not return, a read that fails, or the transaction itself in a
+    block, is no proof. Nor is a slot holder that makes **the same call** (same contract,
+    same function): it may be this order sped up in a wallet or retried by another
+    process, so sending it again could pay twice.
     Without a [`verificationProvider`](/docs/api/nautilus/create#verificationprovider) it
     is never sent again. Otherwise nautilus stops with a `NonceGuardError` whose `reason`
     is `'may-have-been-sent'`: check the account's transactions before retrying. A nonce
@@ -134,11 +139,14 @@ With the default `nonceManagement: 'auto'` and a signer that signs locally (an e
   (`startOrder failed: …REPLACEMENT_UNDERPRICED…`), with the guard's error or the RPC's
   refusal as `cause`, and adds "It may have been sent" unless the send was refused before
   its broadcast. The cause is the failure of the call's own contract: when two sends to one
-  contract were in flight within the last minute (two orders of one asset in
-  `Promise.all`), nautilus cannot tell which call failed and keeps the generic "ocean.js
-  returned no transaction" for both. No error carries a signed transaction (nor the HTTP
-  request of a failed `eth_sendRawTransaction`): an unmined signed transaction can be
-  broadcast by anyone who reads it.
+  contract are on record (two orders of one asset in `Promise.all`; a broadcast stays on
+  record until it is mined, a failure for a minute), nautilus cannot tell which call failed
+  and keeps the generic "ocean.js returned no transaction" for both. The `cause` is the
+  guard's `NonceGuardError`, or a sanitised copy of the wallet's or RPC's error (`name`,
+  `code`, `shortMessage` and its message, redacted). The error a send throws is redacted
+  too: no signed transaction (an unmined one can be broadcast by anyone who reads it), no
+  RPC URL path or query (it may hold the RPC's API key), no HTTP request or response body.
+  The raw values go to the debug channel (topic `nonce`).
 
 ```ts twoslash
 import { JsonRpcProvider, Wallet } from 'ethers'
@@ -164,7 +172,8 @@ for (const result of results)
 ```
 
 **Set `verificationProvider` for paid flows.** It must be an independent RPC for the same
-chain (`create` checks the chain id). The proofs above trust that "unknown by hash" means
+chain: `create` checks the chain id, and refuses the signer's own provider object or a
+provider with the same URL (one RPC read twice proves nothing a second RPC would). The proofs above trust that "unknown by hash" means
 "not sent"; a single, possibly load-balanced RPC whose transaction index lags its state can
 answer that for a transaction it already mined. That is why a transaction that moves value
 is never sent again without a second RPC, and why the metadata cleanup reads both when one
