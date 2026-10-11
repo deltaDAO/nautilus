@@ -7,7 +7,7 @@
  * (so `session_id`, `Session-Id` and `sessionId` are one key). A key is secret when it is
  *
  * - exactly `nonce`, `sid`, `auth`, `bearer`, `seed`, `pk`, `privkey`, `otp`, `pin`,
- *   `hmac`, `dkey`, `sig` or `requestUri` (an openid4vp request by reference; as a suffix
+ *   `hmac`, `dkey`, `sig`, `pass`, `pwd` or `requestUri` (an openid4vp request by reference; as a suffix
  *   they would hide readable fields: `decryptNonce`, `nodeUri`);
  * - or ends in a credential name: `secret`, `secretKey`, `password`, `passphrase`,
  *   `mnemonic`, `seedPhrase`, `apiKey`, `privateKey`, `privKey`, `sessionId`, `signature`,
@@ -15,6 +15,8 @@
  *   `jwt`, `authorization`, `basicAuth`, `accessToken`, `refreshToken`, `sessionToken`,
  *   `securityToken`, `csrfToken`, `apiToken`, `authorizationCode`, `preAuthorizedCode`,
  *   `authCode`, `credentials`, `presentation`, `signedTx`, `rawTx`, …;
+ * - or holds `privateKey` or `privKey` anywhere (`privateKeyHex`, `signerPrivateKey`), or
+ *   ends in the word `pass` (`DB_PASS`, `dbPass`; not `bypass`);
  * - or ends in `key` or `auth` (`accessKey`, `encryptionKey`, `AccountKey`, `apiAuth`,
  *   `x-auth`), except `key`, `publicKey` and `objectKey`: the long-lived credentials the
  *   `sensitive` debug tier hides, so this rule hides at least what that tier hides;
@@ -42,6 +44,8 @@ const EXACT_SECRET_KEYS = new Set([
   'hmac',
   'dkey',
   'sig',
+  'pass',
+  'pwd',
   'requesturi'
 ])
 
@@ -65,6 +69,30 @@ const PUBLIC_KEY = /^(?:key|publickey|objectkey)$/
  */
 const SECRET_CODE =
   /^code$|(?:auth|otp|totp|hotp|mfa|2fa|twofactor|recovery|backup|verification|verify|confirmation|confirm|security|access|login|signin|sms|email|user|device|activation|reset|invite|invitation|pairing|pin|pass|secret|onetime|tx|session|unlock)code$/
+
+/**
+ * Normalised keys holding a private key wherever the name stands (`privateKeyHex`,
+ * `private_key_hex`, `privKeyBytes`, `signerPrivateKey`): secret in logs and never shown at
+ * any debug tier.
+ */
+const PRIVATE_KEY = /privatekey|privkey/
+
+/**
+ * A key ending in a separate word `pass` (`DB_PASS`, `smtp-pass`, `dbPass`), told by the
+ * `_`, `-` or space or the capital before it, so `bypass`, `compass` and `surpass` stay
+ * readable. Tested on the key without its invisible characters, case kept.
+ */
+const PASS_WORD = /(?:[-_\s][Pp][Aa][Ss][Ss]|[a-z0-9](?:Pass|PASS))$/
+
+/** The invisible characters `normalizeKey` drops, without `-`, `_` and whitespace. */
+const INVISIBLE =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: removing them is the point
+  /[\u0000-\u0008\u000e-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g
+
+/** Whether `key` ends in the word `pass` (see `PASS_WORD`). */
+function endsInPassWord(key: string): boolean {
+  return PASS_WORD.test(key.replace(INVISIBLE, ''))
+}
 
 /** An EVM address: what a `…token` key holds when it names a token contract. */
 const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/
@@ -96,11 +124,20 @@ export function normalizeKey(key: string): string {
 export function isSecretKey(key: string): boolean {
   const normalized = normalizeKey(key)
   return (
-    EXACT_SECRET_KEYS.has(normalized) ||
-    SECRET_SUFFIX.test(normalized) ||
-    isCredentialEnding(normalized) ||
+    alwaysSecret(key, normalized) ||
     normalized.endsWith('token') ||
     SECRET_CODE.test(normalized)
+  )
+}
+
+/** Whether the value of `key` is secret whatever it is. */
+function alwaysSecret(key: string, normalized: string): boolean {
+  return (
+    EXACT_SECRET_KEYS.has(normalized) ||
+    SECRET_SUFFIX.test(normalized) ||
+    PRIVATE_KEY.test(normalized) ||
+    isCredentialEnding(normalized) ||
+    endsInPassWord(key)
   )
 }
 
@@ -112,12 +149,7 @@ function isCredentialEnding(normalized: string): boolean {
 export function redactsValue(key: string, value: unknown): boolean {
   if (!isSecretKey(key)) return false
   const normalized = normalizeKey(key)
-  if (
-    EXACT_SECRET_KEYS.has(normalized) ||
-    SECRET_SUFFIX.test(normalized) ||
-    isCredentialEnding(normalized)
-  )
-    return true
+  if (alwaysSecret(key, normalized)) return true
 
   if (normalized.endsWith('token'))
     return !(typeof value === 'string' && EVM_ADDRESS.test(value))
@@ -145,7 +177,7 @@ export const SECRET_KEYS: KeyRule = {
 }
 
 /** Normalised keys whose value is never shown, at any debug tier. */
-const NEVER_SHOWN = /(?:privatekey|mnemonic|seedphrase)$/
+const NEVER_SHOWN = /privatekey|privkey|(?:mnemonic|seedphrase)$/
 
 /**
  * Normalised keys the `sensitive` debug tier shows although `isSecretKey` (or a credential
@@ -195,7 +227,7 @@ export function isLongLivedCredential(
     return typeof value === 'string' || where === 'query'
   if (normalized.endsWith('token'))
     return !(typeof value === 'string' && EVM_ADDRESS.test(value))
-  return isSecretKey(normalized)
+  return isSecretKey(key)
 }
 
 /** Whether the value of `key` is never shown, at any debug tier. */

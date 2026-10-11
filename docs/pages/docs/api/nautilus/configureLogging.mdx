@@ -114,7 +114,9 @@ whitespace or invisible characters, and matched whole, however long, so `session
 `Session-Id` and `sessionId` are one key:
 
 - the keys `nonce`, `sid`, `auth`, `bearer`, `seed`, `pk`, `privkey`, `otp`, `pin`, `hmac`,
-  `dkey`, `sig` and `requestUri`, and any key ending in a credential name (`secret`, `secretAccessKey`,
+  `dkey`, `sig`, `pass`, `pwd` and `requestUri`, any key holding `privateKey` or `privKey`
+  (`privateKeyHex`), any key ending in the word `pass` (`DB_PASS`, `dbPass`, but not
+  `bypass`), and any key ending in a credential name (`secret`, `secretAccessKey`,
   `password`, `passphrase`, `mnemonic`, `seedPhrase`, `apiKey`, `privateKey`, `sessionId`,
   `signature`, `cookie`, `jwt`, `authorization`, `basicAuth`, `authorizationCode`,
   `preAuthorizedCode`, `credentials`, `presentation`, `signedTx`, `rawTx`, …) become

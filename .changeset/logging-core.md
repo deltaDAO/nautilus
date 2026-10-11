@@ -31,7 +31,9 @@ nautilus has its own logger, and its warnings are now visible by default.
 - **Redacted by field.** Before any output, fields are redacted by key, compared without
   case, `-`, `_` or invisible characters and matched whole, in nested objects and class
   instances too: the exact keys `nonce`, `sid`, `auth`, `bearer`, `seed`, `pk`, `privkey`,
-  `otp`, `pin`, `hmac`, `dkey`, `sig`, `requestUri`; any key ending in a credential name
+  `otp`, `pin`, `hmac`, `dkey`, `sig`, `pass`, `pwd`, `requestUri`; any key holding
+  `privateKey` or `privKey` (`privateKeyHex`); any key ending in the word `pass`
+  (`DB_PASS`, `dbPass`, not `bypass`); any key ending in a credential name
   (`session_id`, `client_secret`, `aws_secret_access_key`, `x-api-key`, `passphrase`,
   `mnemonic`, `authorizationCode`, `presentation`, `rawTx`, …); any other key ending in
   `key` or `auth` (`accessKey`, `encryptionKey`, `apiAuth`) except `key`, `publicKey` and
