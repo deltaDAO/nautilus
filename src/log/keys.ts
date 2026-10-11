@@ -7,18 +7,23 @@
  * (so `session_id`, `Session-Id` and `sessionId` are one key). A key is secret when it is
  *
  * - exactly `nonce`, `sid`, `auth`, `bearer`, `seed`, `pk`, `privkey`, `otp`, `pin`,
- *   `hmac` or `requestUri` (an openid4vp request by reference; as a suffix they would hide
- *   readable fields: `decryptNonce`, `nodeUri`);
+ *   `hmac`, `dkey`, `sig` or `requestUri` (an openid4vp request by reference; as a suffix
+ *   they would hide readable fields: `decryptNonce`, `nodeUri`);
  * - or ends in a credential name: `secret`, `secretKey`, `password`, `passphrase`,
  *   `mnemonic`, `seedPhrase`, `apiKey`, `privateKey`, `privKey`, `sessionId`, `signature`,
  *   `cookie`,
  *   `jwt`, `authorization`, `basicAuth`, `accessToken`, `refreshToken`, `sessionToken`,
  *   `securityToken`, `csrfToken`, `apiToken`, `authorizationCode`, `preAuthorizedCode`,
  *   `authCode`, `credentials`, `presentation`, `signedTx`, `rawTx`, …;
+ * - or ends in `key` or `auth` (`accessKey`, `encryptionKey`, `AccountKey`, `apiAuth`,
+ *   `x-auth`), except `key`, `publicKey` and `objectKey`: the long-lived credentials the
+ *   `sensitive` debug tier hides, so this rule hides at least what that tier hides;
  * - or ends in `token`: secret unless its value is an EVM address, so `paymentToken` and
  *   `datatoken` stay readable;
- * - or ends in `code`: secret unless its value reads as an error code (`SERVER_ERROR`,
- *   `ECONNREFUSED`, `-32005`), or, for a `statusCode`, an HTTP status (100-599).
+ * - or is `code` or a one-time code (`otpCode`, `recoveryCode`, `verificationCode`,
+ *   `userCode`, `txCode`, …): secret unless its value reads as an error code
+ *   (`SERVER_ERROR`, `ECONNREFUSED`, `-32005`). Other `…code` keys (`exitCode`,
+ *   `bytecode`, `statusCode`, `errorCode`) are readable.
  */
 
 import type { KeyRule } from './keyValues.js'
@@ -35,12 +40,31 @@ const EXACT_SECRET_KEYS = new Set([
   'otp',
   'pin',
   'hmac',
+  'dkey',
+  'sig',
   'requesturi'
 ])
 
 /** Normalised keys ending in a credential name, whatever their value. */
 const SECRET_SUFFIX =
   /(?:secret|secretkey|secretaccesskey|password|passwd|passphrase|mnemonic|seedphrase|apikey|privatekey|privkey|sessionid|signature|cookie|jwt|authorization|basicauth|(?:access|refresh|auth|id|vp|bearer|session|security|csrf|api|secret)token|authorizationcode|preauthorizedcode|authcode|credentials?|presentation|signedtx|rawtx)$/
+
+/**
+ * Normalised keys ending in `key` or `auth`: a long-lived credential (`accessKey`,
+ * `encryptionKey`, `apiAuth`), unless `PUBLIC_KEY`.
+ */
+const CREDENTIAL_ENDING = /(?:key|auth)$/
+
+/** Normalised `…key` keys that name no secret: `key` itself (an object key), public keys. */
+const PUBLIC_KEY = /^(?:key|publickey|objectkey)$/
+
+/**
+ * Normalised keys of a one-time or authorization code: `code` itself (OAuth, openid4vp) and
+ * the `…code` keys of one-time codes (`otpCode`, `recoveryCode`, `txCode`, …). Other
+ * `…code` keys (`exitCode`, `bytecode`, `statusCode`) are no secret.
+ */
+const SECRET_CODE =
+  /^code$|(?:auth|otp|totp|hotp|mfa|2fa|twofactor|recovery|backup|verification|verify|confirmation|confirm|security|access|login|signin|sms|email|user|device|activation|reset|invite|invitation|pairing|pin|pass|secret|onetime|tx|session|unlock)code$/
 
 /** An EVM address: what a `…token` key holds when it names a token contract. */
 const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/
@@ -74,26 +98,33 @@ export function isSecretKey(key: string): boolean {
   return (
     EXACT_SECRET_KEYS.has(normalized) ||
     SECRET_SUFFIX.test(normalized) ||
+    isCredentialEnding(normalized) ||
     normalized.endsWith('token') ||
-    normalized.endsWith('code')
+    SECRET_CODE.test(normalized)
   )
+}
+
+function isCredentialEnding(normalized: string): boolean {
+  return CREDENTIAL_ENDING.test(normalized) && !PUBLIC_KEY.test(normalized)
 }
 
 /** Whether `value`, under `key`, is redacted. */
 export function redactsValue(key: string, value: unknown): boolean {
   if (!isSecretKey(key)) return false
   const normalized = normalizeKey(key)
-  if (EXACT_SECRET_KEYS.has(normalized) || SECRET_SUFFIX.test(normalized))
+  if (
+    EXACT_SECRET_KEYS.has(normalized) ||
+    SECRET_SUFFIX.test(normalized) ||
+    isCredentialEnding(normalized)
+  )
     return true
 
   if (normalized.endsWith('token'))
     return !(typeof value === 'string' && EVM_ADDRESS.test(value))
 
-  // `…code`
+  // `code` or a one-time code
   if (typeof value !== 'string' && typeof value !== 'number') return true
-  const text = String(value)
-  if (isErrorCode(text)) return false
-  return !(normalized.endsWith('statuscode') && /^[1-5]\d\d$/.test(text))
+  return !isErrorCode(String(value))
 }
 
 /** Whether `value` reads as an error code (`SERVER_ERROR`, `ECONNREFUSED`, `-32005`). */
@@ -126,16 +157,6 @@ const NEVER_SHOWN = /(?:privatekey|mnemonic|seedphrase)$/
 const SHOWN_AT_SENSITIVE =
   /^(?:nonce|sid|otp|pin|state|id|key|keyid|publickey|objectkey|vptoken)$|(?:sessionid|signature|presentation|presentationsubmission|signedtx|rawtx|requesturi|code)$/
 
-/** Normalised keys that are a long-lived credential exactly, besides `isSecretKey`'s. */
-const LONG_LIVED_EXACT = new Set(['dkey', 'sig'])
-
-/**
- * Normalised key endings of a long-lived credential, besides `isSecretKey`'s: any `…key`,
- * `…secret`, `…password`, `…auth` (`accessKey`, `S3_SECRET_KEY`, `apiSecret`, `DB_PASSWORD`,
- * `basicAuth`, …).
- */
-const LONG_LIVED_SUFFIX = /(?:key|secret|password|passwd|auth)$/
-
 /** Endings of a credential only when the value is a string (an object is walked into). */
 const STRING_CREDENTIAL_SUFFIX = /(?:credentials?|auth)$/
 
@@ -148,12 +169,11 @@ const HEX_VALUE = /^0x[0-9a-f]+$/i
 
 /**
  * Whether the value of `key` is a long-lived credential, hidden at the `sensitive` debug
- * tier (shown at `secrets`): best effort, by name. The log redaction's rule
- * (`isSecretKey`, so a key added there is hidden here too), widened to any key ending in
- * `key`, `secret`, `password` or `auth`, `dkey`, `sig` and the AWS and Google signed-URL
- * parameters, minus the session-scoped and public keys of `SHOWN_AT_SENSITIVE`. As in the
- * log redaction, a `…token` holding an EVM address is no credential; a `…credential(s)` or
- * `…auth` key holding an object is walked into. `where` is `query` for a URL's query
+ * tier (shown at `secrets`): best effort, by name. The log redaction's rule (`isSecretKey`:
+ * a key added there is hidden here too, and every key hidden here is redacted in logs and
+ * errors) and the AWS and Google signed-URL parameters, minus the session-scoped and public
+ * keys of `SHOWN_AT_SENSITIVE`. As in the log redaction, a `…token` holding an EVM address
+ * is no credential; a `…credential(s)` or `…auth` key holding an object is walked into. `where` is `query` for a URL's query
  * parameter, where `key`, `sig` and `signature` (unless `0x` hex) are credentials too (a
  * Google API key, an Azure SAS or CloudFront signature).
  */
@@ -168,18 +188,14 @@ export function isLongLivedCredential(
     if (normalized === 'sig' || normalized === 'signature')
       return !(typeof value === 'string' && HEX_VALUE.test(value))
   }
-  if (
-    NEVER_SHOWN.test(normalized) ||
-    SIGNED_URL_PARAMETER.test(normalized) ||
-    LONG_LIVED_EXACT.has(normalized)
-  )
+  if (NEVER_SHOWN.test(normalized) || SIGNED_URL_PARAMETER.test(normalized))
     return true
   if (SHOWN_AT_SENSITIVE.test(normalized)) return false
   if (STRING_CREDENTIAL_SUFFIX.test(normalized))
     return typeof value === 'string' || where === 'query'
   if (normalized.endsWith('token'))
     return !(typeof value === 'string' && EVM_ADDRESS.test(value))
-  return isSecretKey(normalized) || LONG_LIVED_SUFFIX.test(normalized)
+  return isSecretKey(normalized)
 }
 
 /** Whether the value of `key` is never shown, at any debug tier. */

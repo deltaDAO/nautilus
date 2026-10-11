@@ -8,14 +8,15 @@
  * redaction of `src/node/messages.ts` shares):
  *
  * - a credential or a one-time value is replaced by `<redacted>`: the exact keys `nonce`,
- *   `sid`, `auth`, `bearer`, `seed`, `pk`, `privkey`, `otp`, `pin`, `hmac` and `requestUri`,
- *   and any key ending in a credential name (`secret`, `secretKey`, `password`, `apiKey`,
- *   `privateKey`, `sessionId`, `signature`, `cookie`, `jwt`, `authorization`, `accessToken`,
- *   `sessionToken`, `authorizationCode`, `credentials`, `presentation`, `signedTx`, `rawTx`,
- *   …). A key ending in `token` is redacted unless its value is an EVM address, so
- *   `paymentToken` stays readable; a key ending in `code` unless its value reads as an
- *   error code (`SERVER_ERROR`, `-32005`) or, for a `statusCode`, an HTTP status. A key
- *   is matched whole, before it is cut to the 100 characters it may be printed with;
+ *   `sid`, `auth`, `bearer`, `seed`, `pk`, `privkey`, `otp`, `pin`, `hmac`, `dkey`, `sig`
+ *   and `requestUri`, any key ending in a credential name (`secret`, `secretKey`,
+ *   `password`, `apiKey`, `privateKey`, `sessionId`, `signature`, `cookie`, `jwt`,
+ *   `authorization`, `accessToken`, `sessionToken`, `authorizationCode`, `credentials`,
+ *   `presentation`, `signedTx`, `rawTx`, …), and any other key ending in `key` or `auth`
+ *   but `key`, `publicKey` and `objectKey`. A key ending in `token` is redacted unless its
+ *   value is an EVM address, so `paymentToken` stays readable; `code` and one-time codes
+ *   (`otpCode`, `recoveryCode`, …) unless the value reads as an error code
+ *   (`SERVER_ERROR`, `-32005`). See `keys.ts`. A key is matched whole, before it is cut to the 100 characters it may be printed with;
  * - a URL (`url`, `uri`, `endpoint`, or a key ending in `Url`/`Uri`) is reduced to its
  *   origin, without user info;
  * - an `error`, and any `Error` value, goes through `sanitize` (`src/node/messages.ts`):

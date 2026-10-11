@@ -31,12 +31,15 @@ nautilus has its own logger, and its warnings are now visible by default.
 - **Redacted by field.** Before any output, fields are redacted by key, compared without
   case, `-`, `_` or invisible characters and matched whole, in nested objects and class
   instances too: the exact keys `nonce`, `sid`, `auth`, `bearer`, `seed`, `pk`, `privkey`,
-  `otp`, `pin`, `hmac`, `requestUri`; any key ending in a credential name (`session_id`,
-  `client_secret`, `aws_secret_access_key`, `x-api-key`, `passphrase`, `mnemonic`,
-  `authorizationCode`, `presentation`, `rawTx`, …); any key ending in `token` unless its
-  value is an EVM address (`paymentToken` stays readable); any key ending in `code` unless
-  its value reads as an error code (`SERVER_ERROR`, `ECONNREFUSED`, `-32005`, ethers'
-  `TIMEOUT`/`CANCELLED`) or, for a `statusCode`, an HTTP status. Credentials become
+  `otp`, `pin`, `hmac`, `dkey`, `sig`, `requestUri`; any key ending in a credential name
+  (`session_id`, `client_secret`, `aws_secret_access_key`, `x-api-key`, `passphrase`,
+  `mnemonic`, `authorizationCode`, `presentation`, `rawTx`, …); any other key ending in
+  `key` or `auth` (`accessKey`, `encryptionKey`, `apiAuth`) except `key`, `publicKey` and
+  `objectKey`; any key ending in `token` unless its value is an EVM address
+  (`paymentToken` stays readable); `code` and one-time codes (`otpCode`, `recoveryCode`,
+  `txCode`, …) unless the value reads as an error code (`SERVER_ERROR`, `ECONNREFUSED`,
+  `-32005`, ethers' `TIMEOUT`/`CANCELLED`). Other `…code` keys (`exitCode`, `bytecode`,
+  `statusCode`) stay readable. Credentials become
   `<redacted>`, URLs are reduced to their origin, errors are sanitised with up to two levels
   of their `cause`, byte arrays print as `[N bytes]`.
 - **The same keys in text.** Messages, error messages (node answers, ethers errors and their

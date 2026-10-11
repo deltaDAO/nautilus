@@ -113,21 +113,25 @@ nested objects and class instances too. Keys are compared without case, `-`, `_`
 whitespace or invisible characters, and matched whole, however long, so `session_id`,
 `Session-Id` and `sessionId` are one key:
 
-- the keys `nonce`, `sid`, `auth`, `bearer`, `seed`, `pk`, `privkey`, `otp`, `pin`, `hmac`
-  and `requestUri`, and any key ending in a credential name (`secret`, `secretAccessKey`,
+- the keys `nonce`, `sid`, `auth`, `bearer`, `seed`, `pk`, `privkey`, `otp`, `pin`, `hmac`,
+  `dkey`, `sig` and `requestUri`, and any key ending in a credential name (`secret`, `secretAccessKey`,
   `password`, `passphrase`, `mnemonic`, `seedPhrase`, `apiKey`, `privateKey`, `sessionId`,
   `signature`, `cookie`, `jwt`, `authorization`, `basicAuth`, `authorizationCode`,
   `preAuthorizedCode`, `credentials`, `presentation`, `signedTx`, `rawTx`, …) become
   `<redacted>`. The first group matches only as the whole key, so `decryptNonce` stays
   readable;
+- any key ending in `key` or `auth` (`accessKey`, `encryptionKey`, `AccountKey`, `apiAuth`,
+  `x-auth`) becomes `<redacted>`, except `key`, `publicKey` and `objectKey`. Every key the
+  `sensitive` debug tier hides is redacted here too;
 - any key ending in `token` (`token`, `accessToken`, `sessionToken`, `X-Amz-Security-Token`,
   `csrfToken`, …) becomes `<redacted>` unless its value is an EVM address, so
   `paymentToken` stays readable;
-- any key ending in `code` becomes `<redacted>` unless its value reads as an error code: an
+- `code` and the keys of one-time codes (`otpCode`, `recoveryCode`, `verificationCode`,
+  `userCode`, `txCode`, …) become `<redacted>` unless the value reads as an error code: an
   upper-case constant with an underscore (`SERVER_ERROR`), a Node system error
-  (`ECONNREFUSED`), a negative JSON-RPC code (`-32005`) or ethers' `TIMEOUT` and `CANCELLED`;
-  a `statusCode` also keeps an HTTP status (100-599). An OAuth or openid4vp authorization
-  code is redacted;
+  (`ECONNREFUSED`), a negative JSON-RPC code (`-32005`) or ethers' `TIMEOUT` and `CANCELLED`.
+  An OAuth or openid4vp authorization code is redacted; other `…code` keys (`exitCode`,
+  `bytecode`, `statusCode`, `errorCode`) stay readable;
 - any `url` or `uri` (and `endpoint`, `nodeUri`, …) is reduced to its origin;
 - an `error` is reduced to its name and message, followed by up to two levels of its
   `cause` (`… (cause: …)`), each with control characters stripped and credentials redacted;
