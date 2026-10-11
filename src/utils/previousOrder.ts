@@ -145,6 +145,24 @@ export class IncompleteOrderLookupError extends Error {
   }
 }
 
+/**
+ * Thrown when an RPC answer lacks what the lookup needs: no newest block, no receipt for a
+ * transaction the RPC's own logs list (or for the order a reuse of the account names), or
+ * a receipt without the event the logs list. A load-balanced RPC whose backends lag each
+ * other answers so for a recent order. Read as "no order", it would buy again; it is a
+ * failed lookup instead (see `OrderCheckError`, reason `rpc-error`).
+ */
+export class InconsistentRpcAnswerError extends Error {
+  /** What was missing, in plain words: `no receipt for an order its logs list`. */
+  readonly missing: string
+
+  constructor(missing: string) {
+    super(`The RPC's answer to the previous-order lookup had ${missing}.`)
+    this.name = 'InconsistentRpcAnswerError'
+    this.missing = missing
+  }
+}
+
 function roughHours(hours: number): string {
   if (Number.isNaN(hours)) return 'unknown'
   return Number.isFinite(hours) ? hours.toFixed(1) : 'unlimited'
@@ -194,7 +212,8 @@ export async function findPreviousOrder(
   const cutoff = now - lifetime
   const head = await provider.getBlock('latest')
 
-  if (!head || head.timestamp < cutoff) return undefined
+  if (!head) throw new InconsistentRpcAnswerError('no newest block')
+  if (head.timestamp < cutoff) return undefined
 
   const latest = head.number - CONFIRMATIONS + 1
   const floor = Math.max(0, latest - MAX_BLOCKS + 1)
@@ -339,6 +358,8 @@ interface Candidate {
   txId: string
   /** The block time of the transaction. */
   timestamp: number
+  /** The account's event the logs list for it, from the datatoken. */
+  event: 'OrderStarted' | 'OrderReused'
 }
 
 /** The account's `OrderStarted` and `OrderReused` transactions in the range, newest first. */
@@ -367,7 +388,7 @@ async function readCandidates(
     if (event.name === 'OrderReused' && event.caller !== account) return []
 
     seen.add(txId)
-    return [{ txId, timestamp: event.timestamp }]
+    return [{ txId, timestamp: event.timestamp, event: event.name }]
   })
 }
 
@@ -423,7 +444,16 @@ function checker(query: PreviousOrderQuery, now: number, lifetime: number) {
   > => {
     const mined = await receipt(candidate.txId)
 
-    if (!mined) return undefined
+    // The RPC's logs list the transaction, so it is mined, with the account's event in it:
+    // an answer without them is the RPC's (a lagging backend), not "no order".
+    if (!mined)
+      throw new InconsistentRpcAnswerError(
+        'no receipt for an order transaction its logs list'
+      )
+    if (!lists(mined, candidate, datatoken, account))
+      throw new InconsistentRpcAnswerError(
+        'a receipt without the order event its logs list'
+      )
 
     // Upstream ocean-node reads the datatoken from here; a `reuseOrder` nautilus sends passes.
     const direct = mined.to?.toLowerCase() === datatoken
@@ -434,7 +464,10 @@ function checker(query: PreviousOrderQuery, now: number, lifetime: number) {
     if (reused) {
       if (reused.event.caller !== account) return undefined
       ordered = await receipt(reused.event.orderTxId)
-      if (!ordered) return undefined
+      if (!ordered)
+        throw new InconsistentRpcAnswerError(
+          'no receipt for the order a reuse of the account names'
+        )
     }
 
     // The first one from any contract, as upstream takes it: enterprise takes the first one
@@ -461,6 +494,24 @@ function checker(query: PreviousOrderQuery, now: number, lifetime: number) {
         mined.logs.some((log) => feeAccepted(decode(log), candidate.timestamp))
     }
   }
+}
+
+/** Whether the receipt holds the candidate's event: the account's, from the datatoken. */
+function lists(
+  receipt: TransactionReceipt,
+  candidate: Candidate,
+  datatoken: string,
+  account: string
+): boolean {
+  return receipt.logs.some((log) => {
+    if (log.address.toLowerCase() !== datatoken) return false
+    const event = decode(log)
+    if (event?.name === 'OrderStarted')
+      return candidate.event === 'OrderStarted' && event.consumer === account
+    if (event?.name === 'OrderReused')
+      return candidate.event === 'OrderReused' && event.caller === account
+    return false
+  })
 }
 
 type Event =
