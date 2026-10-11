@@ -59,7 +59,12 @@ What happens in order:
    is checked from its receipt the way the node checks a download: yours, for this
    service, inside the service's timeout with at least 10 minutes left
    ([details](/docs/guides/pricing#downloads-the-order-on-chain)). Otherwise a datatoken is
-   bought and a new order placed.
+   bought and a new order placed. "No order found" places a new one. A lookup that
+   **fails** (the RPC rate-limits it, does not answer, or answers with an error) or **stops
+   short** (it cannot read back over the whole order window) is not "no order found": on a
+   service that costs anything, `access()` stops before paying and throws an
+   [`OrderCheckError`](#ordercheckerror), since buying without the check could pay twice. A free service is ordered anyway, with a warning
+   ([`orderOnLookupFailure`](#orderonlookupfailure-optional) does the same for a paid one).
 5. Only then is your consent asked, and only for the fee that will be paid: none when an
    order is used as it stands, whatever the node quoted; the fee the node quotes now when
    an order is extended or a new one placed. A non-zero fee must be allowed by
@@ -186,6 +191,27 @@ So a tight `maxProviderFee` passed here never falls back to a permissive
 `confirmProviderFees` set in `Nautilus.create`, and `{ confirmProviderFees: undefined }`
 clears the default callback.
 
+##### orderOnLookupFailure (optional)
+
+- Type: `boolean`
+- Default: `false`
+
+What to do when the previous order cannot be checked on chain and the service costs
+anything (a price, a publish-market fee or a provider fee). By default `access()` throws an
+[`OrderCheckError`](#ordercheckerror) before paying: if your account already holds a valid
+order, a new one would pay twice. `true` places a new order anyway, and still warns
+(`access.order.lookup_failed`). Only `true` opts in: `'true'`, `1` or any other value does
+not.
+
+```text
+Could not check whether 0x4C84…4A52 already holds an order for service "Download (JSON)" of asset "Weather" (did:ope:59a18b63…): the RPC did not answer. A new order will be placed, as `orderOnLookupFailure` allows: if the account already holds one, this will pay twice (1.002 devEURAU).
+```
+
+A free service is ordered either way, with a warning that it costs only gas. "No previous
+order found" is not a failure and always orders, with no warning. When the price cannot be
+read either (usually the same failing RPC), nothing can be bought, and `access()` throws an
+`OrderCheckError` even with `true`.
+
 ## Throws
 
 - `PolicyDeniedError`: the policy server refused this consumer (`error.code` is the HTTP
@@ -218,5 +244,81 @@ clears the default callback.
   `maxProviderFee` nor `confirmProviderFees` allows it. `error.fees` lists the fees, `error.reason` is
   `'no-limit'`, `'over-limit'` or `'declined'`.
 
+- [`OrderCheckError`](#ordercheckerror): the service costs anything and the previous order
+  could not be checked on chain (the lookup failed or stopped short).
+
 All of these are thrown before any approval, purchase or order; `ConsumerParameterError` and
 the service errors before any node call other than resolving the asset.
+
+### OrderCheckError
+
+`access()` stopped before paying, because it could not check whether your account already
+holds a valid order for the service, and buying without that check could make you pay
+twice. **Nothing was ordered or paid, and it is safe to retry.** The message says so, with
+the price and the cause in plain words:
+
+```text
+access() stopped before paying for service "Download (JSON)" of asset "Weather" (did:ope:59a18b63…): it could not check whether 0x4C84…4A52 already holds a valid order, and buying without that check could make you pay twice (1.002 devEURAU). Nothing was ordered or paid; it is safe to retry. Cause: the RPC rate-limited the check (HTTP 429). Retry in a minute or use another RPC. To buy anyway, pass `orderOnLookupFailure: true`.
+```
+
+Fields, so a program need not parse the text:
+
+| Field | Type | |
+| --- | --- | --- |
+| `code` | `'ORDER_CHECK_FAILED'` | |
+| `reason` | `'rate-limited' \| 'unreachable' \| 'incomplete' \| 'rpc-error'` | Why the check failed (below). |
+| `retryable` | `true` | Nothing was sent: the same call can be made again. |
+| `did`, `serviceId` | `string` | The asset and service. |
+| `consumer` | `string` | The account the order is for. |
+| `price` | `{ amount: string; symbol: string } \| undefined` | The main cost of a new order, in whole tokens: the datatoken's price (exchange fees included), or for a free datatoken the first fee due. `symbol` is `tokens of 0x…` when the token's symbol cannot be read. `undefined` when the pricing could not be read either. |
+| `costs` | `{ amount: string; symbol: string }[]` | Every part a new order would pay, each in its own token: the price, the publish-market fee and the provider fee, those that are not zero. The message names them all (`1.002 devEURAU + 0.1 OCEAN`). Empty when the pricing could not be read. |
+| `checkedHours`, `windowHours` | `number` | For `incomplete` only: how far back the check read (`NaN` when unknown), and the order window, the service's `timeout` (`Infinity` when its orders never expire). |
+| `cause` | `Error` | The RPC's error, redacted: first line only, no URL, long hex shortened, at most 200 characters. |
+
+| `reason` | The cause in the message |
+| --- | --- |
+| `rate-limited` | the RPC rate-limited the check (HTTP 429): an HTTP 429, a `Retry-After` header on an answer that is not a server error, JSON-RPC code `-32005` that does not refuse the block range, or "rate limit" / "too many requests" in the answer |
+| `unreachable` | the RPC did not answer: a network error or a timeout (not an RPC that answered with an error that mentions a timeout) |
+| `incomplete` | the check covered only the last 16 of the 24 hours an order stays valid: the lookup stopped before it covered the order window (below) |
+| `rpc-error` | the RPC returned an error: … (the RPC's own words, redacted) |
+
+The lookup reads at most 100 000 blocks back, in at most 100 rounds of reads, and checks
+at most 50 candidate orders. When one of those bounds ends it before the service's
+`timeout` with no order found, the result is `incomplete`, not "not found":
+
+- **Out of reads** (the RPC refuses large block ranges, so each round reads only a few
+  blocks): the next step is "Use another RPC, or retry."
+- **Out of depth** (a `timeout` longer than 100 000 blocks, about 55 hours on OP Sepolia,
+  or `0`, so orders never expire) or **out of candidates**: a retry ends the same way. The
+  message says so, and when the account has not bought the service in that window (never,
+  for orders that never expire), buying with `orderOnLookupFailure: true` is safe. For orders
+  that never expire the cause reads "the check covered only the last 55 hours, and orders
+  of this service never expire".
+
+When the price cannot be read either, the message says "the price could not be read
+either" instead of the price, and offers no opt-in: nothing can be bought until the RPC
+answers.
+
+```ts twoslash
+import { Nautilus, OrderCheckError } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+try {
+  await nautilus.access({ assetDid: 'did:ope:1234abcd...' })
+} catch (error) {
+  if (error instanceof OrderCheckError && error.retryable) {
+    // Nothing was paid. Retry later, or with another RPC; or, accepting that it may pay
+    // twice, order anyway:
+    await nautilus.access({
+      assetDid: 'did:ope:1234abcd...',
+      orderOnLookupFailure: true
+    })
+  } else throw error
+}
+```
+
+The `cause` is redacted. To see the RPC's full answer when diagnosing, run with
+`NAUTILUS_DEBUG=sensitive` (or [`setDebug`](/docs/api/nautilus/setDebug)): the raw error goes
+to the debug channel under the `order` topic. See [debugging](/docs/guides/debugging) before
+sharing that output.
