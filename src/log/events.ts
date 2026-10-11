@@ -2,7 +2,8 @@ import type { LogLevelName } from './levels.js'
 
 /**
  * The part of nautilus an event comes from. `config` is nautilus's own setup (the logging
- * environment variables); `oceanjs` is reserved for ocean.js's own log lines.
+ * environment variables); `oceanjs` is ocean.js's own log lines, captured
+ * (`configureLogging({ oceanjs })`).
  */
 export type LogComponent =
   | 'publish'
@@ -57,14 +58,6 @@ export const LOG_EVENTS = {
     description:
       'A NAUTILUS_LOG_* or NAUTILUS_DEBUG* environment variable has a value nautilus does not know. It is ignored, and the default (or the configured value) stays.',
     fields: ['variable', 'value', 'allowed'],
-    once: true
-  },
-  'config.oceanjs.not_active': {
-    level: 'warn',
-    component: 'config',
-    description:
-      "configureLogging() was given an oceanjs mode ('capture', 'passthrough' or 'silent'), which a later release implements: until then ocean.js prints its own lines, unredacted, at the level LoggerInstance.setLevel() sets (errors only by default).",
-    fields: ['mode'],
     once: true
   },
 
@@ -506,6 +499,35 @@ export const LOG_EVENTS = {
     description:
       'persistPresentedSessions is on: presented policy-server sessions are kept in the sessionStore, and their ids let anyone read the presentation through the node.',
     once: true
+  },
+
+  // oceanjs: ocean.js's own lines, captured (configureLogging({ oceanjs: 'capture' }))
+  'oceanjs.logger.error': {
+    level: 'error',
+    component: 'oceanjs',
+    description:
+      "ocean.js logged an error through its LoggerInstance, e.g. a refused node request or, after a refused compute start or initialize, the request payload ('Payload was:'). Redacted like every event: the nonce, signature and policy-server session ids are <redacted>. ocean.js usually throws right after; nautilus's error says what failed.",
+    fields: ['method', 'args']
+  },
+  'oceanjs.logger.warn': {
+    level: 'warn',
+    component: 'oceanjs',
+    description: 'ocean.js logged a warning through its LoggerInstance.',
+    fields: ['method', 'args']
+  },
+  'oceanjs.logger.log': {
+    level: 'info',
+    component: 'oceanjs',
+    description:
+      "ocean.js logged a line through its LoggerInstance's log or bypass method. Only when ocean.js's own level is Log or Verbose (bypass: always).",
+    fields: ['method', 'args']
+  },
+  'oceanjs.logger.debug': {
+    level: 'debug',
+    component: 'oceanjs',
+    description:
+      "ocean.js logged a debug line through its LoggerInstance, e.g. P2P dial details. Only when ocean.js's own level is Verbose.",
+    fields: ['method', 'args']
   }
 } as const satisfies Record<string, LogEventSpec>
 

@@ -71,10 +71,14 @@ export interface LoggingOptions {
 }
 
 /**
- * What to do with ocean.js's own log output (its global `LoggerInstance`).
+ * What to do with ocean.js's own log output (its process-wide `LoggerInstance`).
  *
- * - `'capture'`: route it through nautilus's logger, redacted;
- * - `'passthrough'`: leave it as ocean.js prints it, unredacted;
+ * - `'capture'` (the default): route it through nautilus's process-wide logger as
+ *   `oceanjs.logger.*` events (component `oceanjs`), redacted like every other event, at
+ *   nautilus's level and to its sink; the raw lines reach only the `sensitive` debug tier;
+ * - `'passthrough'`: leave it as ocean.js prints it, to the console, **unredacted**: its
+ *   payload dump after a refused compute start holds the request's nonce and the
+ *   policy-server session ids;
  * - `'silent'`: drop it.
  */
 export type OceanJsLogMode = 'capture' | 'passthrough' | 'silent'
@@ -82,12 +86,10 @@ export type OceanJsLogMode = 'capture' | 'passthrough' | 'silent'
 /** The process-wide logging configuration, see `Nautilus.configureLogging`. */
 export interface LoggingConfig extends LoggingOptions {
   /**
-   * What to do with ocean.js's own log output. Accepted and stored, but **not active
-   * yet**: until a later release implements it, ocean.js prints as it always did,
-   * unredacted, at the level `Nautilus.setLogLevel` (or ocean.js's
-   * `LoggerInstance.setLevel`) sets; its default is errors only. Every mode warns once
-   * (`config.oceanjs.not_active`). To silence ocean.js now, call
-   * `LoggerInstance.setLevel(LogLevel.None)`.
+   * What to do with ocean.js's own log output. Default `'capture'`. ocean.js's own level
+   * (`LoggerInstance.setLevel`, errors only by default) still decides first which lines it
+   * emits. `LoggerInstance` is process-wide, so this applies to every ocean.js user in the
+   * process. Going back to the default: `oceanjs: undefined`.
    */
   oceanjs?: OceanJsLogMode
 }

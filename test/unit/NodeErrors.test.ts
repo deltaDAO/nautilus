@@ -24,6 +24,7 @@ import {
   Wallet
 } from 'ethers'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { configureLogging } from '../../src/log/logger.js'
 import { redactMessage } from '../../src/log/redact.js'
 import type { NodeAuth } from '../../src/node/auth.js'
 import { nodeText, redactSecrets, sanitize } from '../../src/node/messages.js'
@@ -574,7 +575,8 @@ describe('calls that stay on ocean.js', () => {
         body: JSON.stringify(ACCESS_DENIED)
       }
     })
-    vi.spyOn(console, 'error').mockImplementation(() => {})
+    // ocean.js's error lines, captured as events: kept off stderr (the suite's tap still scans them).
+    configureLogging({ sink: () => {} })
 
     const error = await rejection(() => freeCompute(client()))
 
@@ -590,7 +592,8 @@ describe('calls that stay on ocean.js', () => {
         body: JSON.stringify({ error: 'Missing algorithm' })
       }
     })
-    vi.spyOn(console, 'error').mockImplementation(() => {})
+    // ocean.js's error lines, captured as events: kept off stderr (the suite's tap still scans them).
+    configureLogging({ sink: () => {} })
 
     const error = await rejection(() =>
       client().initializeCompute({
@@ -834,7 +837,8 @@ describe('ocean.js logging', () => {
   })
 
   it('is not triggered by a refused initialize or compute-logs request', async () => {
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    // ocean.js's logger itself: captured or not, its lines no longer reach the console.
+    const consoleError = vi.spyOn(LoggerInstance, 'error')
     stubFetch({
       '/api/services/initialize': {
         status: 403,

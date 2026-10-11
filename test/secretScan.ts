@@ -112,8 +112,12 @@ const PATTERNS: [string, (text: string) => boolean][] = [
   ],
   [
     'credential as a JSON field',
+    // A token contract's address under `token` (ocean.js's `payment.token`) is kept, as
+    // the field redaction keeps it.
     (text) =>
-      new RegExp(`"(?:${SECRET_KEYS})":(?!"<redacted>")`, 'i').test(text)
+      new RegExp(`"(?:${SECRET_KEYS})":(?!"<redacted>")`, 'i').test(
+        text.replace(/"token":"0x[0-9a-f]{40}"/gi, '')
+      )
   ],
   ['bearer credential', (text) => /Bearer\s+(?!<redacted>)\S/i.test(text)],
   [

@@ -568,9 +568,13 @@ export class Nautilus {
    * Overrides `NAUTILUS_LOG_LEVEL`, `NAUTILUS_LOG_FORMAT` and `NAUTILUS_LOG_COMPONENTS`.
    * An instance created with `logger` options uses those over these.
    *
-   * `oceanjs` (`'capture' | 'passthrough' | 'silent'`) is accepted and stored, but not
-   * acted on yet, whichever the mode: ocean.js still prints its own lines as it always did,
-   * and setting it warns once (`config.oceanjs.not_active`).
+   * `oceanjs` decides what happens to ocean.js's own log lines (its process-wide
+   * `LoggerInstance`): `'capture'` (the default) routes them through this logger as
+   * `oceanjs.logger.*` events, redacted (the nonce, signature and session ids of ocean.js's
+   * payload dump included) and at this level; `'passthrough'` lets ocean.js print them
+   * itself, **unredacted**; `'silent'` drops them. ocean.js's own level still decides first
+   * which lines it emits (errors only by default). It applies to every ocean.js user in the
+   * process, not only to nautilus.
    */
   static configureLogging(options: LoggingConfig): void {
     configureLogging(options)
