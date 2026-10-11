@@ -23,14 +23,16 @@ import {
   Wallet
 } from 'ethers'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { redactMessage } from '../../src/log/redact.js'
 import type { NodeAuth } from '../../src/node/auth.js'
-import { nodeText, redactSecrets } from '../../src/node/messages.js'
+import { nodeText, redactSecrets, sanitize } from '../../src/node/messages.js'
 import {
   AssetNotFoundError,
   OceanNodeClient,
   OceanNodeError
 } from '../../src/node/OceanNodeClient.js'
 import { ASSET_DID, CHAIN_ID, NFT_ADDRESS } from '../fixtures/Asset.js'
+import { FAKE } from '../secretScan.js'
 
 const NODE = 'https://node.test.invalid'
 const PEER = '16Uiu2HAmPeerIdOnly'
@@ -1118,5 +1120,102 @@ describe("the node's text in a message", () => {
     expect(cause.name).to.equal('TypeError')
     expect(cause.message).not.to.contain('0xsecret')
     expect(cause.message.length).to.be.at.most(201)
+  })
+  it('keeps a URL whole across a backslash in its path, and ends it at a quote', () => {
+    const token = FAKE.rpcPathToken
+    for (const [text, expected] of [
+      [
+        `see https://rpc.example.org/x\\y/v3/${token} now`,
+        'see https://rpc.example.org now'
+      ],
+      [
+        `see https://rpc.example.org\\v3\\${token}.`,
+        'see https://rpc.example.org.'
+      ],
+      [
+        `see https://rpc.example.org/x\\/v3/${token} now`,
+        'see https://rpc.example.org now'
+      ],
+      // A quote ends the URL (`\"` as well): the JSON after it is kept.
+      [
+        '{"u":"https://h.example/p?apikey=1","next":"kept"}',
+        '{"u":"https://h.example","next":"kept"}'
+      ],
+      [
+        '{\\"u\\":\\"https://h.example/p?a=1\\",\\"next\\":\\"kept\\"}',
+        '{\\"u\\":\\"https://h.example\\",\\"next\\":\\"kept\\"}'
+      ]
+    ])
+      expect(redactSecrets(text), text).to.equal(expected)
+  })
+
+  it('redacts a megabyte of hostile text in no time (security regression)', () => {
+    // Text built to be slow to redact: dotted words (the URL scheme pattern used to rescan
+    // from each one) and `0x` runs (the hex patterns). Only the start is read.
+    for (const text of ['a.'.repeat(500_000), '0x'.repeat(500_000)]) {
+      const started = performance.now()
+      const clean = sanitize(text, 1_000, null)
+      expect(performance.now() - started, text.slice(0, 4)).to.be.below(50)
+      expect(clean.length).to.be.at.most(1_001)
+    }
+  })
+
+  it('drops the word the read limit cuts in no time, also at the log window (security regression)', () => {
+    // A run with no separator up to just before the read limit, then one: the word the cut
+    // splits used to be found by a regular expression that rescanned the run from each of
+    // its characters (about 60 ms at 8,192, 300 ms at 16,000). A run of `a` is hex too, as
+    // calldata is, so the hex patterns read it. Read windows: 8,192 for a node's text and a
+    // result list, 16,000 for a log message (bound 2,000). Redacting them takes about 8 and
+    // 15 ms.
+    const hostile = (limit: number) =>
+      `${'a'.repeat(limit - 2)} b${' c'.repeat(5_000)}`
+    const shapes = [
+      [
+        'node text',
+        8_192,
+        200,
+        35,
+        (text: string) => sanitize(text, 200, null)
+      ],
+      [
+        'result list',
+        8_192,
+        1_000,
+        35,
+        (text: string) => sanitize(text, 1_000, null)
+      ],
+      ['log message', 16_000, 2_000, 60, redactMessage]
+    ] as const
+    const slow: string[] = []
+    for (const [label, limit, maxLength, budget, clean] of shapes) {
+      const text = hostile(limit)
+      const started = performance.now()
+      const result = clean(text)
+      const elapsed = performance.now() - started
+
+      if (elapsed >= budget) slow.push(`${label}: ${elapsed.toFixed(0)} ms`)
+      expect(result, label).to.equal(`${'a'.repeat(maxLength)}…`)
+    }
+    expect(slow).to.deep.equal([])
+  })
+
+  it('reads only the start of a long text, and drops the credential the cut splits', () => {
+    // A long URL shrinks to its origin, so what stood far beyond the bound moves into it:
+    // a JWT split by the cut would read as no JWT and be shown in part.
+    const prefix = `https://h.example/${'p'.repeat(8_150)} `
+    expect(prefix.length).to.be.below(8_192)
+    expect(prefix.length + FAKE.jwt.length).to.be.above(8_192)
+
+    const clean = sanitize(`${prefix}${FAKE.jwt} and more`, 1_000, null)
+
+    expect(clean).to.equal('https://h.example…')
+    // Within the read limit nothing changes: the JWT is whole and redacted.
+    expect(
+      sanitize(
+        `https://h.example/${'p'.repeat(5_000)} ${FAKE.jwt} and more`,
+        1_000,
+        null
+      )
+    ).to.equal('https://h.example <redacted> and more')
   })
 })

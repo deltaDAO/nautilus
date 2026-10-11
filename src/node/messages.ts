@@ -26,14 +26,18 @@ export interface NodeAnswer {
 
 /** How much of a node's text goes into an error message. */
 const MAX_NODE_MESSAGE_LENGTH = 200
+/** How much of a text `sanitize` reads at least, however short the message: see `readLimit`. */
+const MIN_READ_LENGTH = 8_192
 
 /**
  * `scheme://authority/path?query#fragment`, up to whitespace or a quote, also with its
- * slashes JSON-escaped (`https:\/\/host\/path`, as a body quoted in JSON has it). The
- * scheme is bounded, so hostile text of letters and dots is scanned in linear time.
+ * slashes JSON-escaped (`https:\/\/host\/path`, as a body quoted in JSON has it). A
+ * backslash is part of the URL unless a quote follows it (`\"` ends a JSON string), so a
+ * path such as `/x\y/v3/<key>` is not cut at the backslash with its key left in the text.
+ * The scheme is bounded, so hostile text of letters and dots is scanned in linear time.
  */
 const URL_PATTERN =
-  /[a-z][a-z0-9+.-]{0,31}:(?:\\*\/){2}(?:[^\s"'<>\\]|\\+\/)*/gi
+  /[a-z][a-z0-9+.-]{0,31}:(?:\\*\/){2}(?:[^\s"'<>\\]|\\+(?!["'\s<>\\]))*/gi
 
 /** A `Bearer` or `Basic` credential, wherever it stands. */
 const BEARER = /((?:Bearer|Basic)\s+)[\w.~+/=-]+/gi
@@ -97,7 +101,8 @@ export { isErrorCode }
 function originOnly(url: string): string {
   const trailing = /[.,;:!?)\]}]*$/.exec(url)?.[0] ?? ''
   const core = url.slice(0, url.length - trailing.length).replace(/\\+\//g, '/')
-  const [, scheme, authority = ''] = /^([^:]+):\/\/([^/?#]*)/.exec(core) ?? []
+  // A backslash ends the authority, as a URL parser reads `https://host\path`.
+  const [, scheme, authority = ''] = /^([^:]+):\/\/([^/?#\\]*)/.exec(core) ?? []
   const host = authority.replace(/^.*@/, '')
 
   return `${scheme}://${host}${trailing}`
@@ -122,6 +127,9 @@ export function stripControlCharacters(text: string): string {
  * split by a line break, is whole only once they are gone), and at most `maxLength`
  * characters (200 by default, an ellipsis marking the cut).
  *
+ * Only the start of a long text is read (`readLimit`): a node can send any amount, and
+ * the redaction costs time in proportion to what it reads.
+ *
  * When that changes the text, the raw text goes to the debug channel under `topic`
  * (`null`: not, because the caller hands it over itself).
  */
@@ -130,10 +138,13 @@ export function sanitize(
   maxLength = MAX_NODE_MESSAGE_LENGTH,
   topic: DebugTopic | null = 'node'
 ): string {
-  const clean = bounded(
-    redactSecrets(stripControlCharacters(redactSecrets(text))),
-    maxLength
-  )
+  const limit = readLimit(maxLength)
+  const read = text.length > limit ? beforeLastWord(text.slice(0, limit)) : text
+  const redacted = redactSecrets(stripControlCharacters(redactSecrets(read)))
+  const clean =
+    read !== text && redacted.length <= maxLength
+      ? `${redacted}…`
+      : bounded(redacted, maxLength)
   if (topic && debugEnabled('sensitive', topic) && clean !== text)
     debugRaw(topic, 'text before redaction', text)
   return clean
@@ -188,6 +199,31 @@ export function boundedNodeMessage(
   if (topic && debugEnabled('sensitive', topic) && clean !== text)
     debugRaw(topic, 'node value before redaction', value)
   return clean
+}
+
+/**
+ * How much of a text `sanitize` reads for a message of `maxLength` characters: enough that
+ * the redaction (a URL shrinks to its origin, a JWT to `<redacted>`) still leaves
+ * `maxLength` characters to show, and never so much that hostile text costs real time.
+ */
+function readLimit(maxLength: number): number {
+  return Math.max(8 * maxLength, MIN_READ_LENGTH)
+}
+
+/** What ends a word for `beforeLastWord`: whitespace, quotes, brackets, `,` and `;`. */
+const WORD_END = /[\s"'`,;{}[\]()<>]/
+
+/**
+ * `text` without its last word, for a text `sanitize` cut: the cut can split a credential
+ * (a JWT, a signature, a URL, a value) so that its start no longer reads as one, so the word
+ * it split is dropped, back to the last whitespace, quote or JSON punctuation. A loop from
+ * the end, not a regular expression anchored at `$`: that one rescans the word from each of
+ * its characters, which costs time in the square of its length.
+ */
+function beforeLastWord(text: string): string {
+  let end = text.length
+  while (end > 0 && !WORD_END.test(text[end - 1])) end--
+  return text.slice(0, end)
 }
 
 function bounded(text: string, maxLength: number): string {

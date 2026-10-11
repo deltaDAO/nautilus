@@ -39,8 +39,8 @@ export const FAKE = {
 /**
  * The long-lived fixture credentials in the shapes the `sensitive` tier must still hide:
  * a drpc URL, a Pinata gateway token as a query parameter and as a key, `PINATA_JWT=` and
- * `S3_SECRET_KEY=` in an environment dump, a second cookie, and a credential in JSON inside
- * a JSON string (with a JSON-escaped URL).
+ * `S3_SECRET_KEY=` in an environment dump, a second cookie, an RPC URL with a backslash in
+ * its path, and a credential in JSON inside a JSON string (with a JSON-escaped URL).
  */
 export const CREDENTIAL_SHAPES = [
   `https://lb.drpc.org/ogrpc?network=optimism-sepolia&dkey=${FAKE.drpcKey}`,
@@ -48,6 +48,8 @@ export const CREDENTIAL_SHAPES = [
   `{"pinataGatewayToken":"${FAKE.pinataGatewayToken}"}`,
   `PINATA_JWT=${FAKE.pinataJwt}\nS3_SECRET_KEY=${FAKE.envSecretKey}`,
   `Cookie: theme=dark; session=${FAKE.cookie}`,
+  // A backslash in the path must not end the URL before its token.
+  `https://rpc.example.org/x\\y/v3/${FAKE.rpcPathToken}`,
   JSON.stringify({
     body: JSON.stringify({
       apiToken: FAKE.nestedApiToken,
@@ -73,7 +75,8 @@ const SUITE_SECRETS = [
   FAKE.nestedApiToken
 ]
 
-const URL_PATTERN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>\\]*/gi
+const URL_PATTERN =
+  /\b[a-z][a-z0-9+.-]*:\/\/(?:[^\s"'<>\\]|\\+(?!["'\s<>\\]))*/gi
 const SECRET_KEYS =
   'signature|consumerSignature|nonce|sessionId|session_id|token|access_token|id_token|vp_token|jwt|authorization|secretAccessKey|apiKey|api_key|password'
 
@@ -130,7 +133,7 @@ export function findSecrets(text: string): string[] {
 /** Whether a URL in `text` has user info, a path, a query or a fragment. */
 function urlsBeyondOrigin(text: string): boolean {
   for (const [url] of text.matchAll(URL_PATTERN)) {
-    const rest = /^[^:]+:\/\/([^/?#]*)(.*)$/.exec(url)
+    const rest = /^[^:]+:\/\/([^/?#\\]*)(.*)$/.exec(url)
     if (!rest) continue
     const [, authority, tail] = rest
     if (authority.includes('@')) return true
