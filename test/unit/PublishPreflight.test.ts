@@ -19,12 +19,14 @@ import {
   addCredentialAddresses,
   addRequestCredentials
 } from '../../src/identity/policy.js'
+import { type DebugEvent, setDebug } from '../../src/log/debug.js'
 import {
   createLogger,
   type LogEvent,
   type Logger,
   type LoggingOptions
 } from '../../src/log/index.js'
+import { configureLogging } from '../../src/log/logger.js'
 import { AssetBuilder } from '../../src/Nautilus/Asset/AssetBuilder.js'
 import { PLACEHOLDER_ADDRESS } from '../../src/Nautilus/Asset/NautilusDDO.js'
 import {
@@ -796,6 +798,98 @@ describe('completePublish while an earlier metadata transaction may land', () =>
     )
     expect(warning.fields.nftAddress).to.equal(NFT_ADDRESS)
     expect(vi.mocked(writeMetadata)).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('an RPC error in a warning (security regression)', () => {
+  /** The error ethers' JsonRpcProvider throws for a failed request to the RPC URL. */
+  function rpcError() {
+    const request = new FetchRequest(FAKE.rpcUrl)
+    return makeError(
+      'server response 500 Internal Server Error',
+      'SERVER_ERROR',
+      {
+        request,
+        info: {
+          requestUrl: FAKE.rpcUrl,
+          responseBody: '{"error":"backend down"}',
+          responseStatus: '500 Internal Server Error'
+        }
+      } as never
+    )
+  }
+
+  function failingNonces() {
+    const error = rpcError()
+    nftState.nonces = {
+      get pending(): number {
+        throw error
+      },
+      latest: 4
+    } as never
+  }
+
+  it('prints the RPC URL with its origin only, in both formats, on stderr', async () => {
+    for (const format of ['pretty', 'json'] as const) {
+      const stderr = stderrSpy()
+      configureLogging({ format })
+      failingNonces()
+      const { nautilus } = await createNautilus()
+
+      await nautilus.completePublish(NFT_ADDRESS, validAsset())
+
+      const printed = stderr.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.includes('publish.preflight.pending_unreadable'))
+      expect(printed, format).to.have.length(1)
+      expect(printed[0]).to.contain('https://rpc.example.org')
+      expect(printed[0]).to.contain('SERVER_ERROR')
+      for (const secret of [
+        FAKE.rpcPathToken,
+        FAKE.rpcQueryToken,
+        '/v3/',
+        'apikey='
+      ])
+        expect(printed[0], format).not.to.contain(secret)
+      stderr.mockRestore()
+      nftState.nonces = { pending: 4, latest: 4 }
+    }
+  })
+
+  it('hands what it removed to the debug channel: the path at sensitive, the token only at secrets', async () => {
+    const stderr = stderrSpy()
+    const debug: DebugEvent[] = []
+    const listen = (level: 'sensitive' | 'secrets') =>
+      setDebug({ level, topics: ['nonce'], sink: (event) => debug.push(event) })
+
+    listen('sensitive')
+    failingNonces()
+    const { nautilus } = await createNautilus()
+    await nautilus.completePublish(NFT_ADDRESS, validAsset())
+
+    const sensitive = JSON.stringify(debug.map((event) => event.data))
+    expect(debug.length).to.be.greaterThan(0)
+    expect(debug.every((event) => event.tier === 'sensitive')).to.equal(true)
+    expect(sensitive).to.contain('https://rpc.example.org/v3/')
+    expect(sensitive).to.contain('backend down')
+    expect(sensitive).not.to.contain(FAKE.rpcPathToken)
+    expect(sensitive).not.to.contain(FAKE.rpcQueryToken)
+
+    debug.length = 0
+    listen('secrets')
+    failingNonces()
+    await nautilus.completePublish(NFT_ADDRESS, validAsset())
+
+    const secrets = JSON.stringify(
+      debug
+        .filter((event) => event.tier === 'secrets')
+        .map((event) => event.data)
+    )
+    expect(secrets).to.contain(FAKE.rpcPathToken)
+    expect(secrets).to.contain(FAKE.rpcQueryToken)
+    // Never on stderr, whatever the channel holds.
+    const printed = stderr.mock.calls.map((call) => String(call[0])).join('\n')
+    expect(printed).not.to.contain(FAKE.rpcQueryToken)
   })
 })
 
