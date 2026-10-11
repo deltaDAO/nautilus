@@ -412,16 +412,42 @@ const METADATA_HOSTS = new Set([
  * `text` without the policy-server session id `sessionId` (8 characters or more), nor any
  * part of it of 32 characters or more (the policy server's id is two SHA-256 hashes joined
  * by `-`, the second the secret one), wherever they stand: also inside a URL,
- * percent-encoded or JSON-escaped text, and in any letter case.
+ * percent-encoded or JSON-escaped text, and in any letter case (A to Z). Found as literal
+ * text, not by a regular expression built from the id: the node chooses it, and one of
+ * 33 KB or more made too large a pattern, which threw a `SyntaxError` quoting it.
  */
 function withoutSessionId(text: string, sessionId: string): string {
   const parts = [
     ...(sessionId.length >= 8 ? [sessionId] : []),
     ...sessionId.split('-').filter((part) => part.length >= 32)
-  ].map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  if (!parts.length) return text
+  ]
 
-  return text.replace(new RegExp(parts.join('|'), 'gi'), '<redacted>')
+  return parts.reduce(
+    (current, part) => withoutText(current, asciiLowerCase(part)),
+    text
+  )
+}
+
+/** `text` with every occurrence of `part` (lower case), in any letter case, redacted. */
+function withoutText(text: string, part: string): string {
+  const folded = asciiLowerCase(text)
+  let kept = ''
+  let from = 0
+  for (
+    let at = folded.indexOf(part);
+    at !== -1;
+    at = folded.indexOf(part, from)
+  ) {
+    kept += `${text.slice(from, at)}<redacted>`
+    from = at + part.length
+  }
+
+  return kept + text.slice(from)
+}
+
+/** `text` with A to Z in lower case only, so it keeps its length and indexes. */
+function asciiLowerCase(text: string): string {
+  return text.replace(/[A-Z]+/g, (letters) => letters.toLowerCase())
 }
 
 /**

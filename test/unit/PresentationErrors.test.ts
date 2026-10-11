@@ -9,6 +9,7 @@
  * stub, except where the real `OceanNodeClient` reads a hostile verifier record.
  */
 
+import { ProviderInstance } from '@oceanprotocol/lib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CredentialProvider } from '../../src/identity/CredentialProvider.js'
 import { PolicySessionResolver } from '../../src/identity/PolicySessionResolver.js'
@@ -22,6 +23,7 @@ import {
   WaltIdHttpWallet,
   type WaltIdWallet
 } from '../../src/identity/waltid/client.js'
+import { setDebug } from '../../src/log/debug.js'
 import { redactSecrets } from '../../src/node/messages.js'
 import {
   OceanNodeClient,
@@ -35,6 +37,7 @@ import {
   OWNER_ADDRESS,
   SERVICE_ID
 } from '../fixtures/Asset.js'
+import { cpuTime } from '../helpers.js'
 import { FAKE } from '../secretScan.js'
 
 const NODE = 'https://node.test.invalid'
@@ -493,6 +496,70 @@ describe("the node's per-policy results", () => {
   })
 })
 
+describe("a hostile node's per-policy results, in bounded time", () => {
+  it('reads a 256 KB record in milliseconds, over HTTP and over P2P (security regression)', async () => {
+    // Fields built to be slow: a run of hex (`a`) with a separator just before 8,192, the
+    // read limit every field used to have. A session-id pattern that looked back over the
+    // run and a cut-word drop that rescanned it made such a record cost 3.8 s over HTTP and
+    // 18 s over P2P, on every gated access. Names and errors are now read at 8 times their
+    // bound (800 characters), so each field costs little.
+    const field = `${'a'.repeat(8_190)} bx`
+    const record = (entries: number) => ({
+      success: true,
+      httpStatus: 200,
+      message: {
+        verificationResult: false,
+        policyResults: {
+          results: Array.from({ length: entries }, (_, index) => ({
+            credential: field,
+            policyResults: [
+              { policy: `${field}${index}`, is_success: false, error: field }
+            ]
+          }))
+        }
+      }
+    })
+    // Over HTTP a 2xx answer is read up to 256 KiB.
+    const body = JSON.stringify(record(10))
+    expect(body.length).to.be.within(240_000, 256 * 1024)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(body, { status: 200 }))
+    )
+    // Over P2P ocean.js sets no size limit; the client keeps 50 results.
+    vi.spyOn(ProviderInstance, 'PolicyServerPassthrough').mockResolvedValue(
+      record(50) as never
+    )
+    // The reading is timed, not the debug channel's hand-over of each raw field, which
+    // runs only when a user turns debug on: off here, also under NAUTILUS_TEST_DEBUG.
+    setDebug({ level: 'off' })
+
+    for (const [label, nodeUri, entries] of [
+      ['HTTP', NODE, 10],
+      ['P2P', '16Uiu2HAmPeer', 50]
+    ] as const) {
+      const client = new OceanNodeClient({
+        nodeUri,
+        chainId: CHAIN_ID,
+        auth: 'a-session-token',
+        consumerAddress: OWNER_ADDRESS
+      })
+      let check: PolicySessionCheck | undefined
+      const elapsed = await cpuTime(async () => {
+        check = await client.checkPolicySession(SID)
+      })
+
+      expect(elapsed, label).to.be.below(50)
+      expect(check?.policyResults, label).to.have.length(entries)
+      for (const result of check?.policyResults ?? []) {
+        expect(result.policy.length).to.be.at.most(101)
+        expect(result.credential?.length ?? 0).to.be.at.most(101)
+        expect(result.error?.length ?? 0).to.be.at.most(101)
+      }
+    }
+  })
+})
+
 describe("CredentialPresentationError's reason", () => {
   it('says which step failed', async () => {
     const { node } = policyNode(HOLDER_BINDING_NPE)
@@ -783,6 +850,32 @@ describe("a policy-server session id in the wallet's text (D10)", () => {
     )
   })
 
+  it("keeps the refusal's reason with a huge session id the node chose (sec m1)", async () => {
+    const { node } = policyNode(HOLDER_BINDING_NPE)
+    const base = walletPresentingThrough(httpWallet(400, VERIFIER_400))
+    for (const sessionId of [
+      // 1,250 parts of 32 characters (40 KB), and one part of 100 KB: a pattern built from
+      // either was too large, and the SyntaxError quoted it.
+      Array.from({ length: 1_250 }, (_, index) =>
+        index.toString(16).padStart(32, 'b')
+      ).join('-'),
+      'c'.repeat(100_000)
+    ]) {
+      const errorMessage = `session ${sessionId.slice(0, 40_000)} expired`
+      const presented = await waltIdProvider(node, {
+        ...base,
+        usePresentationRequest: async () => ({ errorMessage })
+      })
+        .present(challengeFor(node, sessionId))
+        .catch((error) => error)
+
+      expect(presented).to.be.instanceOf(CredentialPresentationError)
+      expect(presented.reason).to.equal('verifier-rejected')
+      expect(presented.message.length).to.be.below(600)
+      expect(presented.message).not.to.match(/b{32}|c{32}/)
+    }
+  })
+
   it('is redacted in any text, but a compute job id of the same shape is kept', () => {
     for (const text of QUOTING)
       expect(redactSecrets(text), text).not.to.contain(random)
@@ -791,6 +884,30 @@ describe("a policy-server session id in the wallet's text (D10)", () => {
     expect(redactSecrets(`job ${jobId} is running`)).to.equal(
       `job ${jobId} is running`
     )
+    for (const [text, expected] of [
+      [`job ${jobId.toUpperCase().replace('0X', '0x')}`, 'kept'],
+      [`job 0X${jobId.slice(2)}`, 'kept'],
+      [`0x12 ${PSID}`, '0x12 <redacted>'],
+      [`ab${PSID}cd`, 'ab<redacted>cd'],
+      [`${PSID}-${'e'.repeat(64)}`, `<redacted>-${'e'.repeat(64)}`]
+    ])
+      expect(redactSecrets(text), text).to.equal(
+        expected === 'kept' ? text : expected
+      )
+  })
+
+  it('is found in linear time in a long hex run (security regression)', async () => {
+    // A `0x` looked back for over the whole run at each of its characters: a run of 16,000
+    // (calldata in an RPC error, at the log message's read limit) took 160 ms, and 65,536
+    // took seconds.
+    const run = `${'a'.repeat(16_000)} ${PSID} 0x${'b'.repeat(16_000)}`
+    let redacted = ''
+    const elapsed = await cpuTime(() => {
+      redacted = redactSecrets(run)
+    })
+    expect(elapsed).to.be.below(50)
+    expect(redacted).not.to.contain(random)
+    expect(redacted.endsWith(`0x${'b'.repeat(16_000)}`)).to.equal(true)
   })
 
   it("is redacted from the node's per-policy results too", async () => {

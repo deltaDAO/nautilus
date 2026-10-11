@@ -59,7 +59,11 @@ policy-server session id or the wallet's redirect URI any more.
   the wallet's text still keeps its origin, so the verifier's host can appear.
 - **The node's per-policy results are bounded.** `checkPolicySession` keeps at most 50
   results (failures first), and strips control characters from, redacts and cuts at 100
-  characters each policy and credential name and each error.
+  characters each policy and credential name and each error. Each is read up to 800
+  characters only (a field of a bound of 100 characters or less is read at eight times it,
+  not at 8,192), so a hostile record costs milliseconds. The session-id pattern scans a long
+  hex run (calldata in an RPC error) in linear time, and a session id of any length the node
+  chose is removed from the wallet's text as literal text, so the refusal keeps its `reason`.
 - **The `setVpPolicies` JSDoc** recommends the safe set
   (`[{ policy: 'signature' }, { policy: 'minimum-credentials', args: '1' }]`) and no longer
   suggests `holder-binding`.

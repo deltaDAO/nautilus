@@ -31,8 +31,10 @@ export interface NodeAnswer {
 
 /** How much of a node's text goes into an error message. */
 export const MAX_NODE_MESSAGE_LENGTH = 200
-/** How much of a text `sanitize` reads at least, however short the message: see `readLimit`. */
+/** How much of a text `sanitize` reads at least, for a message: see `readLimit`. */
 const MIN_READ_LENGTH = 8_192
+/** The longest bound of a short field, which `sanitize` reads at 8 times it: see `readLimit`. */
+const SHORT_FIELD_LENGTH = 100
 
 /**
  * `scheme://authority/path?query#fragment`, up to whitespace or a quote, also with its
@@ -237,9 +239,13 @@ export function boundedNodeMessage(
  * How much of a text `sanitize` reads for a message of `maxLength` characters: enough that
  * the redaction (a URL shrinks to its origin, a JWT to `<redacted>`) still leaves
  * `maxLength` characters to show, and never so much that hostile text costs real time.
+ * A short field (a policy name or error, at most `SHORT_FIELD_LENGTH`) is read at 8 times
+ * its bound only: a node's record can hold hundreds of them, so each costs little.
  */
 function readLimit(maxLength: number): number {
-  return Math.max(8 * maxLength, MIN_READ_LENGTH)
+  return maxLength <= SHORT_FIELD_LENGTH
+    ? 8 * maxLength
+    : Math.max(8 * maxLength, MIN_READ_LENGTH)
 }
 
 /** What ends a word for `beforeLastWord`: whitespace, quotes, brackets, `,` and `;`. */
