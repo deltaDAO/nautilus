@@ -10,7 +10,11 @@ import {
   requiresPresentation,
   setVpPolicies
 } from '../../src/identity/policy.js'
-import { SsiPolicyError } from '../../src/identity/policyLint.js'
+import {
+  policyServerRequests,
+  requestedTypes,
+  SsiPolicyError
+} from '../../src/identity/policyLint.js'
 import { CredentialRejectedLocallyError } from '../../src/identity/preflight.js'
 import {
   WaltIdCredentialProvider,
@@ -1211,6 +1215,82 @@ describe('SSI policy lint: per-credential policies as walt.id resolves them', ()
       credentialType: 'gx:LegalPerson'
     })
     expect(seen[0].msg).to.contain('(schema) that never run')
+  })
+
+  it('drops a repeated identical request at its first position, as the policy server does', () => {
+    // G4 (PR 12 round 2): the service repeats the asset's issuer-trust request after another
+    // list. The policy server keeps the asset's copy where it is, so walt.id runs the
+    // service's not-before list for the type, and another issuer's credential passes.
+    const notBefore = [{ policy: 'not-before' }]
+    const service = serviceBuilder()
+      .addRequestCredentials(ALLOW, [
+        { type: 'gx:LegalPerson', format: 'jwt_vc_json', policies: notBefore },
+        TRUST[0]
+      ])
+      .build()
+    const seen = events(() =>
+      new AssetBuilder()
+        .setType('dataset')
+        .setName('Repeated')
+        .setProvidedBy('deltaDAO AG')
+        .addService(service)
+        .addCredentialAddresses(ALLOW, [OWNER_ADDRESS])
+        .addRequestCredentials(ALLOW, TRUST)
+        .setVcPolicies(ALLOW, SAFE_VC)
+        .setVpPolicies(ALLOW, SAFE_VP)
+        .build()
+    )
+
+    expect(
+      seen.map((event) => [event.event, event.fields?.where])
+    ).to.deep.equal([
+      ['identity.policy.credential_policies_replaced', 'asset'],
+      ['identity.policy.no_issuer_trust', 'service Access Service']
+    ])
+    expect(seen[0].msg).to.contain('(allowed-issuer) that never run')
+  })
+
+  it('reads the policies the policy server forwards for a type', () => {
+    const asset = {
+      request_credentials: [
+        { type: 'T', format: 'jwt_vc_json', policies: [TRUST[0].policies[0]] },
+        { type: 'U', policies: ['not json', 7] }
+      ]
+    } as unknown as SsiPolicyValue
+    const service = {
+      request_credentials: [
+        { type: 'T', format: 'jwt_vc_json', policies: ['"expired"'] },
+        {
+          type: 'T',
+          format: 'jwt_vc_json',
+          policies: [JSON.stringify(TRUST[0].policies[0])]
+        },
+        { type: 'U', policies: 'allowed-issuer' }
+      ]
+    } as unknown as SsiPolicyValue
+
+    const forwarded = policyServerRequests([
+      { where: 'asset', values: [asset] },
+      { where: 'service s', values: [service] }
+    ])
+    expect(
+      forwarded.map(({ where, credential, policies }) => [
+        where,
+        credential.type,
+        policies
+      ])
+    ).to.deep.equal([
+      ['asset', 'T', [TRUST[0].policies[0]]],
+      // Unparseable strings and non-lists give no policies, so the service's U repeats it.
+      ['asset', 'U', []],
+      ['service s', 'T', ['expired']]
+      // The service's issuer-trust T repeats the asset's, which keeps its position.
+    ])
+
+    const t = requestedTypes(forwarded).get('T')
+    expect(t?.effective?.policies).to.deep.equal(['expired'])
+    expect(t?.replaced.map(({ where }) => where)).to.deep.equal(['asset'])
+    expect(requestedTypes(forwarded).get('U')?.effective).to.equal(undefined)
   })
 
   it('throws for an allowed-issuer that names no issuer, in every mode', () => {

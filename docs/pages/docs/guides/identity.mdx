@@ -401,7 +401,7 @@ them, and:
 | `holder-binding` | Warns: `identity.policy.holder_binding` |
 | `presentation-definition` with a `jwt_vc_json` or `jwt_vc` credential | Warns: `identity.policy.presentation_definition_vc_jwt` |
 | A requested credential type whose effective per-credential policies have no `allowed-issuer` | Warns: `identity.policy.no_issuer_trust` (a self-issued credential of that type is accepted) |
-| A type requested twice with different per-credential policies | Warns: `identity.policy.credential_policies_replaced`: walt.id keeps only the last non-empty list per type, so the earlier policies never run |
+| A type requested twice with different per-credential policies | Warns: `identity.policy.credential_policies_replaced`: walt.id keeps only the last non-empty list per type, after the policy server drops repeats of an identical request (the first one keeps its position), so the other lists never run |
 
 The policy server may add `signature` to every session from its operator's
 `DEFAULT_VC_POLICIES` / `DEFAULT_VP_POLICIES`, which nautilus cannot read, so the two

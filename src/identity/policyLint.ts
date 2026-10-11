@@ -28,7 +28,8 @@
  * - `presentation-definition` filters on `$.vc.type` for `jwt_vc_json` and `jwt_vc`
  *   requests, which VCDM 2.0 credentials do not have: a warning.
  * - walt.id keeps one per-credential policy list per requested type, the last non-empty one
- *   (`VerifierService.kt:104-108`). A requested type whose effective list has no
+ *   (`VerifierService.kt:104-108`), after the policy server drops repeats of an identical
+ *   request, keeping the first one's position (`waltIdPolicyHandler.ts:873-890`). A requested type whose effective list has no
  *   `allowed-issuer` accepts a credential of that type from any issuer, a self-issued one
  *   included; a non-empty list that a later one replaces never runs. Warnings.
  *
@@ -168,11 +169,25 @@ const WARNING_EVENTS: Partial<Record<SsiPolicyFinding['code'], LogEventName>> =
 const OPERATOR_NOTE =
   "The policy server may add it from its operator's DEFAULT_VC_POLICIES / DEFAULT_VP_POLICIES, which nautilus cannot read; set it on the asset so the check holds whatever the operator set."
 
-/** A request credential with the place it sits and its policies as the policy server parses them. */
-interface PlacedRequest {
+/**
+ * A request credential as the policy server forwards it to walt.id, with the block it came
+ * from: `'asset'` or `'service <id or name>'`.
+ */
+export interface ForwardedRequest {
   where: string
   credential: StoredRequestCredential
+  /** Its per-credential policies as the policy server parses them (`parsePolicies`). */
   policies: unknown[]
+}
+
+/** walt.id's per-credential policies for one requested type. */
+export interface RequestedTypePolicies {
+  /** The list walt.id runs: the last non-empty one for the type, if any. */
+  effective?: ForwardedRequest
+  /** Non-empty lists for the type that walt.id drops, with other policies than `effective`. */
+  replaced: ForwardedRequest[]
+  /** Every forwarded request of the type, in the policy server's order. */
+  requests: ForwardedRequest[]
 }
 
 /**
@@ -365,9 +380,9 @@ function lintPresentationDefinition(
 }
 
 /**
- * Per requested type, the per-credential policies walt.id runs: request credentials with no
- * policies are dropped, and of the others the last for a type wins
- * (`VerifierService.kt:104-108`), in the policy server's order (asset, then service).
+ * Per requested type, the per-credential policies walt.id runs (see `requestedTypes`): a type
+ * whose effective list has no `allowed-issuer`, or one that admits no issuer, and non-empty
+ * lists that never run.
  */
 function lintRequestedTypes(
   assetWhere: string,
@@ -376,31 +391,25 @@ function lintRequestedTypes(
   serviceValues: SsiPolicyValue[],
   add: (finding: SsiPolicyFinding) => void
 ): void {
-  const requests: PlacedRequest[] = [
-    ...placed(assetWhere, assetValues),
-    ...placed(serviceWhere, serviceValues)
-  ]
+  const forwarded = policyServerRequests([
+    { where: assetWhere, values: assetValues },
+    { where: serviceWhere, values: serviceValues }
+  ])
 
-  for (const type of new Set(
-    requests.map(({ credential }) => credential.type)
+  for (const [type, { effective, replaced, requests }] of requestedTypes(
+    forwarded
   )) {
-    const ofType = requests.filter(({ credential }) => credential.type === type)
-    const withPolicies = ofType.filter(({ policies }) => policies.length)
-    const effective = withPolicies.at(-1)
-    const where = (effective ?? ofType[ofType.length - 1]).where
+    const where = (effective ?? requests[requests.length - 1]).where
 
-    for (const earlier of withPolicies.slice(0, -1))
-      if (
-        JSON.stringify(earlier.policies) !== JSON.stringify(effective?.policies)
-      )
-        add({
-          code: 'credential-policies-replaced',
-          fatal: false,
-          where: earlier.where,
-          policy: policyNames(earlier.policies).join(', ') || 'policies',
-          credentialType: type,
-          message: `The ${earlier.where} request for '${shown(type)}' credentials carries per-credential policies (${policyNames(earlier.policies).map(shown).join(', ')}) that never run: '${shown(type)}' is also requested at ${effective?.where} with other policies, and walt.id keeps only the last non-empty policy list per requested type. Put all of the type's policies on one request.`
-        })
+    for (const earlier of replaced)
+      add({
+        code: 'credential-policies-replaced',
+        fatal: false,
+        where: earlier.where,
+        policy: policyNames(earlier.policies).join(', ') || 'policies',
+        credentialType: type,
+        message: `The ${earlier.where} request for '${shown(type)}' credentials carries per-credential policies (${policyNames(earlier.policies).map(shown).join(', ')}) that never run: '${shown(type)}' is also requested at ${effective?.where} with other policies, and walt.id keeps only the last non-empty policy list per requested type (the policy server first drops a repeat of an identical request, keeping the first one's position). Put all of the type's policies on one request.`
+      })
 
     const issuers = (effective?.policies ?? []).filter(
       (policy) => readPolicy(policy).name === 'allowed-issuer'
@@ -642,24 +651,73 @@ function requestCredentials(value: SsiPolicyValue): StoredRequestCredential[] {
   )
 }
 
-function placed(where: string, values: SsiPolicyValue[]): PlacedRequest[] {
-  return values.flatMap(requestCredentials).map((credential) => ({
-    where,
-    credential,
-    policies: toArray(credential.policies).flatMap(parseCredentialPolicy)
-  }))
+/**
+ * The request credentials the policy server forwards to walt.id (`parseRequestCredentials`,
+ * `waltIdPolicyHandler.ts:737-899`): the blocks' requests in order (asset, then service),
+ * each one's policies parsed (`parsePolicies`), and a repeat of an identical
+ * `{ type, format, policies }` dropped, the first occurrence keeping its position.
+ */
+export function policyServerRequests(
+  blocks: { where: string; values: SsiPolicyValue[] }[]
+): ForwardedRequest[] {
+  const forwarded = new Map<string, ForwardedRequest>()
+
+  for (const { where, values } of blocks)
+    for (const credential of values.flatMap(requestCredentials)) {
+      const policies = Array.isArray(credential.policies)
+        ? credential.policies.flatMap(parseCredentialPolicy)
+        : []
+      const key = JSON.stringify({
+        type: credential.type,
+        format: credential.format,
+        policies
+      })
+      if (!forwarded.has(key))
+        forwarded.set(key, { where, credential, policies })
+    }
+
+  return [...forwarded.values()]
+}
+
+/**
+ * Per requested type, the per-credential policies walt.id runs: of the forwarded requests
+ * (`policyServerRequests`), those with no policies are dropped, and of the others the last
+ * for a type wins (`VerifierService.kt:104-108`).
+ */
+export function requestedTypes(
+  forwarded: ForwardedRequest[]
+): Map<string, RequestedTypePolicies> {
+  const types = new Map<string, RequestedTypePolicies>()
+
+  for (const type of new Set(
+    forwarded.map(({ credential }) => credential.type)
+  )) {
+    const requests = forwarded.filter(
+      ({ credential }) => credential.type === type
+    )
+    const withPolicies = requests.filter(({ policies }) => policies.length)
+    const effective = withPolicies.at(-1)
+    const replaced = withPolicies
+      .slice(0, -1)
+      .filter(
+        ({ policies }) =>
+          JSON.stringify(policies) !== JSON.stringify(effective?.policies)
+      )
+    types.set(type, { effective, replaced, requests })
+  }
+
+  return types
 }
 
 /**
  * A per-credential policy as the policy server parses it (`parsePolicies`): an object as it
- * is, a string JSON-parsed, an unparseable string dropped.
+ * is, a string JSON-parsed, an unparseable string or anything else dropped.
  */
 function parseCredentialPolicy(raw: unknown): unknown[] {
   if (raw && typeof raw === 'object') return [raw]
   if (typeof raw !== 'string') return []
   try {
-    const parsed: unknown = JSON.parse(raw)
-    return parsed === undefined || parsed === null ? [] : [parsed]
+    return [JSON.parse(raw)]
   } catch {
     return []
   }

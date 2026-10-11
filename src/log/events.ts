@@ -336,14 +336,14 @@ export const LOG_EVENTS = {
     level: 'warn',
     component: 'identity',
     description:
-      'AssetBuilder.build(): a requested credential type has no per-credential allowed-issuer among the policies walt.id runs for it (the last non-empty list for the type), so a credential of that type from any issuer, a self-issued one included, is accepted.',
+      'AssetBuilder.build(): a requested credential type has no per-credential allowed-issuer among the policies walt.id runs for it (the last non-empty list for the type, after the policy server drops repeats of an identical request), so a credential of that type from any issuer, a self-issued one included, is accepted.',
     fields: ['where', 'credentialType']
   },
   'identity.policy.credential_policies_replaced': {
     level: 'warn',
     component: 'identity',
     description:
-      'AssetBuilder.build(): a credential type is requested more than once with different per-credential policies. walt.id keeps only the last non-empty policy list per type, so the earlier policies never run.',
+      'AssetBuilder.build(): a credential type is requested more than once with different per-credential policies. walt.id keeps only the last non-empty policy list per type, after the policy server drops repeats of an identical request (the first one keeps its position), so the other lists never run.',
     fields: ['where', 'credentialType']
   },
   'identity.policy.no_vc_signature': {
