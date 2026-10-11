@@ -191,8 +191,19 @@ clears the default callback.
 - `PolicyDeniedError`: the policy server refused this consumer (`error.code` is the HTTP
   status, `error.reason` its message, e.g. `Access denied: Address not allowed at asset
   level.`), or the verifier did not accept the presentation (`error.code` is `undefined`,
-  `error.reason` names the failed policies). Also carries `did`, `serviceId` and
-  `consumerAddress`.
+  `error.reason` names the failed policies as the node reports them, e.g. `holder-binding:
+  java.lang.NullPointerException`, and `error.policyResults` lists them all; `error.cause`
+  is the wallet's error when the wallet reported the failure). Also carries `did`,
+  `serviceId` and `consumerAddress`. Don't send `policyResults` to a central log: a policy's
+  error can quote a credential value. See
+  [what a rejection looks like](/docs/guides/identity#what-a-rejection-looks-like).
+- `CredentialPresentationError` (from `WaltIdCredentialProvider`): the wallet could not
+  present, e.g. it holds no credential of the requested type (`error.reason` is
+  `'no-matching-credential'`), or the verifier refused and its record names no failed policy
+  (`'verifier-rejected'`; the others are listed on
+  [`WaltIdCredentialProvider`](/docs/api/identity/WaltIdCredentialProvider#errors)).
+  Neither error carries the policy-server session id; `NAUTILUS_DEBUG=sensitive` with the
+  `policy` and `wallet` topics shows the raw answers ([debugging](/docs/guides/debugging)).
 - An `Error` when the service asks for a verifiable presentation and no credential provider
   is set.
 - `ConsumerParameterError`: `userdata` does not fit the service's consumer parameters.

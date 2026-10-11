@@ -117,7 +117,10 @@ sequenceDiagram
 4. If the asset or service carries an `SSIpolicy` that asks for credentials, the credential
    provider answers the openid4vp request from your wallet, and nautilus checks with the
    policy server (`checkSessionId`) that the verifier accepted it. A presentation that was not
-   accepted is a `PolicyDeniedError` naming the failed policies.
+   accepted is a `PolicyDeniedError` naming the failed policies. When the wallet itself
+   reports that the verifier refused it (walt.id answers a refused presentation with an
+   error), nautilus still asks the verifier's record which policies failed, and names them the
+   same way.
 5. The session id is carried into the download URL, or into `initializeCompute` and
    `computeStart`: one session per compute input, the algorithm included.
 
@@ -156,6 +159,62 @@ policy server (400), a network error, a timeout or a 5xx.
 
 If the wallet holds nothing that matches, the provider's error carries the credentials you are
 *missing*, rather than just reporting no match.
+
+### What a rejection looks like
+
+When the verifier refuses a presentation, the refusal names the policies that failed, as the
+node reports them (the node relays the verifier's record, and for a download it is the
+publisher's choice of node):
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus, PolicyDeniedError } from '@deltadao/nautilus'
+const signer = new Wallet('0x1234', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const nautilus = await Nautilus.create(signer, {
+  config: { oceanNodeUri: 'https://node.example.org' }
+})
+// ---cut---
+try {
+  await nautilus.access({ assetDid: 'did:ope:1234abcd...' })
+} catch (error) {
+  if (!(error instanceof PolicyDeniedError)) throw error
+
+  console.log(error.reason) // [!code focus]
+  // @log: 'the node reports that the verifier did not accept the presentation (holder-binding: java.lang.NullPointerException)'
+  for (const { credential, policy, success, error: why } of error.policyResults ?? []) // [!code focus]
+    if (!success) console.log(credential, policy, why) // [!code focus]
+  // @log: VerifiablePresentation holder-binding java.lang.NullPointerException
+}
+```
+
+- `reason` lists what fits of the failed policies (`policy: error`, each cut at 80
+  characters) and counts the rest (`; 2 more in policyResults`); it always ends in `)`.
+  `policyResults` has all of them, at most 50, failures first, each name and error at most
+  100 characters and stripped of control characters.
+- `cause` is the wallet's error when the wallet reported the failure: a
+  `CredentialPresentationError` with `reason: 'verifier-rejected'` and
+  `details.errorMessage` (walt.id's message, e.g. `Presentation failed - redirecting to error
+  page`).
+- When the wallet failed before the verifier, nautilus does not ask the verifier: the
+  wallet's own error is thrown, a `CredentialPresentationError` whose `reason` says which
+  step failed (`no-matching-credential`, `none-selected`, `wallet-setup`, `request-invalid`
+  or `wallet-failed`). So is a `verifier-rejected` one whose session record names no failed
+  policy (the session expired, for example) or cannot be read within 15 seconds.
+- Neither error carries the policy-server session id or the wallet's redirect URI: the
+  session id is a credential (see `PolicySessionResolver`), and the wallet's answer to a
+  refused presentation is the verifier's error page with the session id in it. The redirect
+  URI is dropped, and the session id is redacted wherever the wallet's text quotes it (walt.id
+  does, for an expired session). A URL quoted in the text keeps its origin (scheme, host and
+  port), so the message can still name the verifier's host. To see the wallet's whole answer
+  and the verifier's full record, turn on `NAUTILUS_DEBUG=sensitive` with
+  `NAUTILUS_DEBUG_TOPICS=policy,wallet` ([debugging](/docs/guides/debugging)), on your
+  machine only.
+
+:::warning[Don't log `policyResults` centrally]
+A policy's error can quote a value of the presented credential (an attribute a `schema`
+policy checked, an issuer, a status-list entry). Show `policyResults` to the user who
+presented, and keep them out of shared or central logs, the same as the credential itself.
+:::
 
 ### What the wallet trusts
 

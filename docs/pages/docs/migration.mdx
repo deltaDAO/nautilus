@@ -98,7 +98,13 @@ status; `undefined` for a presentation), `reason` (its message, bounded) and, fo
 presentation, `policyResults` (each policy's name, outcome and error; never the presentation).
 It is not an `OceanNodeError`. Everything the node says itself still is, with the status: a
 rejected nonce or signature (401), an asset it has not indexed (404), a policy server it
-cannot reach (400), as are a network error, a timeout and a 5xx.
+cannot reach (400), as are a network error, a timeout and a 5xx. When the wallet reports the
+failure itself, nautilus asks the verifier which policies failed and throws the
+`PolicyDeniedError` with the wallet's error as its `cause`. A failure before the verifier (the
+wallet holds no matching credential, for example), or a refusal whose record names no failed
+policy, is the wallet's `CredentialPresentationError`, with a `reason` and, for a rejection,
+`details.errorMessage`. Don't send `policyResults` to a central log: a policy's error can
+quote a credential value.
 
 ```ts
 import { PolicyDeniedError } from '@deltadao/nautilus'

@@ -90,11 +90,12 @@ credential is never shown in part. A cut string ends in `…(cut: N of M charact
 [nautilus:debug:sensitive] [policy] 2026-10-10T13:36:58.772Z verifier per-policy results (checkSessionId) {…,"policies":[…,"VerifiablePresentation holder-binding: failed (java.lang.NullPointerException)"]}
 ```
 
-The error your code catches is unchanged: here a `CredentialPresentationError` whose message
-names the wallet's answer with the verifier's URL reduced to its origin and the session id
-removed. With the `policy` topic on, nautilus reads the verifier's record of a rejected
-presentation once more (`checkSessionId`) to show its per-policy results; nothing else
-changes in what nautilus sends.
+The error your code catches is the same with the channel on or off: here a
+`PolicyDeniedError` naming `holder-binding: java.lang.NullPointerException`, read from the
+verifier's record (`checkSessionId`) that nautilus asks for after a presentation the verifier
+refused. Its `cause` keeps only the wallet's `errorMessage`; the wallet's redirect URI and the
+session id are in the debug lines only. Turning the channel on changes nothing in what
+nautilus sends.
 
 To route the events elsewhere, pass a `sink`; it receives `{ time, tier, topic, message,
 data }`.

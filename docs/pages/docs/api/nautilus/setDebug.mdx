@@ -118,9 +118,10 @@ Errors, return values (e.g. `PublishResponse.stored`), `PolicyDeniedError` and l
 stay exactly as redacted as with the channel off. Apps log, store and return those, so
 nautilus never un-redacts them; the raw values go to this channel only.
 
-One behaviour is added: with the `policy` topic on, a presentation the verifier rejects is
-followed by one `checkSessionId` read through the node, so that the verifier's per-policy
-results reach the channel. The error thrown is the same.
+Nothing in what nautilus sends changes either. After a presentation the verifier refused,
+nautilus reads the verifier's record (`checkSessionId`) with the channel on or off, to name the
+failed policies in the `PolicyDeniedError`; with the `policy` topic on, the whole record also
+reaches the channel.
 
 ## Warning on enabling
 

@@ -32,8 +32,8 @@ the redacted error does not explain can be diagnosed without out-of-band queries
   sink; stronger under `NODE_ENV=production`.
 - **Errors, return values and log events do not change.** They stay exactly as redacted as
   with the channel off; the raw values go to this channel only. A rejected presentation's
-  per-policy results are read and shown in the channel (e.g. `holder-binding: failed
-  (java.lang.NullPointerException)`); the error thrown is the same.
+  per-policy results are shown in the channel (e.g. `holder-binding: failed
+  (java.lang.NullPointerException)`).
 - **The signer's private key or mnemonic is never printed**, at any tier: nautilus never
   holds them.
 
