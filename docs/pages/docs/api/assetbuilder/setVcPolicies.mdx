@@ -47,7 +47,12 @@ the asset-level form. Without `signature` in the list, `build()` warns
 :::info
 This *replaces* the list. On an asset built from a resolved DDO, the policies you pass are
 the policies it ends up with — leaving one out removes it, and `[]` clears them. The request
-credentials on the entry are kept either way.
+credentials on the entry are kept either way. An `SSIpolicy` entry left with no request
+credential and no VC or VP policy is removed: on an edit of an asset with an ungated service,
+`setVcPolicies(list, []).setVpPolicies(list, [])` clears the asset-level gate, so the
+policies can move onto the gated service with
+[`ServiceBuilder.setVcPolicies`](/docs/api/servicebuilder/setVcPolicies) and
+[`setVpPolicies`](/docs/api/servicebuilder/setVpPolicies).
 :::
 
 ## Returns

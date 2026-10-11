@@ -508,7 +508,10 @@ The policy server merges the asset's `SSIpolicy` entries into every service and 
 consumer of a service whose merged view holds one but requests no credential ("SSIpolicy was
 found, but failed to fetch request credentials"). VC or VP policies set on the asset would so
 close the preview to everyone; `build()` throws an `SsiPolicyError` for that setup, in every
-lint mode, naming the services concerned.
+lint mode, naming the services concerned. To repair an asset published that way, edit it with
+`setVcPolicies(list, [])` and `setVpPolicies(list, [])` on the `AssetBuilder`, which removes
+the emptied asset-level entry, and the policies set on the gated service through
+`new ServiceBuilder({ asset, serviceId })`.
 
 ### Issuing from a real DID
 

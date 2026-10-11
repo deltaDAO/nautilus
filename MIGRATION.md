@@ -321,7 +321,9 @@ policies that cannot work as written, which earlier versions published:
   that needs arguments (`allowed-issuer`, `schema`, `webhook`, `dynamic`,
   `credential-status`). The policy server keeps only the name, so walt.id failed it for every
   presentation. Move it into the `policies` of the requested credential. Another VC policy
-  with arguments ran without them: drop the arguments and keep the name;
+  with arguments ran without them: drop the arguments and keep the name. On an edit, such a
+  stored policy (e.g. `{ policy: 'expired', args }`) is written back as its name without a
+  finding;
 - `minimum-credentials` or `maximum-credentials` without an integer `args`, and
   `vp_required_credentials` without `args` of the form `{ required: [...] }`;
 - a per-credential `allowed-issuer` that names no issuer (no `args`, `[]`, `'*'`), which
@@ -359,6 +361,26 @@ Gating one service and leaving another open:
    .addService(full)
 -  .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'not-before', 'revoked-status-list'])
 -  .setVpPolicies(CredentialListTypes.ALLOW, [{ policy: 'signature' }, { policy: 'minimum-credentials', args: '1' }])
+```
+
+Editing an asset published that way: `build()` throws until the asset's VC and VP lists are
+empty. Clearing both removes the asset's emptied `SSIpolicy` entry; then set the policies on
+the gated service:
+
+```ts
+const full = new ServiceBuilder({ asset, serviceId: fullServiceId })
+  .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'not-before', 'revoked-status-list'])
+  .setVpPolicies(CredentialListTypes.ALLOW, [
+    { policy: 'signature' },
+    { policy: 'minimum-credentials', args: '1' }
+  ])
+  .build()
+
+const edited = new AssetBuilder(asset)
+  .setVcPolicies(CredentialListTypes.ALLOW, [])
+  .setVpPolicies(CredentialListTypes.ALLOW, [])
+  .addService(full)
+  .build()
 ```
 
 It also logs a warning (`identity.policy.*` events) for a gate weaker than the recommended
