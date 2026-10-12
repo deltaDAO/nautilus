@@ -211,12 +211,23 @@ describe('JSON escapes and the redaction', () => {
 
   it('stay redacted after the escapes are undone', () => {
     // The first pass redacts the URL and the signature; the second, unescaped, finds the
-    // token. What the first pass removed does not come back.
-    const text = `see https:\\/\\/rpc.example.org\\/v3\\/${FAKE.rpcPathToken} sig ${FAKE.signature} {\\\\\\"apiToken\\\\\\":\\\\\\"${FAKE.nestedApiToken}\\\\\\"}`
+    // token behind its `\u0022` quotes. What the first pass removed does not come back.
+    const text = `see https:\\/\\/rpc.example.org\\/v3\\/${FAKE.rpcPathToken} sig ${FAKE.signature} {\\u0022apiToken\\u0022:\\u0022${FAKE.nestedApiToken}\\u0022}`
     const clean = redactSecrets(text)
     expect(leaks(clean)).to.deep.equal([])
     expect(clean).to.contain('https://rpc.example.org')
     expect(clean).to.contain('"apiToken":"<redacted>"')
+  })
+
+  it('a key quoted by backslashes at any depth is redacted in place, its escapes kept', () => {
+    // JSON in JSON strings, three levels deep: the first pass reads the escaped key as it
+    // stands (PR #213 review), so nothing is left for a second pass to find.
+    const text = `see https:\\/\\/rpc.example.org\\/v3\\/${FAKE.rpcPathToken} {\\\\\\"apiToken\\\\\\":\\\\\\"${FAKE.nestedApiToken}\\\\\\"}`
+    const clean = redactSecrets(text)
+    expect(leaks(clean)).to.deep.equal([])
+    expect(clean).to.contain(
+      '{\\\\\\"apiToken\\\\\\":\\\\\\"<redacted>\\\\\\"}'
+    )
   })
 
   it('a `\\u0022` key is masked at the sensitive debug tier too', () => {

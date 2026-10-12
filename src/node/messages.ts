@@ -171,7 +171,7 @@ const ANSI_ESCAPE =
  *   `log/keys.ts`: signatures, tokens, nonces, session ids, passwords, API keys, S3 and
  *   OAuth secrets, private keys, cookies, presentations, signed transactions, …), given as
  *   `key=value`, as a JSON field (also inside a JSON string, `\"key\":\"value\"`, at any
- *   depth, JSON escapes in keys and URLs decoded first: `decodeJsonEscapes`), or as
+ *   depth, keys and URLs behind JSON escapes read decoded: `decodeJsonEscapes`), or as
  *   `key: value` or `'key': 'value'`, also under deeper JSON escaping (`\u0022` and `\'`
  *   escapes included) and percent-encoding (`apiToken%3D…`): up to `MAX_UNESCAPE_LEVELS`
  *   levels are undone, and escaping deeper than that is flattened (`withEscapesUndone`).
@@ -187,19 +187,31 @@ const ANSI_ESCAPE =
  * brackets (`127.0.0.1:8545/v3/<key>` reads `127.0.0.1:8545`): see `SCHEMELESS_URL`.
  */
 export function redactSecrets(text: string): string {
-  // Escapes hide a key (`\\\"apiToken\\\":…`, `\u0022apiToken\u0022:…`, `apiToken%3D…`)
+  // Escapes hide a key (`\u0022apiToken\u0022:…`, `apiToken%3D…`)
   // or a URL (`https%3A%2F%2F…`) from the patterns, as an RPC's answer quoted in an ethers
   // error message has it: the text is read again with them undone, what the first pass
   // redacted staying redacted (`withEscapesUndone`).
   return withEscapesUndone(text, redactShallow)
 }
 
-/** `redactSecrets` of the text as it is, without undoing escapes. */
+/**
+ * `redactSecrets` of the text as it is, without undoing escapes but the JSON escapes a key
+ * or a URL may hide behind (`decodeJsonEscapes`: `session\u0049d`, `session\u0000Id`,
+ * `https:\/\/…`). As `withEscapesUndone` does, the text keeps those escapes unless reading
+ * it decoded redacts more; then it is shown decoded.
+ */
 function redactShallow(text: string): string {
+  const plain = redactPatterns(text)
+  const decoded = decodeJsonEscapes(text)
+  if (decoded === text) return plain
+  const read = redactPatterns(decoded)
+  return read === decodeJsonEscapes(plain) ? plain : read
+}
+
+/** The redaction patterns of `redactSecrets`, on `text` as it is. */
+function redactPatterns(text: string): string {
   return redactKeyValues(
-    decodeJsonEscapes(text)
-      .replace(URL_PATTERN, originOnly)
-      .replace(SCHEMELESS_URL, hostOnly),
+    text.replace(URL_PATTERN, originOnly).replace(SCHEMELESS_URL, hostOnly),
     SECRET_KEYS
   )
     .replace(BEARER, '$1<redacted>')

@@ -147,8 +147,8 @@ and the value of every key the rules above redact is redacted there too when the
 it as `key=value`, `key: value`, `'key': 'value'`, a JSON field `"key": value` or a JSON
 field inside a JSON string (`\"key\":\"value\"`, as ethers quotes a response body, and
 deeper), a `Cookie` header to the end of its line, and a URL also with JSON-escaped slashes
-(`https:\/\/…`); JSON escapes in a key or a URL are decoded first, so `"session\u0049d"` is
-`sessionId`. The text is also read with up to eight levels of escaping undone: JSON
+(`https:\/\/…`); a key or a URL behind JSON escapes is read decoded, so `"session\u0049d"`
+is `sessionId`. The text is also read with up to eight levels of escaping undone: JSON
 escaping (a body quoted inside JSON several times, `\u0022` and `\'` quotes included) and
 percent-encoding (`apiToken%3D…`, `%22apiToken%22%3A…`, `https%3A%2F%2F…`). Deeper escaping
 is flattened and read once more: every escape is undone, and so is every escape that undoing
@@ -158,10 +158,11 @@ encoded percent signs (`%25253D`) the character it encodes, and a chain of escap
 percent-encoding of any depth, or both mixed, is still redacted.
 When this finds a credential that the text as written hid, the message or field shows the text
 with those escapes undone (`"apiToken":"<redacted>"` where the error had
-`\\\"apiToken\\\":…`), so it can read with fewer backslashes or `%` escapes than the raw
-error; text that hides nothing keeps its escapes. A URL without a scheme on an IP address,
-`localhost` or an IPv6 address in brackets (`127.0.0.1:8545/v3/<key>`) keeps its host and port
-only;
+`\u0022apiToken\u0022:…`), so it can read with fewer backslashes or `%` escapes than the raw
+error; text that hides nothing keeps its escapes, and a key quoted by backslashes at any depth
+(`\\\"apiToken\\\":…`) is redacted where it stands, its escapes kept. A URL without a scheme
+on an IP address, `localhost` or an IPv6 address in brackets (`127.0.0.1:8545/v3/<key>`)
+keeps its host and port only;
 `Bearer` and `Basic` credentials, JWTs, 65-byte hex signatures and raw signed transactions
 are redacted wherever they stand. Text is redacted before and after control characters are
 stripped, so a key split by one is still caught. Free text is matched by pattern, not
