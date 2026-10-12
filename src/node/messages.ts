@@ -43,13 +43,32 @@ const JWT = /\beyJ[\w-]*\.[\w-]+\.[\w-]*/g
 const HEX_SIGNATURE = /\b0x[0-9a-f]{130}\b/gi
 /**
  * A raw signed transaction (ethers quotes it in `transaction="0x02f8…"` of a failed
- * `eth_sendRawTransaction`): an RLP list, typed (`0x01`-`0x04`) or legacy, of 100 bytes or
- * more. Whoever holds one that was never mined can still send it. Ended by a lookahead, not
- * `\b`, so one followed by `_` or a letter is caught too. False positives: about 1 in 85
- * other hex blobs of 100 bytes or more (calldata, ECIES ciphertext) starts like an RLP list
- * and is redacted too; the raw value is in the debug channel, so nothing is lost.
+ * `eth_sendRawTransaction`): an RLP list, typed (`0x01`-`0x04`) or legacy, in long form
+ * (`f8`-`fa` and the payload length: a signature alone is 65 bytes). Whoever holds one that
+ * was never mined can still send it. Ended by a lookahead, not `\b`, so one followed by `_`
+ * or a letter is caught too. `isSignedTransaction` decides which matches are redacted.
  */
-const SIGNED_TRANSACTION = /\b0x(?:0[1-4])?f[89a][0-9a-f]{196,}(?![0-9a-f])/gi
+const SIGNED_TRANSACTION = /\b0x(?:0[1-4])?f[89a][0-9a-f]*(?![0-9a-f])/gi
+/**
+ * From this many bytes, every match is redacted. False positives: about 1 in 85 other hex
+ * blobs of that size (calldata, ECIES ciphertext) starts like an RLP list and is redacted
+ * too; the raw value is in the debug channel, so nothing is lost.
+ */
+const SIGNED_TRANSACTION_BYTES = 100
+
+/**
+ * Whether `hex` (a `SIGNED_TRANSACTION` match) is redacted: 100 bytes or more, or a shorter
+ * one-byte-length list (`f8`, 56 to 255 bytes of payload) whose length matches what follows
+ * exactly, as a minimal legacy transfer's (97 bytes) or a contract creation's does.
+ */
+function isSignedTransaction(hex: string): boolean {
+  const body = hex.slice(2)
+  if (body.length >= 2 * SIGNED_TRANSACTION_BYTES) return true
+  const list = /^(?:0[1-4])?f8([0-9a-f]{2})/i.exec(body)
+  if (!list) return false
+  const payload = Number.parseInt(list[1], 16)
+  return payload >= 56 && body.length - list[0].length === 2 * payload
+}
 
 /** ANSI escape sequences: CSI (`ESC [ … m`), OSC (`ESC ] … BEL`) and two-byte ones. */
 const ANSI_ESCAPE =
@@ -87,7 +106,9 @@ export function redactSecrets(text: string): string {
     .replace(BEARER, '$1<redacted>')
     .replace(JWT, '<redacted>')
     .replace(HEX_SIGNATURE, '<redacted>')
-    .replace(SIGNED_TRANSACTION, '<redacted>')
+    .replace(SIGNED_TRANSACTION, (hex) =>
+      isSignedTransaction(hex) ? '<redacted>' : hex
+    )
 }
 
 /** Whether `value` reads as an error code: see `log/keys.ts`. */
