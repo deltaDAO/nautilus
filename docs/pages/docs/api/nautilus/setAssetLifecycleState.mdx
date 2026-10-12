@@ -63,6 +63,14 @@ store, and a node that decrypts for anyone will still decrypt it. Remove it from
 an asset retired for good: without its creation envelope, a node reindex cannot restore it.
 :::
 
+:::tip[Revoking a deprecated asset]
+Once the node has dropped a deprecated asset, `getAsset` has nothing to give you, and this
+call needs an asset object. To withdraw an asset, set `REVOKED_BY_PUBLISHER` directly. If you
+deprecate first, keep the asset object you read before (from `getAsset` or `publish()`'s
+`ddo`): it holds the NFT address, and this call can still revoke with it. See
+[known limitations](/docs/known-limitations#revoking-after-deprecating).
+:::
+
 `ASSET_UNLISTED` hides nothing by itself. The asset stays resolvable by DID and searchable on
 the node, with `indexedMetadata.nft.state` set to `5`: a market must filter on that state to
 leave it out.

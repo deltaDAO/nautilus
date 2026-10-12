@@ -12,6 +12,7 @@ export const sidebar = {
         { text: 'Examples', link: '/docs/examples' },
         { text: 'TypeScript', link: '/docs/typescript' },
         { text: 'FAQ', link: '/docs/faq' },
+        { text: 'Known limitations', link: '/docs/known-limitations' },
         {
           text: 'Migrating from v1',
           link: '/docs/migration',

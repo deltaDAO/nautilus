@@ -90,6 +90,12 @@ const customConfig: Partial<Config> = {
 
 ## Concurrency and nonces
 
+:::note
+Two limits of this release concern parallel work: buying the same service in parallel from one
+key, and requesting a second download URL for the same consumer and node before the first is
+fetched. See [known limitations](/docs/known-limitations).
+:::
+
 Every transaction nautilus sends goes through a **nonce guard** that `Nautilus.create` wraps
 around your signer. It exists because ocean.js swallows a failed send and returns `null`,
 and because each send used to read its nonce from the RPC on its own: two publishes, a

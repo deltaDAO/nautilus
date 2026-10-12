@@ -1,0 +1,148 @@
+# Known limitations [What this release does not handle yet, and what to do instead]
+
+These are the limits we know of in this release. Each one names what happens, whether money is
+at risk, and what to do until it is fixed. Most are fixed in the next beta; the first one
+needs a change outside nautilus.
+
+| Limitation | Money at risk? | Workaround |
+| --- | --- | --- |
+| [Credential checks can be bypassed](#credential-checks-can-be-bypassed) | No, but data can reach the wrong consumer | Gate on trusted issuers **and** an explicit address allow list |
+| [One download URL at a time per consumer and node](#one-download-url-at-a-time-per-consumer-and-node) | No | Use each URL before you request the next |
+| [Buying the same service in parallel from one key](#buying-the-same-service-in-parallel-from-one-key) | No, gas only | Don't buy the same service concurrently from one key |
+| [An RPC that lags behind can lead to a second purchase](#an-rpc-that-lags-behind-can-lead-to-a-second-purchase) | Yes, one extra purchase | Use a reliable RPC, set `verificationProvider`, don't access again right after buying |
+| [Orders older than about 55 hours are not found](#orders-older-than-about-55-hours-are-not-found) | Yes, with the opt-in | Paid services with a timeout of at most 48 hours; opt in only for a first purchase |
+| [A stuck fee approval gives an unclear error](#a-stuck-fee-approval-gives-an-unclear-error) | No | None needed |
+| [`getAssets` returns nothing on ocean-node 4.2](#getassets-returns-nothing-on-ocean-node-42) | No | Use `getAsset(did)` per asset |
+| [Revoking after deprecating](#revoking-after-deprecating) | No | Revoke directly, or keep the asset object from before deprecating |
+
+## Credential checks can be bypassed
+
+The credential check of a gated asset runs in the node's policy server and the walt.id
+verifier, not in nautilus. The verifier applies the checks you set for a credential type
+(trusted issuers, attribute checks such as a country) only to a presented credential whose
+type is that type, and it reads a credential's type from the **last** entry of its `type`
+list. Any other credential gets only the general checks (a valid signature, not expired, not
+revoked), and those pass for a credential someone signed themselves. So:
+
+- A consumer who builds their own presentation can pass with a self-issued credential of
+  another type.
+- A consumer with a normal wallet can do the same with a self-issued credential whose `type`
+  list names the requested type but ends with another one (`["VerifiableCredential",
+  "gx:LegalPerson", "gx:Extra"]` is filed as `gx:Extra`).
+- A check on the type `VerifiableCredential` itself checks nothing, for anyone: no credential
+  is filed under it, because it is never the last entry.
+
+**Workaround:** gate on a specific credential type (never `VerifiableCredential`) with trusted
+issuers, and always add an explicit address allow list. The consumer signs the download with
+their Ethereum key, and the policy server checks that address whatever credential was
+presented. Never combine a credential gate with `'*'` in the allow list: that leaves no gate
+at all. Treat credential checks as a filter for honest consumers, not as the only protection.
+See [credential-gated assets](/docs/guides/identity#known-limitation-credentials-of-another-type).
+
+**Fixed by:** the policy server or walt.id (outside nautilus).
+
+## One download URL at a time per consumer and node
+
+[`access()`](/docs/api/nautilus/access) returns a download URL signed with a one-time number
+(a nonce) that the node checks when you fetch it. The node accepts a number only if it is
+higher than the last one it accepted from you. A URL is signed with "the last accepted number
+plus one", and the node counts a number as used only when a URL is fetched. So two URLs
+requested for the same consumer and node before either is fetched carry the **same** number:
+the first one fetched works, and the other is refused with HTTP 401:
+
+```text
+HTTP 401: nonce: 110 is not a valid nonce
+```
+
+That URL was replaced by a newer one for the same consumer and node. nautilus does not fetch
+the URL itself, so it cannot turn this answer into a clearer error for you.
+
+**Workaround:** use each URL before you request the next one, and don't call `access()` for
+the same consumer and node in parallel. If a download answers 401 with `is not a valid
+nonce`, call `access()` again and fetch the new URL right away. `access()` looks for the order
+you already hold and reuses it when it finds one
+([`reusedOrder`](/docs/api/nautilus/access#reusedorder) says so). For a paid service, leave a
+few blocks (about 10 seconds) after the purchase before you ask again: an order that new may
+not be found yet (see [an RPC that lags behind](#an-rpc-that-lags-behind-can-lead-to-a-second-purchase)).
+
+**Fixed by:** the next beta (nautilus will issue the numbers itself).
+
+## Buying the same service in parallel from one key
+
+Three `access()` calls for the same paid service from the same key at the same time: one
+order goes through, and the other two transactions fail (reverted on chain) with a generic
+error. Nothing is paid twice, but the gas of the failed transactions is lost.
+
+**Workaround:** don't buy the same service concurrently from one key. Call `access()` once,
+wait for it, then call it again: the second call reuses the order.
+
+**Fixed by:** the next beta (concurrent calls for the same service share one purchase).
+
+## An RPC that lags behind can lead to a second purchase
+
+Before buying, `access()` looks for an order you already hold. If the RPC's view of the chain
+is a block or more behind, an order you placed seconds ago may not be visible yet, and
+`access()` buys again. This needs a second `access()` for the same paid service right after
+the first one, against an RPC that lags (a load balancer whose backends are not in sync, for
+example).
+
+**Workaround:** use a reliable RPC, set
+[`verificationProvider`](/docs/api/nautilus/create#verificationprovider) for paid flows, and
+leave a few blocks (at least about 10 seconds) between buying a paid service and accessing it
+again.
+
+**Fixed by:** the next beta (an order this process just placed is remembered, and a very new
+order is never bought again).
+
+## Orders older than about 55 hours are not found
+
+The order check reads back only the last 100,000 blocks, about 55 hours on OP Sepolia. For
+a paid service whose orders last longer (`timeout: 0`, which means they never expire, or a
+timeout of more than about 55 hours), the check cannot see all of the time an order stays
+valid. When it finds no order of yours in those 55 hours, `access()` stops with an
+[`OrderCheckError`](/docs/api/nautilus/access#ordercheckerror) whose `reason` is
+`incomplete`, and pays nothing. That happens on the first purchase, and again once your order
+is older than about 55 hours. Passing
+[`orderOnLookupFailure: true`](/docs/api/nautilus/access#orderonlookupfailure-optional) then
+buys; for an older order that is still valid, that pays a second time. Within about 55 hours
+of a purchase, the order is found and reused.
+
+**Workaround:** publish paid services with a timeout of at most 48 hours. Use the opt-in only
+for a first purchase, when you know the account holds no order for the service.
+
+**Fixed by:** the next beta (a deeper read, and for `timeout: 0` a read from the datatoken's
+creation).
+
+## A stuck fee approval gives an unclear error
+
+When nautilus approves a provider fee's token and that approval is sent but never confirms
+(dropped or stuck in the mempool), a later failure on the same token gets a generic error
+instead of one that names the stuck approval. Nothing is paid twice.
+
+**Workaround:** none needed. If a payment stops with an unclear error, look up the account's
+pending transactions in a block explorer and retry once they are mined or dropped.
+
+**Fixed by:** the next beta.
+
+## getAssets returns nothing on ocean-node 4.2
+
+[`getAssets()`](/docs/api/nautilus/getAssets) returns `{}` against ocean-node 4.2.x, even for
+assets that exist: the node answers the query in a shape nautilus does not read yet.
+
+**Workaround:** call [`getAsset(did)`](/docs/api/nautilus/getAsset) for each asset.
+
+**Fixed by:** the next beta.
+
+## Revoking after deprecating
+
+Once an asset is `DEPRECATED`, ocean-node 4.2 with Elasticsearch drops its document, so
+[`getAsset`](/docs/api/nautilus/getAsset) answers 404 and there is no asset object left to pass
+to [`setAssetLifecycleState`](/docs/api/nautilus/setAssetLifecycleState). Revoking it through
+nautilus then fails.
+
+**Workaround:** to withdraw an asset, set `REVOKED_BY_PUBLISHER` directly instead of
+deprecating it first. If you deprecate, keep the asset object you read before
+(`getAsset`, or the `ddo` of `publish()`): it holds the NFT address the transaction needs, and
+`setAssetLifecycleState` can still revoke with it.
+
+**Fixed by:** the next beta (lifecycle changes by NFT address).
