@@ -34,7 +34,7 @@ import {
 import { redactSecrets, sanitize } from '../../src/node/messages.js'
 import { OceanNodeError } from '../../src/node/OceanNodeClient.js'
 import { withoutSignedTransaction } from '../../src/utils/nonceGuard.js'
-import { captureLog, cpuTime } from '../helpers.js'
+import { captureLog, cpuBudget, cpuTime } from '../helpers.js'
 import {
   CREDENTIAL_SHAPES,
   FAKE,
@@ -239,7 +239,8 @@ describe('JSON escapes and the redaction', () => {
       const elapsed = await cpuTime(() => {
         redactMessage(text)
       })
-      if (elapsed >= 60) slow.push(`${label}: ${elapsed.toFixed(0)} ms`)
+      if (elapsed >= cpuBudget(60))
+        slow.push(`${label}: ${elapsed.toFixed(0)} ms`)
     }
     expect(slow).to.deep.equal([])
   })
@@ -504,7 +505,7 @@ describe('the nonce guard and hostile RPC text (security regression)', () => {
     const elapsed = await cpuTime(() => {
       withoutSignedTransaction(error)
     })
-    expect(elapsed).to.be.below(300)
+    expect(elapsed).to.be.below(cpuBudget(300))
     // Not the message itself: a failure would print 16 MB.
     expect(error.message.length).to.be.below(40_000)
   })
