@@ -252,6 +252,13 @@ function stringified(text: string, times: number): string {
   return quoted
 }
 
+/** `text` percent-encoded `times` times. */
+function percentEncoded(text: string, times: number): string {
+  let encoded = text
+  for (let time = 0; time < times; time++) encoded = encodeURIComponent(encoded)
+  return encoded
+}
+
 /** A fake private key, for the never-shown keys of the `secrets` tier. */
 const PRIVATE_KEY = `0x${'c0ffee'.repeat(10)}beef`
 
@@ -271,6 +278,7 @@ function everyPath(text: string): [string, string, boolean][] {
       JSON.stringify(redactFields({ error: new Error(text) })),
       false
     ],
+    ['string field', JSON.stringify(redactFields({ detail: text })), false],
     ['nonce guard', `${send.message} ${send.shortMessage}`, false],
     ['maskText', maskText(text), true],
     ['maskCredentials', JSON.stringify(maskCredentials({ note: text })), true]
@@ -355,6 +363,96 @@ describe('how deep escaping is undone (security regression)', () => {
         expect(leaks(shown, masked), path).to.deep.equal([])
       }
     })
+
+  // Past the eight undone levels, a chain of encoded percent signs (`%25…3D`) is read to
+  // its end, and the backslashes it encodes are flattened after it.
+  for (const levels of [10, 12, 16])
+    for (const [label, text, secret] of [
+      [
+        'a JSON key',
+        `{"apiToken":"${FAKE.nestedApiToken}"}`,
+        FAKE.nestedApiToken
+      ],
+      ['`apiToken=`', `apiToken=${FAKE.nestedApiToken}`, FAKE.nestedApiToken],
+      ['a URL', `see ${FAKE.rpcUrl} now`, FAKE.rpcPathToken]
+    ] as const)
+      it(`redacts ${label} percent-encoded ${levels} times on every path`, () => {
+        for (const [path, shown, masked] of everyPath(
+          percentEncoded(text, levels)
+        )) {
+          expect(shown, path).not.to.contain(secret)
+          expect(leaks(shown, masked), path).to.deep.equal([])
+        }
+      })
+
+  for (const [label, text] of [
+    [
+      'percent-encoded 9 times around 2 JSON levels',
+      percentEncoded(stringified(`{"apiToken":"${FAKE.nestedApiToken}"}`, 2), 9)
+    ],
+    [
+      'percent-encoded 10 times around 6 JSON levels',
+      percentEncoded(
+        stringified(`{"apiToken":"${FAKE.nestedApiToken}"}`, 6),
+        10
+      )
+    ],
+    [
+      'quoted 4 times around 12 percent levels',
+      stringified(
+        percentEncoded(`{"apiToken":"${FAKE.nestedApiToken}"}`, 12),
+        4
+      )
+    ],
+    [
+      'percent and JSON alternating, 20 levels',
+      (() => {
+        let mixed = `{"apiToken":"${FAKE.nestedApiToken}"}`
+        for (let level = 0; level < 20; level++)
+          mixed = level % 2 ? JSON.stringify(mixed) : encodeURIComponent(mixed)
+        return mixed
+      })()
+    ]
+  ] as const)
+    it(`redacts a key ${label} on every path`, () => {
+      for (const [path, shown, masked] of everyPath(text)) {
+        expect(shown, path).not.to.contain(FAKE.nestedApiToken)
+        expect(leaks(shown, masked), path).to.deep.equal([])
+      }
+    })
+
+  it('flattens hostile percent chains in linear time', async () => {
+    // 4 MB of `%25…` chains: one long chain, chains that end in no character, and chains
+    // that encode backslashes and quotes. Each is read past the eight undone levels.
+    const chain = (length: number) => `%${'25'.repeat(length)}`
+    const slow: string[] = []
+    for (const [label, text] of [
+      ['one chain', `${chain(2_000_000)}3D`],
+      ['dangling chains', `${chain(60)}zz `.repeat(32_000)],
+      ['encoded backslashes', `${chain(12)}5C`.repeat(140_000)],
+      ['encoded quotes', `apiToken${chain(12)}22:`.repeat(110_000)]
+    ] as const) {
+      expect(text.length, label).to.be.above(3_700_000)
+      // The flatten pass runs: three passes, not two.
+      let passes = 0
+      withEscapesUndone(text, (read) => {
+        passes++
+        return `${read}.`
+      })
+      expect(passes, label).to.equal(3)
+
+      for (const [name, run] of [
+        ['redactSecrets', () => redactSecrets(text)],
+        ['maskText', () => maskText(text)]
+      ] as const) {
+        // Linear takes 0.05-2 s here; quadratic would take hours.
+        const elapsed = await cpuTime(run)
+        if (elapsed >= 10_000)
+          slow.push(`${label}, ${name}: ${elapsed.toFixed(0)} ms`)
+      }
+    }
+    expect(slow).to.deep.equal([])
+  }, 120_000)
 
   it("reads the first pass's output again, so what it redacted stays redacted", () => {
     // A toy pass that redacts `KEY` and, only when it reads it plainly, `"x"`.
