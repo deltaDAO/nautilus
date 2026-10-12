@@ -80,12 +80,23 @@ export function redactMessage(message: string): string {
   return scrub(message, MAX_MESSAGE_LENGTH)
 }
 
-/** A copy of `fields` with every value redacted by its key, safe to serialise as JSON. */
+/**
+ * A copy of `fields` with every value redacted by its key, safe to serialise as JSON.
+ *
+ * With `argsAsFields` (an `oceanjs.*` event), each entry of `fields.args`, an argument
+ * ocean.js logged, is kept as deep as an event's own fields are: the fields object and the
+ * `args` list around it cost no depth, so a payload's `algorithm.meta.container` stays
+ * readable.
+ */
 export function redactFields(
-  fields: Record<string, unknown>
+  fields: Record<string, unknown>,
+  options: { argsAsFields?: boolean } = {}
 ): Record<string, unknown> {
-  return redactObject(fields, 0)
+  return redactObject(fields, 0, options.argsAsFields ? 'args' : undefined)
 }
+
+/** What the fields object and the `args` list around an argument would cost. */
+const ARGS_WRAPPER_DEPTH = 2
 
 /**
  * An error as `Name: message`, sanitised (`Error: …` is just the message), followed by up
@@ -224,7 +235,9 @@ function redactPlain(value: unknown, depth: number): unknown {
 
 function redactObject(
   object: Record<string, unknown>,
-  depth: number
+  depth: number,
+  /** The key whose value is not charged for `ARGS_WRAPPER_DEPTH`. */
+  unwrapped?: string
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   const keys = Object.keys(object)
@@ -232,7 +245,11 @@ function redactObject(
   for (const key of keys.slice(0, MAX_ENTRIES)) {
     // Matched whole, before the cut to `MAX_KEY_LENGTH`, and without control characters
     // and escapes, so neither a long key nor a `session\u0000Id` hides a credential.
-    const value = redactValue(stripControlCharacters(key), object[key], depth)
+    const value = redactValue(
+      stripControlCharacters(key),
+      object[key],
+      key === unwrapped ? depth - ARGS_WRAPPER_DEPTH : depth
+    )
     if (value !== undefined) out[scrub(key, MAX_KEY_LENGTH)] = value
   }
   if (keys.length > MAX_ENTRIES) out['…'] = `${keys.length - MAX_ENTRIES} more`
@@ -335,7 +352,7 @@ export function debugUnredacted(
     COMPONENT_TOPIC[component]
   if (!topic || !debugEnabled('sensitive', topic)) return
   try {
-    if (msg === printedMsg && !touches(fields)) return
+    if (msg === printedMsg && !touches(fields, component)) return
     debugRaw(topic, `log event ${name} before redaction`, { msg, fields })
   } catch {
     // Debug output must never fail the operation it describes.
@@ -348,7 +365,10 @@ export function debugUnredacted(
  * with a plain JSON copy of the raw fields. Fields that do not serialise (a cycle) count
  * as changed.
  */
-function touches(fields: Record<string, unknown>): boolean {
+function touches(
+  fields: Record<string, unknown>,
+  component: LogComponent
+): boolean {
   let raw: string | undefined
   try {
     raw = JSON.stringify(fields, (_key, value: unknown) =>
@@ -357,7 +377,16 @@ function touches(fields: Record<string, unknown>): boolean {
   } catch {
     return true
   }
-  return JSON.stringify(redactFields(fields)) !== raw
+  return (
+    JSON.stringify(
+      redactFields(fields, { argsAsFields: argsAsFields(component) })
+    ) !== raw
+  )
+}
+
+/** Whether `redactFields` keeps the `args` of `component`'s events as deep as fields. */
+export function argsAsFields(component: LogComponent): boolean {
+  return component === 'oceanjs'
 }
 
 // #endregion
