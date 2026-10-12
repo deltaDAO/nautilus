@@ -37,7 +37,7 @@ import {
   OWNER_ADDRESS,
   SERVICE_ID
 } from '../fixtures/Asset.js'
-import { cpuTime } from '../helpers.js'
+import { cpuBudget, cpuTime } from '../helpers.js'
 import { FAKE } from '../secretScan.js'
 
 const NODE = 'https://node.test.invalid'
@@ -549,7 +549,7 @@ describe("a hostile node's per-policy results, in bounded time", () => {
         check = await client.checkPolicySession(SID)
       })
 
-      expect(elapsed, label).to.be.below(50)
+      expect(elapsed, label).to.be.below(cpuBudget(50))
       expect(check?.policyResults, label).to.have.length(entries)
       for (const result of check?.policyResults ?? []) {
         expect(result.policy.length).to.be.at.most(101)
@@ -905,7 +905,7 @@ describe("a policy-server session id in the wallet's text (D10)", () => {
     const elapsed = await cpuTime(() => {
       redacted = redactSecrets(run)
     })
-    expect(elapsed).to.be.below(50)
+    expect(elapsed).to.be.below(cpuBudget(50))
     expect(redacted).not.to.contain(random)
     expect(redacted.endsWith(`0x${'b'.repeat(16_000)}`)).to.equal(true)
   })

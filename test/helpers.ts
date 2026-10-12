@@ -64,6 +64,15 @@ export async function cpuTime(run: () => unknown): Promise<number> {
   return (user + system) / 1_000
 }
 
+/**
+ * A `cpuTime` bound in ms, measured on a developer machine without coverage. CI runners
+ * collect coverage and are about four times slower, which is still well under every
+ * regression these bounds guard against.
+ */
+export function cpuBudget(ms: number): number {
+  return process.env.CI ? ms * 4 : ms
+}
+
 /** The code points `stripControlCharacters` deletes: invisible to a reader. */
 export const INVISIBLE_CODES = [
   [0x00, 0x08],
