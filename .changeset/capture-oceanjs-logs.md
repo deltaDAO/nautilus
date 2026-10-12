@@ -21,7 +21,8 @@ lines: not the level, not the sink, not the redaction.
   print at nautilus's level, in its format and to its sink, so the payload dump now prints as
   a redacted `[oceanjs] error` line on stderr instead of an unredacted one on the console.
   The raw lines reach only the debug channel (topic `node`): its `sensitive` tier, or
-  `secrets` for a credential (an RPC key, a Bearer token, a signed transaction).
+  `secrets` for a credential (an RPC key, a Bearer token). The arguments of one line hold at
+  most 2,000 values, so a node's large answer body stays a short line.
 - `'passthrough'` keeps the old behaviour: ocean.js prints itself, unredacted. `'silent'`
   drops ocean.js's lines. `oceanjs: undefined` goes back to `'capture'`.
 - ocean.js's own level (`LoggerInstance.setLevel`, errors only by default) still decides first
@@ -37,9 +38,11 @@ lines: not the level, not the sink, not the redaction.
   the paths nautilus calls logs a request payload), and the logger of ocean.js's other bundle,
   which an app gets when it loads ocean.js through `require`.
 - Several copies of nautilus in one process share the capture: a copy loaded later keeps the
-  mode in force, `getLoggingConfig().oceanjs` is that mode whichever copy set it, and the
-  lines go to the copy that last set `oceanjs` (else to the first one loaded).
+  mode in force, whichever copy set it, and the lines go to the copy that last set `oceanjs`
+  (else to the first one loaded). The copy that received them until then warns
+  (`oceanjs.capture.moved`), e.g. when a bundled copy sets `'passthrough'`.
 - A line ocean.js logs while nautilus captures one (a `sink` or debug sink that logs through
   `LoggerInstance`) is dropped, with one `oceanjs.capture.nested_dropped` warning; it never
   prints unredacted. A frozen `LoggerInstance` is left alone: nothing is captured, and
-  `oceanjs.capture.unavailable` warns once when nautilus is imported.
+  `oceanjs.capture.unavailable` warns once when nautilus is imported, with advice that works
+  for the case (a frozen logger's level can't change after it is frozen).
