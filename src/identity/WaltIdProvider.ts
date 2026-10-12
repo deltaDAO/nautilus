@@ -422,10 +422,58 @@ function withoutSessionId(text: string, sessionId: string): string {
     ...sessionId.split('-').filter((part) => part.length >= 32)
   ]
 
-  return parts.reduce(
-    (current, part) => withoutText(current, asciiLowerCase(part)),
-    text
+  return withoutCutStart(
+    parts.reduce(
+      (current, part) => withoutText(current, asciiLowerCase(part)),
+      text
+    ),
+    parts
   )
+}
+
+/**
+ * `text` without the start of one of `parts` that a cut left at its end, before the `…` that
+ * marks the cut: `WaltIdHttpWallet` bounds the wallet's message before the provider sees
+ * it, and a cut inside the session id kept its first characters, which no longer read as
+ * the id. The longest such start goes; its length is found in linear time.
+ */
+function withoutCutStart(text: string, parts: string[]): string {
+  if (!text.endsWith('…')) return text
+
+  const kept = text.slice(0, -1)
+  const folded = asciiLowerCase(kept)
+  const cut = Math.max(
+    0,
+    ...parts.map((part) => cutStartLength(folded, asciiLowerCase(part)))
+  )
+
+  return cut ? `${kept.slice(0, kept.length - cut)}<redacted>…` : text
+}
+
+/**
+ * The length of the longest end of `text` that is a start of `part`, shorter than `part`
+ * (a whole one is redacted already): the prefix function of `part`, then `text`.
+ */
+function cutStartLength(text: string, part: string): number {
+  const start = part.slice(0, -1)
+  if (!start) return 0
+
+  const prefix = new Array<number>(start.length).fill(0)
+  for (let at = 1, length = 0; at < start.length; at++) {
+    while (length && start[at] !== start[length]) length = prefix[length - 1]
+    if (start[at] === start[length]) length++
+    prefix[at] = length
+  }
+
+  let length = 0
+  const from = Math.max(0, text.length - start.length)
+  for (let at = from; at < text.length; at++) {
+    if (length === start.length) length = prefix[length - 1]
+    while (length && text[at] !== start[length]) length = prefix[length - 1]
+    if (text[at] === start[length]) length++
+  }
+
+  return length
 }
 
 /** `text` with every occurrence of `part` (lower case), in any letter case, redacted. */
