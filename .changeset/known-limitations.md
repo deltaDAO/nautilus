@@ -15,10 +15,11 @@ release are documented on one page.
   encoded RPC URL) reached the `error` field of a log event, an operation's
   `…operation.failed` event, an `OceanNodeError` and the message of a failed send, because
   the redaction did not look under the escapes. It now reads the text with up to eight levels
-  of JSON escaping and percent-encoding undone, and flattens deeper escaping in one more pass,
-  and redacts what it finds there. Text that hides nothing keeps its escapes. The raw value is
-  still in the debug channel: at `NAUTILUS_DEBUG=secrets`, not at `sensitive`, which now reads
-  the same escapes, JSON-escaped URLs included.
+  of JSON escaping and percent-encoding undone, and flattens deeper JSON escaping and
+  percent-encoding of any depth (also mixed) for one more read, and redacts what it finds
+  there. Text that hides nothing keeps its escapes. The raw value is still in the debug
+  channel: at `NAUTILUS_DEBUG=secrets`, not at `sensitive`, which now reads the same escapes,
+  JSON-escaped URLs included.
 - **A failed send's error is bounded.** The nonce guard keeps the first 16,000 characters of
   each message of a failed send, with ANSI escapes and control characters stripped, so a huge
   error body from an RPC is redacted in bounded time. The raw error is in the debug channel
@@ -37,5 +38,6 @@ release are documented on one page.
   address allow list), one download URL at a time, buying the same service in parallel from
   one key, a second `access()` right after buying a paid service (wait until at least 2 more
   blocks are mined after the purchase, or it pays again; a lagging RPC extends that wait),
-  orders older than about 55 hours, a stuck fee approval, `getAssets` on ocean-node 4.2, and
-  revoking after deprecating.
+  every `compute()` buying its paid datasets and algorithms again (price compute services as
+  free, or expect one purchase per job), orders older than about 55 hours, a stuck fee
+  approval, `getAssets` on ocean-node 4.2, and revoking after deprecating.
