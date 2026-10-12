@@ -845,9 +845,9 @@ export class Nautilus {
     // The DID depends on the NFT address, so the DDO can only be stored after the mint. A
     // store that can tell it will fail says so now, before anything is spent.
     await remoteStore.check?.()
-    await this.warnIfPublisherIsNode()
-    await this.warnIfPolicyServerDeniesAll(asset)
-    await this.assertIndexerNotStuck(options)
+    await this.warnIfPublisherIsNode(log)
+    await this.warnIfPolicyServerDeniesAll(log, asset)
+    await this.assertIndexerNotStuck(options, log)
 
     const published: PublishedService[] = []
 
@@ -887,7 +887,8 @@ export class Nautilus {
           lifecycleState: asset.lifecycleState ?? 0,
           remoteStore,
           ddoSigner,
-          issuer
+          issuer,
+          log
         })
       } catch (error) {
         throw new PublishIncompleteError(
@@ -899,11 +900,14 @@ export class Nautilus {
         )
       }
 
-      return this.assertAloneInBlock({
-        ...result,
-        nftAddress: created.nftAddress,
-        services: published
-      })
+      return this.assertAloneInBlock(
+        {
+          ...result,
+          nftAddress: created.nftAddress,
+          services: published
+        },
+        log
+      )
     })
 
     return this.finishWrite(response, options)
@@ -933,8 +937,8 @@ export class Nautilus {
     asset: NautilusAsset,
     options: CompletePublishOptions = {}
   ): Promise<PublishResponse> {
-    return this.operation('completePublish', () =>
-      this.runCompletePublish(nftAddress, asset, options)
+    return this.operation('completePublish', (log) =>
+      this.runCompletePublish(nftAddress, asset, options, log)
     )
   }
 
@@ -942,7 +946,8 @@ export class Nautilus {
   private async runCompletePublish(
     nftAddress: string,
     asset: NautilusAsset,
-    options: CompletePublishOptions
+    options: CompletePublishOptions,
+    log: Logger
   ): Promise<PublishResponse> {
     assertEncryptOption(options)
     assertWritableState(asset.lifecycleState ?? 0, 'the asset')
@@ -967,7 +972,7 @@ export class Nautilus {
       // between these checks and that read shows up there.
       if (metadataTxHash)
         await this.assertEarlierWriteSettled(nftAddress, metadataTxHash)
-      await this.assertNoPendingTransactions(nftAddress)
+      await this.assertNoPendingTransactions(nftAddress, log)
 
       const status = await readMetadataStatus(
         new Nft(this.signer, this.config.chainId, this.config),
@@ -1013,9 +1018,9 @@ export class Nautilus {
         issuer
       })
       await remoteStore.check?.()
-      await this.warnIfPublisherIsNode()
-      await this.warnIfPolicyServerDeniesAll(asset, nftAddress)
-      await this.assertIndexerNotStuck(options)
+      await this.warnIfPublisherIsNode(log)
+      await this.warnIfPolicyServerDeniesAll(log, asset, nftAddress)
+      await this.assertIndexerNotStuck(options, log)
 
       // Every reused datatoken is on its service before the first transaction, so a retry
       // after a failure further down finds them by name.
@@ -1058,14 +1063,18 @@ export class Nautilus {
         lifecycleState: asset.lifecycleState ?? 0,
         remoteStore,
         ddoSigner,
-        issuer
+        issuer,
+        log
       })
 
-      return this.assertAloneInBlock({
-        ...result,
-        nftAddress,
-        services: published
-      })
+      return this.assertAloneInBlock(
+        {
+          ...result,
+          nftAddress,
+          services: published
+        },
+        log
+      )
     })
 
     return this.finishWrite(response, options)
@@ -1231,7 +1240,10 @@ export class Nautilus {
    * signer counts, since nautilus cannot tell which it is. Best effort: when the counts
    * cannot be read, it warns and goes on.
    */
-  private async assertNoPendingTransactions(nftAddress: string): Promise<void> {
+  private async assertNoPendingTransactions(
+    nftAddress: string,
+    log: Logger
+  ): Promise<void> {
     let pending: number
     let latest: number
     try {
@@ -1240,7 +1252,7 @@ export class Nautilus {
         this.signer.getNonce('latest')
       ])
     } catch (error) {
-      this.log.emit(
+      log.emit(
         'publish.preflight.pending_unreadable',
         `completePublish could not read the signer's pending transaction count, so it cannot tell whether an earlier metadata transaction for ${nftAddress} is still pending.`,
         { nftAddress, error }
@@ -1303,13 +1315,14 @@ export class Nautilus {
     asset: NautilusAsset,
     options: PublishOptions = {}
   ): Promise<PublishResponse> {
-    return this.operation('edit', () => this.runEdit(asset, options))
+    return this.operation('edit', (log) => this.runEdit(asset, options, log))
   }
 
   /** `edit()`, within its operation. */
   private async runEdit(
     asset: NautilusAsset,
-    options: PublishOptions
+    options: PublishOptions,
+    log: Logger
   ): Promise<PublishResponse> {
     const baseline = asset.ddo.getOriginalDDO()
 
@@ -1362,9 +1375,9 @@ export class Nautilus {
         issuer
       })
       await remoteStore.check?.()
-      await this.warnIfPublisherIsNode()
-      await this.warnIfPolicyServerDeniesAll(asset)
-      await this.assertIndexerNotStuck(options)
+      await this.warnIfPublisherIsNode(log)
+      await this.warnIfPolicyServerDeniesAll(log, asset)
+      await this.assertIndexerNotStuck(options, log)
 
       const published: PublishedService[] = []
       const created: string[] = []
@@ -1383,7 +1396,8 @@ export class Nautilus {
           lifecycleState,
           remoteStore,
           ddoSigner,
-          issuer
+          issuer,
+          log
         })
       } catch (error) {
         if (!created.length) throw error
@@ -1395,11 +1409,14 @@ export class Nautilus {
         )
       }
 
-      return this.assertAloneInBlock({
-        ...result,
-        nftAddress,
-        services: published
-      })
+      return this.assertAloneInBlock(
+        {
+          ...result,
+          nftAddress,
+          services: published
+        },
+        log
+      )
     })
 
     return this.finishWrite(response, options)
@@ -1444,7 +1461,8 @@ export class Nautilus {
    * Best effort: when the logs cannot be read, it logs that and goes on.
    */
   private async assertAloneInBlock(
-    response: PublishResponse
+    response: PublishResponse,
+    log: Logger
   ): Promise<PublishResponse> {
     const receipt = response.setMetadataTxReceipt
     if (typeof receipt?.blockNumber !== 'number') return response
@@ -1457,7 +1475,7 @@ export class Nautilus {
         receipt.blockNumber
       )
     } catch (error) {
-      this.log.emit(
+      log.emit(
         'publish.metadata.events_unchecked',
         `Could not check block ${receipt.blockNumber} for other metadata events on ${response.nftAddress}.`,
         {
@@ -1511,8 +1529,10 @@ export class Nautilus {
    * (`providerAddress` from `GET /`). The indexer then signs its decrypt calls with the
    * same key and nonce sequence as the publisher's requests, they collide, and decrypt
    * fails with 401: the asset goes on chain but is never indexed. Best effort.
+   *
+   * The check runs once, so its events belong to the operation that ran it (`log`).
    */
-  private warnIfPublisherIsNode(): Promise<void> {
+  private warnIfPublisherIsNode(log: Logger): Promise<void> {
     this.nodeKeyCheck ??= (async () => {
       try {
         const [nodeAddress, publisher] = await Promise.all([
@@ -1521,14 +1541,14 @@ export class Nautilus {
         ])
 
         if (nodeAddress && getAddress(publisher) === getAddress(nodeAddress))
-          this.log.emit(
+          log.emit(
             'publish.preflight.publisher_is_node',
             `The publisher ${publisher} is the node's own address (${this.node.nodeUri} reports providerAddress ${nodeAddress}). The indexer signs its decrypt calls with that key, so its nonces collide with yours and decrypt fails with 401: the asset goes on chain but is not indexed. Publish with a different key than the node's.`,
             { publisher, nodeAddress, nodeUri: this.node.nodeUri },
             { once: nodeAddress }
           )
       } catch (error) {
-        this.log.emit(
+        log.emit(
           'publish.preflight.node_address_unreadable',
           "Could not read the node's address.",
           { nodeUri: this.node.nodeUri, error }
@@ -1559,6 +1579,7 @@ export class Nautilus {
    * differ only in a trailing slash are one node.
    */
   private async warnIfPolicyServerDeniesAll(
+    log: Logger,
     asset: NautilusAsset,
     nftAddress?: string
   ): Promise<void> {
@@ -1583,7 +1604,7 @@ export class Nautilus {
       try {
         configured = await this.node.forEndpoint(endpoint).hasPolicyServer()
       } catch (error) {
-        this.log.emit(
+        log.emit(
           'publish.preflight.policy_server_unknown',
           'Could not ask the node whether it has a policy server.',
           { endpoint, error }
@@ -1598,7 +1619,7 @@ export class Nautilus {
         await this.signer.getAddress().catch(() => ''),
         name
       ])
-      this.log.emit(
+      log.emit(
         'publish.preflight.denies_all',
         `${endpoint} has a policy server, and this asset's credentials have no address allow list (credentials: {}, or an allow list without an 'address' entry). The policy server checks the consumer's address against that list first, so it denies every consumer: the asset will be published, but nobody can download it or compute on it. Add the consumers' addresses with addCredentialAddresses(CredentialListTypes.ALLOW, [...]) before publishing.`,
         did ? { endpoint, did } : { endpoint, name },
@@ -1618,14 +1639,17 @@ export class Nautilus {
    * will be after this publish, and the asset will not be indexed; that is warned about,
    * not refused.
    */
-  private async assertIndexerNotStuck(options: PublishOptions): Promise<void> {
+  private async assertIndexerNotStuck(
+    options: PublishOptions,
+    log: Logger
+  ): Promise<void> {
     if (options.checkIndexerNonce === false) return
 
     let state: Awaited<ReturnType<OceanNodeClient['getIndexerNonceState']>>
     try {
       state = await this.node.getIndexerNonceState()
     } catch (error) {
-      this.log.emit(
+      log.emit(
         'publish.preflight.indexer_nonce_unreadable',
         "Could not read the indexer's nonce; skipping the check.",
         { nodeUri: this.node.nodeUri, error }
@@ -1642,7 +1666,7 @@ export class Nautilus {
       nodeAcceptsZeroByteNonce(state.nodeVersion) &&
       !isIndexerNonceSignable(state.nodeAddress, decryptNonce)
     )
-      this.log.emit(
+      log.emit(
         'node.indexer_nonce.zero_byte_accepted',
         `The indexer of ${this.node.nodeUri} will sign its second decrypt call for this asset with nonce ${decryptNonce}, whose hash starts with a zero byte, which ocean-node before 4.2.2 refuses; the node reports version ${state.nodeVersion} (self-reported; the fix is in the OE fork), so nautilus does not warn. If this asset is not indexed, check the node's logs for 'consumer address and nonce signature mismatch'.`,
         {
@@ -1660,7 +1684,7 @@ export class Nautilus {
         state.nodeVersion
       )
     )
-      this.log.emit(
+      log.emit(
         'publish.preflight.indexer_nonce_will_stick',
         `The indexer of ${this.node.nodeUri} will sign its second decrypt call for this asset with nonce ${decryptNonce}, which the node does not accept: unless another decrypt moves the nonce first, this asset will not be indexed and the indexer nonce will be stuck until the operator advances it.`,
         { nodeUri: this.node.nodeUri, decryptNonce },
@@ -1764,6 +1788,8 @@ export class Nautilus {
     ddoSigner: DdoSigner
     /** Resolved before the first transaction, so it is not asked for twice. */
     issuer: string
+    /** The operation's logger. */
+    log: Logger
   }): Promise<Omit<PublishResponse, 'nftAddress' | 'services' | 'indexed'>> {
     const {
       asset,
@@ -1771,7 +1797,8 @@ export class Nautilus {
       create,
       lifecycleState,
       remoteStore,
-      ddoSigner
+      ddoSigner,
+      log
     } = params
 
     const ddo = await asset.ddo.getDDO(this.node, {
@@ -1839,7 +1866,7 @@ export class Nautilus {
           sent = progress === 'sent'
           txHash = hash ?? txHash
         },
-        logger: this.log
+        logger: log
       })
     } catch (error) {
       throw await settleStoredEnvelope(error, {
