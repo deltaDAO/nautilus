@@ -115,7 +115,7 @@ describe('parallel operations (10c)', () => {
     const events = captured.events
     expect(events.length).to.be.greaterThan(0)
     for (const event of events) {
-      expect(event.opId, event.event).to.match(/^[0-9a-f]{8}$/)
+      expect(event.opId, event.event).to.match(/^[0-9a-f]{12}$/)
       expect(event.operation, event.event).to.be.a('string')
     }
 

@@ -10,7 +10,9 @@
  * logger) then carry no `opId`, never a wrong one.
  *
  * The error a call throws carries its `opId` too, as `error.opId`, so a bug report's error
- * leads straight to its log lines.
+ * leads straight to its log lines. An error object that several calls throw (one cached
+ * rejection, an abort reason) has the last one's as `error.opId` and all of them, in order,
+ * as `error.opIds`.
  *
  * Nothing in the context comes from the caller, the node or the chain: the `opId` is
  * random and the operation is one of the names below.
@@ -35,7 +37,7 @@ export type OperationName =
 
 /** One running operation. */
 export interface OperationContext {
-  /** 8 lower-case hex characters, random. */
+  /** 12 lower-case hex characters, random. */
   readonly opId: string
   readonly operation: OperationName
   /** When it started, in ms (`performance.now()` where there is one). */
@@ -168,20 +170,38 @@ const EVENTS: Record<OperationName, OperationEvents> = {
 }
 
 /**
+ * The operations still running, each with the logger it was started on (an instance's,
+ * or the process-wide one). An operation leaves when it ends; its context may stay
+ * behind in work it started (a timer, a listener), which `runOperation` must not join.
+ */
+const running = new WeakMap<OperationContext, Logger>()
+
+/**
  * Runs `run` as the operation `name`: a new `opId`, an `…started` event, then
  * `…finished` or `…failed` with `durationMs`, and the `opId` on the error it throws.
  * `run` gets `logger` bound to the operation: pass it to whatever the operation calls.
  *
- * Inside another operation (a call made from a callback of one, such as
- * `confirmProviderFees`), `run` joins it: no new `opId`, no events of its own.
+ * Inside another operation that is still running on the same logger (a call made from a
+ * callback of one, such as `confirmProviderFees`), `run` joins it: no new `opId`, no
+ * events of its own, the outer `opId` on its error. An operation that has ended, or one
+ * of another logger (another tenant's instance), is not joined: work it left behind, such
+ * as a timer, starts operations of its own. Joining needs `AsyncLocalStorage`; without it
+ * every call is an operation of its own.
  */
 export async function runOperation<T>(
   logger: Logger,
   name: OperationName,
   run: (log: Logger) => Promise<T>
 ): Promise<T> {
+  const root = logger.root()
   const outer = currentOperation()
-  if (outer) return run(logger.withOperation(outer))
+  if (outer && running.get(outer) === root)
+    try {
+      return await run(logger.withOperation(outer))
+    } catch (error) {
+      tagError(error, outer.opId)
+      throw error
+    }
 
   const context: OperationContext = {
     opId: newOpId(),
@@ -192,6 +212,7 @@ export async function runOperation<T>(
   const events = EVENTS[name]
 
   const operation = async (): Promise<T> => {
+    running.set(context, root)
     log.emit(events.started, `${name} started.`)
     try {
       const result = await run(log)
@@ -208,39 +229,63 @@ export async function runOperation<T>(
       })
       tagError(error, context.opId)
       throw error
+    } finally {
+      running.delete(context)
     }
   }
 
   return storage ? storage.run(context, operation) : operation()
 }
 
+/** How many `opIds` an error keeps: the first, and the latest after it. */
+const MAX_OP_IDS = 16
+
+/** The `opIds` nautilus gave each error, so one it did not tag is told apart. */
+const tagged = new WeakMap<object, readonly string[]>()
+
 /**
- * Sets `error.opId`, unless the error has one already (it came from another operation
- * first) or cannot take one (not an object, frozen). Not enumerable, so the error
- * compares, prints and serialises as it did.
+ * Sets `error.opId` to `opId`, and appends it to `error.opIds`: an error object several
+ * operations throw (a cached rejection, an abort reason) names the latest as `opId`, and
+ * all of them, the first one first, as `opIds` (the first and the latest 15 of more than
+ * 16). Not enumerable, so the error compares, prints and serialises as it did.
+ *
+ * An error is left as it is when it cannot take them (not an object, frozen, a Proxy
+ * whose traps throw) or has an `opId` nautilus did not set (the app's own). Never throws,
+ * so the error is always rethrown as it was.
  */
 function tagError(error: unknown, opId: string): void {
   if (
     (typeof error !== 'object' && typeof error !== 'function') ||
-    error === null ||
-    Object.hasOwn(error, 'opId')
+    error === null
   )
     return
   try {
-    Object.defineProperty(error, 'opId', {
-      value: opId,
-      enumerable: false,
-      writable: true,
-      configurable: true
-    })
+    const earlier = tagged.get(error)
+    if (earlier ? earlier.at(-1) === opId : Object.hasOwn(error, 'opId')) return
+
+    const all = [...(earlier ?? []), opId]
+    const opIds = Object.freeze(
+      all.length > MAX_OP_IDS ? [all[0], ...all.slice(1 - MAX_OP_IDS)] : all
+    )
+    for (const [key, value] of [
+      ['opId', opId],
+      ['opIds', opIds]
+    ] as const)
+      Object.defineProperty(error, key, {
+        value,
+        enumerable: false,
+        writable: true,
+        configurable: true
+      })
+    tagged.set(error, opIds)
   } catch {
-    // A frozen or sealed error keeps no opId.
+    // A frozen or sealed error, or a Proxy that refuses, keeps no opId.
   }
 }
 
-/** 8 random lower-case hex characters. */
+/** 12 random lower-case hex characters. */
 function newOpId(): string {
-  const bytes = new Uint8Array(4)
+  const bytes = new Uint8Array(6)
   const crypto = (
     globalThis as {
       crypto?: { getRandomValues?: (array: Uint8Array) => Uint8Array }

@@ -19,7 +19,7 @@ export interface LogEvent {
   /** A human-readable sentence. It may change between versions; `event` does not. */
   msg: string
   /**
-   * The operation (the public call) the event belongs to: 8 random hex characters, the
+   * The operation (the public call) the event belongs to: 12 random hex characters, the
    * same on every event of one call and on the error it throws (`error.opId`). Unset
    * outside an operation, and in a browser on events of code the call does not hand its
    * logger (see `configureLogging`).

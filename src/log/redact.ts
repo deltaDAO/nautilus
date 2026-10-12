@@ -269,8 +269,58 @@ const EVENT_TOPIC: Partial<Record<LogEventName, DebugTopic>> = {
 }
 
 /**
+ * The topic of the data an error of these kinds holds, whichever operation threw it: the
+ * presented credential's (`policyResults`, `details`) under `policy` and `wallet`, the
+ * nonce state (`attempts`) under `nonce`. Matched by `name`.
+ */
+const ERROR_TOPIC: Readonly<Record<string, DebugTopic>> = {
+  PolicyDeniedError: 'policy',
+  CredentialPresentationError: 'policy',
+  WaltIdWalletError: 'wallet',
+  NonceGuardError: 'nonce',
+  IndexerNonceStuckError: 'nonce'
+}
+
+/** How many levels of `cause` `errorTopic` reads. */
+const MAX_TOPIC_CAUSE_DEPTH = 8
+
+/** An operation's `failed` event: the whole raw error is in its `error` field. */
+const OPERATION_FAILED = /\.(?:operation|query)\.failed$/
+
+/**
+ * The topic of the first error in the cause chain of `fields.error` that has one (`ERROR_TOPIC`),
+ * else `undefined`. Never throws.
+ */
+function errorTopic(fields: Record<string, unknown>): DebugTopic | undefined {
+  let current: unknown
+  try {
+    current = fields.error
+  } catch {
+    return undefined
+  }
+  for (let depth = 0; depth < MAX_TOPIC_CAUSE_DEPTH; depth++) {
+    if (!current || typeof current !== 'object') return undefined
+    try {
+      const name = (current as { name?: unknown }).name
+      if (typeof name === 'string' && Object.hasOwn(ERROR_TOPIC, name))
+        return ERROR_TOPIC[name]
+    } catch {
+      return undefined
+    }
+    const cause = causeOf(current)
+    if (cause === current) return undefined
+    current = cause
+  }
+  return undefined
+}
+
+/**
  * Hands the raw message and fields of a printed log event to the sensitive debug channel,
  * when its topic is on and the redaction changed something. Never throws.
+ *
+ * The topic is the event's (`EVENT_TOPIC`), else its component's; for an operation's
+ * `failed` event it is that of the error's origin where `ERROR_TOPIC` knows it (a
+ * `PolicyDeniedError` from `access()` goes to `policy`, not `order`).
  */
 export function debugUnredacted(
   name: LogEventName,
@@ -279,7 +329,10 @@ export function debugUnredacted(
   fields: Record<string, unknown>,
   printedMsg: string
 ): void {
-  const topic = EVENT_TOPIC[name] ?? COMPONENT_TOPIC[component]
+  const topic =
+    (OPERATION_FAILED.test(name) ? errorTopic(fields) : undefined) ??
+    EVENT_TOPIC[name] ??
+    COMPONENT_TOPIC[component]
   if (!topic || !debugEnabled('sensitive', topic)) return
   try {
     if (msg === printedMsg && !touches(fields)) return
