@@ -51,11 +51,51 @@ const URL_PATTERN =
 /** A `Bearer` or `Basic` credential, wherever it stands. */
 const BEARER = /((?:Bearer|Basic)\s+)[\w.~+/=-]+/gi
 /**
- * A JWT (`eyJ…` header, payload and signature, base64url). Also right after a letter when
- * its payload is a JSON object too (`eyJ…`), as one is when `stripControlCharacters`
- * deletes an escape that ended in a letter in front of it (`Evil\u001b[2JeyJ…`).
+ * A run of base64url words joined by dots (`a.b.c`), whole: where `redactJwts` looks for
+ * JWTs. It starts only where no such character stands before it, so each run is read once
+ * and hostile text costs linear time; a rule for the JWT itself without a word boundary in
+ * front would rescan the run from each `eyJ`.
  */
-const JWT = /\beyJ[\w-]*\.[\w-]+\.[\w-]*|eyJ[\w-]*\.eyJ[\w-]*\.[\w-]*/g
+const DOTTED_RUN = /(?<![\w.-])[\w-]*\.[\w.-]*/g
+/** A JSON object's start in base64url, at least 10 characters: `{"`, `{ ` or `{\n`. */
+const JSON_OBJECT = /e[wy][\w-]{8}/
+
+/**
+ * A dotted run (`DOTTED_RUN`) with each JWT in it (header, payload and signature,
+ * base64url) replaced by `<redacted>`. A JWT's header is a JSON object: `eyJ…` (`{"`), or
+ * `ew…`/`eyA…` when its JSON has whitespace, which counts only when the payload does too.
+ *
+ * It is found also right after a letter, as one is when `stripControlCharacters` deletes
+ * an escape that ended in a letter in front of it (`Evil\u001b[2JeyJ…`): from the first
+ * header start in its word, so what stood before it in that word may go with it.
+ */
+function redactJwts(run: string): string {
+  const parts = run.split('.')
+  const kept: string[] = []
+  let index = 0
+  while (index < parts.length) {
+    const start =
+      index + 2 < parts.length
+        ? headerStart(parts[index], parts[index + 1])
+        : -1
+    if (start < 0) {
+      kept.push(parts[index])
+      index += 1
+    } else {
+      kept.push(`${parts[index].slice(0, start)}<redacted>`)
+      index += 3
+    }
+  }
+  return kept.join('.')
+}
+
+/** Where a JWT's header starts in `word`, with `payload` after it, or `-1`. */
+function headerStart(word: string, payload: string): number {
+  if (payload === '') return -1
+  const compact = word.indexOf('eyJ')
+  if (compact >= 0) return compact
+  return payload.search(JSON_OBJECT) === 0 ? word.search(JSON_OBJECT) : -1
+}
 /**
  * A 65-byte ECDSA signature in hex, wherever it stands: also right after a letter, as
  * one is when an escape before it is deleted (`Evil\u001b[2J0x…`).
@@ -114,7 +154,7 @@ export function redactSecrets(text: string): string {
     SECRET_KEYS
   )
     .replace(BEARER, '$1<redacted>')
-    .replace(JWT, '<redacted>')
+    .replace(DOTTED_RUN, redactJwts)
     .replace(HEX_SIGNATURE, '<redacted>')
     .replace(SIGNED_TRANSACTION, '<redacted>')
     .replace(POLICY_SESSION_ID, redactSessionId)

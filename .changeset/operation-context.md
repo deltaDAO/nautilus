@@ -42,7 +42,9 @@ can be told apart, and a thrown error leads to its lines.
 - **Redaction fix.** A JWT, a signature or a signed transaction right after an escape
   sequence that ends in a letter (`Evil\u001b[2J<token>`) was printed: deleting the escape
   glued the token to the word before it. Such tokens are now redacted there too, in log
-  lines and error messages.
+  lines and error messages, also when the JWT's payload JSON has whitespace (`{\n"sub":…}`,
+  encoded `ewo…` rather than `eyJ…`). A JWT whose header JSON has whitespace is now redacted
+  as well; it was printed even on its own.
 
 The `opId` is random and the operation a fixed name: neither carries your data, the node's
 or the chain's, and both pass the same field redaction as every other field.

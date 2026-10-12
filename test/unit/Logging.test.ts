@@ -958,6 +958,41 @@ describe('regressions (V f)', () => {
         )
       }
     })
+
+    it('redacts a JWT whose JSON has whitespace, also glued to the word before it (PR #219 review)', () => {
+      // `{\n"sub":…}` encodes to `ewo…`, `{ "sub": …}` to `eyA…`: not `eyJ`. A deleted
+      // escape glues the token to `Evil`, where a word boundary in front finds nothing.
+      const part = (json: string) => Buffer.from(json).toString('base64url')
+      const signature = part('fake-signature-of-the-test-jwt')
+      const header = part('{"alg":"HS256","typ":"JWT"}')
+      const formattedHeader = part('{\n  "alg": "HS256"\n}')
+      const tokens = [
+        `${header}.${part('{\n"sub":"test-user"\n}')}.${signature}`,
+        `${header}.${part('{ "sub": "test-user" }')}.${signature}`,
+        `${header}.${part('{}')}.${signature}`,
+        `${formattedHeader}.${part('{\n  "sub": "test-user"\n}')}.${signature}`
+      ]
+      for (const token of tokens) {
+        for (const before of ['', 'refused ', 'see:', 'a.b.'])
+          expect(sanitize(`${before}${token} end`, 500, null), token).to.equal(
+            `${before}<redacted> end`
+          )
+        expect(
+          sanitize(`Evil\u001b[2J${token} end`, 500, null),
+          token
+        ).to.equal('Evil<redacted> end')
+      }
+    })
+
+    it('keeps dotted words that are no JWT', () => {
+      for (const text of [
+        'see node.example.org and v1.2.3',
+        'file survey_results.tar.gz',
+        'heyJoe.foo',
+        'eyJ.'
+      ])
+        expect(sanitize(text, 500, null), text).to.equal(text)
+    })
   })
 
   describe('emit never throws (fix round)', () => {

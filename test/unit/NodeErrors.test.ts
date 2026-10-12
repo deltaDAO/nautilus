@@ -1241,6 +1241,23 @@ describe("the node's text in a message", () => {
     }
   })
 
+  it('finds JWTs in linear time, also where one may be glued to a word (PR #219 review)', async () => {
+    // Runs a JWT rule without a word boundary in front would rescan from each `eyJ` or
+    // `ey` (about 70 ms each at the log window of 16,000, and in the square of the length).
+    const slow: string[] = []
+    for (const text of [
+      'eyJ'.repeat(5_333),
+      `${'eyJ'.repeat(2_666)}.${'eyJ'.repeat(2_666)}`,
+      `${'ey'.repeat(4_000)}.${'ey'.repeat(4_000)}.`,
+      'eyJa.'.repeat(3_200)
+    ]) {
+      const elapsed = await cpuTime(() => redactMessage(text))
+      if (elapsed >= cpuBudget(30))
+        slow.push(`${text.slice(0, 6)}: ${elapsed.toFixed(0)} ms`)
+    }
+    expect(slow).to.deep.equal([])
+  })
+
   it('drops the word the read limit cuts in no time, also at the log window (security regression)', async () => {
     // A run with no separator up to just before the read limit, then one: the word the cut
     // splits used to be found by a regular expression that rescanned the run from each of
