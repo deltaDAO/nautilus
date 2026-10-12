@@ -810,21 +810,56 @@ export async function readMetadataState(
 /**
  * The NFT's lifecycle state and whether it carries metadata, from one `getMetaData()`
  * read (`metaDataState` and `hasMetaData`).
+ *
+ * The errors carry neither the RPC's error (it may hold the RPC URL and its key) nor its
+ * answer unsanitised; both go to the debug channel.
  */
 export async function readMetadataStatus(
   nft: Pick<Nft, 'getMetadata'>,
   nftAddress: string
 ): Promise<{ state: number; hasMetadata: boolean }> {
-  const metadata = (await nft.getMetadata(nftAddress)) as unknown[]
+  let metadata: unknown
+  try {
+    metadata = await nft.getMetadata(nftAddress)
+  } catch (error) {
+    debugRaw('rpc', `getMetaData of NFT ${nftAddress} failed`, error)
+    throw new Error(
+      `Could not read the metadata state of NFT ${nftAddress}: the getMetaData call failed (an address that is no data NFT, or an RPC error). Try again, or check the RPC.`
+    )
+  }
+
   const state = Array.isArray(metadata) ? metadata[2] : undefined
+  const value = Number(state)
 
   // Fail closed: an unreadable state must not pass for ACTIVE.
-  if (state === undefined || state === null || state === '')
+  if (
+    state === undefined ||
+    state === null ||
+    state === '' ||
+    !Number.isInteger(value) ||
+    value < 0 ||
+    value > 255
+  ) {
+    debugRaw('rpc', `getMetaData of NFT ${nftAddress} answered`, metadata)
+    let shown: string
+    try {
+      shown = String(
+        JSON.stringify(metadata, (_key, item) =>
+          typeof item === 'bigint' ? item.toString() : item
+        )
+      )
+    } catch {
+      shown = typeof metadata
+    }
     throw new Error(
-      `Could not read the metadata state of NFT ${nftAddress} (getMetaData returned ${JSON.stringify(metadata, (_key, value) => (typeof value === 'bigint' ? value.toString() : value))}).`
+      `Could not read the metadata state of NFT ${nftAddress} (getMetaData returned ${sanitize(shown, 200, null)}).`
     )
+  }
 
-  return { state: Number(state), hasMetadata: Boolean(metadata[3]) }
+  return {
+    state: value,
+    hasMetadata: Boolean((metadata as unknown[])[3])
+  }
 }
 
 /**

@@ -10,6 +10,7 @@
  * The pre-transaction pass runs on a projection with stand-in addresses, so these tests
  * also pin the thing that makes it affordable: it costs no extra node round trip.
  */
+import { inspect } from 'node:util'
 import type { StorageObject } from '@oceanprotocol/lib'
 import {
   FetchRequest,
@@ -67,6 +68,7 @@ import { NodePersistentRemoteStore } from '../../src/remote/NodePersistentRemote
 import type { RemoteStore } from '../../src/remote/RemoteStore.js'
 import {
   getMetadataEventsInBlock,
+  readNftLabel,
   setMetadataState
 } from '../../src/utils/contracts.js'
 import { getPricingInfo } from '../../src/utils/pricing.js'
@@ -100,6 +102,11 @@ const nftState = vi.hoisted(() => ({
   calls: [] as string[],
   /** What `ERC721Factory.erc721List(nft)` answers; `''` means "the NFT itself". */
   factoryListed: '',
+  /** Thrown by `checkNFT()` and by `getMetadata()` instead of answering, when set. */
+  factoryError: undefined as Error | undefined,
+  metadataError: undefined as Error | undefined,
+  /** Answered by `getMetadata()` instead of the usual tuple, when set. */
+  metadataAnswer: undefined as unknown,
   datatokens: [] as string[],
   /** What `getNftPermissions(nft, signer)` answers. */
   permissions: { updateMetadata: true, deployERC20: true },
@@ -128,6 +135,9 @@ vi.mock('@oceanprotocol/lib', async (importOriginal) => {
     Nft: class {
       async getMetadata() {
         nftState.calls.push('getMetadata')
+        if (nftState.metadataError) throw nftState.metadataError
+        if (nftState.metadataAnswer !== undefined)
+          return nftState.metadataAnswer
         return [
           'https://node.test.invalid',
           OWNER_ADDRESS,
@@ -152,6 +162,8 @@ vi.mock('@oceanprotocol/lib', async (importOriginal) => {
     },
     NftFactory: class {
       async checkNFT(nftAddress: string) {
+        nftState.calls.push('checkNFT')
+        if (nftState.factoryError) throw nftState.factoryError
         return nftState.factoryListed || nftAddress
       }
     }
@@ -362,6 +374,9 @@ beforeEach(() => {
   nftState.ownerError = undefined
   nftState.calls = []
   nftState.factoryListed = ''
+  nftState.factoryError = undefined
+  nftState.metadataError = undefined
+  nftState.metadataAnswer = undefined
   nftState.datatokens = [DATATOKEN_ADDRESS]
   nftState.permissions = { updateMetadata: true, deployERC20: true }
   nftState.permissionsOf = {}
@@ -2331,14 +2346,17 @@ describe('setAssetLifecycleState and getAssetLifecycleState', () => {
     expect(vi.mocked(setMetadataState)).not.toHaveBeenCalled()
   })
 
-  it('refuses an NFT the factory did not create, before any transaction', async () => {
+  it('refuses an NFT the factory did not create, before reading anything from it', async () => {
     nftState.factoryListed = ZeroAddress
     const { nautilus } = await createNautilus()
 
+    // The label carries no name or symbol: those would come from the contract itself.
     await expectThrowsAsync(
       () => nautilus.setAssetLifecycleState(OTHER_NFT, 3),
-      /setAssetLifecycleState: NFT 0x3c3D.*\("Lifecycle NFT", LNFT; did:ope:.*\) was not created by the ERC721 factory .*Nothing was sent\./
+      /setAssetLifecycleState: NFT 0x3c3D\w+ \(did:ope:[0-9a-f]{64}\) was not created by the ERC721 factory .*Nothing was sent\./
     )
+    expect(vi.mocked(readNftLabel)).not.toHaveBeenCalled()
+    expect(nftState.calls).to.deep.equal(['checkNFT'])
     expect(vi.mocked(setMetadataState)).not.toHaveBeenCalled()
   })
 
@@ -2381,18 +2399,38 @@ describe('setAssetLifecycleState and getAssetLifecycleState', () => {
     expect(vi.mocked(setMetadataState).mock.calls[0][0].state).to.equal(0)
   })
 
-  it('reports the change, naming the NFT for a revoke', async () => {
+  it('reports a revoke at warn, printed by default, naming the NFT', async () => {
     const { nautilus } = await createNautilus()
-    const log = captureLog({ level: 'info' })
+    // The default level.
+    const log = captureLog({ level: 'warn' })
 
     await nautilus.setAssetLifecycleState(NFT_ADDRESS, 3)
 
-    const [set] = log.named('lifecycle.state.set')
-    expect(set.msg).to.match(
+    const [retired] = log.named('lifecycle.state.retired')
+    expect(retired.level).to.equal('warn')
+    expect(retired.msg).to.match(
       /NFT 0xBB10.* \("Lifecycle NFT", LNFT; did:ope:.*\) moved from lifecycle state 0 to 3 \(tx 0xstate\)/
     )
-    expect(set.did).to.equal(expectedDid(NFT_ADDRESS, CHAIN_ID))
-    expect(set.fields).to.include({ nftAddress: NFT_ADDRESS, previous: 0 })
+    expect(retired.did).to.equal(expectedDid(NFT_ADDRESS, CHAIN_ID))
+    expect(retired.fields).to.include({ nftAddress: NFT_ADDRESS, previous: 0 })
+    expect(log.named('lifecycle.state.set')).to.have.length(0)
+  })
+
+  it('reports a deprecation at warn, and a reversible change at info', async () => {
+    const { nautilus } = await createNautilus()
+    const log = captureLog({ level: 'info' })
+
+    nftState.state = 0
+    await nautilus.setAssetLifecycleState(NFT_ADDRESS, 5)
+    nftState.state = 5
+    await nautilus.setAssetLifecycleState(NFT_ADDRESS, 2)
+
+    const [set] = log.named('lifecycle.state.set')
+    expect(set.level).to.equal('info')
+    expect(set.msg).to.match(/moved from lifecycle state 0 to 5/)
+    const [retired] = log.named('lifecycle.state.retired')
+    expect(retired.level).to.equal('warn')
+    expect(retired.msg).to.match(/moved from lifecycle state 5 to 2/)
   })
 
   it('resolves a DID and uses the NFT it is derived from', async () => {
@@ -2503,6 +2541,232 @@ describe('setAssetLifecycleState and getAssetLifecycleState', () => {
     expect(await nautilus.getAssetLifecycleState(ASSET_DID)).to.equal(2)
     // The DDO says ACTIVE.
     expect(await nautilus.getAssetLifecycleState(getAssetFixture())).to.equal(2)
+    expect(vi.mocked(setMetadataState)).not.toHaveBeenCalled()
+  })
+
+  /**
+   * The error ethers' JsonRpcProvider throws for a refused request (401, as from a rate
+   * limit or an expired key): `FetchResponse.assertOk()`'s own, with the request URL and the
+   * response body in `info` and in the message.
+   */
+  function rpcRefusal(): Error {
+    const request = new FetchRequest(FAKE.rpcUrl)
+    const response = new FetchResponse(
+      401,
+      'Unauthorized',
+      {},
+      new TextEncoder().encode(
+        `{"error":"rate limited, apikey=${FAKE.rpcQueryToken}"}`
+      ),
+      request
+    )
+    try {
+      response.assertOk()
+    } catch (error) {
+      return error as Error
+    }
+    throw new Error('assertOk() did not throw')
+  }
+
+  /** Asserts that the RPC's error, with its key, reached neither the message nor the error. */
+  function expectNoRpcDetail(error: Error) {
+    for (const text of [error.message, inspect(error, { depth: 12 })]) {
+      expect(text).not.to.contain(FAKE.rpcPathToken)
+      expect(text).not.to.contain(FAKE.rpcQueryToken)
+      expect(text).not.to.contain('rpc.example.org')
+    }
+  }
+
+  it('stops without the RPC detail when the factory cannot be read', async () => {
+    // The real error carries the key: the test would prove nothing otherwise.
+    expect(rpcRefusal().message).to.contain(FAKE.rpcPathToken)
+    expect(rpcRefusal().message).to.contain(FAKE.rpcQueryToken)
+    const events: DebugEvent[] = []
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    setDebug({
+      level: 'sensitive',
+      topics: ['rpc'],
+      sink: (event) => events.push(event)
+    })
+    nftState.factoryError = rpcRefusal()
+    const { nautilus } = await createNautilus()
+
+    const error = (await nautilus
+      .setAssetLifecycleState(NFT_ADDRESS, 3)
+      .catch((e: Error) => e)) as Error
+
+    expect(error.message).to.match(
+      /^setAssetLifecycleState: whether NFT 0xBB10\w+ \(did:ope:[0-9a-f]{64}\) was created by the ERC721 factory .* could not be read from the chain\. Nothing was sent\. Try again, or check the RPC\.$/
+    )
+    expectNoRpcDetail(error)
+    expect(vi.mocked(setMetadataState)).not.toHaveBeenCalled()
+    const [raw] = events.filter((event) =>
+      event.message.includes("the factory's erc721List read failed")
+    )
+    expect(raw.topic).to.equal('rpc')
+    expect(JSON.stringify(raw.data)).to.contain('401')
+  })
+
+  it('stops without the RPC detail when the state cannot be read', async () => {
+    nftState.metadataError = rpcRefusal()
+    const { nautilus } = await createNautilus()
+
+    const set = (await nautilus
+      .setAssetLifecycleState(NFT_ADDRESS, 3)
+      .catch((e: Error) => e)) as Error
+    expect(set.message).to.match(
+      /^setAssetLifecycleState: the lifecycle state of NFT 0xBB10.* could not be read from the chain\. Nothing was sent\. Try again, or check the RPC\.$/
+    )
+    expectNoRpcDetail(set)
+    expect(vi.mocked(setMetadataState)).not.toHaveBeenCalled()
+
+    const get = (await nautilus
+      .getAssetLifecycleState(NFT_ADDRESS)
+      .catch((e: Error) => e)) as Error
+    expect(get.message).to.match(
+      /^Could not read the metadata state of NFT 0xBB10\w+: the getMetaData call failed/
+    )
+    expectNoRpcDetail(get)
+  })
+
+  it("shows getMetaData's odd answer sanitised and bounded", async () => {
+    nftState.metadataAnswer = [`\u001b[31mMy NFT\nINJECTED ${'x'.repeat(500)}`]
+    const { nautilus } = await createNautilus()
+
+    const error = (await nautilus
+      .getAssetLifecycleState(NFT_ADDRESS)
+      .catch((e: Error) => e)) as Error
+
+    expect(error.message).to.match(
+      /^Could not read the metadata state of NFT 0xBB10\w+ \(getMetaData returned /
+    )
+    expect(error.message).not.to.contain('\u001b')
+    expect(error.message).not.to.contain('\n')
+    expect(error.message.length).to.be.below(400)
+
+    // An answer that is no state at all (an EOA's empty answer decodes to nothing).
+    nftState.metadataAnswer = ['uri', OWNER_ADDRESS, 'not a state', true]
+    await expectThrowsAsync(
+      () => nautilus.getAssetLifecycleState(NFT_ADDRESS),
+      /Could not read the metadata state of NFT/
+    )
+  })
+
+  it('refuses a state outside LifecycleStates, saying nothing was sent', async () => {
+    const { nautilus } = await createNautilus()
+
+    for (const [state, shown] of [
+      [7, 'got 7\\.'],
+      [255, 'got 255\\.'],
+      [-1, 'got -1\\.'],
+      [Number.NaN, 'got NaN\\.'],
+      [3n, 'got 3n, a bigint\\.'],
+      ['3', 'got "3"\\.'],
+      [{}, 'got an object\\.'],
+      [Object.create(null), 'got an object\\.']
+    ] as const)
+      await expectThrowsAsync(
+        () => nautilus.setAssetLifecycleState(NFT_ADDRESS, state as never),
+        new RegExp(
+          `state must be a lifecycle state, a number from 0 to 5 \\(see LifecycleStates\\); ${shown} Nothing was sent\\.$`
+        )
+      )
+    expect(nftState.calls).to.have.length(0)
+    expect(vi.mocked(setMetadataState)).not.toHaveBeenCalled()
+  })
+
+  it('refuses a malformed DID or an object that is no DDO locally, saying nothing was sent', async () => {
+    const { nautilus, node } = await createNautilus()
+
+    for (const did of [
+      'did:ope:zz',
+      `did:ope:${'a'.repeat(63)}`,
+      `did:ope:${'a'.repeat(65)}`,
+      `did:web:${'a'.repeat(64)}`
+    ])
+      await expectThrowsAsync(
+        () => nautilus.setAssetLifecycleState(did, 3),
+        /is not an asset DID \(did:ope: and 64 hexadecimal digits\)\. Nothing was sent\./
+      )
+    expect(node.calls.resolve).to.have.length(0)
+
+    for (const target of [{}, { id: 5 }, []])
+      await expectThrowsAsync(
+        () => nautilus.setAssetLifecycleState(target as never, 3),
+        /the object given is not a DDO .*Nothing was sent\./
+      )
+    await expectThrowsAsync(
+      () => nautilus.getAssetLifecycleState({} as never),
+      /the object given is not a DDO/
+    )
+    expect(nftState.calls).to.have.length(0)
+    expect(vi.mocked(setMetadataState)).not.toHaveBeenCalled()
+  })
+
+  it('says "name unreadable" when the NFT does not answer name()', async () => {
+    vi.mocked(readNftLabel).mockResolvedValueOnce({ symbol: 'LNFT' })
+    nftState.permissions = { updateMetadata: false, deployERC20: true }
+    const { nautilus } = await createNautilus()
+
+    await expectThrowsAsync(
+      () => nautilus.setAssetLifecycleState(NFT_ADDRESS, 3),
+      /lacks the metadata role on NFT 0xBB10\w+ \(name unreadable, LNFT; did:ope:/
+    )
+  })
+
+  it('tells an unknown DID (404, no indexing record) from a dropped one', async () => {
+    const { nautilus } = await goneFromNode(undefined)
+
+    const error = (await nautilus
+      .setAssetLifecycleState(ASSET_DID, 3)
+      .catch((e: Error) => e)) as Error
+
+    expect(error.message).to.match(
+      /does not serve did:ope:.* \(HTTP 404\) and has no indexing record of it, so it knows no asset with that DID\. Check the DID.*Nothing was sent\./
+    )
+    expect(error.message).not.to.contain('DEPRECATED')
+    expect(vi.mocked(setMetadataState)).not.toHaveBeenCalled()
+  })
+
+  it('a revoke by DID runs before an edit started after it', async () => {
+    const { nautilus } = await createNautilus({
+      node: { assets: { [ASSET_DID]: getAssetFixture() } }
+    })
+    const order: string[] = []
+    vi.mocked(setMetadataState).mockImplementationOnce(async () => {
+      order.push('revoke')
+      nftState.state = 3
+      return { hash: '0xstate' } as never
+    })
+    vi.mocked(writeMetadata).mockImplementation((async () => {
+      order.push('edit-write')
+      return { hash: '0xedit', blockNumber: 100 }
+    }) as never)
+
+    const [revoke, edit] = await Promise.allSettled([
+      nautilus.setAssetLifecycleState(ASSET_DID, 3),
+      nautilus.edit(new AssetBuilder(getAssetFixture()).build())
+    ])
+
+    expect(revoke.status).to.equal('fulfilled')
+    expect(order).to.deep.equal(['revoke'])
+    expect(edit.status).to.equal('rejected')
+    expect(String((edit as PromiseRejectedResult).reason)).to.match(
+      /lifecycle state 3/
+    )
+  })
+
+  it('a revoke by DID that is refused does not hold up the edit after it', async () => {
+    const { nautilus } = await goneFromNode(undefined)
+
+    const [revoke, edit] = await Promise.allSettled([
+      nautilus.setAssetLifecycleState(ASSET_DID, 3),
+      nautilus.edit(new AssetBuilder(getAssetFixture()).build())
+    ])
+
+    expect(revoke.status).to.equal('rejected')
+    expect(edit.status).to.equal('fulfilled')
+    expect(vi.mocked(writeMetadata)).toHaveBeenCalledTimes(1)
     expect(vi.mocked(setMetadataState)).not.toHaveBeenCalled()
   })
 })

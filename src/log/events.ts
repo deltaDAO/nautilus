@@ -189,7 +189,14 @@ export const LOG_EVENTS = {
     level: 'info',
     component: 'lifecycle',
     description:
-      "setAssetLifecycleState() changed the NFT's lifecycle state on chain. For DEPRECATED (2) and REVOKED_BY_PUBLISHER (3) the message names the NFT's name and symbol too.",
+      "setAssetLifecycleState() changed the NFT's lifecycle state on chain to ACTIVE (0), END_OF_LIFE (1), ORDERING_DISABLED_TEMPORARILY (4) or ASSET_UNLISTED (5). A change to DEPRECATED (2) or REVOKED_BY_PUBLISHER (3) is `lifecycle.state.retired` instead.",
+    fields: ['nftAddress', 'state', 'previous']
+  },
+  'lifecycle.state.retired': {
+    level: 'warn',
+    component: 'lifecycle',
+    description:
+      "setAssetLifecycleState() set the NFT's lifecycle state to DEPRECATED (2) or REVOKED_BY_PUBLISHER (3): one-way, and ocean-node stops serving the asset. Printed by default; the message names the NFT's address, name, symbol and DID, so a wrong target shows.",
     fields: ['nftAddress', 'state', 'previous']
   },
 
