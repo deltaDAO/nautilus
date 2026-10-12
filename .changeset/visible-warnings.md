@@ -39,7 +39,10 @@ ocean.js no longer prints "No config found" during an order.
 - **Node text is redacted in bounded time, and a backslash no longer ends a URL.** The
   redaction of a node's text, an error or a log message reads only the start of a long
   text: 8,192 characters, or eight times the length it is cut to when that is more. The word
-  that cut splits is dropped, so a cut JWT or URL never shows in part. A URL with a backslash in its path
+  that cut splits is dropped, so a cut JWT or URL never shows in part; a URL the cut goes
+  through is dropped whole, so its user info (`https://user:secret,…@host`) is never read as
+  its host. A URL whose authority is no host and port (a quote or a space in its password
+  ended it) reads `scheme://<redacted>`, in messages and in the `sensitive` debug tier. A URL with a backslash in its path
   (`https://host/x\y/v3/<key>`) now keeps only its origin in messages, and its path token is
   masked in the `sensitive` debug tier as well; before, the text after the backslash was
   printed. So does a URL with a BOM or a zero-width character in its path (the token after
