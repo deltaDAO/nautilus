@@ -52,6 +52,13 @@ export enum LifecycleStates {
 /** `LifecycleStates` and ddo-js's `State` are the same values. */
 export type AssetState = LifecycleStates | State
 
+/**
+ * What `setAssetLifecycleState` and `getAssetLifecycleState` act on: the asset, its DID
+ * (`did:ope:…`), or its NFT address (`0x…`). After ocean-node 4.2.x stops serving a
+ * DEPRECATED or REVOKED_BY_PUBLISHER asset, the NFT address is the reliable handle.
+ */
+export type LifecycleTarget = AssetV5 | string
+
 export interface IAssetBuilder extends IBuilder<NautilusAsset> {
   // metadata
   setType: (type: string) => IAssetBuilder

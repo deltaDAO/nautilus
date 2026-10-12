@@ -10,7 +10,9 @@ import {
   type TransactionReceipt
 } from 'ethers'
 import { getDatatokenForService, getService } from '../ddo/read.js'
+import { debugRaw } from '../log/debug.js'
 import { type Logger, log } from '../log/logger.js'
+import { sanitize } from '../node/messages.js'
 import { confirmTransaction } from './order.js'
 import { getPricingInfo } from './pricing.js'
 
@@ -86,6 +88,38 @@ export async function setMetadataState(params: {
     'setMetadataState',
     await nft.setMetadataState(nftAddress, await signer.getAddress(), state)
   )
+}
+
+const NFT_LABEL_ABI = [
+  'function name() view returns (string)',
+  'function symbol() view returns (string)'
+] as const
+
+/**
+ * The NFT's ERC721 name and symbol, so a message about an irreversible call shows which
+ * NFT it acts on. RPC-supplied, so sanitised and bounded; a value that cannot be read is
+ * left out (the raw error goes to the debug channel). Not exported from the package.
+ */
+export async function readNftLabel(
+  signer: Signer,
+  nftAddress: string
+): Promise<{ name?: string; symbol?: string }> {
+  const nft = new Contract(nftAddress, NFT_LABEL_ABI, signer)
+  const read = async (key: 'name' | 'symbol') => {
+    try {
+      return sanitize(String(await nft.getFunction(key)()), 60, 'rpc')
+    } catch (error) {
+      debugRaw(
+        'rpc',
+        `the ${key} of NFT ${nftAddress} could not be read`,
+        error
+      )
+      return undefined
+    }
+  }
+  const [name, symbol] = await Promise.all([read('name'), read('symbol')])
+
+  return { name, symbol }
 }
 
 const TOKENS_LIST_ABI = [

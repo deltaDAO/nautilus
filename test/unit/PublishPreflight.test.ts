@@ -41,6 +41,7 @@ import {
 import { ServiceBuilder } from '../../src/Nautilus/Asset/Service/ServiceBuilder.js'
 import { Nautilus } from '../../src/Nautilus/Nautilus.js'
 import {
+  AssetNotFoundError,
   IndexerNonceStuckError,
   IndexingError,
   isIndexerNonceSignable,
@@ -48,6 +49,7 @@ import {
   OceanNodeError
 } from '../../src/node/OceanNodeClient.js'
 import {
+  expectedDid,
   maxDecryptableJwsLength,
   maxJwsLengthFor
 } from '../../src/publish/envelope.js'
@@ -163,6 +165,10 @@ vi.mock('../../src/utils/contracts.js', async (importOriginal) => {
     ...actual,
     getNftDatatokens: vi.fn(async () => nftState.datatokens),
     setMetadataState: vi.fn(async () => ({ hash: '0xstate' })),
+    readNftLabel: vi.fn(async () => ({
+      name: 'Lifecycle NFT',
+      symbol: 'LNFT'
+    })),
     getMetadataEventsInBlock: vi.fn(async () => {
       if (!nftState.blockEvents) throw new Error('no logs in this test')
       return nftState.blockEvents
@@ -2042,6 +2048,7 @@ describe('policy server that denies every consumer', () => {
 
 describe('lifecycle state', () => {
   it('reads the state for edit() after a revoke this instance started', async () => {
+    nftState.hasMetadata = true
     const { nautilus } = await createNautilus()
     vi.mocked(setMetadataState).mockImplementationOnce(async () => {
       await new Promise((resolve) => setTimeout(resolve, 5))
@@ -2257,5 +2264,245 @@ describe('indexer nonce preflight', () => {
     expect(vi.mocked(writeMetadata)).toHaveBeenCalledTimes(1)
     const [warning] = log.named('publish.preflight.indexer_nonce_will_stick')
     expect(warning.msg).to.match(/second decrypt call/)
+  })
+})
+
+describe('setAssetLifecycleState and getAssetLifecycleState', () => {
+  /** Another factory NFT, and the DID it derives on the test chain. */
+  const OTHER_NFT = '0x3c3D0e4b5A6f7a8B9c0D1e2F3a4B5c6D7E8f9A0b'
+
+  beforeEach(() => {
+    nftState.hasMetadata = true
+  })
+
+  /** A node whose `resolve` answers 404, with `state` as the indexing record. */
+  async function goneFromNode(state?: Record<string, unknown>) {
+    const created = await createNautilus()
+    created.node.client.resolve = vi.fn(async (did: string) => {
+      throw new AssetNotFoundError(did, state as never)
+    }) as never
+    return created
+  }
+
+  it('sends to an NFT address without resolving, checksummed', async () => {
+    const { nautilus, node } = await createNautilus()
+
+    const receipt = await nautilus.setAssetLifecycleState(
+      NFT_ADDRESS.toLowerCase(),
+      3
+    )
+
+    expect(receipt).to.deep.equal({ hash: '0xstate' })
+    expect(node.calls.resolve).to.have.length(0)
+    expect(vi.mocked(setMetadataState)).toHaveBeenCalledOnce()
+    expect(vi.mocked(setMetadataState).mock.calls[0][0]).to.include({
+      nftAddress: NFT_ADDRESS,
+      state: 3
+    })
+  })
+
+  it('refuses an address with a wrong checksum, before any read', async () => {
+    const { nautilus } = await createNautilus()
+    const wrong = NFT_ADDRESS.replace('bB', 'Bb')
+
+    await expectThrowsAsync(
+      () => nautilus.setAssetLifecycleState(wrong, 2),
+      /is not an address, or its checksum is wrong\. Nothing was sent\./
+    )
+    expect(nftState.calls).to.have.length(0)
+    expect(vi.mocked(setMetadataState)).not.toHaveBeenCalled()
+  })
+
+  it('refuses a target that is no asset, DID or address', async () => {
+    const { nautilus } = await createNautilus()
+
+    await expectThrowsAsync(
+      () => nautilus.setAssetLifecycleState('my-asset\nINJECTED', 2),
+      /must be an asset, its DID or its NFT address; got "my-asset/
+    )
+    await expectThrowsAsync(
+      () => nautilus.setAssetLifecycleState(1.5 as never, 2),
+      /must be an asset, its DID or its NFT address/
+    )
+    await expectThrowsAsync(
+      () => nautilus.setAssetLifecycleState(NFT_ADDRESS, 1.5 as never),
+      /state must be a lifecycle state/
+    )
+    expect(vi.mocked(setMetadataState)).not.toHaveBeenCalled()
+  })
+
+  it('refuses an NFT the factory did not create, before any transaction', async () => {
+    nftState.factoryListed = ZeroAddress
+    const { nautilus } = await createNautilus()
+
+    await expectThrowsAsync(
+      () => nautilus.setAssetLifecycleState(OTHER_NFT, 3),
+      /setAssetLifecycleState: NFT 0x3c3D.*\("Lifecycle NFT", LNFT; did:ope:.*\) was not created by the ERC721 factory .*Nothing was sent\./
+    )
+    expect(vi.mocked(setMetadataState)).not.toHaveBeenCalled()
+  })
+
+  it('refuses a signer without the metadata role, or an NFT without metadata', async () => {
+    const { nautilus } = await createNautilus()
+
+    nftState.permissions = { updateMetadata: false, deployERC20: true }
+    await expectThrowsAsync(
+      () => nautilus.setAssetLifecycleState(NFT_ADDRESS, 2),
+      /lacks the metadata role on NFT 0xBB10.*"Lifecycle NFT", LNFT; did:ope:/
+    )
+
+    nftState.permissions = { updateMetadata: true, deployERC20: true }
+    nftState.hasMetadata = false
+    await expectThrowsAsync(
+      () => nautilus.setAssetLifecycleState(NFT_ADDRESS, 5),
+      /carries no metadata, so it is not a published asset/
+    )
+    await expectThrowsAsync(
+      () => nautilus.getAssetLifecycleState(NFT_ADDRESS),
+      /carries no metadata/
+    )
+    expect(vi.mocked(setMetadataState)).not.toHaveBeenCalled()
+  })
+
+  it('judges "already in that state" from the chain, not the DDO', async () => {
+    const { nautilus } = await createNautilus()
+    const log = captureLog()
+    // The DDO says ACTIVE; the NFT was unlisted since.
+    const stale = getAssetFixture()
+    nftState.state = 5
+
+    expect(await nautilus.setAssetLifecycleState(stale, 5)).to.equal(undefined)
+    expect(vi.mocked(setMetadataState)).not.toHaveBeenCalled()
+    expect(log.named('lifecycle.state.unchanged')).to.have.length(1)
+
+    expect(await nautilus.setAssetLifecycleState(stale, 0)).to.deep.equal({
+      hash: '0xstate'
+    })
+    expect(vi.mocked(setMetadataState).mock.calls[0][0].state).to.equal(0)
+  })
+
+  it('reports the change, naming the NFT for a revoke', async () => {
+    const { nautilus } = await createNautilus()
+    const log = captureLog({ level: 'info' })
+
+    await nautilus.setAssetLifecycleState(NFT_ADDRESS, 3)
+
+    const [set] = log.named('lifecycle.state.set')
+    expect(set.msg).to.match(
+      /NFT 0xBB10.* \("Lifecycle NFT", LNFT; did:ope:.*\) moved from lifecycle state 0 to 3 \(tx 0xstate\)/
+    )
+    expect(set.did).to.equal(expectedDid(NFT_ADDRESS, CHAIN_ID))
+    expect(set.fields).to.include({ nftAddress: NFT_ADDRESS, previous: 0 })
+  })
+
+  it('resolves a DID and uses the NFT it is derived from', async () => {
+    const { nautilus, node } = await createNautilus({
+      node: { assets: { [ASSET_DID]: getAssetFixture() } }
+    })
+
+    await nautilus.setAssetLifecycleState(ASSET_DID, 2)
+
+    expect(node.calls.resolve).to.deep.equal([ASSET_DID])
+    expect(vi.mocked(setMetadataState).mock.calls[0][0].nftAddress).to.equal(
+      NFT_ADDRESS
+    )
+  })
+
+  it('refuses a DID whose served DDO derives another DID, before any read', async () => {
+    const otherDid = expectedDid(OTHER_NFT, CHAIN_ID)
+    // Self-consistent, but another asset's DDO, served for the victim's DID.
+    const forged = getAssetFixture({ id: otherDid })
+    ;(
+      forged as unknown as { credentialSubject: { nftAddress: string } }
+    ).credentialSubject.nftAddress = OTHER_NFT
+    const { nautilus } = await createNautilus({
+      node: { assets: { [ASSET_DID]: forged } }
+    })
+
+    await expectThrowsAsync(
+      () => nautilus.setAssetLifecycleState(ASSET_DID, 3),
+      /the node answered did:ope:.* with the DDO of did:ope:.* \(NFT 0x3c3D.*\)\. Refused/
+    )
+    expect(nftState.calls).to.have.length(0)
+    expect(vi.mocked(setMetadataState)).not.toHaveBeenCalled()
+  })
+
+  it("refuses an asset object whose NFT is not its id's", async () => {
+    const forged = getAssetFixture()
+    ;(
+      forged as unknown as { credentialSubject: { nftAddress: string } }
+    ).credentialSubject.nftAddress = OTHER_NFT
+    const { nautilus } = await createNautilus()
+
+    await expectThrowsAsync(
+      () => nautilus.setAssetLifecycleState(forged, 3),
+      /is not the DID of its NFT 0x3c3D/
+    )
+    expect(vi.mocked(setMetadataState)).not.toHaveBeenCalled()
+  })
+
+  it('on a 404, takes the NFT from the indexing record, checked against the DID', async () => {
+    const { nautilus } = await goneFromNode({
+      did: ASSET_DID,
+      chainId: CHAIN_ID,
+      nft: NFT_ADDRESS.toLowerCase(),
+      valid: true,
+      error: 'Schema for version deprecated not found'
+    })
+
+    await nautilus.setAssetLifecycleState(ASSET_DID, 3)
+
+    expect(vi.mocked(setMetadataState).mock.calls[0][0].nftAddress).to.equal(
+      NFT_ADDRESS
+    )
+  })
+
+  it('on a 404, refuses a record naming another NFT or chain', async () => {
+    for (const record of [
+      { nft: OTHER_NFT, chainId: CHAIN_ID },
+      { nft: NFT_ADDRESS, chainId: CHAIN_ID + 1 },
+      { nft: 'not-an-address\nINJECTED' }
+    ]) {
+      const { nautilus } = await goneFromNode({ valid: false, ...record })
+
+      await expectThrowsAsync(
+        () => nautilus.setAssetLifecycleState(ASSET_DID, 3),
+        /the NFT its indexing record names, ".*", is not that DID's NFT .*pass the asset's NFT address instead/
+      )
+    }
+    expect(vi.mocked(setMetadataState)).not.toHaveBeenCalled()
+  })
+
+  it('on a 404 whose record names no NFT (ocean-node 4.2.2), asks for the NFT address', async () => {
+    const { nautilus } = await goneFromNode({
+      did: ASSET_DID,
+      chainId: CHAIN_ID,
+      nft: null,
+      valid: true,
+      error: 'Schema for version deprecated not found'
+    })
+
+    const error = await nautilus
+      .setAssetLifecycleState(ASSET_DID, 3)
+      .catch((e: Error) => e)
+
+    expect(String(error)).to.match(
+      /does not serve did:ope:.* \(HTTP 404\), and its indexing record names no NFT.*pass the asset's NFT address instead/
+    )
+    expect((error as Error).cause).to.be.instanceOf(AssetNotFoundError)
+    expect(vi.mocked(setMetadataState)).not.toHaveBeenCalled()
+  })
+
+  it('getAssetLifecycleState reads the chain for every kind of target', async () => {
+    const { nautilus } = await createNautilus({
+      node: { assets: { [ASSET_DID]: getAssetFixture() } }
+    })
+    nftState.state = 2
+
+    expect(await nautilus.getAssetLifecycleState(NFT_ADDRESS)).to.equal(2)
+    expect(await nautilus.getAssetLifecycleState(ASSET_DID)).to.equal(2)
+    // The DDO says ACTIVE.
+    expect(await nautilus.getAssetLifecycleState(getAssetFixture())).to.equal(2)
+    expect(vi.mocked(setMetadataState)).not.toHaveBeenCalled()
   })
 })

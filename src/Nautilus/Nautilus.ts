@@ -32,7 +32,7 @@ import type {
   PublishResponse,
   StopComputeConfig
 } from '../@types/index.js'
-import type { AssetState } from '../@types/Nautilus.js'
+import type { AssetState, LifecycleTarget } from '../@types/Nautilus.js'
 import { access } from '../access/index.js'
 import { compute, freeCompute, selectEnvironment } from '../compute/index.js'
 import {
@@ -44,7 +44,6 @@ import {
 import {
   getChainId as getDdoChainId,
   getDid,
-  getLifecycleState,
   getNftAddress
 } from '../ddo/read.js'
 import type { DdoCredentials } from '../ddo/types.js'
@@ -57,7 +56,9 @@ import { type DebugOptions, debugRaw, setDebug } from '../log/debug.js'
 import { fromOceanLogLevel } from '../log/levels.js'
 import { configureLogging, type Logger, loggerFor } from '../log/logger.js'
 import type { LoggingConfig, LoggingOptions } from '../log/types.js'
+import { sanitize } from '../node/messages.js'
 import {
+  AssetNotFoundError,
   IndexerNonceStuckError,
   isIndexerNonceSignable,
   OceanNodeClient,
@@ -69,6 +70,7 @@ import {
   assertEncryptOption,
   assertWritableState,
   boundNftAddress,
+  expectedDid,
   readMetadataState,
   readMetadataStatus
 } from '../publish/envelope.js'
@@ -93,6 +95,7 @@ import {
   editPrice,
   getMetadataEventsInBlock,
   getNftDatatokens,
+  readNftLabel,
   setMetadataState
 } from '../utils/contracts.js'
 import { resolvePublisherTrustedAlgorithms } from '../utils/helpers/trusted-algorithms.js'
@@ -1120,6 +1123,18 @@ export class Nautilus {
         `completePublish: NFT ${nftAddress} is owned by ${nftOwner}, not by the signer ${signerAddress}. Refusing to write a DDO onto an NFT someone else controls.`
       )
 
+    await this.assertFactoryNft(nftAddress, 'completePublish')
+  }
+
+  /**
+   * Refuses an NFT the configured ERC721 factory did not create (`erc721List`), so a call
+   * never sends a transaction to an arbitrary contract.
+   */
+  private async assertFactoryNft(
+    nftAddress: string,
+    operation: string,
+    label = `NFT ${nftAddress}`
+  ): Promise<void> {
     const factory = new NftFactory(
       this.config.nftFactoryAddress as string,
       this.signer,
@@ -1134,7 +1149,7 @@ export class Nautilus {
       getAddress(listed) !== getAddress(nftAddress)
     )
       throw new Error(
-        `completePublish: NFT ${nftAddress} was not created by the ERC721 factory ${this.config.nftFactoryAddress}.`
+        `${operation}: ${label} was not created by the ERC721 factory ${this.config.nftFactoryAddress}.${operation === 'completePublish' ? '' : ' Nothing was sent.'}`
       )
   }
 
@@ -1797,32 +1812,248 @@ export class Nautilus {
     })
   }
 
-  /** Changes the asset's lifecycle state on its NFT. */
+  /**
+   * Changes the asset's lifecycle state on its NFT.
+   *
+   * `target` is the asset, its DID or its NFT address. ocean-node 4.2.x stops serving a
+   * DEPRECATED (2) or REVOKED_BY_PUBLISHER (3) asset, so pass the NFT address (or the
+   * DID) then. A DID is resolved, and the NFT the node names must be the one the DID is
+   * derived from on the configured chain; when the node no longer serves the DID, the NFT
+   * named in its indexing record is used under the same check, and without one this throws
+   * and asks for the NFT address. An asset object's NFT is checked against its id the same
+   * way.
+   *
+   * Before sending, the NFT must have been created by the configured ERC721 factory, the
+   * signer must hold its metadata role, and it must carry metadata. The current state is
+   * read from the chain, not from a DDO: when the NFT is in `state` already, nothing is
+   * sent and this resolves `undefined`. For DEPRECATED and REVOKED_BY_PUBLISHER, errors and
+   * the `lifecycle.state.set` event name the NFT's name, symbol and DID, so a wrong target
+   * is visible.
+   */
   async setAssetLifecycleState(
-    asset: AssetV5,
+    target: LifecycleTarget,
     state: AssetState
   ): Promise<TransactionReceipt | undefined> {
-    const current = getLifecycleState(asset)
+    const operation = 'setAssetLifecycleState'
 
-    if (current === state) {
-      this.log.emit(
-        'lifecycle.state.unchanged',
-        `Asset ${asset.id} is already in state ${state}; nothing to do.`,
-        { did: asset.id, state }
+    if (!Number.isInteger(state) || state < 0 || state > 255)
+      throw new Error(
+        `${operation}: state must be a lifecycle state (an integer from 0 to 255; see LifecycleStates), got ${String(JSON.stringify(state))}.`
       )
-      return undefined
-    }
 
-    const nftAddress = getNftAddress(asset)
+    // An asset or an address is bound without awaiting, so the NFT lock is queued for in
+    // this tick, and calls started in order (a revoke, then an edit) run in that order.
+    const bound = this.lifecycleTarget(target, operation)
+    const { nftAddress, did } = bound instanceof Promise ? await bound : bound
 
-    return this.withNftLock(nftAddress, () =>
-      setMetadataState({
+    return this.withNftLock(nftAddress, async () => {
+      const retiring = state === 2 || state === 3
+      const label = retiring
+        ? nftLabel(nftAddress, did, await readNftLabel(this.signer, nftAddress))
+        : nftLabel(nftAddress, did)
+      const signerAddress = getAddress(await this.signer.getAddress())
+      const nft = new Nft(this.signer, this.config.chainId, this.config)
+
+      await this.assertFactoryNft(nftAddress, operation, label)
+
+      const permissions = await nft
+        .getNftPermissions(nftAddress, signerAddress)
+        .catch((error: unknown) => {
+          debugRaw('rpc', `${operation}: getPermissions failed`, error)
+          return undefined
+        })
+
+      if (!permissions)
+        throw new Error(
+          `${operation}: the permissions of the signer ${signerAddress} on ${label} could not be read from the chain. Nothing was sent. Try again, or check the RPC.`
+        )
+
+      if (permissions.updateMetadata !== true)
+        throw new Error(
+          `${operation}: the signer ${signerAddress} lacks the metadata role on ${label}, which setting its lifecycle state needs. Nothing was sent.`
+        )
+
+      const status = await readMetadataStatus(nft, nftAddress)
+
+      if (!status.hasMetadata)
+        throw new Error(
+          `${operation}: ${label} carries no metadata, so it is not a published asset. Nothing was sent.`
+        )
+
+      if (status.state === state) {
+        this.log.emit(
+          'lifecycle.state.unchanged',
+          `Asset ${did} is already in state ${state} on chain; nothing to do.`,
+          { did, nftAddress, state }
+        )
+        return undefined
+      }
+
+      const receipt = await setMetadataState({
         nftAddress,
         state: state as number,
         chainConfig: this.config,
         signer: this.signer
       })
+
+      this.log.emit(
+        'lifecycle.state.set',
+        `${label} moved from lifecycle state ${status.state} to ${state} (tx ${receipt.hash}).`,
+        { did, nftAddress, state, previous: status.state, txHash: receipt.hash }
+      )
+
+      return receipt
+    })
+  }
+
+  /**
+   * The asset's lifecycle state, read from its NFT on chain (`getMetaData()`), not from a
+   * DDO, which may be stale or gone. `target` is the asset, its DID or its NFT address, and
+   * is checked as in `setAssetLifecycleState`. Throws when the NFT carries no metadata.
+   */
+  async getAssetLifecycleState(target: LifecycleTarget): Promise<number> {
+    const operation = 'getAssetLifecycleState'
+    const { nftAddress, did } = await this.lifecycleTarget(target, operation)
+    const status = await readMetadataStatus(
+      new Nft(this.signer, this.config.chainId, this.config),
+      nftAddress
     )
+
+    if (!status.hasMetadata)
+      throw new Error(
+        `${operation}: ${nftLabel(nftAddress, did)} carries no metadata, so it is not a published asset.`
+      )
+
+    return status.state
+  }
+
+  /**
+   * The NFT a lifecycle call acts on, checksummed, and its DID on the configured chain.
+   * Nothing is sent and no NFT is read here; see `setAssetLifecycleState` for the checks.
+   * Only a DID needs the node, so only a DID answers with a promise.
+   */
+  private lifecycleTarget(
+    target: LifecycleTarget,
+    operation: string
+  ):
+    | { nftAddress: string; did: string }
+    | Promise<{ nftAddress: string; did: string }> {
+    const chainId = this.config.chainId
+
+    if (typeof target === 'string') {
+      const value = target.trim()
+
+      if (/^0x/i.test(value)) {
+        let nftAddress: string
+        try {
+          // Rejects a mixed-case address whose checksum is wrong.
+          nftAddress = getAddress(value)
+        } catch {
+          throw new Error(
+            `${operation}: "${sanitize(value, 100, null)}" is not an address, or its checksum is wrong. Nothing was sent.`
+          )
+        }
+        return { nftAddress, did: expectedDid(nftAddress, chainId) }
+      }
+
+      if (/^did:ope?:/i.test(value))
+        return this.lifecycleTargetOfDid(value, operation)
+
+      throw new Error(
+        `${operation}: the target must be an asset, its DID or its NFT address; got "${sanitize(value, 100, null)}". Nothing was sent.`
+      )
+    }
+
+    if (!target || typeof target !== 'object')
+      throw new Error(
+        `${operation}: the target must be an asset, its DID or its NFT address. Nothing was sent.`
+      )
+
+    // The asset may come from query() or a store, so its NFT is bound to its id.
+    const nftAddress = boundNftAddress(
+      {
+        id: getDid(target),
+        chainId: getDdoChainId(target),
+        nftAddress: getNftAddress(target)
+      },
+      chainId,
+      operation
+    )
+
+    return { nftAddress, did: expectedDid(nftAddress, chainId) }
+  }
+
+  /**
+   * The NFT of a DID: the one the node's DDO names (`resolve()` checks that the DDO is the
+   * DID's, and `boundNftAddress` that the DID is the NFT's on the configured chain). When
+   * the node does not serve the DID (404), the NFT its indexing record names, under the
+   * same check; without one, this asks for the NFT address.
+   */
+  private async lifecycleTargetOfDid(
+    did: string,
+    operation: string
+  ): Promise<{ nftAddress: string; did: string }> {
+    const chainId = this.config.chainId
+    const shown = sanitize(did, 100, null)
+    let asset: AssetV5
+
+    try {
+      asset = await this.node.resolve(did)
+    } catch (error) {
+      if (!(error instanceof AssetNotFoundError)) throw error
+
+      const recorded = error.state?.nft
+      if (!recorded)
+        throw new Error(
+          `${operation}: the node does not serve ${shown} (HTTP 404), and its indexing record names no NFT, so the asset's NFT is unknown. ocean-node 4.2.x stops serving a DEPRECATED or REVOKED_BY_PUBLISHER asset: pass the asset's NFT address instead. Nothing was sent.`,
+          { cause: error }
+        )
+
+      const nftAddress =
+        typeof recorded === 'string' && isAddress(recorded)
+          ? getAddress(recorded)
+          : undefined
+
+      if (
+        !nftAddress ||
+        !isSameAsset(expectedDid(nftAddress, chainId), did) ||
+        (error.state?.chainId !== undefined && error.state.chainId !== chainId)
+      ) {
+        debugRaw(
+          'node',
+          `${operation}: the indexing record's NFT is not the DID's`,
+          {
+            did,
+            state: error.state
+          }
+        )
+        throw new Error(
+          `${operation}: the node does not serve ${shown} (HTTP 404), and the NFT its indexing record names, "${sanitize(String(recorded), 100, null)}", is not that DID's NFT on chain ${chainId}. Refused; pass the asset's NFT address instead. Nothing was sent.`
+        )
+      }
+
+      return { nftAddress, did: expectedDid(nftAddress, chainId) }
+    }
+
+    const nftAddress = boundNftAddress(
+      {
+        id: getDid(asset),
+        chainId: getDdoChainId(asset),
+        nftAddress: getNftAddress(asset)
+      },
+      chainId,
+      operation
+    )
+    const bound = expectedDid(nftAddress, chainId)
+
+    // resolve() refuses a DDO whose id is not `did` already; checked here again, as the
+    // whole decision rests on it.
+    if (!isSameAsset(bound, did))
+      throw new Error(
+        `${operation}: the node answered ${shown} with the DDO of ${bound} (NFT ${nftAddress}). Refused. Nothing was sent.`
+      )
+
+    return { nftAddress, did: bound }
   }
 
   /**
@@ -2100,4 +2331,28 @@ export class Nautilus {
   }
 
   // #endregion
+}
+
+/**
+ * An NFT for a lifecycle message: its address and DID, and, when given, its ERC721 name
+ * and symbol (already sanitised by `readNftLabel`).
+ */
+function nftLabel(
+  nftAddress: string,
+  did: string,
+  label?: { name?: string; symbol?: string }
+): string {
+  if (!label) return `NFT ${nftAddress} (${did})`
+
+  const name = label.name === undefined ? 'name unreadable' : `"${label.name}"`
+  const symbol = label.symbol === undefined ? 'symbol unreadable' : label.symbol
+
+  return `NFT ${nftAddress} (${name}, ${symbol}; ${did})`
+}
+
+/** Whether `did` (`did:op:` or `did:ope:`, any case) is the asset whose DID is `expected`. */
+function isSameAsset(expected: string, did: string): boolean {
+  const hash = /^did:ope?:([0-9a-f]{64})$/i.exec(did.trim())?.[1]
+
+  return hash !== undefined && `did:ope:${hash.toLowerCase()}` === expected
 }

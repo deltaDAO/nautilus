@@ -784,8 +784,10 @@ function shownId(id: unknown): string {
  * ORDERING_DISABLED_TEMPORARILY and ASSET_UNLISTED.
  *
  * DEPRECATED (2) and REVOKED_BY_PUBLISHER (3) are refused both ways. Step 2: the indexer
- * then replaces the DDO with a stub, one-way. Step 6: the decrypt handler refuses to
- * decrypt for an asset in either state.
+ * stops serving the DDO, one-way (ocean-node 4.2.x with Elasticsearch drops it: the
+ * `version: 'deprecated'` stub it means to keep fails its schema lookup; with Typesense
+ * a stub stays). Step 6: the decrypt handler refuses to decrypt for an asset in either
+ * state.
  */
 const WRITABLE_STATES = [0, 1, 4, 5]
 

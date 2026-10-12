@@ -182,8 +182,15 @@ export const LOG_EVENTS = {
     level: 'warn',
     component: 'lifecycle',
     description:
-      'setAssetLifecycleState() was asked for the state the asset is in already; nothing was sent.',
-    fields: ['state']
+      'setAssetLifecycleState() was asked for the state the NFT is in already on chain; nothing was sent.',
+    fields: ['nftAddress', 'state']
+  },
+  'lifecycle.state.set': {
+    level: 'info',
+    component: 'lifecycle',
+    description:
+      "setAssetLifecycleState() changed the NFT's lifecycle state on chain. For DEPRECATED (2) and REVOKED_BY_PUBLISHER (3) the message names the NFT's name and symbol too.",
+    fields: ['nftAddress', 'state', 'previous']
   },
 
   // access (and the orders of compute)
