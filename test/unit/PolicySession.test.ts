@@ -40,6 +40,8 @@ import {
   type SessionEntry,
   type SessionKey
 } from '../../src/identity/session.js'
+import { runOperation } from '../../src/log/context.js'
+import { log as processLog } from '../../src/log/logger.js'
 import {
   OceanNodeClient,
   OceanNodeError,
@@ -1892,5 +1894,89 @@ describe('compute() with a policy server', () => {
       ASSET_DID,
       ALGO_DID
     ])
+  })
+})
+
+// PR 10d: how the session came about is readable at `debug`; its id never is.
+describe('PolicySessionResolver log', () => {
+  it('logs an opened, then a cached session at debug, without the session id', async () => {
+    const { client } = policyNode()
+    const resolver = new PolicySessionResolver()
+    const log = captureLog({ level: 'debug' })
+
+    for (let call = 0; call < 2; call++)
+      await resolver.resolve({
+        node: client,
+        asset: getAssetFixture(),
+        serviceId: SERVICE_ID,
+        consumerAddress: CONSUMER
+      })
+
+    const resolved = log.named('identity.session.resolved')
+    expect(resolved.map((event) => event.fields.outcome)).toEqual([
+      'opened',
+      'cached'
+    ])
+    expect(resolved[0]).toMatchObject({
+      did: getAssetFixture().id,
+      fields: { serviceId: SERVICE_ID, nodeUri: NODE }
+    })
+    expect(resolved[0].durationMs).to.be.a('number')
+    expect(JSON.stringify(log.events)).not.toContain(SESSION)
+  })
+
+  it('logs a presented session', async () => {
+    const { client } = policyNode({
+      initiate: async () => initiatedWithPresentation()
+    })
+    const { provider } = recordingProvider()
+    const log = captureLog({ level: 'debug' })
+
+    await new PolicySessionResolver({ credentials: provider }).resolve({
+      node: client,
+      asset: ssiAsset(),
+      serviceId: SERVICE_ID,
+      consumerAddress: CONSUMER
+    })
+
+    expect(
+      log
+        .named('identity.session.resolved')
+        .map((event) => event.fields.outcome)
+    ).toEqual(['presented'])
+    expect(JSON.stringify(log.events)).not.toContain(SESSION)
+  })
+
+  it("names the policy that refused a presentation in the access's failed line (the beta.2 holder-binding case)", async () => {
+    const { client } = policyNode({
+      initiate: async () => initiatedWithPresentation(),
+      check: {
+        verified: false,
+        policyResults: [
+          { policy: 'signature', success: true },
+          {
+            policy: 'holder-binding',
+            success: false,
+            error: 'java.lang.NullPointerException'
+          }
+        ]
+      } as PolicySessionCheck
+    })
+    const { provider } = recordingProvider()
+    const log = captureLog({ level: 'debug' })
+
+    await runOperation(processLog, 'access', () =>
+      new PolicySessionResolver({ credentials: provider }).resolve({
+        node: client,
+        asset: ssiAsset(),
+        serviceId: SERVICE_ID,
+        consumerAddress: CONSUMER
+      })
+    ).catch(() => undefined)
+
+    const failed = log.named('access.operation.failed')
+    expect(failed).to.have.length(1)
+    expect(failed[0].fields.error).to.contain('holder-binding')
+    expect(JSON.stringify(log.events)).not.toContain(SESSION)
   })
 })

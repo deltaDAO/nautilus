@@ -1114,3 +1114,97 @@ describe('IndexingError', () => {
     expect(failure('Hash check failed').message).not.to.contain('Hint')
   })
 })
+
+// PR 10d: what a wait for the indexer, and each node request, log.
+describe('waitForIndexer log', () => {
+  it('logs each lookup at trace and the indexing at debug, with the time it took', async () => {
+    stubNode({
+      lookups: [
+        { status: 404 },
+        { status: 200, body: indexedAsset(OTHER_TX) },
+        { status: 200, body: indexedAsset() }
+      ]
+    })
+    const log = captureLog({ level: 'trace' })
+
+    await client().waitForIndexer(ASSET_DID, TX, { intervalMs: 1 })
+
+    const lines = log.events.filter((event) =>
+      event.event.startsWith('node.indexer_wait.')
+    )
+    expect(lines.map((event) => `${event.level} ${event.event}`)).toEqual([
+      'trace node.indexer_wait.polled',
+      'trace node.indexer_wait.polled',
+      'trace node.indexer_wait.polled',
+      'debug node.indexer_wait.indexed'
+    ])
+    expect(lines.map((event) => event.fields.result)).toEqual([
+      'pending',
+      'pending',
+      'indexed',
+      undefined
+    ])
+    expect(lines[3]).toMatchObject({
+      did: ASSET_DID,
+      txHash: TX,
+      fields: { polls: 3, nodeUri: 'https://node.test.invalid' }
+    })
+    expect(lines[3].durationMs).to.be.a('number')
+  })
+
+  it('logs a failed lookup at debug', async () => {
+    stubNode({
+      lookups: [
+        { status: 500, body: 'boom' },
+        { status: 200, body: indexedAsset() }
+      ]
+    })
+    const log = captureLog({ level: 'debug' })
+
+    await client().waitForIndexer(ASSET_DID, TX, { intervalMs: 1 })
+
+    expect(log.named('node.indexer_wait.lookup_failed')).to.have.length(1)
+    expect(
+      log.named('node.indexer_wait.lookup_failed')[0].fields
+    ).toMatchObject({ failures: 1, error: expect.stringContaining('500') })
+  })
+})
+
+describe('node request log', () => {
+  it('logs each request at trace: the command, the node and how long it took', async () => {
+    stubNode({ lookups: [{ status: 200, body: indexedAsset() }] })
+    const log = captureLog({ level: 'trace' })
+
+    await client().resolve(ASSET_DID)
+
+    expect(log.named('node.request.answered')).toEqual([
+      expect.objectContaining({
+        level: 'trace',
+        fields: { command: 'resolve', nodeUri: 'https://node.test.invalid' },
+        durationMs: expect.any(Number)
+      })
+    ])
+  })
+
+  it('logs a failed request at debug with its status, and nothing at the default level', async () => {
+    stubNode({ lookups: [{ status: 503, body: 'down for maintenance' }] })
+    const debug = captureLog({ level: 'debug' })
+
+    await expect(client().resolve(ASSET_DID)).rejects.toThrow()
+
+    expect(debug.named('node.request.failed')).toEqual([
+      expect.objectContaining({
+        fields: expect.objectContaining({
+          command: 'resolve',
+          nodeUri: 'https://node.test.invalid',
+          status: 503,
+          error: expect.stringContaining('503')
+        })
+      })
+    ])
+
+    const quiet = captureLog({ level: 'warn' })
+    await expect(client().resolve(ASSET_DID)).rejects.toThrow()
+    expect(quiet.events).toEqual([])
+  })
+})

@@ -43,6 +43,7 @@ import {
   withoutSignedTransaction
 } from '../../src/utils/nonceGuard.js'
 import { confirmTransaction } from '../../src/utils/order.js'
+import { captureLog } from '../helpers.js'
 
 const PRIVATE_KEY =
   '0x0123456789012345678901234567890123456789012345678901234567890123'
@@ -1712,5 +1713,52 @@ describe('Nautilus.create: the verification provider', () => {
     } finally {
       for (const provider of [own, sameUrl, other]) provider.destroy()
     }
+  })
+})
+
+// PR 10d: the beta.2 stale nonce (case 14) is readable at `debug`, without querying the RPC
+// by hand: the pending count the RPC gave, the refusal, the decision, and the resend.
+describe('NonceGuardSigner: log', () => {
+  it('shows a stale pending count, the refusal and the resend at debug', async () => {
+    const chain = fakeChain({
+      latest: 818,
+      stale: 53,
+      broadcast: refuseFirst(1, 'NONCE_EXPIRED', 'nonce too low')
+    })
+    const log = captureLog({ level: 'debug' })
+
+    await guard(chain).sendTransaction(request())
+
+    expect(log.events.map((event) => `${event.level} ${event.event}`)).toEqual([
+      'debug chain.nonce.chosen',
+      'debug chain.nonce.refused',
+      'warn chain.nonce.resending',
+      'debug chain.send.broadcast'
+    ])
+    const [chosen, refused, , broadcast] = log.events
+    expect(chosen.fields).toMatchObject({ txNonce: 765, pending: 765 })
+    expect(refused.fields).toMatchObject({
+      refusal: 'nonce-expired',
+      attempt: 1
+    })
+    expect(broadcast.fields).toMatchObject({ txNonce: 818, attempt: 2 })
+    expect(broadcast.txHash).to.equal(chain.broadcasts[1].hash)
+    // No signed transaction in any line: it could be sent again by whoever reads it.
+    expect(JSON.stringify(log.events)).not.toMatch(LONG_HEX)
+  })
+
+  it('logs a plain send at debug only', async () => {
+    const chain = fakeChain({})
+    const quiet = captureLog({ level: 'warn' })
+
+    await guard(chain).sendTransaction(request())
+    expect(quiet.events).toEqual([])
+
+    const log = captureLog({ level: 'debug' })
+    await guard(chain).sendTransaction(request())
+    expect(log.events.map((event) => event.event)).toEqual([
+      'chain.nonce.chosen',
+      'chain.send.broadcast'
+    ])
   })
 })

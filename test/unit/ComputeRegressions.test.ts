@@ -665,3 +665,72 @@ describe('a requested maxJobDuration above the environment limit', () => {
     expect(log.named('compute.duration.capped')).to.have.length(2)
   })
 })
+
+// PR 10d: what a compute job logs, step by step (LogCoverage.test.ts has the other
+// operations).
+describe('compute() log', () => {
+  it('logs the environment, the quote, the orders and the job at debug', async () => {
+    const { client } = createComputeNodeMock({
+      [ASSET_DID]: getComputeAssetFixture(),
+      [ALGO_DID]: accessOnlyAlgorithm()
+    })
+    const log = captureLog({ level: 'debug' })
+
+    await computeAllowed(
+      { dataset: { did: ASSET_DID }, algorithm: { did: ALGO_DID } },
+      computeContext(client)
+    )
+
+    expect(log.events.map((event) => `${event.level} ${event.event}`)).toEqual([
+      'debug compute.environment.defaulted',
+      'debug identity.session.resolved',
+      'debug identity.session.resolved',
+      'debug compute.initialize.quoted',
+      'debug compute.escrow.not_quoted',
+      'debug compute.orders.settled',
+      'debug compute.job.started'
+    ])
+    expect(log.named('compute.initialize.quoted')[0].fields).toEqual({
+      environmentId: 'env-1',
+      inputs: 2,
+      reusableOrders: 0,
+      escrowQuoted: false
+    })
+    expect(log.named('compute.orders.settled')[0].fields.orders).toEqual([
+      {
+        did: ASSET_DID,
+        serviceId: SERVICE_ID,
+        transferTxId: expect.any(String)
+      },
+      {
+        did: ALGO_DID,
+        serviceId: ALGO_SERVICE_ID,
+        transferTxId: `tx-${ALGO_DATATOKEN}`
+      }
+    ])
+    expect(log.named('compute.job.started')[0].fields).toEqual({
+      jobIds: ['job-1'],
+      environmentId: 'env-1'
+    })
+  })
+
+  it('logs a free job at debug too', async () => {
+    const environment = { ...environmentFixture(), free: { resources: [] } }
+    const { client } = createComputeNodeMock(
+      {
+        [ASSET_DID]: getComputeAssetFixture(),
+        [ALGO_DID]: accessOnlyAlgorithm()
+      },
+      undefined,
+      environment as unknown as ComputeEnvironment
+    )
+    const log = captureLog({ level: 'debug' })
+
+    await freeCompute(
+      { dataset: { did: ASSET_DID }, algorithm: { did: ALGO_DID } },
+      computeContext(client)
+    )
+
+    expect(log.named('compute.job.started')).to.have.length(1)
+  })
+})
