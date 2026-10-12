@@ -223,6 +223,20 @@ export async function compute(
   )
 
   await assertProviderFeesAllowed(fees, config)
+  logger.emit(
+    'compute.initialize.quoted',
+    `${node.nodeUri} quoted the job on environment ${environment.id}.`,
+    () => ({
+      environmentId: environment.id,
+      inputs: inputs.length,
+      reusableOrders: inputs.filter(
+        (input, index) =>
+          !!matchInitializeResult(initializeResults, input, datatokens[index])
+            .validOrder
+      ).length,
+      escrowQuoted: !!initializeResults.payment
+    })
+  )
 
   const escrowQuote = await checkEscrowPayment({
     chainConfig,
@@ -262,6 +276,20 @@ export async function compute(
 
     // 6. Send every order, and record the transfer ids.
     const orders = await sendOrders(settlements)
+    logger.emit(
+      'compute.orders.settled',
+      `Settled the order of every input: ${Object.values(orders).join(', ')}.`,
+      () => ({
+        orders: Object.entries(orders).map(([key, transferTxId]) => {
+          const at = key.lastIndexOf('#')
+          return {
+            did: key.slice(0, at),
+            serviceId: key.slice(at + 1),
+            transferTxId
+          }
+        })
+      })
+    )
 
     for (const dataset of datasets)
       dataset.transferTxId =
@@ -297,7 +325,8 @@ export async function compute(
       : await run()
 
   logger.emit('compute.job.started', 'Started the compute job.', () => ({
-    jobIds: jobs.map((job) => job.jobId)
+    jobIds: jobs.map((job) => job.jobId),
+    environmentId: environment.id
   }))
 
   return {
@@ -351,6 +380,10 @@ export async function freeCompute(
     queueMaxWaitTime: config.queueMaxWaitTime,
     outputBucketId: config.outputBucketId
   })
+  logger.emit('compute.job.started', 'Started the free compute job.', () => ({
+    jobIds: jobs.map((job) => job.jobId),
+    environmentId: environment.id
+  }))
 
   return { jobs, environment }
 }

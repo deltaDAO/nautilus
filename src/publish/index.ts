@@ -34,6 +34,7 @@ import {
   toBeHex
 } from 'ethers'
 import type { PublishResponse, StoredBeforeFailure } from '../@types/Publish.js'
+import { stopwatch } from '../log/context.js'
 import { type Logger, log } from '../log/logger.js'
 import type {
   FileTypes,
@@ -92,8 +93,6 @@ export async function createNftWithService(params: {
   nftParams: NftCreateData
   service: NautilusService<ServiceTypes, FileTypes>
   owner: string
-  /** Where this call's log events go. Default: the process-wide logger. */
-  logger?: Logger
 }): Promise<CreatedTokens> {
   const { signer, chainConfig, nftParams, service, owner } = params
 
@@ -169,12 +168,6 @@ export async function createNftWithService(params: {
     throw new Error(
       'The bundle transaction confirmed but emitted no NFTCreated/TokenCreated events. Check that nftFactoryAddress points at a current ERC721Factory.'
     )
-
-  ;(params.logger ?? log).emit(
-    'publish.tokens.created',
-    'Created the NFT and its datatoken.',
-    { nftAddress, datatokenAddress, txHash: tx.hash }
-  )
 
   return { nftAddress, datatokenAddress, tx }
 }
@@ -547,29 +540,54 @@ export async function prepareMetadata(params: {
   return (await prepareMetadataForWrite(params)).written
 }
 
-/** `prepareMetadata()`, keeping what `writeMetadata()` needs. Not exported from the package. */
+/**
+ * `prepareMetadata()`, keeping what `writeMetadata()` needs, and logging each step at
+ * `debug`. Not exported from the package.
+ */
 export async function prepareMetadataForWrite(params: {
   node: OceanNodeClient
   ddo: Record<string, unknown>
   signer: DdoSigner
   remoteStore: RemoteStore
   did: string
+  /** Where this call's log events go. Default: the process-wide logger. */
+  logger?: Logger
 }): Promise<PreparedWrite> {
   const { node, ddo, signer, remoteStore, did } = params
+  const logger = params.logger ?? log
 
   assertEncryptOption(params)
 
+  let step = stopwatch()
   const credential = await signer.sign(ddo)
   assertSignedDdo(credential.jwt, ddo)
+  logger.emit('publish.ddo.signed', `Signed the DDO of ${did}.`, {
+    did,
+    issuer: credential.issuer,
+    durationMs: step()
+  })
 
+  step = stopwatch()
   const envelope = await buildEnvelope(node, credential.jwt)
   const metadataHash = hashEnvelope(envelope)
+  logger.emit(
+    'publish.envelope.encrypted',
+    `${node.nodeUri} encrypted the signed DDO of ${did}.`,
+    { did, nodeUri: node.nodeUri, bytes: envelope.length, durationMs: step() }
+  )
 
+  step = stopwatch()
   const stored = await remoteStore.put(envelope, { did })
+  logger.emit(
+    'store.envelope.stored',
+    `Stored the encrypted DDO of ${did} (${String(stored?.type ?? 'unknown')}).`,
+    () => ({ did, type: stored?.type, durationMs: step() })
+  )
 
   let pointer: ReturnType<typeof pointerPlaintext>
   let plaintext: string
   let metadata: string
+  step = stopwatch()
   try {
     pointer = pointerPlaintext(stored)
     plaintext = JSON.stringify(pointer)
@@ -587,6 +605,12 @@ export async function prepareMetadataForWrite(params: {
       sent: false
     })
   }
+
+  logger.emit(
+    'publish.pointer.encrypted',
+    `${node.nodeUri} encrypted the pointer to the DDO of ${did}.`,
+    { did, nodeUri: node.nodeUri, durationMs: step() }
+  )
 
   // Redacted once (one debug event), and copied, so the two fields stay independent.
   const redacted = redactPointer(pointer.remote)

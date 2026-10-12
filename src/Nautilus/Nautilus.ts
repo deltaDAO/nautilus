@@ -48,7 +48,7 @@ import type { CredentialProvider } from '../identity/CredentialProvider.js'
 import { PolicySessionResolver } from '../identity/PolicySessionResolver.js'
 import { isAddressCredential } from '../identity/policy.js'
 import type { SessionStore } from '../identity/session.js'
-import { type OperationName, runOperation } from '../log/context.js'
+import { type OperationName, runOperation, stopwatch } from '../log/context.js'
 import {
   type DebugOptions,
   debugEnabled,
@@ -779,8 +779,10 @@ export class Nautilus {
     txid?: string,
     options?: WaitForIndexerOptions
   ): Promise<AssetV5> {
-    return this.operation('waitForIndexer', () =>
-      this.node.waitForIndexer(did, txid, options)
+    return this.operation(
+      'waitForIndexer',
+      () => this.node.waitForIndexer(did, txid, options),
+      () => ({ did, ...(txid ? { txHash: txid } : {}) })
     )
   }
 
@@ -799,8 +801,10 @@ export class Nautilus {
     asset: NautilusAsset,
     options: PublishOptions = {}
   ): Promise<PublishResponse> {
-    return this.operation('publish', (log) =>
-      this.runPublish(asset, options, log)
+    return this.operation(
+      'publish',
+      (log) => this.runPublish(asset, options, log),
+      published
     )
   }
 
@@ -848,6 +852,7 @@ export class Nautilus {
     await this.warnIfPublisherIsNode(log)
     await this.warnIfPolicyServerDeniesAll(log, asset)
     await this.assertIndexerNotStuck(options, log)
+    preflightPassed(log, services.length)
 
     const published: PublishedService[] = []
 
@@ -855,14 +860,25 @@ export class Nautilus {
     // one transaction rather than three.
     const [first, ...rest] = services
 
+    const minting = stopwatch()
     const created = await createNftWithService({
       signer: this.signer,
       chainConfig: this.config,
       nftParams: asset.getNftParams(owner),
       service: first,
-      owner,
-      logger: log
+      owner
     })
+    log.emit(
+      'publish.tokens.created',
+      `Created NFT ${created.nftAddress} and its datatoken ${created.datatokenAddress}.`,
+      {
+        nftAddress: created.nftAddress,
+        datatokenAddress: created.datatokenAddress,
+        serviceId: first.id,
+        txHash: created.tx.hash,
+        durationMs: minting()
+      }
+    )
 
     first.datatokenAddress = created.datatokenAddress
     published.push({
@@ -877,7 +893,7 @@ export class Nautilus {
       let result: Awaited<ReturnType<Nautilus['writeAsset']>>
       try {
         published.push(
-          ...(await this.createDatatokens(created.nftAddress, rest, owner))
+          ...(await this.createDatatokens(created.nftAddress, rest, owner, log))
         )
 
         result = await this.writeAsset({
@@ -910,7 +926,7 @@ export class Nautilus {
       )
     })
 
-    return this.finishWrite(response, options)
+    return this.finishWrite(response, options, log)
   }
 
   /**
@@ -937,8 +953,10 @@ export class Nautilus {
     asset: NautilusAsset,
     options: CompletePublishOptions = {}
   ): Promise<PublishResponse> {
-    return this.operation('completePublish', (log) =>
-      this.runCompletePublish(nftAddress, asset, options, log)
+    return this.operation(
+      'completePublish',
+      (log) => this.runCompletePublish(nftAddress, asset, options, log),
+      published
     )
   }
 
@@ -995,6 +1013,21 @@ export class Nautilus {
         ),
         owner
       )
+      log.emit(
+        'publish.reuse.planned',
+        `completePublish() plan for NFT ${nftAddress}: ${plan.map(reuseAction).join(', ')}.`,
+        () => ({
+          nftAddress,
+          steps: plan.map((step) => ({
+            // A new service has no id before the DDO is built: its name then.
+            service: step.service.id || step.service.name,
+            action: reuseAction(step),
+            ...(step.datatokenAddress
+              ? { datatokenAddress: step.datatokenAddress }
+              : {})
+          }))
+        })
+      )
       await assertNftPermissions({
         signer: this.signer,
         chainConfig: this.config,
@@ -1021,6 +1054,7 @@ export class Nautilus {
       await this.warnIfPublisherIsNode(log)
       await this.warnIfPolicyServerDeniesAll(log, asset, nftAddress)
       await this.assertIndexerNotStuck(options, log)
+      preflightPassed(log, services.length)
 
       // Every reused datatoken is on its service before the first transaction, so a retry
       // after a failure further down finds them by name.
@@ -1033,26 +1067,38 @@ export class Nautilus {
       for (const { service, datatokenAddress, price } of plan) {
         if (!datatokenAddress) {
           published.push(
-            ...(await this.createDatatokens(nftAddress, [service], owner))
+            ...(await this.createDatatokens(nftAddress, [service], owner, log))
           )
           continue
+        }
+
+        let tx: TransactionReceipt | undefined
+        if (price) {
+          const pricing = stopwatch()
+          tx = await createPricingForDatatoken({
+            signer: this.signer,
+            chainConfig: this.config,
+            datatokenAddress,
+            service,
+            owner
+          })
+          log.emit(
+            'publish.pricing.created',
+            `Created the pricing of datatoken ${datatokenAddress}.`,
+            {
+              datatokenAddress,
+              serviceId: service.id,
+              txHash: tx.hash,
+              durationMs: pricing()
+            }
+          )
         }
 
         published.push({
           service,
           datatokenAddress,
           reused: true,
-          ...(price
-            ? {
-                tx: await createPricingForDatatoken({
-                  signer: this.signer,
-                  chainConfig: this.config,
-                  datatokenAddress,
-                  service,
-                  owner
-                })
-              }
-            : {})
+          ...(tx ? { tx } : {})
         })
       }
 
@@ -1077,7 +1123,7 @@ export class Nautilus {
       )
     })
 
-    return this.finishWrite(response, options)
+    return this.finishWrite(response, options, log)
   }
 
   /**
@@ -1277,6 +1323,7 @@ export class Nautilus {
     nftAddress: string,
     services: NautilusService<ServiceTypes, FileTypes>[],
     owner: string,
+    log: Logger,
     created: string[] = []
   ): Promise<PublishedService[]> {
     const published: PublishedService[] = []
@@ -1284,6 +1331,7 @@ export class Nautilus {
     for (const service of services) {
       const before = service.datatokenAddress
       try {
+        const creating = stopwatch()
         const { datatokenAddress, tx } = await createDatatokenForService({
           signer: this.signer,
           chainConfig: this.config,
@@ -1291,6 +1339,17 @@ export class Nautilus {
           service,
           owner
         })
+        log.emit(
+          'publish.datatoken.created',
+          `Created datatoken ${datatokenAddress} and its pricing on NFT ${nftAddress}.`,
+          {
+            nftAddress,
+            datatokenAddress,
+            serviceId: service.id,
+            txHash: tx.hash,
+            durationMs: creating()
+          }
+        )
 
         published.push({ service, datatokenAddress, tx })
       } finally {
@@ -1315,7 +1374,11 @@ export class Nautilus {
     asset: NautilusAsset,
     options: PublishOptions = {}
   ): Promise<PublishResponse> {
-    return this.operation('edit', (log) => this.runEdit(asset, options, log))
+    return this.operation(
+      'edit',
+      (log) => this.runEdit(asset, options, log),
+      published
+    )
   }
 
   /** `edit()`, within its operation. */
@@ -1378,6 +1441,7 @@ export class Nautilus {
       await this.warnIfPublisherIsNode(log)
       await this.warnIfPolicyServerDeniesAll(log, asset)
       await this.assertIndexerNotStuck(options, log)
+      preflightPassed(log, asset.ddo.services.length)
 
       const published: PublishedService[] = []
       const created: string[] = []
@@ -1385,7 +1449,13 @@ export class Nautilus {
       let result: Awaited<ReturnType<Nautilus['writeAsset']>>
       try {
         published.push(
-          ...(await this.createDatatokens(nftAddress, priced, owner, created))
+          ...(await this.createDatatokens(
+            nftAddress,
+            priced,
+            owner,
+            log,
+            created
+          ))
         )
         minting = false
 
@@ -1419,7 +1489,7 @@ export class Nautilus {
       )
     })
 
-    return this.finishWrite(response, options)
+    return this.finishWrite(response, options, log)
   }
 
   /**
@@ -1507,19 +1577,29 @@ export class Nautilus {
    */
   private async finishWrite(
     response: PublishResponse,
-    options: PublishOptions
+    options: PublishOptions,
+    log: Logger
   ): Promise<PublishResponse> {
     if (!options.waitForIndexer) return response
 
+    const did = response.ddo.id as string
+    const txHash = response.setMetadataTxReceipt.hash
+    log.emit(
+      'publish.indexer.waiting',
+      `Waiting for ${this.node.nodeUri} to index ${did}.`,
+      { did, txHash, nodeUri: this.node.nodeUri }
+    )
+    const waiting = stopwatch()
     try {
-      await this.node.waitForIndexer(
-        response.ddo.id as string,
-        response.setMetadataTxReceipt.hash,
-        indexerOptions(options)
-      )
+      await this.node.waitForIndexer(did, txHash, indexerOptions(options))
     } catch (error) {
       throw attachPublished(error, response)
     }
+    log.emit('publish.indexer.indexed', `The node indexed ${did}.`, {
+      did,
+      txHash,
+      durationMs: waiting()
+    })
 
     return { ...response, indexed: true }
   }
@@ -1833,13 +1913,26 @@ export class Nautilus {
         nftAddress
       })
 
+    const did = ddo.id as string
+    const preparing = stopwatch()
     const prepared = await prepareMetadataForWrite({
       node: this.node,
       ddo,
       signer: ddoSigner,
       remoteStore,
-      did: ddo.id as string
+      did,
+      logger: log
     })
+    log.emit(
+      'publish.ddo.stored',
+      `Signed, encrypted and stored the DDO of ${did}.`,
+      {
+        did,
+        pointer: prepared.written.stored.pointer,
+        metadataHash: prepared.written.metadataHash,
+        durationMs: preparing()
+      }
+    )
 
     // From here the envelope is stored. A failure while no transaction can point at it
     // (before the broadcast, or after a mined revert) orphans it, so it is removed again;
@@ -1850,11 +1943,21 @@ export class Nautilus {
     try {
       // Read the stored object back the way the node will, before the transaction, so an
       // unreadable or altered object is caught while nothing is on chain yet.
-      await remoteStore.verify?.(
-        prepared.storedPointer,
-        prepared.written.metadataHash
-      )
+      if (remoteStore.verify) {
+        const verifying = stopwatch()
+        await remoteStore.verify(
+          prepared.storedPointer,
+          prepared.written.metadataHash
+        )
+        log.emit(
+          'publish.ddo.verified',
+          `Read the stored DDO of ${did} back as the node will, unchanged.`,
+          { did, durationMs: verifying() }
+        )
+      }
 
+      const writing = stopwatch()
+      let announced = false
       setMetadataTxReceipt = await writeMetadata({
         signer: this.signer,
         chainConfig: this.config,
@@ -1865,9 +1968,28 @@ export class Nautilus {
         onProgress: (progress, hash) => {
           sent = progress === 'sent'
           txHash = hash ?? txHash
+          if (sent && !announced) {
+            announced = true
+            log.emit(
+              'publish.metadata.sent',
+              `Sent the metadata transaction of ${did}${txHash ? ` (${txHash})` : ''}.`,
+              { did, nftAddress, txHash }
+            )
+          }
         },
         logger: log
       })
+      log.emit(
+        'publish.metadata.confirmed',
+        `The metadata transaction of ${did} was mined in block ${setMetadataTxReceipt.blockNumber}.`,
+        {
+          did,
+          nftAddress,
+          txHash: setMetadataTxReceipt.hash,
+          blockNumber: setMetadataTxReceipt.blockNumber,
+          durationMs: writing()
+        }
+      )
     } catch (error) {
       throw await settleStoredEnvelope(error, {
         remoteStore,
@@ -1898,15 +2020,18 @@ export class Nautilus {
     )
       throw new Error('newPrice must be a numeric string, e.g. "2.5".')
 
-    return this.operation('setServicePrice', (log) =>
-      editPrice({
-        asset,
-        serviceId,
-        newPrice,
-        chainConfig: this.config,
-        signer: this.signer,
-        logger: log
-      })
+    return this.operation(
+      'setServicePrice',
+      (log) =>
+        editPrice({
+          asset,
+          serviceId,
+          newPrice,
+          chainConfig: this.config,
+          signer: this.signer,
+          logger: log
+        }),
+      (receipt) => ({ did: asset.id, txHash: receipt?.hash, serviceId })
     )
   }
 
@@ -1915,8 +2040,10 @@ export class Nautilus {
     asset: AssetV5,
     state: AssetState
   ): Promise<TransactionReceipt | undefined> {
-    return this.operation('setAssetLifecycleState', (log) =>
-      this.runSetAssetLifecycleState(asset, state, log)
+    return this.operation(
+      'setAssetLifecycleState',
+      (log) => this.runSetAssetLifecycleState(asset, state, log),
+      (receipt) => ({ did: asset.id, txHash: receipt?.hash, state })
     )
   }
 
@@ -1939,6 +2066,11 @@ export class Nautilus {
 
     const nftAddress = getNftAddress(asset)
 
+    log.emit(
+      'lifecycle.state.sending',
+      `Changing the lifecycle state of ${asset.id} from ${current} to ${state}.`,
+      { did: asset.id, nftAddress, from: current, to: state }
+    )
     return this.withNftLock(nftAddress, () =>
       setMetadataState({
         nftAddress,
@@ -1991,13 +2123,21 @@ export class Nautilus {
 
   /** Orders a service if needed and returns a one-time download URL. */
   async access(config: AccessConfig): Promise<AccessResult> {
-    return this.operation('access', (log) =>
-      access(this.withProviderFeeDefaults(config), {
-        node: this.node,
-        signer: this.signer,
-        chainConfig: this.config,
-        policySessions: this.policySessions,
-        logger: log
+    return this.operation(
+      'access',
+      (log) =>
+        access(this.withProviderFeeDefaults(config), {
+          node: this.node,
+          signer: this.signer,
+          chainConfig: this.config,
+          policySessions: this.policySessions,
+          logger: log
+        }),
+      (result) => ({
+        did: result.did,
+        txHash: result.transferTxId,
+        serviceId: result.serviceId,
+        reusedOrder: result.reusedOrder
       })
     )
   }
@@ -2020,16 +2160,19 @@ export class Nautilus {
 
   /** Starts a paid compute job: orders inputs, funds escrow, then starts. */
   async compute(config: ComputeConfig): Promise<ComputeResult> {
-    return this.operation('compute', (log) =>
-      compute(this.withEscrowDefaults(this.withProviderFeeDefaults(config)), {
-        node: this.node,
-        signer: this.signer,
-        chainConfig: this.config,
-        policySessions: this.policySessions,
-        escrow: this.explicitEscrow,
-        escrowLock: this.escrowLock,
-        logger: log
-      })
+    return this.operation(
+      'compute',
+      (log) =>
+        compute(this.withEscrowDefaults(this.withProviderFeeDefaults(config)), {
+          node: this.node,
+          signer: this.signer,
+          chainConfig: this.config,
+          policySessions: this.policySessions,
+          escrow: this.explicitEscrow,
+          escrowLock: this.escrowLock,
+          logger: log
+        }),
+      started
     )
   }
 
@@ -2037,14 +2180,17 @@ export class Nautilus {
   async freeCompute(
     config: FreeComputeConfig
   ): Promise<Omit<ComputeResult, 'initializeResults' | 'orders'>> {
-    return this.operation('freeCompute', (log) =>
-      freeCompute(config, {
-        node: this.node,
-        signer: this.signer,
-        chainConfig: this.config,
-        policySessions: this.policySessions,
-        logger: log
-      })
+    return this.operation(
+      'freeCompute',
+      (log) =>
+        freeCompute(config, {
+          node: this.node,
+          signer: this.signer,
+          chainConfig: this.config,
+          policySessions: this.policySessions,
+          logger: log
+        }),
+      started
     )
   }
 
@@ -2058,8 +2204,10 @@ export class Nautilus {
   async getComputeStatus(
     config: ComputeStatusConfig
   ): Promise<NodeComputeJob | undefined> {
-    return this.operation('getComputeStatus', () =>
-      this.nodeFor(config.nodeUri).getComputeJob(config.jobId)
+    return this.operation(
+      'getComputeStatus',
+      () => this.nodeFor(config.nodeUri).getComputeJob(config.jobId),
+      (job) => ({ jobId: config.jobId, status: job?.status })
     )
   }
 
@@ -2074,8 +2222,10 @@ export class Nautilus {
   async getComputeResult(
     config: ComputeResultConfig
   ): Promise<string | undefined> {
-    return this.operation('getComputeResult', (log) =>
-      this.runGetComputeResult(config, log)
+    return this.operation(
+      'getComputeResult',
+      (log) => this.runGetComputeResult(config, log),
+      (url) => ({ jobId: config.jobId, ready: url !== undefined })
     )
   }
 
@@ -2168,8 +2318,14 @@ export class Nautilus {
 
   /** Asks the node to stop a job, and returns the jobs as they stand after the request. */
   async stopCompute(config: StopComputeConfig): Promise<NodeComputeJob[]> {
-    return this.operation('stopCompute', () =>
-      this.nodeFor(config.nodeUri).computeStop(config.jobId, config.agreementId)
+    return this.operation(
+      'stopCompute',
+      () =>
+        this.nodeFor(config.nodeUri).computeStop(
+          config.jobId,
+          config.agreementId
+        ),
+      (jobs) => ({ jobIds: jobs.map((job) => job.jobId) })
     )
   }
 
@@ -2243,13 +2399,15 @@ export class Nautilus {
    * Runs `run` as the operation `name` (`src/log/context.ts`): every event it causes, and
    * the error it throws, carry the operation's `opId`. `run` gets this instance's logger
    * bound to the operation; hand it to the functions it calls, which is how the `opId`
-   * reaches their events where there is no `AsyncLocalStorage` (a browser).
+   * reaches their events where there is no `AsyncLocalStorage` (a browser). `summary`
+   * puts what the call produced on its `…finished` event.
    */
   private operation<T>(
     name: OperationName,
-    run: (log: Logger) => Promise<T>
+    run: (log: Logger) => Promise<T>,
+    summary?: (result: T) => Record<string, unknown>
   ): Promise<T> {
-    return runOperation(this.log, name, run)
+    return runOperation(this.log, name, run, summary)
   }
 
   /** A client for another node, when a job runs somewhere other than the default. */
@@ -2288,4 +2446,41 @@ function sameRpc(a: Provider, b: Provider | null): boolean {
   }
   const url = urlOf(a)
   return url !== undefined && url === urlOf(b)
+}
+
+/** What a publish, `completePublish()` or `edit()` produced, for its `…finished` event. */
+function published(response: PublishResponse): Record<string, unknown> {
+  return {
+    did: response.ddo?.id,
+    txHash: response.setMetadataTxReceipt?.hash,
+    nftAddress: response.nftAddress
+  }
+}
+
+/** The jobs a `compute()` or `freeCompute()` started, for its `…finished` event. */
+function started(
+  result: Pick<ComputeResult, 'jobs' | 'environment'>
+): Record<string, unknown> {
+  return {
+    jobIds: result.jobs.map((job) => job.jobId),
+    environmentId: result.environment?.id
+  }
+}
+
+/** What `completePublish()` does with one service's datatoken. */
+function reuseAction(step: {
+  datatokenAddress?: string
+  price?: unknown
+}): 'reuse' | 'price' | 'create' {
+  if (!step.datatokenAddress) return 'create'
+  return step.price ? 'price' : 'reuse'
+}
+
+/** Every check before the first transaction of a publish, `completePublish()` or edit passed. */
+function preflightPassed(log: Logger, services: number): void {
+  log.emit(
+    'publish.preflight.passed',
+    'Every check before the first transaction passed.',
+    { services }
+  )
 }

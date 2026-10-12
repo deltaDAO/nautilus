@@ -964,7 +964,18 @@ export class NonceGuardSigner extends AbstractSigner {
     to: string | undefined
   ): Promise<TransactionResponse> {
     try {
-      return this.track(to, await this.signer.sendTransaction(tx))
+      const response = await this.signer.sendTransaction(tx)
+      this.log.emit(
+        'chain.send.broadcast',
+        `Sent transaction ${response.hash} of ${response.from} with nonce ${response.nonce} (the wallet's).`,
+        {
+          address: response.from,
+          txNonce: response.nonce,
+          attempt: 1,
+          txHash: response.hash
+        }
+      )
+      return this.track(to, response)
     } catch (error) {
       const outcome = await this.recover({
         error,
@@ -1013,6 +1024,11 @@ export class NonceGuardSigner extends AbstractSigner {
           hash: response.hash,
           attempt
         })
+        this.log.emit(
+          'chain.send.broadcast',
+          `Sent transaction ${response.hash} of ${address} with nonce ${nonce}${attempt > 1 ? ` (attempt ${attempt})` : ''}.`,
+          { address, txNonce: nonce, attempt, txHash: response.hash }
+        )
         return response
       } catch (error) {
         const outcome = await this.recover({
@@ -1067,6 +1083,11 @@ export class NonceGuardSigner extends AbstractSigner {
       local: local?.next,
       nonce
     })
+    this.log.emit(
+      'chain.nonce.chosen',
+      `Next nonce of ${address}: ${nonce} (the RPC's pending count ${pending}, nautilus's counter ${local?.next ?? 'none'}).`,
+      { address, txNonce: nonce, pending, counter: local?.next }
+    )
     return nonce
   }
 
@@ -1141,6 +1162,16 @@ export class NonceGuardSigner extends AbstractSigner {
       refusal: refusal ?? 'not a nonce refusal',
       attempt: params.attempt
     })
+    if (refusal)
+      this.log.emit(
+        'chain.nonce.refused',
+        `The RPC refused the send for its nonce (${refusal}, attempt ${params.attempt}); the nonce guard decides next.`,
+        {
+          code: typeof code === 'string' ? code : undefined,
+          refusal,
+          attempt: params.attempt
+        }
+      )
 
     const moneySend = isMoneySend(request)
     const stop = (

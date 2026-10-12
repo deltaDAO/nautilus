@@ -180,6 +180,9 @@ const running = new WeakMap<OperationContext, Logger>()
  * Runs `run` as the operation `name`: a new `opId`, an `…started` event, then
  * `…finished` or `…failed` with `durationMs`, and the `opId` on the error it throws.
  * `run` gets `logger` bound to the operation: pass it to whatever the operation calls.
+ * `summary` names what the call produced on its `…finished` event (the asset's `did`, the
+ * last `txHash`, job ids): the operation's own milestone, so no separate "done" event is
+ * needed. It is called only when that event is printed, and never fails the call.
  *
  * Inside another operation that is still running on the same logger (a call made from a
  * callback of one, such as `confirmProviderFees`), `run` joins it: no new `opId`, no
@@ -191,7 +194,8 @@ const running = new WeakMap<OperationContext, Logger>()
 export async function runOperation<T>(
   logger: Logger,
   name: OperationName,
-  run: (log: Logger) => Promise<T>
+  run: (log: Logger) => Promise<T>,
+  summary?: (result: T) => Record<string, unknown>
 ): Promise<T> {
   const root = logger.root()
   const outer = currentOperation()
@@ -217,9 +221,14 @@ export async function runOperation<T>(
     try {
       const result = await run(log)
       const durationMs = elapsed(context)
-      log.emit(events.finished, `${name} finished in ${durationMs} ms.`, {
-        durationMs
-      })
+      log.emit(
+        events.finished,
+        `${name} finished in ${durationMs} ms.`,
+        () => ({
+          ...summary?.(result),
+          durationMs
+        })
+      )
       return result
     } catch (error) {
       const durationMs = elapsed(context)
@@ -307,4 +316,13 @@ function now(): number {
 /** Whole ms since the operation started. */
 function elapsed(context: OperationContext): number {
   return Math.max(0, Math.round(now() - context.startedAt))
+}
+
+/**
+ * A stopwatch for one step: call it for the whole ms since it was made. Steps log what
+ * they took as `durationMs`.
+ */
+export function stopwatch(): () => number {
+  const startedAt = now()
+  return () => Math.max(0, Math.round(now() - startedAt))
 }

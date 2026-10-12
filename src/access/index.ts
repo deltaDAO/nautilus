@@ -15,6 +15,7 @@ import type { OceanNodeClient } from '../node/OceanNodeClient.js'
 import { assertValidLimits } from '../utils/paymentLimits.js'
 import {
   initializeWithValidProviderFee,
+  type ProviderFeeLike,
   providerFeeToSend
 } from '../utils/providerFee.js'
 import { assertAccessRequest } from './guards.js'
@@ -104,7 +105,21 @@ export async function access(
         userdata
       }),
     (result) => [providerFeeToSend(result)],
-    Number(service.timeout) === 0 ? { attempts: 1 } : {}
+    { ...(Number(service.timeout) === 0 ? { attempts: 1 } : {}), logger }
+  )
+  logger.emit(
+    'access.provider_fee.quoted',
+    `${serviceNode.nodeUri} quoted the provider fee for service ${service.id} of ${asset.id}.`,
+    () => {
+      const fee = initialized.providerFee as ProviderFeeLike | undefined
+      return {
+        did: asset.id,
+        serviceId: service.id,
+        nodeUri: serviceNode.nodeUri,
+        feeToken: fee?.providerFeeToken,
+        feeAmount: fee?.providerFeeAmount
+      }
+    }
   )
 
   const datatokenAddress =
@@ -148,8 +163,10 @@ export async function access(
 
   logger.emit(
     'access.order.settled',
-    reused ? 'Reused an order in force.' : 'Placed or extended the order.',
-    { did: config.assetDid, txHash: transferTxId, reused }
+    reused
+      ? `Reused the order ${transferTxId} in force for service ${service.id} of ${asset.id}.`
+      : `Ordered service ${service.id} of ${asset.id}: ${transferTxId}.`,
+    { did: asset.id, txHash: transferTxId, serviceId: service.id, reused }
   )
 
   // 5. Build the download URL — on the service's node, which holds the decryption key —
@@ -162,6 +179,17 @@ export async function access(
       fileIndex: config.fileIndex,
       policyServer,
       userdata
+    }
+  )
+  // The URL itself carries the download's signature and nonce: only where it points.
+  logger.emit(
+    'access.download_url.created',
+    `${serviceNode.nodeUri} signed the download URL for service ${service.id} of ${asset.id}.`,
+    {
+      did: asset.id,
+      serviceId: service.id,
+      nodeUri: serviceNode.nodeUri,
+      fileIndex: config.fileIndex ?? 0
     }
   )
 

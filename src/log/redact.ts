@@ -265,6 +265,10 @@ const EVENT_TOPIC: Partial<Record<LogEventName, DebugTopic>> = {
   'publish.preflight.indexer_nonce_unreadable': 'nonce',
   'publish.preflight.indexer_nonce_will_stick': 'nonce',
   'publish.preflight.pending_unreadable': 'nonce',
+  'publish.ddo.stored': 'store',
+  'chain.nonce.chosen': 'nonce',
+  'chain.nonce.refused': 'nonce',
+  'chain.send.broadcast': 'nonce',
   'node.policy_server.empty_url': 'policy'
 }
 
@@ -278,7 +282,11 @@ const ERROR_TOPIC: Readonly<Record<string, DebugTopic>> = {
   CredentialPresentationError: 'policy',
   WaltIdWalletError: 'wallet',
   NonceGuardError: 'nonce',
-  IndexerNonceStuckError: 'nonce'
+  IndexerNonceStuckError: 'nonce',
+  // The previous-order lookup's (PR 9), whichever operation ordered: compute() too.
+  OrderCheckError: 'order',
+  IncompleteOrderLookupError: 'order',
+  InconsistentRpcAnswerError: 'order'
 }
 
 /** How many levels of `cause` `errorTopic` reads. */

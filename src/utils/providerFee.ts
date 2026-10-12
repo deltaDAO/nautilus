@@ -30,6 +30,7 @@ import {
   toBeHex,
   ZeroAddress
 } from 'ethers'
+import { type Logger, log } from '../log/logger.js'
 
 /** secp256k1's group order, to fold a high `s` back to the canonical form ethers takes. */
 const SECP256K1_N =
@@ -273,6 +274,8 @@ export async function initializeWithValidProviderFee<T>(
     attempts?: number
     delayMs?: number
     sleep?: (ms: number) => Promise<void>
+    /** Where the retries are logged. Default: the process-wide logger. */
+    logger?: Logger
   } = {}
 ): Promise<T> {
   const attempts = Math.max(1, options.attempts ?? PROVIDER_FEE_ATTEMPTS)
@@ -324,6 +327,11 @@ export async function initializeWithValidProviderFee<T>(
 
     for (const hash of hashes) if (hash) seenBad.add(hash)
 
+    ;(options.logger ?? log).emit(
+      'access.provider_fee.requested_again',
+      `The node's provider fee had a signature the contract rejects (attempt ${attempt} of ${attempts}); asking again in ${delayMs} ms.`,
+      { attempt, attempts, problem: problem.kind, delayMs }
+    )
     await sleep(delayMs)
   }
 }

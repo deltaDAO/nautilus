@@ -13,6 +13,7 @@ import {
 } from '@oceanprotocol/lib'
 import { Decimal } from 'decimal.js'
 import { Contract, type Signer } from 'ethers'
+import { stopwatch } from '../log/context.js'
 import { debugRaw } from '../log/debug.js'
 import { type Logger, log } from '../log/logger.js'
 import { sanitize } from '../node/messages.js'
@@ -44,6 +45,7 @@ import {
 } from '../utils/providerFee.js'
 import {
   classifyLookupFailure,
+  type LookupFailure,
   lookupFailedWarning,
   OrderCheckError,
   type OrderCheckPrice,
@@ -129,15 +131,18 @@ export async function planSettlement(
     return { pricing, price }
   })
   const previous = await reusableOrder(params, quote, operation)
+  const logger = params.logger ?? log
 
   // An order in force and no new fee needed: reuse the transaction as it stands. Nothing
   // is sent, so no fee is checked or asked for, whatever the node quoted.
-  if (previous && !previous.feeDue)
+  if (previous && !previous.feeDue) {
+    planned(logger, params, 'reused', previous.transferTxId)
     return {
       kind: 'reused',
       datatokenAddress,
       transferTxId: previous.transferTxId
     }
+  }
 
   // Both remaining paths send the fee to the datatoken, which checks it first: refuse
   // one it would reject here, once. `order()` and `reuseOrder()` check again for their
@@ -170,7 +175,8 @@ export async function planSettlement(
   }
 
   // An order in force but a new fee period: extend it rather than buying again.
-  if (previous)
+  if (previous) {
+    planned(logger, params, 'reuse', previous.transferTxId)
     return {
       kind: 'reuse',
       datatokenAddress,
@@ -183,6 +189,7 @@ export async function planSettlement(
         ...allowed
       }
     }
+  }
 
   const { pricing, price } = await quote()
 
@@ -201,8 +208,35 @@ export async function planSettlement(
 
   // Pricing that cannot be ordered is refused here.
   await checkOrder(request)
+  planned(logger, params, 'order', undefined, price.total)
 
   return { kind: 'order', datatokenAddress, request }
+}
+
+/** What the plan does: the decision `sendSettlement` carries out. */
+function planned(
+  logger: Logger,
+  params: SettleOrderParams,
+  kind: SettlementPlan['kind'],
+  orderTxId?: string,
+  price?: string
+): void {
+  logger.emit(
+    'access.order.planned',
+    kind === 'reused'
+      ? `Using the order ${orderTxId} as it stands: it is in force and owes no new provider fee.`
+      : kind === 'reuse'
+        ? `Extending the order ${orderTxId} with a new provider fee.`
+        : `Placing a new order${price === undefined ? '' : ` (price ${price})`}.`,
+    {
+      did: params.did,
+      serviceId: params.service?.id,
+      datatokenAddress: params.datatokenAddress,
+      plan: kind,
+      ...(orderTxId ? { orderTxId } : {}),
+      ...(price === undefined ? {} : { price })
+    }
+  )
 }
 
 /**
@@ -238,6 +272,28 @@ async function reusableOrder(
 
   const providerFee = initialized.providerFee as ProviderFeeLike | undefined
 
+  const looking = stopwatch()
+  const lookedUp = (result: string, failure?: LookupFailure) => {
+    const durationMs = looking()
+    logger.emit(
+      'access.order.lookup_finished',
+      result === 'failed'
+        ? `The previous-order lookup on chain failed after ${durationMs} ms.`
+        : `The previous-order lookup on chain took ${durationMs} ms and found ${result === 'none' ? 'no order in force' : `an order (${result})`}.`,
+      () => ({
+        did: params.did,
+        serviceId: service.id,
+        datatokenAddress: params.datatokenAddress,
+        result,
+        timeout: service.timeout,
+        durationMs,
+        // The classified, redacted cause: an RPC's raw error can carry its URL's key.
+        ...(failure
+          ? { reason: failure.reason, error: failure.cause.message }
+          : {})
+      })
+    )
+  }
   const previous = await findPreviousOrder({
     provider,
     datatokenAddress: params.datatokenAddress,
@@ -248,8 +304,19 @@ async function reusableOrder(
     providerFeeAddress:
       providerFee?.providerFeeAddress === undefined
         ? undefined
-        : String(providerFee.providerFeeAddress)
-  }).catch((error: unknown) => onLookupFailure(params, error, quote, operation))
+        : String(providerFee.providerFeeAddress),
+    logger
+  }).then(
+    (found) => {
+      lookedUp(found ? (found.usableTxId ? 'usable' : 'extendable') : 'none')
+      return found
+    },
+    (error: unknown) => {
+      const failure = classifyLookupFailure(error)
+      lookedUp('failed', failure)
+      return onLookupFailure(params, failure, quote, operation)
+    }
+  )
 
   if (!previous) return undefined
 
@@ -279,12 +346,11 @@ type Quote = { pricing: PricingInfo; price: OrderPrice }
  */
 async function onLookupFailure(
   params: SettleOrderParams,
-  error: unknown,
+  failure: LookupFailure,
   quote: () => Promise<Quote>,
   operation: string
 ): Promise<undefined> {
   const logger = params.logger ?? log
-  const failure = classifyLookupFailure(error)
   // A throw while the costs are put together counts as an unreadable price too.
   const costs = await quote()
     .then(({ pricing, price }) => costsOfNewOrder(params, pricing, price))

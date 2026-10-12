@@ -46,6 +46,8 @@
  */
 import type { Block, Log, Provider, TransactionReceipt } from 'ethers'
 import { Interface, toUtf8String, zeroPadValue } from 'ethers'
+import { stopwatch } from '../log/context.js'
+import { type Logger, log } from '../log/logger.js'
 import { rateLimitOf } from './rpcErrors.js'
 
 /**
@@ -104,6 +106,8 @@ export interface PreviousOrderQuery {
   timeout?: number
   /** The node's fee address, the `providerFeeAddress` of the fee it quotes now. */
   providerFeeAddress?: string
+  /** Where each read of the scan is logged (`trace`). Default: the process-wide logger. */
+  logger?: Logger
 }
 
 /**
@@ -197,6 +201,7 @@ export async function findPreviousOrder(
   options: { now?: number } = {}
 ): Promise<PreviousOrder | undefined> {
   const { provider } = query
+  const logger = query.logger ?? log
   const now = options.now ?? Math.floor(Date.now() / 1000)
 
   // Seconds after its block an order is still reused: the node's `elapsed > timeout`, with
@@ -239,13 +244,30 @@ export async function findPreviousOrder(
     const from = Math.max(stop, to - chunk + 1)
     let candidates: Candidate[]
 
+    const reading = stopwatch()
     try {
       candidates = await readCandidates(query, from, to)
     } catch (error) {
       if (chunk === 1 || !isRangeError(error)) throw error
       chunk = Math.floor(chunk / 2)
+      logger.emit(
+        'access.order.lookup_narrowed',
+        `The RPC refused blocks ${from}-${to} as too many; reading ${chunk} at a time.`,
+        { fromBlock: from, toBlock: to, chunk }
+      )
       continue
     }
+    logger.emit(
+      'access.order.lookup_read',
+      `Read blocks ${from}-${to}: ${candidates.length} order transaction(s) of the account.`,
+      {
+        fromBlock: from,
+        toBlock: to,
+        read: reads + 1,
+        candidates: candidates.length,
+        durationMs: reading()
+      }
+    )
 
     for (const candidate of candidates) {
       // Every older candidate is older still, and so is the order it names.

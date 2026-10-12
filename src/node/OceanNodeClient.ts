@@ -63,6 +63,7 @@ import {
   withQualifiedJobId
 } from '../compute/jobs.js'
 import type { PolicyServerPayload } from '../ddo/types.js'
+import { stopwatch } from '../log/context.js'
 import { debugEnabled, debugRaw } from '../log/debug.js'
 import { type Logger, log } from '../log/logger.js'
 import {
@@ -1350,6 +1351,7 @@ export class OceanNodeClient {
    * same way. `initializePolicyVerification` and `getComputeLogs` use it.
    */
   private async withNonceRetry<T>(
+    command: string,
     signal: AbortSignal | undefined,
     send: () => Promise<T>
   ): Promise<T> {
@@ -1364,8 +1366,18 @@ export class OceanNodeClient {
       )
         throw error
 
+      this.retried(command, error)
       return send()
     }
+  }
+
+  /** Logs that a signed command is sent once more, after the node refused its nonce. */
+  private retried(command: string, error: unknown): void {
+    this.log.emit(
+      'node.request.retried',
+      `${this.nodeUri} refused the nonce of a ${command}; sending it once more with a fresh one.`,
+      { command, nodeUri: this.nodeUri, error }
+    )
   }
 
   // #region metadata
@@ -1498,6 +1510,9 @@ export class OceanNodeClient {
         Math.min(requestTimeoutMs, deadline - Date.now())
       )
 
+    const waiting = stopwatch()
+    let polls = 0
+
     for (;;) {
       if (signal?.aborted) throw signal.reason
 
@@ -1507,8 +1522,33 @@ export class OceanNodeClient {
         signal,
         requestBudget()
       )
+      polls++
+      this.log.emit(
+        'node.indexer_wait.polled',
+        `Lookup ${polls} of ${what} on ${this.nodeUri}: ${lookup.kind}.`,
+        () => ({
+          did,
+          nodeUri: this.nodeUri,
+          poll: polls,
+          result: lookup.kind,
+          elapsedMs: waiting()
+        })
+      )
 
-      if (lookup.kind === 'indexed') return lookup.asset
+      if (lookup.kind === 'indexed') {
+        this.log.emit(
+          'node.indexer_wait.indexed',
+          `${this.nodeUri} indexed ${what} after ${polls} lookup(s).`,
+          () => ({
+            did,
+            ...(txid ? { txHash: txid } : {}),
+            nodeUri: this.nodeUri,
+            polls,
+            durationMs: waiting()
+          })
+        )
+        return lookup.asset
+      }
 
       // A rate-limit answer is not a failure of the node: wait longer and ask again.
       let rateLimited: NodeRateLimitedError | undefined =
@@ -1519,6 +1559,17 @@ export class OceanNodeClient {
 
         failures++
         lastLookupError = lookup.error
+        this.log.emit(
+          'node.indexer_wait.lookup_failed',
+          `Lookup ${polls} of ${what} on ${this.nodeUri} failed (${failures} in a row of at most ${maxFailures}).`,
+          () => ({
+            did,
+            nodeUri: this.nodeUri,
+            failures,
+            maxFailures,
+            error: OceanNodeError.from('waitForIndexer', lookup.error)
+          })
+        )
 
         if (failures >= maxFailures)
           throw new OceanNodeError(
@@ -2091,6 +2142,7 @@ export class OceanNodeClient {
       )
         throw first.error
 
+      this.retried('encrypt', first.error)
       const second = await this.encryptOnce(
         data,
         policyServer,
@@ -2624,7 +2676,7 @@ export class OceanNodeClient {
       return logs
     }
 
-    const response = await this.withNonceRetry(signal, () =>
+    const response = await this.withNonceRetry(operation, signal, () =>
       this.requestComputeLogs(jobId, signal)
     )
 
@@ -2855,7 +2907,7 @@ export class OceanNodeClient {
       'initializePolicyVerification',
       signal,
       (callSignal) =>
-        this.withNonceRetry(callSignal, () =>
+        this.withNonceRetry('initializePolicyVerification', callSignal, () =>
           this.initiateOnce(request, callSignal)
         )
     )
@@ -3148,6 +3200,106 @@ export class OceanNodeClient {
   }
 
   // #endregion
+}
+
+/**
+ * The node calls that log one event each (`node.request.answered` at `trace`,
+ * `node.request.failed` at `debug`): the method, and the position of an argument that
+ * names another node to send to, if the method has one. Calls made through another of
+ * these (`getComputeJob` through `computeStatus`, `hasPolicyServer` through
+ * `getNodeStatus`) are logged once, by the inner one.
+ */
+const LOGGED_REQUESTS: Readonly<Record<string, number | undefined>> = {
+  resolve: undefined,
+  query: undefined,
+  validateRemote: undefined,
+  getFileInfo: 3,
+  checkDidFiles: undefined,
+  encrypt: 3,
+  initialize: undefined,
+  getDownloadUrl: undefined,
+  getComputeEnvironments: undefined,
+  initializeCompute: undefined,
+  computeStart: undefined,
+  freeComputeStart: undefined,
+  computeStatus: undefined,
+  computeStop: undefined,
+  getComputeResultUrl: undefined,
+  getComputeResult: undefined,
+  getComputeLogs: undefined,
+  getNodeStatus: undefined,
+  getNodeAddress: undefined,
+  getIndexerNonceState: undefined,
+  getIndexingState: undefined,
+  initializePolicyVerification: undefined,
+  checkPolicySession: undefined,
+  policyServerPassthrough: undefined,
+  createBucket: undefined,
+  uploadFile: undefined,
+  getFileObject: undefined
+}
+
+type NodeMethod = (
+  this: OceanNodeClient,
+  ...args: unknown[]
+) => Promise<unknown>
+
+for (const [command, target] of Object.entries(LOGGED_REQUESTS)) {
+  const methods = OceanNodeClient.prototype as unknown as Record<
+    string,
+    NodeMethod
+  >
+  const send = methods[command]
+  methods[command] = function (this: OceanNodeClient, ...args: unknown[]) {
+    const nodeUri =
+      target !== undefined && typeof args[target] === 'string'
+        ? (args[target] as string)
+        : this.nodeUri
+    // The client's own logger: private to the class, and read here only.
+    const logger = (this as unknown as { log: Logger }).log
+    return logRequest(logger, command, nodeUri, () => send.apply(this, args))
+  }
+}
+
+/**
+ * Runs one node call, logging how long it took: `node.request.answered` (`trace`), or
+ * `node.request.failed` (`debug`) with the HTTP status when the node answered. Only the
+ * node's origin and the command: never the arguments, which carry signatures, session
+ * ids and consumer data.
+ */
+async function logRequest<T>(
+  logger: Logger,
+  command: string,
+  nodeUri: string,
+  send: () => Promise<T>
+): Promise<T> {
+  const timing = stopwatch()
+  try {
+    const result = await send()
+    logger.emit(
+      'node.request.answered',
+      () => `${command} on ${nodeUri} answered in ${timing()} ms.`,
+      () => ({ command, nodeUri, durationMs: timing() })
+    )
+    return result
+  } catch (error) {
+    const durationMs = timing()
+    const status = error instanceof OceanNodeError ? error.status : undefined
+    logger.emit(
+      'node.request.failed',
+      `${command} on ${nodeUri} failed after ${durationMs} ms${status ? ` (HTTP ${status})` : ''}.`,
+      // Not a signer's or an RPC's raw error: the node error nautilus makes of it, whose
+      // text is sanitised the way the error the caller sees is.
+      () => ({
+        command,
+        nodeUri,
+        status,
+        durationMs,
+        error: OceanNodeError.from(command, error)
+      })
+    )
+    throw error
+  }
 }
 
 /** The path of `GET /api/aquarius/assets/ddo/<did>`. */

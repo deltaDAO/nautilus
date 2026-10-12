@@ -29,6 +29,7 @@ import {
   hasCredentials
 } from '../ddo/read.js'
 import type { PolicyServerPayload } from '../ddo/types.js'
+import { stopwatch } from '../log/context.js'
 import { debugEnabled, debugRaw } from '../log/debug.js'
 import { type Logger, log } from '../log/logger.js'
 import { MAX_NODE_MESSAGE_LENGTH, sanitize } from '../node/messages.js'
@@ -124,6 +125,22 @@ export interface PolicySessionRequest {
   consumerAddress: string
 }
 
+/** How `resolve()` came by the session, or why there is none. */
+type SessionOutcome =
+  | 'not-gated'
+  | 'no-policy-server'
+  | 'cached'
+  | 'opened'
+  | 'presented'
+
+const OUTCOMES: Record<SessionOutcome, string> = {
+  'not-gated': 'none needed, the service has no credentials',
+  'no-policy-server': 'none needed, the node has no policy server',
+  cached: 'reused a cached session',
+  opened: 'opened a session',
+  presented: 'opened a session and the verifier accepted the presentation'
+}
+
 export class PolicySessionResolver {
   private credentials?: CredentialProvider
   /** Sessions opened without a presentation, and presented ones when persisted. */
@@ -131,6 +148,7 @@ export class PolicySessionResolver {
   /** Presented sessions: `sessions` when persisted, else memory only. */
   private readonly presentedSessions: SessionStore
   private readonly sessionTtlMs: number
+  private readonly log: Logger
 
   constructor(options: PolicySessionResolverOptions = {}) {
     const sessionTtlMs = options.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS
@@ -147,9 +165,10 @@ export class PolicySessionResolver {
         ? this.sessions
         : new MemorySessionStore()
     this.sessionTtlMs = sessionTtlMs
+    this.log = options.logger ?? log
 
     if (options.sessionStore && options.persistPresentedSessions)
-      (options.logger ?? log).emit(
+      this.log.emit(
         'identity.sessions.presented_persisted',
         'persistPresentedSessions is on: presented policy-server sessions are kept in your sessionStore. Their ids let anyone read the presentation (vp_token) through the node until the verifier forgets them; keep that store private.',
         undefined,
@@ -194,12 +213,28 @@ export class PolicySessionResolver {
     request: PolicySessionRequest
   ): Promise<PolicyServerPayload | null> {
     const { node, asset, serviceId } = request
+    const resolving = stopwatch()
+    // Never the session id: it lets anyone read a presentation through the node.
+    const resolved = <T>(outcome: SessionOutcome, payload: T): T => {
+      this.log.emit(
+        'identity.session.resolved',
+        `Policy session for service ${serviceId} of ${asset.id} on ${node.nodeUri}: ${OUTCOMES[outcome]}.`,
+        {
+          did: asset.id,
+          serviceId,
+          nodeUri: node.nodeUri,
+          outcome,
+          durationMs: resolving()
+        }
+      )
+      return payload
+    }
 
     const service = getService(asset, serviceId)
     if (!service)
       throw new Error(`Asset ${asset.id} has no service with id ${serviceId}.`)
 
-    if (!hasCredentials(asset, service)) return null
+    if (!hasCredentials(asset, service)) return resolved('not-gated', null)
 
     const consumerAddress = node.policySessionAddress(request.consumerAddress)
     const key: SessionKey = {
@@ -210,9 +245,10 @@ export class PolicySessionResolver {
     }
 
     const cached = await this.reusable(key, node)
-    if (cached) return emptyPolicyServerPayload(cached)
+    if (cached) return resolved('cached', emptyPolicyServerPayload(cached))
 
-    if ((await node.hasPolicyServer()) === false) return null
+    if ((await node.hasPolicyServer()) === false)
+      return resolved('no-policy-server', null)
 
     const assetCredentials = getCredentials(asset)
     const serviceCredentials = getServiceCredentials(service)
@@ -237,7 +273,7 @@ export class PolicySessionResolver {
 
     // The node has no policy server after all (upstream ocean-node 4.2.0 does not report
     // `isPSConfigured`, and an empty `POLICY_SERVER_URL` reports one): no session.
-    if (!reply) return null
+    if (!reply) return resolved('no-policy-server', null)
 
     const { sessionId, redirectUri } = readInitiateReply(reply)
     if (debugEnabled('sensitive', 'policy'))
@@ -299,7 +335,10 @@ export class PolicySessionResolver {
         presented
       })
 
-    return emptyPolicyServerPayload(sessionId)
+    return resolved(
+      presented ? 'presented' : 'opened',
+      emptyPolicyServerPayload(sessionId)
+    )
   }
 
   /**

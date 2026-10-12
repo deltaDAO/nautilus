@@ -112,6 +112,27 @@ export const LOG_EVENTS = {
       "The nonce guard's counter was ahead of the RPC's pending count, and the last transaction it counted is dropped: sent more than a minute ago, unknown by hash on two reads, and the account has not mined past its nonce. The counter falls back to the pending count.",
     fields: ['address', 'txNonce', 'pending']
   },
+  'chain.nonce.chosen': {
+    level: 'debug',
+    component: 'chain',
+    description:
+      "The nonce guard chose the nonce of the next send of a local key: the larger of the RPC's pending count and nautilus's own counter (the nonce after the last transaction it sent), unless that transaction was dropped. A pending count below the counter is an RPC that has not seen the latest sends yet; one above it, another sender of the same key.",
+    fields: ['address', 'txNonce', 'pending', 'counter']
+  },
+  'chain.send.broadcast': {
+    level: 'debug',
+    component: 'chain',
+    description:
+      'A transaction was handed to the RPC (or the wallet sent it): its hash and the nonce it was sent with. attempt is 2 or 3 for a resend after a refusal for the nonce.',
+    fields: ['address', 'txNonce', 'attempt']
+  },
+  'chain.nonce.refused': {
+    level: 'debug',
+    component: 'chain',
+    description:
+      "The RPC refused a send for its nonce (refusal: 'nonce-expired', 'underpriced' or 'already-known'). The next event says what the nonce guard did: chain.nonce.already_sent, chain.nonce.resending or chain.nonce.gave_up.",
+    fields: ['code', 'refusal', 'attempt']
+  },
   'chain.send.failed': {
     level: 'debug',
     component: 'chain',
@@ -182,11 +203,100 @@ export const LOG_EVENTS = {
       "completePublish() could not read the signer's pending transaction count, so it cannot tell whether an earlier metadata transaction is still pending. It goes on.",
     fields: ['nftAddress', 'error']
   },
-  'publish.tokens.created': {
+  'publish.preflight.passed': {
     level: 'debug',
     component: 'publish',
-    description: 'The NFT and its first datatoken were created.',
-    fields: ['nftAddress', 'datatokenAddress']
+    description:
+      'Every check of a publish, completePublish() or edit() before its first transaction passed: the document validates, the store and the services are usable, and the node checks did not refuse. Nothing was spent before this line.',
+    fields: ['services']
+  },
+  'publish.reuse.planned': {
+    level: 'debug',
+    component: 'publish',
+    description:
+      "What completePublish() does with each service, decided from chain reads before any transaction: 'reuse' a datatoken of the NFT as it is, 'price' one whose pricing is missing, or 'create' a new one.",
+    fields: ['nftAddress', 'steps']
+  },
+  'publish.tokens.created': {
+    level: 'info',
+    component: 'publish',
+    description:
+      "publish() created the NFT and the first service's datatoken with its pricing, in one transaction (txHash), in durationMs.",
+    fields: ['nftAddress', 'datatokenAddress', 'serviceId']
+  },
+  'publish.datatoken.created': {
+    level: 'info',
+    component: 'publish',
+    description:
+      'A datatoken and its pricing were created on the NFT for one more service (publish(), completePublish() or a newly priced service of edit()): txHash is the pricing transaction.',
+    fields: ['nftAddress', 'datatokenAddress', 'serviceId']
+  },
+  'publish.pricing.created': {
+    level: 'info',
+    component: 'publish',
+    description:
+      'completePublish() created the missing pricing of a datatoken the NFT already had.',
+    fields: ['datatokenAddress', 'serviceId']
+  },
+  'publish.ddo.signed': {
+    level: 'debug',
+    component: 'publish',
+    description: 'The DDO was signed as a verifiable credential by its issuer.',
+    fields: ['issuer']
+  },
+  'publish.envelope.encrypted': {
+    level: 'debug',
+    component: 'publish',
+    description:
+      "The node encrypted the signed DDO into the envelope the remote store keeps; bytes is the envelope's size.",
+    fields: ['nodeUri', 'bytes']
+  },
+  'publish.pointer.encrypted': {
+    level: 'debug',
+    component: 'publish',
+    description:
+      'The node encrypted the pointer to the stored envelope: the metadata that goes on chain.',
+    fields: ['nodeUri']
+  },
+  'publish.ddo.stored': {
+    level: 'info',
+    component: 'publish',
+    description:
+      'The DDO was signed, encrypted by the node and stored in the remote store; pointer is where (redacted: no credentials, a URL as its origin). durationMs covers signing, both encryptions and the upload.',
+    fields: ['pointer', 'metadataHash']
+  },
+  'publish.ddo.verified': {
+    level: 'info',
+    component: 'publish',
+    description:
+      'The remote store read the stored envelope back the way the node will, and it was unchanged (RemoteStore.verify; stores without it skip this line). Nothing is on chain yet.'
+  },
+  'publish.metadata.sent': {
+    level: 'info',
+    component: 'publish',
+    description:
+      'The metadata transaction may have reached the chain (txHash, when known). From here a failure keeps the stored envelope.',
+    fields: ['nftAddress']
+  },
+  'publish.metadata.confirmed': {
+    level: 'info',
+    component: 'publish',
+    description:
+      'The metadata transaction was mined and succeeded, in blockNumber; durationMs is from building it to its receipt.',
+    fields: ['nftAddress', 'blockNumber']
+  },
+  'publish.indexer.waiting': {
+    level: 'debug',
+    component: 'publish',
+    description:
+      'waitForIndexer was set: the call waits for the node to index the asset at the metadata transaction.',
+    fields: ['nodeUri']
+  },
+  'publish.indexer.indexed': {
+    level: 'info',
+    component: 'publish',
+    description:
+      'The node indexed the asset at the metadata transaction, after durationMs of waiting.'
   },
   'publish.metadata.sending': {
     level: 'debug',
@@ -225,6 +335,13 @@ export const LOG_EVENTS = {
   },
 
   // lifecycle
+  'lifecycle.state.sending': {
+    level: 'debug',
+    component: 'lifecycle',
+    description:
+      "setAssetLifecycleState() is changing the asset's state on its NFT from one state to another.",
+    fields: ['nftAddress', 'from', 'to']
+  },
   'lifecycle.state.unchanged': {
     level: 'warn',
     component: 'lifecycle',
@@ -234,6 +351,55 @@ export const LOG_EVENTS = {
   },
 
   // access (and the orders of compute)
+  'access.provider_fee.quoted': {
+    level: 'debug',
+    component: 'access',
+    description:
+      "The service's node answered initialize with the provider fee it quotes: its token and its amount in base units.",
+    fields: ['serviceId', 'nodeUri', 'feeToken', 'feeAmount']
+  },
+  'access.provider_fee.requested_again': {
+    level: 'debug',
+    component: 'access',
+    description:
+      "The node's provider fee carried a signature the datatoken would reject, so it is requested again after delayMs.",
+    fields: ['attempt', 'attempts', 'problem', 'delayMs']
+  },
+  'access.order.lookup_read': {
+    level: 'trace',
+    component: 'access',
+    description:
+      "One read of the previous-order lookup: the account's order events in blocks fromBlock to toBlock, newest first, and how long the RPC took.",
+    fields: ['fromBlock', 'toBlock', 'read', 'candidates']
+  },
+  'access.order.lookup_narrowed': {
+    level: 'debug',
+    component: 'access',
+    description:
+      'The RPC refused a range of the previous-order lookup as too large, so it is read again in smaller chunks.',
+    fields: ['fromBlock', 'toBlock', 'chunk']
+  },
+  'access.order.lookup_finished': {
+    level: 'debug',
+    component: 'access',
+    description:
+      "The previous-order lookup on chain ended, after durationMs: result 'usable' (an order in force, usable as it stands), 'extendable' (one that needs a new provider fee), 'none' (the whole window was read: no order), or 'failed' (reason and the redacted error, as OrderCheckError names them).",
+    fields: [
+      'serviceId',
+      'datatokenAddress',
+      'result',
+      'timeout',
+      'reason',
+      'error'
+    ]
+  },
+  'access.order.planned': {
+    level: 'debug',
+    component: 'access',
+    description:
+      "How the order will be settled, decided before anything is sent: 'reused' (an order in force as it stands, nothing sent), 'reuse' (extend orderTxId with a new provider fee) or 'order' (a new order at price).",
+    fields: ['serviceId', 'datatokenAddress', 'plan', 'orderTxId', 'price']
+  },
   'access.order.lookup_failed': {
     level: 'warn',
     component: 'access',
@@ -254,11 +420,18 @@ export const LOG_EVENTS = {
     fields: ['schema', 'templateId', 'datatokenAddress', 'total']
   },
   'access.order.settled': {
+    level: 'info',
+    component: 'access',
+    description:
+      'The order of an access() call was settled: placed, extended or reused (reused); txHash is the transfer transaction the download is authorised by.',
+    fields: ['serviceId', 'reused']
+  },
+  'access.download_url.created': {
     level: 'debug',
     component: 'access',
     description:
-      'The order of an access() call was settled: placed, extended or reused.',
-    fields: ['reused']
+      "The service's node built the one-time download URL. The URL itself is never logged: it carries the download's signature.",
+    fields: ['serviceId', 'nodeUri', 'fileIndex']
   },
 
   // compute
@@ -276,6 +449,20 @@ export const LOG_EVENTS = {
       "The requested maxJobDuration exceeds the environment's limit and was capped to it. Once per node, environment, requested duration and limit.",
     fields: ['requested', 'ceiling'],
     once: true
+  },
+  'compute.initialize.quoted': {
+    level: 'debug',
+    component: 'compute',
+    description:
+      'The node answered initializeCompute for the job: how many inputs it quoted, how many it reports an order in force for, and whether it asks for an escrow payment.',
+    fields: ['environmentId', 'inputs', 'reusableOrders', 'escrowQuoted']
+  },
+  'compute.orders.settled': {
+    level: 'debug',
+    component: 'compute',
+    description:
+      'Every input of a paid job has its order (placed, extended or reused): orders lists each input (did, serviceId) with its transfer transaction.',
+    fields: ['orders']
   },
   'compute.escrow.not_quoted': {
     level: 'debug',
@@ -299,7 +486,7 @@ export const LOG_EVENTS = {
     level: 'debug',
     component: 'compute',
     description: 'The node started the compute job(s).',
-    fields: ['jobIds']
+    fields: ['jobIds', 'environmentId']
   },
   'compute.result.not_ready': {
     level: 'info',
@@ -325,6 +512,27 @@ export const LOG_EVENTS = {
       'waitForIndexer() got the beta.0 options interval and maxRetries; they are mapped to intervalMs and timeoutMs for now.',
     once: true
   },
+  'node.indexer_wait.polled': {
+    level: 'trace',
+    component: 'node',
+    description:
+      "One lookup of waitForIndexer: result 'indexed', 'pending' (not indexed yet), 'rate-limited' or 'failed', elapsedMs since the wait started.",
+    fields: ['nodeUri', 'poll', 'result', 'elapsedMs']
+  },
+  'node.indexer_wait.lookup_failed': {
+    level: 'debug',
+    component: 'node',
+    description:
+      'A lookup of waitForIndexer failed (the node did not answer, or answered with an error); the wait gives up after maxFailures in a row.',
+    fields: ['nodeUri', 'failures', 'maxFailures', 'error']
+  },
+  'node.indexer_wait.indexed': {
+    level: 'debug',
+    component: 'node',
+    description:
+      'The node indexed the asset (at txHash, when given) after polls lookups and durationMs.',
+    fields: ['nodeUri', 'polls']
+  },
   'node.indexer_wait.rate_limited': {
     level: 'debug',
     component: 'node',
@@ -338,6 +546,27 @@ export const LOG_EVENTS = {
     description:
       "The node's status could not be read, so whether it has a policy server is unknown.",
     fields: ['nodeUri', 'error']
+  },
+  'node.request.answered': {
+    level: 'trace',
+    component: 'node',
+    description:
+      "A call to the node (command) answered, after durationMs. Only the node's origin and the command are logged, never the request.",
+    fields: ['command', 'nodeUri']
+  },
+  'node.request.failed': {
+    level: 'debug',
+    component: 'node',
+    description:
+      'A call to the node (command) failed after durationMs: status is the HTTP status when the node answered, error the redacted reason.',
+    fields: ['command', 'nodeUri', 'status', 'error']
+  },
+  'node.request.retried': {
+    level: 'debug',
+    component: 'node',
+    description:
+      'The node refused the nonce of a signed command (another request of the same address used it in between), so it is sent once more with a fresh one.',
+    fields: ['command', 'nodeUri', 'error']
   },
   'node.policy_server.empty_url': {
     level: 'warn',
@@ -359,7 +588,8 @@ export const LOG_EVENTS = {
     level: 'info',
     component: 'publish',
     description:
-      'A call of publish() or completePublish() returned, after durationMs.'
+      'A call of publish() or completePublish() returned, after durationMs: the asset (did), its NFT and the metadata transaction (txHash).',
+    fields: ['nftAddress']
   },
   'publish.operation.failed': {
     level: 'info',
@@ -378,7 +608,8 @@ export const LOG_EVENTS = {
     level: 'info',
     component: 'edit',
     description:
-      'A call of edit() or setServicePrice() returned, after durationMs.'
+      "A call of edit() or setServicePrice() returned, after durationMs: the asset (did) and the call's last transaction (txHash: edit()'s metadata transaction, setServicePrice()'s price change).",
+    fields: ['nftAddress', 'serviceId']
   },
   'edit.operation.failed': {
     level: 'info',
@@ -397,7 +628,8 @@ export const LOG_EVENTS = {
     level: 'info',
     component: 'lifecycle',
     description:
-      'A call of setAssetLifecycleState() returned, after durationMs.'
+      'A call of setAssetLifecycleState() returned, after durationMs: the asset (did), the state asked for and the transaction (txHash; none when the asset was in that state already).',
+    fields: ['state']
   },
   'lifecycle.operation.failed': {
     level: 'info',
@@ -415,7 +647,9 @@ export const LOG_EVENTS = {
   'access.operation.finished': {
     level: 'info',
     component: 'access',
-    description: 'A call of access() returned, after durationMs.'
+    description:
+      'A call of access() returned, after durationMs: the asset (did), the service, and the order the download URL is authorised by (txHash; reusedOrder when it was in force already).',
+    fields: ['serviceId', 'reusedOrder']
   },
   'access.operation.failed': {
     level: 'info',
@@ -434,7 +668,8 @@ export const LOG_EVENTS = {
     level: 'info',
     component: 'compute',
     description:
-      'A call of compute(), freeCompute() or stopCompute() returned, after durationMs.'
+      'A call of compute(), freeCompute() or stopCompute() returned, after durationMs, with the ids of the jobs it started or stopped (and the environment of a started job).',
+    fields: ['jobIds', 'environmentId']
   },
   'compute.operation.failed': {
     level: 'info',
@@ -453,7 +688,8 @@ export const LOG_EVENTS = {
     level: 'debug',
     component: 'compute',
     description:
-      'A call of getComputeStatus() or getComputeResult(), which apps poll, returned after durationMs.'
+      "A call of getComputeStatus() or getComputeResult(), which apps poll, returned after durationMs: the job's status number, or whether its result is ready.",
+    fields: ['jobId', 'status', 'ready']
   },
   'compute.query.failed': {
     level: 'debug',
@@ -471,7 +707,8 @@ export const LOG_EVENTS = {
   'node.operation.finished': {
     level: 'info',
     component: 'node',
-    description: 'A call of waitForIndexer() returned, after durationMs.'
+    description:
+      'A call of waitForIndexer() returned, after durationMs: the asset (did) is indexed, at txHash when one was given.'
   },
   'node.operation.failed': {
     level: 'info',
@@ -482,6 +719,13 @@ export const LOG_EVENTS = {
   },
 
   // store
+  'store.envelope.stored': {
+    level: 'debug',
+    component: 'store',
+    description:
+      "The remote store kept the encrypted DDO (type: 'ipfs', 's3', 'url', …), in durationMs.",
+    fields: ['type']
+  },
   'store.s3.shared_credentials': {
     level: 'warn',
     component: 'store',
@@ -500,6 +744,13 @@ export const LOG_EVENTS = {
   },
 
   // identity
+  'identity.session.resolved': {
+    level: 'debug',
+    component: 'identity',
+    description:
+      "How the policy-server session for a service was come by, before anything is spent: outcome 'not-gated' (no credentials), 'no-policy-server', 'cached', 'opened', or 'presented' (opened, and the verifier accepted the presentation). The session id itself is never logged. A refusal throws a PolicyDeniedError instead, which the operation's failed event shows.",
+    fields: ['serviceId', 'nodeUri', 'outcome']
+  },
   'identity.sessions.presented_persisted': {
     level: 'warn',
     component: 'identity',
