@@ -837,8 +837,9 @@ describe('ocean.js logging', () => {
   })
 
   it('is not triggered by a refused initialize or compute-logs request', async () => {
-    // ocean.js's logger itself: captured or not, its lines no longer reach the console.
-    const consoleError = vi.spyOn(LoggerInstance, 'error')
+    // nautilus sends these requests itself, not through ocean.js: ocean.js's logger is
+    // not called at all, whatever the oceanjs mode.
+    const oceanJsError = vi.spyOn(LoggerInstance, 'error')
     stubFetch({
       '/api/services/initialize': {
         status: 403,
@@ -854,7 +855,7 @@ describe('ocean.js logging', () => {
     await rejection(() => node.initialize(DID_OP, 'svc'))
     await rejection(() => node.getComputeLogs(JOB))
 
-    expect(consoleError).not.toHaveBeenCalled()
+    expect(oceanJsError).not.toHaveBeenCalled()
   })
 })
 

@@ -470,20 +470,61 @@ describe('robustness', () => {
   })
 
   it('a sink that logs through ocean.js again does not loop', () => {
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-    let calls = 0
+    const out = output()
+    const events: LogEvent[] = []
     configureLogging({
       sink: (event) => {
-        calls++
+        events.push(event)
         LoggerInstance.error(`[app] ${event.msg}`)
       }
     })
 
     LoggerInstance.error('once')
+    LoggerInstance.error('twice')
 
-    expect(calls).to.equal(1)
-    // The nested line goes to ocean.js's own method, which prints the already-redacted text.
-    expect(consoleError).toHaveBeenCalledWith('[app] once')
+    // The nested lines are dropped, and said so once.
+    expect(events.map((event) => [event.event, event.msg])).to.deep.equal([
+      ['oceanjs.logger.error', 'once'],
+      [
+        'oceanjs.capture.nested_dropped',
+        'ocean.js logged a line while nautilus was capturing one of its lines (a sink or a debug sink that logs through LoggerInstance): the nested line is dropped, not printed, so it cannot print unredacted. Log from a sink through something other than LoggerInstance.'
+      ],
+      ['oceanjs.logger.error', 'twice']
+    ])
+    for (const spy of Object.values(out.console))
+      expect(spy).not.toHaveBeenCalled()
+  })
+
+  it('never prints a nested line raw: a sink that logs a session id through ocean.js', () => {
+    const out = output()
+    configureLogging({
+      sink: () => LoggerInstance.error({ sessionId: FAKE.policySessionId })
+    })
+
+    LoggerInstance.error('outer')
+
+    for (const spy of Object.values(out.console))
+      expect(spy).not.toHaveBeenCalled()
+    expect(out.text()).not.to.contain(FAKE.policySessionId)
+  })
+
+  it('never prints a nested line raw: a debug sink that logs through ocean.js', () => {
+    const out = output()
+    setDebug({
+      level: 'sensitive',
+      sink: (event) => LoggerInstance.error('[debug]', event)
+    })
+    const log = captureLog()
+
+    LoggerInstance.error('Payload was:', j1Payload())
+
+    for (const spy of Object.values(out.console))
+      expect(spy).not.toHaveBeenCalled()
+    expectNoJ1Secret(out.text())
+    expect(log.events.map((event) => event.event)).to.deep.equal([
+      'oceanjs.logger.error',
+      'oceanjs.capture.nested_dropped'
+    ])
   })
 
   it('reads a line without text arguments', () => {
@@ -499,5 +540,252 @@ describe('robustness', () => {
       ],
       ['ocean.js error', { method: 'error' }]
     ])
+  })
+})
+
+type LoggerModule = typeof import('../../src/log/logger.js')
+
+/** A second copy of nautilus's logger in the process, as a bundled copy or a reload gives. */
+async function anotherCopy(): Promise<LoggerModule> {
+  vi.resetModules()
+  return import('../../src/log/logger.js')
+}
+
+/** An ocean.js logger of its own: methods on the prototype, as ocean.js's `Logger` has. */
+function fakeOceanJsLogger() {
+  const printed: unknown[][] = []
+  class Logger {
+    logLevel = 0
+    error(...args: unknown[]) {
+      printed.push(['ocean.js', ...args])
+    }
+    warn(...args: unknown[]) {
+      printed.push(['ocean.js', ...args])
+    }
+    log(...args: unknown[]) {
+      printed.push(['ocean.js', ...args])
+    }
+    debug(...args: unknown[]) {
+      printed.push(['ocean.js', ...args])
+    }
+    bypass(...args: unknown[]) {
+      printed.push(['ocean.js', ...args])
+    }
+  }
+  return { logger: new Logger(), printed }
+}
+
+/** A fresh copy of nautilus's logger, loaded against `logger` as ocean.js's `LoggerInstance`. */
+async function copyWithOceanJsLogger(logger: object): Promise<LoggerModule> {
+  vi.resetModules()
+  vi.doMock('@oceanprotocol/lib', async (importOriginal) => ({
+    ...(await importOriginal<object>()),
+    LoggerInstance: logger
+  }))
+  try {
+    return await import('../../src/log/logger.js')
+  } finally {
+    vi.doUnmock('@oceanprotocol/lib')
+  }
+}
+
+describe('several copies of nautilus in one process', () => {
+  afterEach(() => {
+    vi.resetModules()
+  })
+
+  it('a copy loaded later keeps the mode in force and the first copy keeps the lines', async () => {
+    const log = captureLog()
+    configureLogging({ oceanjs: 'silent' })
+    const out = output()
+
+    const copy = await anotherCopy()
+
+    expect(copy.getLoggingConfig().oceanjs).to.equal('silent')
+    expect(getLoggingConfig().oceanjs).to.equal('silent')
+    LoggerInstance.error('dropped')
+    configureLogging({ oceanjs: 'capture' })
+    LoggerInstance.error('to the first copy')
+
+    expect(log.events.map((event) => event.msg)).to.deep.equal([
+      'to the first copy'
+    ])
+    expect(out.lines).to.deep.equal([])
+  })
+
+  it('getLoggingConfig().oceanjs is the mode in force, whichever copy set it', async () => {
+    const copy = await anotherCopy()
+
+    copy.configureLogging({ oceanjs: 'passthrough' })
+    expect(getLoggingConfig().oceanjs).to.equal('passthrough')
+    configureLogging({ oceanjs: 'silent' })
+    expect(copy.getLoggingConfig().oceanjs).to.equal('silent')
+  })
+
+  it('the lines go to the copy that last set oceanjs', async () => {
+    const first = captureLog()
+    const copy = await anotherCopy()
+    const second: LogEvent[] = []
+    copy.configureLogging({ sink: (event) => second.push(event) })
+
+    LoggerInstance.error('one')
+    copy.configureLogging({ oceanjs: 'capture' })
+    LoggerInstance.error('two')
+    configureLogging({ oceanjs: 'capture' })
+    LoggerInstance.error('three')
+
+    expect(first.events.map((event) => event.msg)).to.deep.equal([
+      'one',
+      'three'
+    ])
+    expect(second.map((event) => event.msg)).to.deep.equal(['two'])
+  })
+
+  it('keeps its state on LoggerInstance under a versioned key, and wraps ocean.js once', async () => {
+    const before = LoggerInstance.error
+    await anotherCopy()
+
+    expect(LoggerInstance.error).to.equal(before)
+    expect(Object.getOwnPropertySymbols(LoggerInstance)).to.include(
+      Symbol.for('@deltadao/nautilus/oceanjs-capture/v1')
+    )
+  })
+})
+
+describe('an ocean.js logger nautilus cannot take over', () => {
+  it('a frozen LoggerInstance: nautilus loads, captures nothing and warns once', async () => {
+    const { logger, printed } = fakeOceanJsLogger()
+    Object.freeze(logger)
+    const out = output()
+
+    const copy = await copyWithOceanJsLogger(logger)
+
+    const warnings = out.lines.map((line) => JSON.parse(line) as LogEvent)
+    expect(warnings.map((event) => [event.event, event.level])).to.deep.equal([
+      ['oceanjs.capture.unavailable', 'warn']
+    ])
+    expect(warnings[0].fields).to.deep.equal({
+      methods: ['error', 'warn', 'log', 'debug', 'bypass']
+    })
+    // ocean.js prints as it always did; configuring a mode does not throw.
+    logger.error('raw')
+    expect(printed).to.deep.equal([['ocean.js', 'raw']])
+    expect(() => copy.configureLogging({ oceanjs: 'silent' })).not.to.throw()
+    expect(copy.getLoggingConfig().oceanjs).to.equal('silent')
+  })
+
+  it("an app's own replacement made before nautilus loads: bypassed in 'capture', called in 'passthrough'", async () => {
+    const { logger, printed } = fakeOceanJsLogger()
+    const app: unknown[][] = []
+    ;(logger as unknown as Record<string, unknown>).error = (
+      ...args: unknown[]
+    ) => app.push(args)
+    const copy = await copyWithOceanJsLogger(logger)
+    const events: LogEvent[] = []
+    copy.configureLogging({ sink: (event) => events.push(event) })
+
+    logger.error('captured')
+    copy.configureLogging({ oceanjs: 'passthrough' })
+    logger.error('to the app')
+
+    expect(events.map((event) => event.msg)).to.deep.equal(['captured'])
+    expect(app).to.deep.equal([['to the app']])
+    expect(printed).to.deep.equal([])
+  })
+})
+
+describe('reading a captured line', () => {
+  /** The J1 payload with the algorithm's container, as ocean.js sends it. */
+  function withContainer() {
+    const payload = j1Payload()
+    payload.algorithm.meta.container = {
+      image: 'node',
+      tag: '22',
+      entrypoint: 'node $ALGO',
+      checksum: `sha256:${'ab'.repeat(32)}`
+    } as never
+    return payload
+  }
+
+  it('keeps the payload as deep as an event field: algorithm.meta.container is readable', () => {
+    const log = captureLog()
+
+    LoggerInstance.error('Payload was:', withContainer())
+    LoggerInstance.error('Payload was:', JSON.stringify(withContainer()))
+
+    for (const event of log.events) {
+      const [payload] = event.fields.args as [
+        { algorithm: { meta: { container: unknown } }; nonce: string }
+      ]
+      expect(payload.algorithm.meta.container).to.deep.equal(
+        withContainer().algorithm.meta.container
+      )
+      expect(payload.nonce).to.equal('<redacted>')
+    }
+    expectNoJ1Secret(JSON.stringify(log.events))
+  })
+
+  it('puts a JSON string over 64 KB in args, as text, redacted', () => {
+    const log = captureLog()
+    const large = JSON.stringify({
+      ...j1Payload(),
+      padding: 'x'.repeat(70_000)
+    })
+
+    LoggerInstance.error('Payload was:', large)
+
+    const [event] = log.events
+    expect(event.msg).to.equal('Payload was:')
+    expect(event.fields.args).to.have.length(1)
+    expect(typeof (event.fields.args as unknown[])[0]).to.equal('string')
+    expectNoJ1Secret(JSON.stringify(event))
+  })
+
+  it("redacts a policy-server state by its shape, and keeps a lifecycle state readable (no 'state' key rule)", () => {
+    const log = captureLog()
+
+    LoggerInstance.error('checkSessionId failed:', {
+      tokenResponse: { state: FAKE.policySessionId },
+      lifecycle: { state: 2 }
+    })
+
+    const [record] = log.events[0].fields.args as [
+      {
+        tokenResponse: { state: string }
+        lifecycle: { state: number }
+      }
+    ]
+    expect(record.tokenResponse.state).not.to.contain(FAKE.policySessionId)
+    expect(record.lifecycle.state).to.equal(2)
+  })
+
+  it('parses a JSON argument once', () => {
+    const log = captureLog()
+    const text = JSON.stringify(j1Payload())
+    const parse = vi.spyOn(JSON, 'parse')
+
+    LoggerInstance.error('Payload was:', text)
+
+    expect(log.events).to.have.length(1)
+    expect(
+      parse.mock.calls.filter(([argument]) => argument === text)
+    ).to.have.length(1)
+  })
+})
+
+describe('the build', () => {
+  it("tells bundlers that the logger's import has a side effect (the capture)", async () => {
+    const { readFile } = await import('node:fs/promises')
+    const manifest = JSON.parse(
+      await readFile(new URL('../../package.json', import.meta.url), 'utf8')
+    ) as { scripts: Record<string, string> }
+    const written = /printf '(.*)' > \.\/src\/_esm\/package\.json/.exec(
+      manifest.scripts['build:esm']
+    )?.[1]
+
+    expect(JSON.parse(written ?? '{}')).to.deep.equal({
+      type: 'module',
+      sideEffects: ['./log/logger.js', './log/oceanjs.js']
+    })
   })
 })

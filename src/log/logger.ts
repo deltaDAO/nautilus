@@ -31,11 +31,15 @@ import {
 import {
   DEFAULT_OCEANJS_MODE,
   describeLine,
+  getOceanJsMode,
+  initOceanJsCapture,
   OCEANJS_EVENT,
+  type OceanJsCapture,
   type OceanJsMethod,
   setOceanJsMode
 } from './oceanjs.js'
 import {
+  argsAsFields,
   debugUnredacted,
   redactError,
   redactFields,
@@ -46,8 +50,7 @@ import type {
   LogEvent,
   LogFields,
   LoggingConfig,
-  LoggingOptions,
-  OceanJsLogMode
+  LoggingOptions
 } from './types.js'
 
 /** How many `once` keys a logger remembers; the oldest are forgotten first. */
@@ -63,7 +66,6 @@ interface Settings {
   format?: LoggingOptions['format']
   components?: LogComponent[]
   sink?: LoggingOptions['sink']
-  oceanjs: OceanJsLogMode
 }
 
 /** What the environment set at import. */
@@ -79,8 +81,7 @@ function fromEnvironment(): Settings {
   return {
     level: environment.settings.level ?? DEFAULT_LOGGING_LEVEL,
     format: environment.settings.format,
-    components: environment.settings.components,
-    oceanjs: DEFAULT_OCEANJS_MODE
+    components: environment.settings.components
   }
 }
 
@@ -121,19 +122,22 @@ export function configureLogging(options: LoggingConfig): void {
       ? [...options.components]
       : defaults.components
   if ('sink' in options) settings.sink = options.sink
-  if ('oceanjs' in options) {
-    settings.oceanjs = options.oceanjs ?? defaults.oceanjs
-    setOceanJsMode(settings.oceanjs, captureOceanJsLine)
-  }
+  // This copy of nautilus now receives ocean.js's lines (see `oceanjs.ts`).
+  if ('oceanjs' in options)
+    setOceanJsMode(options.oceanjs ?? DEFAULT_OCEANJS_MODE, oceanJsCapture)
 }
 
-/** The process-wide logging configuration in force. */
+/**
+ * The process-wide logging configuration in force. `oceanjs` is the mode in force in the
+ * process, whichever copy of nautilus set it.
+ */
 export function getLoggingConfig(): Readonly<LoggingConfig> & {
   level: LoggingLevel
 } {
   return {
     ...settings,
-    components: settings.components && [...settings.components]
+    components: settings.components && [...settings.components],
+    oceanjs: getOceanJsMode()
   }
 }
 
@@ -145,7 +149,7 @@ export function getLoggingConfig(): Readonly<LoggingConfig> & {
 export function resetLogging(env?: Record<string, string | undefined>): void {
   environment = env === undefined ? atImport : readLoggingEnv(env)
   settings = fromEnvironment()
-  setOceanJsMode(settings.oceanjs, captureOceanJsLine)
+  setOceanJsMode(DEFAULT_OCEANJS_MODE, oceanJsCapture)
   log.forget()
   reportEnvironment()
 }
@@ -323,7 +327,9 @@ function build(
     event: name,
     component: spec.component,
     msg: redactMessage(String(text)),
-    fields: redactFields(rest)
+    fields: redactFields(rest, {
+      argsAsFields: argsAsFields(spec.component)
+    })
   }
 
   const top = redactFields({ did, txHash })
@@ -418,6 +424,29 @@ function captureOceanJsLine(method: OceanJsMethod, args: unknown[]): void {
   )
 }
 
+const oceanJsCapture: OceanJsCapture = {
+  line: captureOceanJsLine,
+  nestedDropped: () =>
+    oceanJsLogger().emit(
+      'oceanjs.capture.nested_dropped',
+      'ocean.js logged a line while nautilus was capturing one of its lines (a sink or a debug sink that logs through LoggerInstance): the nested line is dropped, not printed, so it cannot print unredacted. Log from a sink through something other than LoggerInstance.',
+      undefined,
+      { once: 'nested' }
+    )
+}
+
+/** Installs the capture, unless another copy of nautilus did; the mode in force stays. */
+function startOceanJsCapture(): void {
+  const methods = initOceanJsCapture(oceanJsCapture)
+  if (methods.length)
+    log.emit(
+      'oceanjs.capture.unavailable',
+      `ocean.js's LoggerInstance can't be changed (it is frozen or not extensible), so its lines are not captured: ocean.js prints them itself, unredacted, whatever configureLogging's oceanjs mode (the payload dump after a refused compute start holds the request's nonce and the policy-server session ids). To silence them, call LoggerInstance.setLevel(LogLevel.None) from @oceanprotocol/lib.`,
+      { methods },
+      { once: 'unavailable' }
+    )
+}
+
 // #endregion
 
-setOceanJsMode(settings.oceanjs, captureOceanJsLine)
+startOceanJsCapture()
