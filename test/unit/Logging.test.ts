@@ -23,6 +23,7 @@ import {
 } from '../../src/log/logger.js'
 import { formatPretty } from '../../src/log/sinks.js'
 import { Nautilus } from '../../src/Nautilus/Nautilus.js'
+import { sanitize } from '../../src/node/messages.js'
 import { captureLog } from '../helpers.js'
 import {
   allowAnyOnce,
@@ -939,6 +940,23 @@ describe('regressions (V f)', () => {
       evil.name = `\u001b[31mEvil\nName ${FAKE.jwt}`
 
       expect(error(evil)).to.equal('Evil Name <redacted>: m')
+    })
+
+    it('redacts a token that a deleted escape glues to the word before it', () => {
+      // `\u001b[2J` ends in a letter: deleting it leaves `Evil` and the token as one word,
+      // where a rule that needs a word boundary in front finds nothing.
+      const transaction = `0x02f8${'cd'.repeat(120)}`
+      for (const token of [FAKE.jwt, FAKE.signature, transaction]) {
+        const named = new Error('m')
+        named.name = `Evil\u001b[2J${token}`
+        const said = new Error(`refused: Evil\u001b[2J${token} (code 1)`)
+
+        expect(error(named), token).to.equal('Evil<redacted>: m')
+        expect(error(said), token).to.equal('refused: Evil<redacted> (code 1)')
+        expect(sanitize(`x\u001b[0m${token}`, 500, null)).to.equal(
+          'x<redacted>'
+        )
+      }
     })
   })
 

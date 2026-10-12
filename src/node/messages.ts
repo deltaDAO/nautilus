@@ -50,19 +50,27 @@ const URL_PATTERN =
 
 /** A `Bearer` or `Basic` credential, wherever it stands. */
 const BEARER = /((?:Bearer|Basic)\s+)[\w.~+/=-]+/gi
-/** A JWT (`eyJ…` header, payload and signature, base64url). */
-const JWT = /\beyJ[\w-]*\.[\w-]+\.[\w-]*/g
-/** A 65-byte ECDSA signature in hex, wherever it stands. */
-const HEX_SIGNATURE = /\b0x[0-9a-f]{130}\b/gi
+/**
+ * A JWT (`eyJ…` header, payload and signature, base64url). Also right after a letter when
+ * its payload is a JSON object too (`eyJ…`), as one is when `stripControlCharacters`
+ * deletes an escape that ended in a letter in front of it (`Evil\u001b[2JeyJ…`).
+ */
+const JWT = /\beyJ[\w-]*\.[\w-]+\.[\w-]*|eyJ[\w-]*\.eyJ[\w-]*\.[\w-]*/g
+/**
+ * A 65-byte ECDSA signature in hex, wherever it stands: also right after a letter, as
+ * one is when an escape before it is deleted (`Evil\u001b[2J0x…`).
+ */
+const HEX_SIGNATURE = /0x[0-9a-f]{130}\b/gi
 /**
  * A raw signed transaction (ethers quotes it in `transaction="0x02f8…"` of a failed
  * `eth_sendRawTransaction`): an RLP list, typed (`0x01`-`0x04`) or legacy, of 100 bytes or
  * more. Whoever holds one that was never mined can still send it. Ended by a lookahead, not
- * `\b`, so one followed by `_` or a letter is caught too. False positives: about 1 in 85
+ * `\b`, so one followed by `_` or a letter is caught too, and without one in front, so one
+ * after a letter (an escape before it deleted) is caught too. False positives: about 1 in 85
  * other hex blobs of 100 bytes or more (calldata, ECIES ciphertext) starts like an RLP list
  * and is redacted too; the raw value is in the debug channel, so nothing is lost.
  */
-const SIGNED_TRANSACTION = /\b0x(?:0[1-4])?f[89a][0-9a-f]{196,}(?![0-9a-f])/gi
+const SIGNED_TRANSACTION = /0x(?:0[1-4])?f[89a][0-9a-f]{196,}(?![0-9a-f])/gi
 /**
  * A policy-server session id: two SHA-256 hashes in hex joined by `-` (the policy server's
  * `generateSessionId`). walt.id quotes it bare (`Id parameter <id> doesn't refer to an
