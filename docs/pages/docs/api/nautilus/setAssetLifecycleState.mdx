@@ -22,28 +22,39 @@ const receipt = await nautilus.setAssetLifecycleState( // [!code focus]
 Resolves with the receipt once the transaction is **mined**, and throws if it was not
 submitted or reverted. Within one instance, it waits for any `publish()`,
 `completePublish()` or `edit()` of the same NFT still running before it sends its
-transaction.
+transaction. It joins that queue when it is called, whatever the target: a DID is resolved
+once its turn comes, so an `edit()` started after it, in the same tick or later, runs after
+it.
 
 **The current state is read from the chain**, not from a DDO: when the NFT is in the
 requested state already, nothing is sent, it resolves `undefined` and logs
 `lifecycle.state.unchanged`. An asset object fetched before someone else changed the state
-does not decide this any more. After a change it logs `lifecycle.state.set` (level `info`)
-with the DID, the NFT address, the previous state and the transaction hash.
+does not decide this any more. After a change it logs the DID, the NFT address, the previous
+state and the transaction hash: as `lifecycle.state.retired` (level `warn`, printed by
+default) for `DEPRECATED` and `REVOKED_BY_PUBLISHER`, as `lifecycle.state.set` (level
+`info`) for the other states.
 
 ### Which target to pass
 
 | Target | Use it when | What is checked |
 | --- | --- | --- |
 | NFT address (`0x…`) | Always works, also once the node no longer serves the asset. Store it from the publish result. | A valid address; a mixed-case one must have a correct checksum. Nothing is resolved. |
-| DID (`did:ope:…`) | The node still serves the asset. | The DDO the node serves must be the DID's ([`getAsset`](/docs/api/nautilus/getAsset)'s check), and its NFT must be the one the DID is derived from on the configured chain, so a wrong or malicious node cannot redirect an irreversible revoke to another NFT. When the node answers 404, the NFT named in its indexing record is used under the same check; ocean-node 4.2.2 records none for a deprecated or revoked asset, so the call then throws and asks for the NFT address. |
+| DID (`did:ope:…`) | The node still serves the asset. | The DDO the node serves must be the DID's ([`getAsset`](/docs/api/nautilus/getAsset)'s check), and its NFT must be the one the DID is derived from on the configured chain, so a wrong or malicious node cannot redirect an irreversible revoke to another NFT. When the node answers 404, the NFT named in its indexing record is used under the same check; ocean-node 4.2.2 records none for a deprecated or revoked asset, so the call then throws and asks for the NFT address. A DID that is not `did:ope:` (or `did:op:`) and 64 hex digits is refused before the node is asked. |
 | Asset (`AssetV5`) | You have a fetched DDO at hand. | Its NFT must be the one its `id` is derived from, on the configured chain. Its lifecycle state is **not** used. |
 
 For every target, before anything is sent, the NFT must have been created by the configured
-ERC721 factory, the signer must hold its metadata role (the NFT owner or a manager-granted
-`updateMetadata` permission), and the NFT must carry metadata. Each refusal ends in "Nothing
-was sent." For `DEPRECATED` and `REVOKED_BY_PUBLISHER`, the errors and the
-`lifecycle.state.set` message also name the NFT's ERC721 name and symbol and its DID, so a
-wrong target is visible.
+ERC721 factory (checked first, before anything is read from the NFT itself), the signer must
+hold the NFT's `updateMetadata` role (the publisher holds it by default; a manager can grant
+it to others or remove it, the owner's too), and the NFT must carry metadata. Each refusal
+ends in "Nothing was sent.", and so does a failed chain read, which says what could not be
+read without the RPC's own error (that goes to the `rpc` debug topic, as it may carry the
+RPC URL and its key). For `DEPRECATED` and `REVOKED_BY_PUBLISHER`, the errors after the
+factory check and the `lifecycle.state.retired` message also name the NFT's ERC721 name and
+symbol and its DID, so a wrong target is visible.
+
+Revoking by DID alone once the node has dropped the asset (looking the NFT up in the chain's
+logs instead) is not supported; it may come later as an opt-in. Until then, keep the NFT
+address from the publish result.
 
 To read the state back, use
 [`getAssetLifecycleState`](/docs/api/nautilus/getAssetLifecycleState).
@@ -59,7 +70,7 @@ you are changing metadata anyway, and this when the state is all you want to cha
 | Value | Name | Meaning |
 | --- | --- | --- |
 | `0` | `ACTIVE` | Normal. |
-| `1` | `END_OF_LIFE` | Retired; no longer maintained. Reversible. |
+| `1` | `END_OF_LIFE` | Retired; no longer maintained. Reversible. ddo.js and ocean-node define it; ocean-node 4.2.2 serves the asset and decrypts its DDO, but refuses orders (only `ACTIVE` and `ASSET_UNLISTED` can be ordered). |
 | `2` | `DEPRECATED` | Superseded by another asset. **One-way on ocean-node.** |
 | `3` | `REVOKED_BY_PUBLISHER` | Withdrawn. **One-way on ocean-node.** |
 | `4` | `ORDERING_DISABLED_TEMPORARILY` | Visible, but cannot be ordered. Reversible. |
@@ -146,13 +157,19 @@ See [which target to pass](#which-target-to-pass).
 
 - Type: `LifecycleStates | State`
 
+A number from `0` to `5`. The contract stores any `uint8` and ocean.js passes any number on,
+but no other value has a meaning, so nautilus refuses it before anything is sent.
+
 ## Throws
 
-- an `Error` ending in "Nothing was sent." when the target is not an asset, a DID or an
-  address, the address checksum is wrong, the NFT is not the DID's or not the factory's, the
-  signer lacks the metadata role, or the NFT carries no metadata;
+- an `Error` ending in "Nothing was sent." when the state is not one of `LifecycleStates`,
+  the target is not an asset, a well-formed DID or an address, the address checksum is
+  wrong, the NFT is not the DID's or not the factory's, the signer lacks the metadata role,
+  the NFT carries no metadata, or one of these could not be read from the chain ("…could not
+  be read from the chain. Nothing was sent. Try again, or check the RPC.");
 - an `Error` asking for the NFT address when the node does not serve the DID and its
-  indexing record names no NFT (ocean-node 4.2.x after a deprecate or revoke);
+  indexing record names no NFT (ocean-node 4.2.x after a deprecate or revoke), and one
+  saying no asset is known for the DID when the node has no indexing record of it at all;
 - the [`OceanNodeError`](/docs/api/node/OceanNodeClient) of a failed resolve, for a DID
   target;
 - the transaction's error when it was not submitted or reverted.

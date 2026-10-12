@@ -349,8 +349,9 @@ now ends with "Nothing was sent." A custom `DdoSigner` whose payload carries `is
 `jti` must make `iss` its `issuer` and `sub`/`jti` the DDO's id, as the built-in signers do.
 
 **`getAsset()`, `getAssets()` and `waitForIndexer()` refuse a DDO whose id is not a DID
-asked for**, with an `OceanNodeError` (`waitForIndexer()` at once, without polling on), and `edit()` refuses, before any transaction, a DDO whose id is not the DID
-of its `nftAddress` on the configured chain. A correct node never serves either. `getOwner()`
+asked for**, with an `OceanNodeError` (`waitForIndexer()` at once, without polling on),
+and `edit()` refuses, before any transaction, a DDO whose id is not the DID of its
+`nftAddress` on the configured chain. A correct node never serves either. `getOwner()`
 returns the account that wrote the metadata last; read `ownerOf` on chain for the owner.
 
 ### Lifecycle: by NFT address, state from chain
@@ -359,16 +360,28 @@ returns the account that wrote the metadata last; read `ownerOf` on chain for th
 ocean-node 4.2.x with Elasticsearch stops serving a `DEPRECATED` or `REVOKED_BY_PUBLISHER`
 asset, so there was no asset to pass for a second change (deprecate, then revoke); pass the
 NFT address you stored from the publish result. A DID is bound to its NFT before anything is
-sent; when the node no longer serves it, the call asks for the NFT address.
+sent; when the node no longer serves it, the call takes the NFT from the node's indexing
+record, under the same check. ocean-node 4.2.2 records no NFT there for a deprecated or
+revoked asset (`nft: null`), so on 4.2.2 a DID works only while the node still serves the
+asset, and the call asks for the NFT address after that. Revoking by DID alone through the
+chain's logs is not supported; it may come later as an opt-in.
 
 **"Already in that state" is judged from the chain**, no longer from the asset's possibly
 stale DDO: a stale copy used to send a redundant transaction, or to skip a needed one (an
 asset unlisted elsewhere stayed unlisted when set `ACTIVE` with a copy that said `ACTIVE`).
 
-**It refuses more, before any transaction:** an NFT the configured factory did not create, a
-signer without the NFT's metadata role, an NFT without metadata, and an asset object whose
-NFT is not the one its `id` is derived from on the configured chain. Each error ends in
-"Nothing was sent."
+**It refuses more, before any transaction:** a state other than `0` to `5`, a malformed DID,
+an NFT the configured factory did not create, a signer without the NFT's `updateMetadata`
+role, an NFT without metadata, and an asset object whose NFT is not the one its `id` is
+derived from on the configured chain. Each error ends in "Nothing was sent." A revoke or
+deprecation now logs `lifecycle.state.retired` at `warn`, so it is printed by default; other
+changes log `lifecycle.state.set` at `info`.
+
+**Unlisted first, then revoked: the node keeps serving the DDO.** ocean-node 4.2.2 drops (or,
+with Typesense, shortens) the document only when the asset moves to `DEPRECATED` or
+`REVOKED_BY_PUBLISHER` **from `ACTIVE`**. An asset unlisted first stays resolvable after the
+revoke, with `indexedMetadata.nft.state` `3`. The revoke is on chain either way; filter on
+the state.
 
 ```ts
 // beta.1: the asset was needed, and its DDO decided whether anything was sent
@@ -383,8 +396,10 @@ const state = await nautilus.getAssetLifecycleState(nftAddress)
 reads the state from the NFT, so you no longer need ocean.js's `Nft.getMetadata()[2]`.
 
 **`getAssets()` works against ocean-node 4.x.** It read only an Elasticsearch-style
-`{ hits: { hits } }` answer, while 4.x answers `[{ results, totalResults }]`, so it
-returned `{}`; it now reads both.
+`{ hits: { hits } }` answer, while 4.x answers `[{ results, totalResults }]` with
+Elasticsearch and `[{ hits: [{ document }], found }]` with Typesense, so it returned `{}`; it
+now reads all three. The Elasticsearch shape was verified against ocean-node 4.2.2, the
+Typesense one from its source. Two different DDOs for one DID are refused.
 
 ## Upgrading from 2.0.0-beta.0
 
@@ -696,8 +711,9 @@ drops it from the index when that envelope is gone. See
 **Know:** `DEPRECATED` and `REVOKED_BY_PUBLISHER` are one-way, so `publish()` and `edit()`
 refuse to write metadata in either state. What the node serves afterwards depends on the
 node's version and database: ocean-node 4.2.x with Elasticsearch drops the DDO (`getAsset`
-answers 404); with Typesense it keeps a short document holding only the NFT state. Either
-way, read the state from the chain with
+answers 404); with Typesense it keeps a short document holding only the NFT state. It does
+so only for a move from `ACTIVE`: an asset unlisted first stays served, with
+`indexedMetadata.nft.state` `3`. Either way, read the state from the chain with
 [`getAssetLifecycleState`](/docs/api/nautilus/getAssetLifecycleState), and pass the NFT address to
 `setAssetLifecycleState`, which takes the asset, its DID or its NFT address. See
 [lifecycle states](/docs/api/nautilus/setAssetLifecycleState#states).

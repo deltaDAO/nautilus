@@ -331,7 +331,8 @@ unlisting the asset keeps it unlisted.
 Moving an active asset to `DEPRECATED` (2) or `REVOKED_BY_PUBLISHER` (3) cannot be undone.
 What the node serves afterwards depends on the node's version and database: **ocean-node
 4.2.x with Elasticsearch drops the DDO**, so `getAsset` answers 404; with Typesense it keeps a
-short document holding only the NFT state.
+short document holding only the NFT state. It does so only for a move from `ACTIVE`: an asset
+unlisted first stays served after a revoke, with `indexedMetadata.nft.state` `3`.
 Setting `ACTIVE` again does not bring it back, and the node will not decrypt or index new
 metadata for it either, so `edit()` refuses such an asset before spending anything. Use `END_OF_LIFE` (1), `ORDERING_DISABLED_TEMPORARILY` (4) or `ASSET_UNLISTED` (5)
 for anything you may want to undo.
@@ -347,8 +348,8 @@ that state.
 A lifecycle change does not update the indexed transaction id, so
 `waitForIndexer(did, receipt.hash)` cannot wait for it. Read the state from the chain instead,
 with [`getAssetLifecycleState`](/docs/api/nautilus/getAssetLifecycleState) and the NFT
-address: after a `DEPRECATED` or `REVOKED_BY_PUBLISHER` change, a 4.2.x node has no document
-to read it from, and `getAsset` answers 404 with a hint saying so.
+address: after a `DEPRECATED` or `REVOKED_BY_PUBLISHER` change from `ACTIVE`, a 4.2.x node
+has no document to read it from, and `getAsset` answers 404 with a hint saying so.
 
 ## Waiting for the change to be visible
 

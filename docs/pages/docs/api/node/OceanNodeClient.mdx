@@ -73,8 +73,10 @@ from the chain. Over P2P the node's `Not found` answer is an `AssetNotFoundError
 `state`: the indexing state is served over HTTP only. `resolve` and `resolveMany` throw an
 `OceanNodeError` for a DDO whose `id` is not a DID asked for (the `did:op:` and `did:ope:`
 forms of one DID match); the served id appears sanitised, the raw value on the debug
-channel (topic `node`). `resolveMany` reads both answer shapes of the metadata query:
-ocean-node 4.x's `[{ results, totalResults }]` and an Elasticsearch-style `{ hits: { hits } }`.
+channel (topic `node`). `resolveMany` reads the answer shapes of the metadata query:
+ocean-node 4.x's `[{ results, totalResults }]` with Elasticsearch (verified against 4.2.2),
+`[{ hits: [{ document }], found }]` with Typesense (from the 4.2.2 source), and an
+Elasticsearch-style `{ hits: { hits } }`; it throws for two different DDOs of one DID.
 
 ### getIndexingState
 

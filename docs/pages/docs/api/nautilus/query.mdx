@@ -37,12 +37,14 @@ among them.
 - Type: `unknown`
 
 The node's raw response. It is not typed, because the shape depends on the node's version
-and database backend. ocean-node 4.x answers with an array of pages,
-`[{ results: [ddo, …], totalResults }]`, the DDOs themselves in `results`; an
-Elasticsearch-style answer is `{ hits: { hits: [{ _source }] } }`.
+and database backend. ocean-node 4.x answers with an array holding one element per DDO
+schema that has hits: with Elasticsearch `[{ results: [ddo, …], totalResults }]`, the DDOs
+themselves in `results` (verified against 4.2.2); with Typesense the raw Typesense answer,
+`[{ hits: [{ document: ddo }], found, … }]` (from the 4.2.2 source). An Elasticsearch-style
+answer is `{ hits: { hits: [{ _source }] } }`.
 
 For the common case of resolving several known DIDs, use
-[`getAssets`](/docs/api/nautilus/getAssets) instead, which unwraps either shape for you and
+[`getAssets`](/docs/api/nautilus/getAssets) instead, which unwraps each shape for you and
 refuses a DDO whose `id` is not a DID asked for. `query()` checks no hit against any DID.
 
 ## Parameters

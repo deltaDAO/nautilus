@@ -540,7 +540,8 @@ does not tie the ciphertext to the asset it checks the lifecycle state of. So:
 
 - **Revoking does not make a DDO unreadable.** The node stops serving the indexed copy
   (ocean-node 4.2.x with Elasticsearch drops it; with Typesense it keeps a short document
-  holding only the NFT state), but the stored envelope can still be decrypted as long as it exists.
+  holding only the NFT state; an asset unlisted first stays served), but the stored envelope
+  can still be decrypted as long as it exists.
 - **Every superseded version stays readable** the same way, since an edit stores a new
   envelope and leaves the old one.
 

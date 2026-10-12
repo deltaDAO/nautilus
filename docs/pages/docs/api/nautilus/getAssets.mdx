@@ -26,9 +26,12 @@ absent from the result rather than causing a throw. A DDO whose `id` is none of 
 asked for makes it throw an `OceanNodeError`, as
 [`getAsset`](/docs/api/nautilus/getAsset#throws) does.
 
-It reads both answer shapes of the node's metadata query: ocean-node 4.x's
-`[{ results, totalResults }]` and an Elasticsearch-style `{ hits: { hits } }`. (Before
-2.0.0-beta.3 only the second was read, so against ocean-node 4.x it always returned `{}`.)
+It reads the answer shapes of the node's metadata query: ocean-node 4.x's
+`[{ results, totalResults }]` with Elasticsearch (verified against 4.2.2) and
+`[{ hits: [{ document }], found }]` with Typesense (from the 4.2.2 source), and an
+Elasticsearch-style `{ hits: { hits } }`. (Before 2.0.0-beta.3 only the last was read, so
+against ocean-node 4.x it always returned `{}`.) Two different DDOs for one DID make it
+throw an `OceanNodeError`; the same DDO twice is kept once.
 
 ## Parameters
 

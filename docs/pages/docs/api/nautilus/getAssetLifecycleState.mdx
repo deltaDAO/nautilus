@@ -49,8 +49,13 @@ asset. Nothing is sent, so no factory or role check is made.
 
 ## Throws
 
-- an `Error` when the target is not an asset, a DID or an address, the checksum is wrong, the
-  NFT is not the DID's, or the NFT carries no metadata (it is not a published asset);
+- an `Error` when the target is not an asset, a well-formed DID or an address, the checksum
+  is wrong, the NFT is not the DID's, or the NFT carries no metadata (it is not a published
+  asset);
 - an `Error` asking for the NFT address when the node does not serve the DID and its
-  indexing record names no NFT;
-- an `Error` when the chain read fails ("Could not read the metadata state of NFT …").
+  indexing record names no NFT, and one saying no asset is known for the DID when the node
+  has no indexing record of it;
+- an `Error` "Could not read the metadata state of NFT …" when the chain read fails or
+  answers no state: an RPC error, or an address that is no data NFT (an EOA, another
+  contract). It carries neither the RPC's error nor its raw answer; those go to the `rpc`
+  debug topic.
