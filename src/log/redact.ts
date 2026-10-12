@@ -64,6 +64,17 @@ const MAX_KEY_LENGTH = 100
 const MAX_DEPTH = 4
 /** How many entries of an array or object are kept. */
 const MAX_ENTRIES = 50
+/**
+ * How many values the fields of an `argsAsFields` event may hold, at all levels together.
+ * Those arguments are kept deeper than other fields, so without it a node's large answer
+ * body, which ocean.js logs, would be redacted (and printed) in full: seconds of work.
+ */
+const MAX_ARGS_VALUES = 2_000
+
+/** What is left of `MAX_ARGS_VALUES` for one event. */
+interface Budget {
+  left: number
+}
 
 /** Normalised `url`, `uri`, `endpoint`, `nodeUri`, `requestUrl`, `redirect_uri`, … */
 const URL_KEY = /^endpoint$|(?:url|uri)$/
@@ -86,13 +97,16 @@ export function redactMessage(message: string): string {
  * With `argsAsFields` (an `oceanjs.*` event), each entry of `fields.args`, an argument
  * ocean.js logged, is kept as deep as an event's own fields are: the fields object and the
  * `args` list around it cost no depth, so a payload's `algorithm.meta.container` stays
- * readable.
+ * readable. The fields then hold at most `MAX_ARGS_VALUES` values, at all levels together;
+ * where they stop, an object ends with `"…": "N more"` and a list with `"… N more"`.
  */
 export function redactFields(
   fields: Record<string, unknown>,
   options: { argsAsFields?: boolean } = {}
 ): Record<string, unknown> {
-  return redactObject(fields, 0, options.argsAsFields ? 'args' : undefined)
+  return options.argsAsFields
+    ? redactObject(fields, 0, { left: MAX_ARGS_VALUES }, 'args')
+    : redactObject(fields, 0)
 }
 
 /** What the fields object and the `args` list around an argument would cost. */
@@ -179,7 +193,12 @@ export function originOf(value: string): string {
   }
 }
 
-function redactValue(key: string, value: unknown, depth: number): unknown {
+function redactValue(
+  key: string,
+  value: unknown,
+  depth: number,
+  budget?: Budget
+): unknown {
   if (value === undefined || value === null) return value
 
   const normalized = normalizeKey(key)
@@ -192,10 +211,10 @@ function redactValue(key: string, value: unknown, depth: number): unknown {
   )
     return originOf(String(value))
 
-  return redactPlain(value, depth)
+  return redactPlain(value, depth, budget)
 }
 
-function redactPlain(value: unknown, depth: number): unknown {
+function redactPlain(value: unknown, depth: number, budget?: Budget): unknown {
   // `null` or `undefined` in a list: kept (JSON writes both as `null`).
   if (value === null || value === undefined) return null
   switch (typeof value) {
@@ -218,43 +237,62 @@ function redactPlain(value: unknown, depth: number): unknown {
   if (depth >= MAX_DEPTH) return '[…]'
 
   if (Array.isArray(value)) {
-    const kept = value
-      .slice(0, MAX_ENTRIES)
-      .map((entry) =>
+    const kept: unknown[] = []
+    const shown = Math.min(value.length, MAX_ENTRIES)
+    for (let index = 0; index < shown; index++) {
+      // Charged before it is read, so the budget holds whatever the entry holds.
+      if (!spend(budget)) break
+      const entry: unknown = value[index]
+      kept.push(
         entry instanceof Error
           ? redactError(entry)
-          : redactPlain(entry, depth + 1)
+          : redactPlain(entry, depth + 1, budget)
       )
-    if (value.length > MAX_ENTRIES)
-      kept.push(`… ${value.length - MAX_ENTRIES} more`)
+    }
+    if (kept.length < value.length)
+      kept.push(`… ${value.length - kept.length} more`)
     return kept
   }
 
-  return redactObject(value as Record<string, unknown>, depth + 1)
+  return redactObject(value as Record<string, unknown>, depth + 1, budget)
 }
 
 function redactObject(
   object: Record<string, unknown>,
   depth: number,
+  budget?: Budget,
   /** The key whose value is not charged for `ARGS_WRAPPER_DEPTH`. */
   unwrapped?: string
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   const keys = Object.keys(object)
+  const shown = Math.min(keys.length, MAX_ENTRIES)
 
-  for (const key of keys.slice(0, MAX_ENTRIES)) {
+  let read = 0
+  for (; read < shown; read++) {
+    if (!spend(budget)) break
+    const key = keys[read]
     // Matched whole, before the cut to `MAX_KEY_LENGTH`, and without control characters
     // and escapes, so neither a long key nor a `session\u0000Id` hides a credential.
     const value = redactValue(
       stripControlCharacters(key),
       object[key],
-      key === unwrapped ? depth - ARGS_WRAPPER_DEPTH : depth
+      key === unwrapped ? depth - ARGS_WRAPPER_DEPTH : depth,
+      budget
     )
     if (value !== undefined) out[scrub(key, MAX_KEY_LENGTH)] = value
   }
-  if (keys.length > MAX_ENTRIES) out['…'] = `${keys.length - MAX_ENTRIES} more`
+  if (read < keys.length) out['…'] = `${keys.length - read} more`
 
   return out
+}
+
+/** Takes one value from `budget`; `false` when none is left. Without a budget, always `true`. */
+function spend(budget: Budget | undefined): boolean {
+  if (!budget) return true
+  if (budget.left <= 0) return false
+  budget.left--
+  return true
 }
 
 // #region debug channel
