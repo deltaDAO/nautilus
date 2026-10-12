@@ -27,8 +27,9 @@
  * - in free text, the value of a credential named before it, as `key=value`, `key: value`,
  *   a JSON field or a JSON field inside a JSON string (the scanner of the log redaction,
  *   `keyValues.ts`); an `Authorization` or `Cookie` header to the end of its line. The text
- *   is also read with its JSON escapes undone (`https:\/\/…`, `\\\"apiToken\\\"`), and when
- *   that finds more, the unescaped text, masked, is what is shown. So is it without its
+ *   is also read with its JSON escapes undone (`https:\/\/…`, `\\\"apiToken\\\"`,
+ *   `\u0022`; `unescapeJson`, `textShapes.ts`), and when that finds more, the unescaped
+ *   text, masked, is what is shown. So is it without its
  *   invisible characters (a BOM, a zero-width space, a NUL), which a reader does not see
  *   but which split a URL or a token out of the patterns' view;
  * - in an object, the value of a key named like a credential;
@@ -48,7 +49,8 @@ import { redactKeyValues } from './keyValues.js'
 import {
   INVISIBLE_CHARACTERS,
   SCHEMELESS_URL,
-  trailingPunctuation
+  trailingPunctuation,
+  unescapeJson
 } from './textShapes.js'
 
 export const REDACTED = '<redacted>'
@@ -76,8 +78,6 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const IPFS_CID = /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{50,})$/
 const TOKEN_LIKE = /^[A-Za-z0-9_-]{20,}$/
 
-/** How many levels of JSON escaping are undone before scanning. */
-const MAX_UNESCAPE_LEVELS = 4
 /** How many levels of URLs nested in query values are masked. */
 const MAX_URL_NESTING = 3
 
@@ -212,17 +212,6 @@ function maskOnce(text: string, known: readonly string[]): string {
       .replace(PREFIXED_TOKEN, REDACTED),
     LONG_LIVED_CREDENTIALS
   )
-}
-
-/** `text` with up to four levels of JSON string escaping undone (`\"`, `\\`, `\/`). */
-function unescapeJson(text: string): string {
-  let current = text
-  for (let level = 0; level < MAX_UNESCAPE_LEVELS; level++) {
-    const next = current.replace(/\\(["\\/])/g, '$1')
-    if (next === current) break
-    current = next
-  }
-  return current
 }
 
 /**
