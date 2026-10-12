@@ -40,31 +40,109 @@ export function trailingPunctuation(url: string): string {
   return url.slice(start)
 }
 
-/** How many levels of JSON string escaping `unescapeJson` undoes. */
-const MAX_UNESCAPE_LEVELS = 6
-
 /**
- * One level of JSON string escaping: `\"`, `\\`, `\/`, and `\u00XX` for a printable ASCII
- * character (`"`, as an HTML-safe serialiser writes a quote). Matched from left to
- * right in one pass, so `\\u0022` is a backslash and `u0022` at this level.
+ * How many levels of escaping `undoEscapes` undoes. Escaping deeper than that is still
+ * read, flattened in one pass (`withEscapesUndone`).
  */
-const JSON_ESCAPE = /\\(?:(["\\/])|u00([2-6][0-9a-f]|7[0-9a-e]))/gi
+export const MAX_UNESCAPE_LEVELS = 8
 
 /**
- * `text` with up to `MAX_UNESCAPE_LEVELS` levels of JSON string escaping undone: a body
+ * One level of escaping: in JSON (or a JS or Python literal) `\"`, `\'`, `\\`, `\/`, and
+ * `\u00XX` for a printable ASCII character (`\u0022`, as an HTML-safe serialiser writes a
+ * quote); percent-encoding of a printable ASCII character (`%3D`, `%22`, `%2F`). Matched
+ * from left to right in one pass, so `\\u0022` is a backslash and `u0022` at this level.
+ * Never a control character: `\n` stays two characters, and `%0A` three.
+ */
+const ESCAPE =
+  /\\(?:(["'\\/])|u00([2-6][0-9a-fA-F]|7[0-9a-eA-E]))|%([2-6][0-9a-fA-F]|7[0-9a-eA-E])/g
+
+/** Whether `text` still holds an escape `ESCAPE` undoes. */
+const HAS_ESCAPE =
+  /\\(?:["'\\/]|u00(?:[2-6][0-9a-fA-F]|7[0-9a-eA-E]))|%(?:[2-6][0-9a-fA-F]|7[0-9a-eA-E])/
+
+/**
+ * Any escaping at all, for `flattenEscapes`: a run of backslashes with the quote, slash or
+ * `u00XX` it escapes, or a percent-encoded printable character. The run is matched
+ * whatever follows it, so a long run costs linear time.
+ */
+const ESCAPE_RUN =
+  /\\+(?:u00([2-6][0-9a-fA-F]|7[0-9a-eA-E])|(["'/]))?|%([2-6][0-9a-fA-F]|7[0-9a-eA-E])/g
+
+/** A printable ASCII character by its hex code. */
+function fromHex(code: string): string {
+  return String.fromCharCode(Number.parseInt(code, 16))
+}
+
+/**
+ * `text` with up to `MAX_UNESCAPE_LEVELS` levels of escaping undone (`ESCAPE`): a body
  * quoted in JSON inside JSON (an RPC's answer inside an ethers error message) hides a key
- * (`\\\"apiToken\\\"`) or a URL from the patterns. Linear in the length of `text` per level.
+ * (`\\\"apiToken\\\"`) or a URL from the patterns, and so does percent-encoding
+ * (`apiToken%3D…`, `https%3A%2F%2F…`). Linear in the length of `text` per level.
  */
-export function unescapeJson(text: string): string {
+export function undoEscapes(text: string): string {
   let current = text
   for (let level = 0; level < MAX_UNESCAPE_LEVELS; level++) {
     const next = current.replace(
-      JSON_ESCAPE,
-      (_match, char: string | undefined, code: string | undefined) =>
-        char ?? String.fromCharCode(Number.parseInt(code ?? '', 16))
+      ESCAPE,
+      (
+        _match,
+        char: string | undefined,
+        json: string | undefined,
+        percent: string | undefined
+      ) => char ?? fromHex(json ?? percent ?? '')
     )
     if (next === current) break
     current = next
   }
   return current
+}
+
+/**
+ * `text` with escaping of any depth flattened in one pass: a run of backslashes before a
+ * quote, a slash or `u00XX` becomes what it escapes, any other run one backslash, and a
+ * percent-encoded printable character that character. Coarser than `undoEscapes` (it
+ * cannot tell the levels apart), so it is used only past `MAX_UNESCAPE_LEVELS`.
+ */
+function flattenEscapes(text: string): string {
+  return text.replace(
+    ESCAPE_RUN,
+    (
+      _match,
+      json: string | undefined,
+      char: string | undefined,
+      percent: string | undefined
+    ) => {
+      if (json ?? percent) return fromHex(json ?? percent ?? '')
+      return char ?? '\\'
+    }
+  )
+}
+
+/**
+ * `text` through `pass` (a redaction), as it is and with its escapes undone: the pass runs
+ * on `text`, then again on its own output with up to `MAX_UNESCAPE_LEVELS` levels of
+ * escaping undone (`undoEscapes`), so what the first pass redacted stays redacted. When
+ * escapes are still left after that (deeper escaping), the output is read once more with
+ * them all flattened (`flattenEscapes`), so a credential deeper than the limit is still
+ * redacted rather than shown. The first pass's output, with its escapes kept, is returned
+ * unless a later pass redacts more; then that pass's output, with its escapes undone, is.
+ * Linear: at most three passes and `MAX_UNESCAPE_LEVELS` + 1 replacements.
+ */
+export function withEscapesUndone(
+  text: string,
+  pass: (text: string) => string
+): string {
+  const once = pass(text)
+  const unescaped = undoEscapes(once)
+  if (unescaped === once) return once
+
+  const deep = pass(unescaped)
+  const found = deep !== unescaped
+  // Escapes left after `MAX_UNESCAPE_LEVELS`: escaping deeper than the limit.
+  if (HAS_ESCAPE.test(unescaped)) {
+    const flat = flattenEscapes(deep)
+    const deeper = pass(flat)
+    if (deeper !== flat) return deeper
+  }
+  return found ? deep : once
 }

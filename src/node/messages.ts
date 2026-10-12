@@ -19,7 +19,7 @@ import {
   INVISIBLE_CHARACTERS,
   SCHEMELESS_URL,
   trailingPunctuation,
-  unescapeJson
+  withEscapesUndone
 } from '../log/textShapes.js'
 
 /** A non-2xx answer of the node. A `FetchedText` is one. */
@@ -96,12 +96,13 @@ const ANSI_ESCAPE =
  * - the value of every key the log-field redaction treats as secret (`redactsValue`,
  *   `log/keys.ts`: signatures, tokens, nonces, session ids, passwords, API keys, S3 and
  *   OAuth secrets, private keys, cookies, presentations, signed transactions, …), given as
- *   `key=value`, as a JSON field (also inside a JSON string, `\"key\":\"value\"`, and
- *   under any deeper JSON escaping, `\u0022` escapes included: see `redactSecrets`), or as
- *   `key: value` or `'key': 'value'`; a quoted, bracketed or `Bearer`/`Basic` value is
- *   redacted whole. As for fields, a `…token` holding an EVM address is kept, and so is a
- *   `…code` that reads as an error code (`code=SERVER_ERROR`, `"code": -32005`), so RPC
- *   failures stay legible;
+ *   `key=value`, as a JSON field (also inside a JSON string, `\"key\":\"value\"`), or as
+ *   `key: value` or `'key': 'value'`, also under deeper JSON escaping (`\u0022` and `\'`
+ *   escapes included) and percent-encoding (`apiToken%3D…`): up to `MAX_UNESCAPE_LEVELS`
+ *   levels are undone, and escaping deeper than that is flattened (`withEscapesUndone`).
+ *   A quoted, bracketed or `Bearer`/`Basic` value is redacted whole. As for fields, a
+ *   `…token` holding an EVM address is kept, and so is a `…code` that reads as an error
+ *   code (`code=SERVER_ERROR`, `"code": -32005`), so RPC failures stay legible;
  * - `Bearer` and `Basic` credentials, JWTs, 65-byte hex signatures, raw signed
  *   transactions and policy-server session ids (`<64 hex>-<64 hex>`) anywhere.
  *
@@ -111,19 +112,14 @@ const ANSI_ESCAPE =
  * brackets (`127.0.0.1:8545/v3/<key>` reads `127.0.0.1:8545`): see `SCHEMELESS_URL`.
  */
 export function redactSecrets(text: string): string {
-  const once = redactShallow(text)
-  const unescaped = unescapeJson(once)
-  if (unescaped === once) return once
-
-  // JSON escapes hide a key (`\\\"apiToken\\\":…`, `\u0022apiToken\u0022:…`) from the
-  // patterns, as an RPC's answer quoted in an ethers error message has it: the text is
-  // read again with them undone (`unescapeJson`), what the first pass redacted staying
-  // redacted. When that finds more, the unescaped text is what is returned.
-  const deep = redactShallow(unescaped)
-  return deep === unescaped ? once : deep
+  // Escapes hide a key (`\\\"apiToken\\\":…`, `\u0022apiToken\u0022:…`, `apiToken%3D…`)
+  // or a URL (`https%3A%2F%2F…`) from the patterns, as an RPC's answer quoted in an ethers
+  // error message has it: the text is read again with them undone, what the first pass
+  // redacted staying redacted (`withEscapesUndone`).
+  return withEscapesUndone(text, redactShallow)
 }
 
-/** `redactSecrets` of the text as it is, without undoing JSON escapes. */
+/** `redactSecrets` of the text as it is, without undoing escapes. */
 function redactShallow(text: string): string {
   return redactKeyValues(
     text.replace(URL_PATTERN, originOnly).replace(SCHEMELESS_URL, hostOnly),
@@ -270,6 +266,15 @@ function readLimit(maxLength: number): number {
   return maxLength <= SHORT_FIELD_LENGTH
     ? 8 * maxLength
     : Math.max(8 * maxLength, MIN_READ_LENGTH)
+}
+
+/**
+ * The start of `text`, at most `limit` characters cut at a word end (`beforeLastWord`)
+ * with `…` after it, or all of it when it is not longer: for a caller that redacts a text
+ * of any length without `sanitize`'s bound, so hostile text costs little time.
+ */
+export function startOf(text: string, limit: number): string {
+  return text.length > limit ? `${beforeLastWord(text.slice(0, limit))}…` : text
 }
 
 /** What ends a word for `beforeLastWord`: whitespace, quotes, brackets, `,` and `;`. */

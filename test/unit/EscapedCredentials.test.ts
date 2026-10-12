@@ -16,11 +16,21 @@ import type { AddressInfo } from 'node:net'
 import { JsonRpcProvider } from 'ethers'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { runOperation } from '../../src/log/context.js'
-import { maskText } from '../../src/log/credentials.js'
+import {
+  maskCredentials,
+  maskNeverShown,
+  maskText,
+  maskUrl
+} from '../../src/log/credentials.js'
 import { type DebugEvent, setDebug } from '../../src/log/debug.js'
 import { log } from '../../src/log/logger.js'
 import { redactFields, redactMessage } from '../../src/log/redact.js'
 import { formatJson, formatPretty } from '../../src/log/sinks.js'
+import {
+  MAX_UNESCAPE_LEVELS,
+  undoEscapes,
+  withEscapesUndone
+} from '../../src/log/textShapes.js'
 import { redactSecrets, sanitize } from '../../src/node/messages.js'
 import { OceanNodeError } from '../../src/node/OceanNodeClient.js'
 import { withoutSignedTransaction } from '../../src/utils/nonceGuard.js'
@@ -51,6 +61,17 @@ const HIDDEN: [string, string, string][] = [
       )
     ),
     FAKE.pinataGatewayToken
+  ],
+  ['a percent-encoded RPC URL', SHAPES[8], FAKE.rpcPathToken],
+  [
+    'a percent-encoded `apiToken=` and JSON field',
+    SHAPES[9],
+    FAKE.nestedApiToken
+  ],
+  [
+    "an `apiToken` with `\\'` quotes",
+    `{\\'apiToken\\': \\'${FAKE.nestedApiToken}\\'}`,
+    FAKE.nestedApiToken
   ]
 ]
 
@@ -95,9 +116,14 @@ async function rpcError(status: number, text: string): Promise<Error> {
   throw new Error('the stub RPC answered without an error')
 }
 
-/** The secrets and credentials the scans find in `text`. */
-function leaks(text: string): string[] {
-  return [...new Set([...findSecrets(text), ...findCredentials(text)])]
+/**
+ * The secrets and credentials the scans find in `text`; with `masked` (the `sensitive`
+ * debug tier, which keeps what is not a long-lived credential), the credentials only.
+ */
+function leaks(text: string, masked = false): string[] {
+  return masked
+    ? findCredentials(text)
+    : [...new Set([...findSecrets(text), ...findCredentials(text)])]
 }
 
 describe('a credential in an RPC answer quoted in an ethers error', () => {
@@ -216,5 +242,186 @@ describe('JSON escapes and the redaction', () => {
       if (elapsed >= 60) slow.push(`${label}: ${elapsed.toFixed(0)} ms`)
     }
     expect(slow).to.deep.equal([])
+  })
+})
+
+/** `text` quoted in JSON `times` times. */
+function stringified(text: string, times: number): string {
+  let quoted = text
+  for (let time = 0; time < times; time++) quoted = JSON.stringify(quoted)
+  return quoted
+}
+
+/** A fake private key, for the never-shown keys of the `secrets` tier. */
+const PRIVATE_KEY = `0x${'c0ffee'.repeat(10)}beef`
+
+/**
+ * Each output path a credential in `text` can reach, with what it shows. The `sensitive`
+ * debug tier (`mask…`) keeps a URL's path and query, credentials masked.
+ */
+function everyPath(text: string): [string, string, boolean][] {
+  const send = Object.assign(new Error(text), { shortMessage: text })
+  withoutSignedTransaction(send)
+  return [
+    ['redactSecrets', redactSecrets(text), false],
+    ['sanitize', sanitize(text, 20_000, null), false],
+    ['redactMessage', redactMessage(text), false],
+    [
+      'error field',
+      JSON.stringify(redactFields({ error: new Error(text) })),
+      false
+    ],
+    ['nonce guard', `${send.message} ${send.shortMessage}`, false],
+    ['maskText', maskText(text), true],
+    ['maskCredentials', JSON.stringify(maskCredentials({ note: text })), true]
+  ]
+}
+
+describe('how deep escaping is undone (security regression)', () => {
+  it('undoes eight levels, and no more, level by level', () => {
+    expect(MAX_UNESCAPE_LEVELS).to.equal(8)
+    // A quote under 9 levels is 511 backslashes and the quote; each level halves the run.
+    expect(undoEscapes(`${'\\'.repeat(511)}"`)).to.equal('\\"')
+    expect(undoEscapes(`${'\\'.repeat(255)}"`)).to.equal('"')
+  })
+
+  it('undoes `\\u` escapes only, not `\\U`, which JSON does not have', () => {
+    expect(undoEscapes('\\u0022 \\u005C\\u0022')).to.equal('" "')
+    expect(undoEscapes('\\U0022')).to.equal('\\U0022')
+  })
+
+  for (let depth = 0; depth <= 10; depth++)
+    it(`redacts a key quoted ${depth} times on every path`, () => {
+      const text = stringified(`{"apiToken":"${FAKE.nestedApiToken}"}`, depth)
+      for (const [path, shown, masked] of everyPath(text))
+        expect(leaks(shown, masked), `${path}, depth ${depth}`).to.deep.equal(
+          []
+        )
+
+      const secret = stringified(`{"privateKey":"${PRIVATE_KEY}"}`, depth)
+      expect(
+        JSON.stringify(maskNeverShown(secret)),
+        `maskNeverShown, depth ${depth}`
+      ).not.to.contain(PRIVATE_KEY)
+    })
+
+  for (let depth = 1; depth <= 6; depth++)
+    it(`redacts a key with \`\\u0022\` quotes quoted ${depth} times on every path`, () => {
+      const text = stringified(
+        `{"apiToken":"${FAKE.nestedApiToken}"}`,
+        depth
+      ).replace(/"/g, '\\u0022')
+      for (const [path, shown, masked] of everyPath(text))
+        expect(leaks(shown, masked), `${path}, depth ${depth}`).to.deep.equal(
+          []
+        )
+    })
+
+  for (const [label, text, secret] of [
+    [
+      'a percent-encoded URL',
+      `see ${encodeURIComponent(FAKE.rpcUrl)}`,
+      FAKE.rpcPathToken
+    ],
+    [
+      'a percent-encoded `apiToken=` in a URL',
+      `https://cb.example.org/cb?state=${encodeURIComponent(`apiToken=${FAKE.nestedApiToken}`)}`,
+      FAKE.nestedApiToken
+    ],
+    [
+      'a percent-encoded JSON field',
+      encodeURIComponent(`{"apiToken":"${FAKE.nestedApiToken}"}`),
+      FAKE.nestedApiToken
+    ],
+    [
+      'a percent-encoded `apiToken=` quoted twice',
+      stringified(
+        JSON.stringify({
+          q: encodeURIComponent(`apiToken=${FAKE.nestedApiToken}`)
+        }),
+        2
+      ),
+      FAKE.nestedApiToken
+    ],
+    [
+      'escaped single quotes',
+      `{\\'apiToken\\': \\'${FAKE.nestedApiToken}\\'}`,
+      FAKE.nestedApiToken
+    ]
+  ] as const)
+    it(`redacts ${label} on every path`, () => {
+      for (const [path, shown, masked] of everyPath(text)) {
+        expect(shown, path).not.to.contain(secret)
+        expect(leaks(shown, masked), path).to.deep.equal([])
+      }
+    })
+
+  it("reads the first pass's output again, so what it redacted stays redacted", () => {
+    // A toy pass that redacts `KEY` and, only when it reads it plainly, `"x"`.
+    const pass = (text: string) =>
+      text.replace(/KEY/g, '<r>').replace(/"x"/g, '<x>')
+    expect(withEscapesUndone('KEY \\"y\\"', pass)).to.equal('<r> \\"y\\"')
+    expect(withEscapesUndone('KEY \\"x\\"', pass)).to.equal('<r> <x>')
+    // Past the limit, the flattened text is read too.
+    expect(
+      withEscapesUndone(`KEY ${'\\'.repeat(1023)}"x${'\\'.repeat(1023)}"`, pass)
+    ).to.equal('<r> <x>')
+  })
+})
+
+describe('the sensitive tier and JSON-escaped URLs (security regression)', () => {
+  it('masks a URL with JSON-escaped slashes', () => {
+    const masked = maskUrl(FAKE.rpcUrl.replace(/\//g, '\\/'))
+    expect(findCredentials(masked)).to.deep.equal([])
+    expect(masked).to.contain('rpc.example.org')
+  })
+
+  for (const more of [2, 3])
+    it(`masks the RPC key of a nested body quoted ${more} more times, HTTP 500`, async () => {
+      const error = await rpcError(500, stringified(SHAPES[7], more))
+      expect(error.message).to.contain(FAKE.rpcPathToken)
+
+      const events: DebugEvent[] = []
+      setDebug({
+        level: 'sensitive',
+        topics: ['node'],
+        sink: (event) => events.push(event)
+      })
+      OceanNodeError.from('initialize', error)
+      setDebug({ level: 'off' })
+
+      expect(events.length).to.be.greaterThan(0)
+      for (const event of events)
+        expect(
+          findCredentials(JSON.stringify(event.data)),
+          event.message
+        ).to.deep.equal([])
+    })
+})
+
+describe('the nonce guard and hostile RPC text (security regression)', () => {
+  it('scrubs a failed send with a 4 MB error body in bounded time', async () => {
+    // A hostile or broken RPC's answer: ethers quotes it in a 16 MB message.
+    const error = await rpcError(500, `${'\\'.repeat(4_000_000)}"`)
+    const elapsed = await cpuTime(() => {
+      withoutSignedTransaction(error)
+    })
+    expect(elapsed).to.be.below(300)
+    // Not the message itself: a failure would print 16 MB.
+    expect(error.message.length).to.be.below(40_000)
+  })
+
+  it("strips the RPC's ANSI escapes and control characters from the messages", () => {
+    const text = 'nonce too low\u001b[2J\u001b]0;title\u0007 again'
+    const send = Object.assign(new Error(text), {
+      shortMessage: text,
+      error: { message: text }
+    })
+    withoutSignedTransaction(send)
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: matching them is the point
+    const control = /[\u0000-\u001f\u007f]/
+    for (const shown of [send.message, send.shortMessage, send.error.message])
+      expect(shown).not.to.match(control)
+    expect(send.message).to.equal('nonce too low again')
   })
 })

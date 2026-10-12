@@ -26,12 +26,13 @@
  *   (`ghp_…`, `glpat-…`, `xoxb-…`, `sk-…`, `AIza…`) wherever they stand;
  * - in free text, the value of a credential named before it, as `key=value`, `key: value`,
  *   a JSON field or a JSON field inside a JSON string (the scanner of the log redaction,
- *   `keyValues.ts`); an `Authorization` or `Cookie` header to the end of its line. The text
- *   is also read with its JSON escapes undone (`https:\/\/…`, `\\\"apiToken\\\"`,
- *   `\u0022`; `unescapeJson`, `textShapes.ts`), and when that finds more, the unescaped
- *   text, masked, is what is shown. So is it without its
- *   invisible characters (a BOM, a zero-width space, a NUL), which a reader does not see
- *   but which split a URL or a token out of the patterns' view;
+ *   `keyValues.ts`); an `Authorization` or `Cookie` header to the end of its line. The
+ *   masked text is also read with its escapes undone (`https:\/\/…`,
+ *   `\\\"apiToken\\\"`, `\u0022`, `\'`, `apiToken%3D…`, `https%3A%2F%2F…`;
+ *   `withEscapesUndone`, `textShapes.ts`), and when that finds more, that text, masked, is
+ *   what is shown. So is it without its invisible characters (a BOM, a zero-width space, a
+ *   NUL), which a reader does not see but which split a URL or a token out of the
+ *   patterns' view;
  * - in an object, the value of a key named like a credential;
  * - any string the caller names as a credential (a store's configured header values and
  *   secret keys), also percent-encoded and in base64.
@@ -50,7 +51,7 @@ import {
   INVISIBLE_CHARACTERS,
   SCHEMELESS_URL,
   trailingPunctuation,
-  unescapeJson
+  withEscapesUndone
 } from './textShapes.js'
 
 export const REDACTED = '<redacted>'
@@ -66,13 +67,14 @@ const PREFIXED_TOKEN =
   /(?<![A-Za-z0-9])(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|glpat-[\w-]{20,}|xox[abprs]-[\w-]{10,}|sk-[\w-]{20,}|AIza[\w-]{35})/g
 
 /**
- * `scheme://authority/path?query#fragment`, up to whitespace or a quote. A backslash is
- * part of the URL unless a quote follows it (`\"` ends a JSON string), so a path such as
- * `/x\y/v3/<key>` is masked as a whole. The scheme is bounded, so a hostile body of
- * letters and dots is scanned in linear time.
+ * `scheme://authority/path?query#fragment`, up to whitespace or a quote, also with its
+ * slashes JSON-escaped at any depth (`https:\/\/host\/path`), as `messages.ts` reads it. A
+ * backslash is part of the URL unless a quote follows it (`\"` ends a JSON string), so a
+ * path such as `/x\y/v3/<key>` is masked as a whole. The scheme is bounded, so a hostile
+ * body of letters and dots is scanned in linear time.
  */
 const URL_PATTERN =
-  /[a-z][a-z0-9+.-]{0,31}:\/\/(?:[^\s"'<>\\]|\\+(?!["'\s<>\\]))*/gi
+  /[a-z][a-z0-9+.-]{0,31}:(?:\\*\/){2}(?:[^\s"'<>\\]|\\+(?!["'\s<>\\]))*/gi
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const IPFS_CID = /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{50,})$/
@@ -158,11 +160,9 @@ function mask(
 
 /** `text` with the values of never-shown keys replaced (`privateKey=0x…`, `mnemonic: …`). */
 function maskNeverShownText(text: string): string {
-  const once = redactKeyValues(text, NEVER_SHOWN_KEYS)
-  const unescaped = unescapeJson(text)
-  if (unescaped === text) return once
-  const deep = redactKeyValues(unescaped, NEVER_SHOWN_KEYS)
-  return unescapeJson(once) === deep ? once : deep
+  return withEscapesUndone(text, (part) =>
+    redactKeyValues(part, NEVER_SHOWN_KEYS)
+  )
 }
 
 /**
@@ -187,16 +187,12 @@ export function maskText(
   return masked.replace(INVISIBLE_CHARACTERS, '') === deep ? masked : deep
 }
 
-/** `maskText` of the text as it is, and with its JSON escapes undone. */
+/**
+ * `maskText` of the text as it is, and with its escapes undone: they hide a URL
+ * (`https:\/\/…`, `https%3A%2F%2F…`) or a key (`\\\"apiToken\\\"`) from the patterns.
+ */
 function maskEscaped(text: string, known: readonly string[]): string {
-  const once = maskOnce(text, known)
-  const unescaped = unescapeJson(text)
-  if (unescaped === text) return once
-
-  // JSON escapes hide a URL (`https:\/\/…`) or a key (`\\\"apiToken\\\"`) from the
-  // patterns: the unescaped text is masked too, and shown when it hides more.
-  const deep = maskOnce(unescaped, known)
-  return unescapeJson(once) === deep ? once : deep
+  return withEscapesUndone(text, (part) => maskOnce(part, known))
 }
 
 function maskOnce(text: string, known: readonly string[]): string {
@@ -274,9 +270,11 @@ export function credentialsInUrl(url: string | undefined): string[] {
 
 /** A URL with its credentials replaced and everything else kept (see the module comment). */
 export function maskUrl(url: string, nesting = 0): string {
-  // Punctuation that ended the sentence is not part of the URL.
+  // Punctuation that ended the sentence is not part of the URL. JSON-escaped slashes
+  // (`https:\/\/host\/v3\/<key>`) are read as slashes, as `originOnly` (`messages.ts`)
+  // reads them.
   const trailing = trailingPunctuation(url)
-  const core = url.slice(0, url.length - trailing.length)
+  const core = url.slice(0, url.length - trailing.length).replace(/\\+\//g, '/')
 
   // A backslash ends the authority and splits the path, as a URL parser reads it.
   const match =
