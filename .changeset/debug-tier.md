@@ -33,7 +33,8 @@ the redacted error does not explain can be diagnosed without out-of-band queries
 - **Errors, return values and log events do not change.** They stay exactly as redacted as
   with the channel off; the raw values go to this channel only. A rejected presentation's
   per-policy results are read and shown in the channel (e.g. `holder-binding: failed
-  (java.lang.NullPointerException)`); the error thrown is the same.
+  (java.lang.NullPointerException)`), and an answer that is not the policy server's envelope
+  (a proxy's 502 page) as it came; the error thrown is the same.
 - **The signer's private key or mnemonic is never printed**, at any tier: nautilus never
   holds them.
 
@@ -48,7 +49,8 @@ the redacted error does not explain can be diagnosed without out-of-band queries
 - **Raw signed transactions are redacted** in error texts, warnings and log events. ethers
   quotes the signed transaction of a failed `eth_sendRawTransaction` in its error message
   (`transaction="0x02f8…"`); one that was never mined (e.g. `INSUFFICIENT_FUNDS`) can still
-  be sent by whoever reads the log.
+  be sent by whoever reads the log. Short ones are recognised by their RLP length, down to a
+  minimal legacy transfer (97 bytes) or contract creation.
 - **More credentials are redacted in error texts, warnings and log events:** a URL whose
   slashes are JSON-escaped (`https:\/\/host\/v3\/<key>`, as a JSON body quoted in JSON has
   it) is reduced to its origin like any other, and a `Cookie` header is redacted to the end

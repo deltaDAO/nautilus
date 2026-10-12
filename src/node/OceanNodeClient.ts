@@ -2888,6 +2888,14 @@ export class OceanNodeClient {
       reply = parsePolicyServerReply(response.body)
       if (!response.ok)
         failed = `${response.status} ${response.statusText}`.trim()
+      // Not the policy server's envelope (a proxy's 502 page, a plain-text diagnostic): the
+      // error names the status only, so the answer goes to the channel as it came.
+      if (!reply && debugEnabled('sensitive', 'policy'))
+        debugRaw('policy', 'checkSessionId answer, not a policy-server reply', {
+          status: response.status,
+          statusText: response.statusText,
+          body: response.body
+        })
     } else {
       try {
         reply = (await ProviderInstance.PolicyServerPassthrough(
@@ -2899,6 +2907,12 @@ export class OceanNodeClient {
         if (signal?.aborted) throw signal.reason
 
         reply = policyServerReplyIn(error)
+        if (!reply && debugEnabled('sensitive', 'policy'))
+          debugRaw(
+            'policy',
+            'checkSessionId failed, not a policy-server reply',
+            error
+          )
         if (!reply)
           throw new OceanNodeError(
             operation,

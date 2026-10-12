@@ -46,6 +46,18 @@ const MIN_READ_LENGTH = 8_192
 const URL_PATTERN =
   /[a-z][a-z0-9+.-]{0,31}:(?:\\*\/){2}(?:[^\s"'<>\\]|\ufeff|\\+(?!["'\s<>\\]))*/gi
 
+/**
+ * A JSON escape for `/` or a `\uXXXX` character, after any number of backslashes: JSON
+ * nested in JSON strings doubles them at each level (`\/`, `\\/`, `\\\u0049`).
+ */
+const JSON_ESCAPE = /\\+(?:\/|u([0-9a-fA-F]{4}))/g
+/**
+ * What a `\uXXXX` escape may be decoded to: characters that are part of a key or a URL and
+ * that end no value in any form. A quote, a backslash or a delimiter stays escaped, so it
+ * cannot cut a value short.
+ */
+const DECODABLE = /^[A-Za-z0-9_\-.:/@~+]$/
+
 /** A `Bearer` or `Basic` credential, wherever it stands. */
 const BEARER = /((?:Bearer|Basic)\s+)[\w.~+/=-]+/gi
 /** A JWT (`eyJ…` header, payload and signature, base64url). */
@@ -54,13 +66,32 @@ const JWT = /\beyJ[\w-]*\.[\w-]+\.[\w-]*/g
 const HEX_SIGNATURE = /\b0x[0-9a-f]{130}\b/gi
 /**
  * A raw signed transaction (ethers quotes it in `transaction="0x02f8…"` of a failed
- * `eth_sendRawTransaction`): an RLP list, typed (`0x01`-`0x04`) or legacy, of 100 bytes or
- * more. Whoever holds one that was never mined can still send it. Ended by a lookahead, not
- * `\b`, so one followed by `_` or a letter is caught too. False positives: about 1 in 85
- * other hex blobs of 100 bytes or more (calldata, ECIES ciphertext) starts like an RLP list
- * and is redacted too; the raw value is in the debug channel, so nothing is lost.
+ * `eth_sendRawTransaction`): an RLP list, typed (`0x01`-`0x04`) or legacy, in long form
+ * (`f8`-`fa` and the payload length: a signature alone is 65 bytes). Whoever holds one that
+ * was never mined can still send it. Ended by a lookahead, not `\b`, so one followed by `_`
+ * or a letter is caught too. `isSignedTransaction` decides which matches are redacted.
  */
-const SIGNED_TRANSACTION = /\b0x(?:0[1-4])?f[89a][0-9a-f]{196,}(?![0-9a-f])/gi
+const SIGNED_TRANSACTION = /\b0x(?:0[1-4])?f[89a][0-9a-f]*(?![0-9a-f])/gi
+/**
+ * From this many bytes, every match is redacted. False positives: about 1 in 85 other hex
+ * blobs of that size (calldata, ECIES ciphertext) starts like an RLP list and is redacted
+ * too; the raw value is in the debug channel, so nothing is lost.
+ */
+const SIGNED_TRANSACTION_BYTES = 100
+
+/**
+ * Whether `hex` (a `SIGNED_TRANSACTION` match) is redacted: 100 bytes or more, or a shorter
+ * one-byte-length list (`f8`, 56 to 255 bytes of payload) whose length matches what follows
+ * exactly, as a minimal legacy transfer's (97 bytes) or a contract creation's does.
+ */
+function isSignedTransaction(hex: string): boolean {
+  const body = hex.slice(2)
+  if (body.length >= 2 * SIGNED_TRANSACTION_BYTES) return true
+  const list = /^(?:0[1-4])?f8([0-9a-f]{2})/i.exec(body)
+  if (!list) return false
+  const payload = Number.parseInt(list[1], 16)
+  return payload >= 56 && body.length - list[0].length === 2 * payload
+}
 
 /** ANSI escape sequences: CSI (`ESC [ … m`), OSC (`ESC ] … BEL`) and two-byte ones. */
 const ANSI_ESCAPE =
@@ -73,7 +104,8 @@ const ANSI_ESCAPE =
  * - the value of every key the log-field redaction treats as secret (`redactsValue`,
  *   `log/keys.ts`: signatures, tokens, nonces, session ids, passwords, API keys, S3 and
  *   OAuth secrets, private keys, cookies, presentations, signed transactions, …), given as
- *   `key=value`, as a JSON field (also inside a JSON string, `\"key\":\"value\"`), or as
+ *   `key=value`, as a JSON field (also inside a JSON string, `\"key\":\"value\"`, at any
+ *   depth, JSON escapes in keys and URLs decoded first: `decodeJsonEscapes`), or as
  *   `key: value` or `'key': 'value'`; a quoted, bracketed or `Bearer`/`Basic` value is
  *   redacted whole. As for fields, a `…token` holding an EVM address is kept, and so is a
  *   `…code` that reads as an error code (`code=SERVER_ERROR`, `"code": -32005`), so RPC
@@ -88,13 +120,33 @@ const ANSI_ESCAPE =
  */
 export function redactSecrets(text: string): string {
   return redactKeyValues(
-    text.replace(URL_PATTERN, originOnly).replace(SCHEMELESS_URL, hostOnly),
+    decodeJsonEscapes(text)
+      .replace(URL_PATTERN, originOnly)
+      .replace(SCHEMELESS_URL, hostOnly),
     SECRET_KEYS
   )
     .replace(BEARER, '$1<redacted>')
     .replace(JWT, '<redacted>')
     .replace(HEX_SIGNATURE, '<redacted>')
-    .replace(SIGNED_TRANSACTION, '<redacted>')
+    .replace(SIGNED_TRANSACTION, (hex) =>
+      isSignedTransaction(hex) ? '<redacted>' : hex
+    )
+}
+
+/**
+ * `text` with the JSON escapes a key or a URL may hide behind decoded, at any level of
+ * nesting: `session\u0049d` is `sessionId`, `https:\/\/host\/path` a URL, as a JSON parser
+ * reads them. An invisible character is dropped, as `stripControlCharacters` does. Only
+ * characters that end no value are decoded (`DECODABLE`), so the structure stays as it was.
+ */
+function decodeJsonEscapes(text: string): string {
+  return text.replace(JSON_ESCAPE, (sequence, hex: string | undefined) => {
+    if (hex === undefined) return '/'
+    const char = String.fromCharCode(Number.parseInt(hex, 16))
+    INVISIBLE_CHARACTERS.lastIndex = 0
+    if (INVISIBLE_CHARACTERS.test(char)) return ''
+    return DECODABLE.test(char) ? char : sequence
+  })
 }
 
 /** Whether `value` reads as an error code: see `log/keys.ts`. */
