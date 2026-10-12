@@ -307,7 +307,8 @@ at most 50 candidate orders. When one of those bounds ends it before the service
 `timeout` with no order found, the result is `incomplete`, not "not found":
 
 - **Out of reads** (the RPC serves fewer than 100 blocks per `eth_getLogs` call, or answers
-  so slowly that the reads take more than 5 minutes): the next step is "Use another RPC, or
+  so slowly that the reads take more than 5 minutes; a call the RPC does not answer within
+  them ends the lookup at the 5 minutes): the next step is "Use another RPC, or
   retry."
 - **Out of depth** (a `timeout` longer than 100 000 blocks, about 55 hours on OP Sepolia,
   or `0`, so orders never expire) or **out of candidates**: a retry ends the same way. The

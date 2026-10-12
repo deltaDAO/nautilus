@@ -29,8 +29,9 @@ whole order window.
   so on a narrow RPC an order more than a few hours old was not seen and a second one was
   placed. The lookup now narrows a refused range to 1,000, 500, 200 and 100 blocks (and
   below), keeps the size that works, does not count refused ranges as reads, and reads as
-  many rounds as the window needs at 100 blocks each (at least 100) for at most 5 minutes.
-  When the reads end before they cover the service's timeout, it throws `OrderCheckError`
+  many rounds as the window needs at 100 blocks each (at least 100) for at most 5 minutes,
+  which also bound each wait for the RPC: a call it does not answer in time ends the lookup
+  at the 5 minutes, not when its answer comes. When the reads end before they cover the service's timeout, it throws `OrderCheckError`
   (`'incomplete'`) before anything is paid.
 - **Keep paid timeouts within what the check can read:** at most 24 hours on an RPC that
   serves 100 blocks per `eth_getLogs` call, up to about 55 hours (48 recommended) on one
@@ -46,7 +47,7 @@ whole order window.
   blocks read but they do not cover its timeout**: orders that never expire (`timeout: 0`),
   a timeout longer than the 100,000-block depth (about 55 hours on OP Sepolia), reads that
   end first (an RPC that serves fewer than 100 blocks per call, or answers too slowly for
-  the 5 minutes), or 50 candidates checked without one to reuse or extend, since an older order may
+  the 5 minutes or not at all), or 50 candidates checked without one to reuse or extend, since an older order may
   still be in force. If the account never bought it, pass `orderOnLookupFailure: true`.
 
 **What changes for you**

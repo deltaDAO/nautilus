@@ -167,7 +167,8 @@ The events are read newest first, 2 000 blocks per `eth_getLogs` call (narrowed 
 500, 200, 100 blocks and below while the RPC refuses the range, and kept at the size that
 works; a rate limit is not taken for a refusal), back to the first block inside the service's
 timeout and at most 100 000 blocks, in as many rounds of reads as those blocks need at 100
-blocks per round (at least 100) and for at most 5 minutes, checking at most 50 candidates.
+blocks per round (at least 100) and for at most 5 minutes (a call the RPC does not answer
+in time ends the lookup then), checking at most 50 candidates.
 On an RPC that serves 100 blocks per call, a 24-hour window on OP Sepolia (2-second blocks)
 takes about 450 rounds. "Not found" means the whole window was read. When a bound ends the
 read first (a timeout longer than 100 000 blocks, a timeout of `0`, an RPC that serves fewer

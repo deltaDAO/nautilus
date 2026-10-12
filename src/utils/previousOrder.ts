@@ -59,7 +59,9 @@ const CHUNK_BLOCKS = CHUNKS[0] as number
 /**
  * The lookup's bounds: blocks back from the newest confirmed one; rounds of `eth_getLogs`
  * calls the RPC answered, enough to read the blocks at `MIN_CHUNK_BLOCKS` per round and at
- * least `MIN_READS`; and time, from the start of the lookup. A refused range is not a round:
+ * least `MIN_READS`; and time, from the start of the lookup, which bounds every wait for the
+ * RPC too (`timeBound`), so a call it does not answer in time ends the lookup at the limit
+ * rather than when the answer comes. A refused range is not a round:
  * it only narrows the chunk, at most once per size. A lookup that reaches a bound before the
  * end of the service's timeout, with no order found, throws an `IncompleteOrderLookupError`:
  * an order beyond it cannot be ruled out. An RPC that serves fewer than `MIN_CHUNK_BLOCKS`
@@ -170,6 +172,31 @@ export class InconsistentRpcAnswerError extends Error {
   }
 }
 
+/** Rejects a wait for the RPC that the lookup's time limit ended (`timeBound`). */
+class TimeLimitReached extends Error {}
+
+/** A wait for the RPC, bounded by the lookup's time limit (`timeBound`). */
+type Bound = <T>(pending: Promise<T>) => Promise<T>
+
+/**
+ * `pending`, or a `TimeLimitReached` rejection once `deadline` (a `Date.now()` time) has
+ * passed: the RPC call is not cancelled, its answer is only no longer waited for, and its
+ * failure is ignored then.
+ */
+function timeBound(deadline: number): Bound {
+  return <T>(pending: Promise<T>) => {
+    pending.catch(() => undefined)
+    const left = deadline - Date.now()
+    if (left <= 0) return Promise.reject(new TimeLimitReached())
+
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const reached = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new TimeLimitReached()), left)
+    })
+    return Promise.race([pending, reached]).finally(() => clearTimeout(timer))
+  }
+}
+
 function roughHours(hours: number): string {
   if (Number.isNaN(hours)) return 'unknown'
   return Number.isFinite(hours) ? hours.toFixed(1) : 'unlimited'
@@ -192,7 +219,7 @@ export interface PreviousOrder {
  * The events are read newest first, in chunks of blocks, from the newest block with
  * `CONFIRMATIONS` down to the first block still inside the service's timeout, and no
  * further than `MAX_BLOCKS`, the rounds of reads and `options.timeLimit` (milliseconds,
- * `TIME_LIMIT_MS` by default); at most `MAX_CHECKS` candidates are checked, after which the
+ * `TIME_LIMIT_MS` by default, which also bounds each wait for the RPC); at most `MAX_CHECKS` candidates are checked, after which the
  * best extendable order found is returned. A chunk the RPC refuses as too large is read
  * again with the next narrower size; any other error is thrown, a rate limit included.
  *
@@ -205,7 +232,7 @@ export async function findPreviousOrder(
   options: { now?: number; timeLimit?: number } = {}
 ): Promise<PreviousOrder | undefined> {
   const { provider } = query
-  const deadline = Date.now() + (options.timeLimit ?? TIME_LIMIT_MS)
+  const bound = timeBound(Date.now() + (options.timeLimit ?? TIME_LIMIT_MS))
   const now = options.now ?? Math.floor(Date.now() / 1000)
 
   // Seconds after its block an order is still reused: the node's `elapsed > timeout`, with
@@ -217,23 +244,38 @@ export async function findPreviousOrder(
 
   if (lifetime <= 0) return undefined
 
+  const windowHours = Number.isFinite(lifetime)
+    ? Number(query.timeout) / 3600
+    : Number.POSITIVE_INFINITY
   // A block mined before `cutoff` holds no order that is still reused.
   const cutoff = now - lifetime
-  const head = await provider.getBlock('latest')
+  let head: Block | null
+  let window: { start: number; cut: boolean; time?: number }
+  let floor = 0
+  const latestOf = (newest: Block) => newest.number - CONFIRMATIONS + 1
 
-  if (!head) throw new InconsistentRpcAnswerError('no newest block')
-  if (head.timestamp < cutoff) return undefined
+  try {
+    head = await bound(provider.getBlock('latest'))
 
-  const latest = head.number - CONFIRMATIONS + 1
-  const floor = Math.max(0, latest - MAX_BLOCKS + 1)
-  // Where the window starts, and whether `MAX_BLOCKS` cut it: a service whose orders never
-  // expire has no start, and older orders than the floor may be in force.
-  const window = Number.isFinite(cutoff)
-    ? await windowStart(provider, head, floor, cutoff)
-    : { start: floor, cut: floor > 0 }
+    if (!head) throw new InconsistentRpcAnswerError('no newest block')
+    if (head.timestamp < cutoff) return undefined
+
+    floor = Math.max(0, latestOf(head) - MAX_BLOCKS + 1)
+    // Where the window starts, and whether `MAX_BLOCKS` cut it: a service whose orders
+    // never expire has no start, and older orders than the floor may be in force.
+    window = Number.isFinite(cutoff)
+      ? await windowStart(provider, bound, head, floor, cutoff)
+      : { start: floor, cut: floor > 0 }
+  } catch (error) {
+    // The time limit ended the lookup before it read any block.
+    if (error instanceof TimeLimitReached)
+      throw new IncompleteOrderLookupError(0, windowHours, 'reads')
+    throw error
+  }
+
+  const latest = latestOf(head)
   const stop = window.start
-
-  const check = checker(query, now, lifetime)
+  const check = checker(query, bound, now, lifetime)
   let extendable: { orderTxId: string; timestamp: number } | undefined
   let chunk = CHUNK_BLOCKS
   let checks = 0
@@ -248,13 +290,14 @@ export async function findPreviousOrder(
   /** Set when `MAX_CHECKS` stopped the scan: the time of the first candidate not checked. */
   let cappedAt: number | undefined
 
-  scan: while (to >= stop && reads < maxReads && Date.now() < deadline) {
+  scan: while (to >= stop && reads < maxReads) {
     const from = Math.max(stop, to - chunk + 1)
     let candidates: Candidate[]
 
     try {
-      candidates = await readCandidates(query, from, to)
+      candidates = await readCandidates(query, bound, from, to)
     } catch (error) {
+      if (error instanceof TimeLimitReached) break
       const narrower = CHUNKS.find((size) => size < chunk)
       if (narrower === undefined || !isRangeError(error)) throw error
       chunk = narrower
@@ -273,7 +316,14 @@ export async function findPreviousOrder(
         break scan
       }
 
-      const verdict = await check(candidate)
+      let verdict: Awaited<ReturnType<typeof check>>
+      try {
+        verdict = await check(candidate)
+      } catch (error) {
+        // This chunk was not checked to its end: the scan stops inside it.
+        if (error instanceof TimeLimitReached) break scan
+        throw error
+      }
 
       if (verdict?.usable)
         return { orderTxId: verdict.orderTxId, usableTxId: candidate.txId }
@@ -289,11 +339,17 @@ export async function findPreviousOrder(
   if (covered) return undefined
 
   // Nothing found, but not everything read: "not found" would buy again blind.
-  const windowHours = Number.isFinite(lifetime)
-    ? Number(query.timeout) / 3600
-    : Number.POSITIVE_INFINITY
   const hoursSince = (timestamp: number | undefined) =>
     timestamp === undefined ? Number.NaN : (now - timestamp) / 3600
+  // A block's time from the average block time between `floor` and the head, for when
+  // the time limit ended the lookup and the block cannot be read any more.
+  const { time: floorTime } = window
+  const estimatedTime = (block: number) =>
+    floorTime === undefined || head.number === floor
+      ? undefined
+      : head.timestamp -
+        ((head.number - block) * (head.timestamp - floorTime)) /
+          (head.number - floor)
 
   if (cappedAt !== undefined)
     throw new IncompleteOrderLookupError(
@@ -305,13 +361,15 @@ export async function findPreviousOrder(
     throw new IncompleteOrderLookupError(
       to === latest
         ? hoursSince(head.timestamp)
-        : hoursSince(await blockTime(provider, to + 1)),
+        : hoursSince(
+            (await blockTime(provider, bound, to + 1)) ?? estimatedTime(to + 1)
+          ),
       windowHours,
       'reads'
     )
   if (window.cut)
     throw new IncompleteOrderLookupError(
-      hoursSince(window.time ?? (await blockTime(provider, stop))),
+      hoursSince(window.time ?? (await blockTime(provider, bound, stop))),
       windowHours,
       'depth'
     )
@@ -319,13 +377,17 @@ export async function findPreviousOrder(
   return undefined
 }
 
-/** A block's time, or `undefined` when it cannot be read: only for the message. */
+/**
+ * A block's time, or `undefined` when it cannot be read, also once the time limit is up:
+ * only for the message.
+ */
 async function blockTime(
   provider: Provider,
+  bound: Bound,
   block: number
 ): Promise<number | undefined> {
   try {
-    return (await provider.getBlock(block))?.timestamp
+    return (await bound(provider.getBlock(block)))?.timestamp
   } catch {
     return undefined
   }
@@ -342,11 +404,12 @@ async function blockTime(
  */
 async function windowStart(
   provider: Provider,
+  bound: Bound,
   head: Block,
   floor: number,
   cutoff: number
 ): Promise<{ start: number; cut: boolean; time?: number }> {
-  const base = await provider.getBlock(floor)
+  const base = await bound(provider.getBlock(floor))
 
   if (!base || base.timestamp >= cutoff)
     return { start: floor, cut: floor > 0, time: base?.timestamp }
@@ -359,13 +422,15 @@ async function windowStart(
     ) -
     CHUNK_BLOCKS
 
-  if (estimate <= floor) return { start: floor, cut: false }
+  if (estimate <= floor)
+    return { start: floor, cut: false, time: base.timestamp }
 
-  const block = await provider.getBlock(estimate)
+  const block = await bound(provider.getBlock(estimate))
 
   return {
     start: block && block.timestamp < cutoff ? estimate : floor,
-    cut: false
+    cut: false,
+    time: base.timestamp
   }
 }
 
@@ -380,18 +445,21 @@ interface Candidate {
 /** The account's `OrderStarted` and `OrderReused` transactions in the range, newest first. */
 async function readCandidates(
   query: PreviousOrderQuery,
+  bound: Bound,
   fromBlock: number,
   toBlock: number
 ): Promise<Candidate[]> {
   const account = query.account.toLowerCase()
   const range = { address: query.datatokenAddress, fromBlock, toBlock }
-  const [started, reused] = await Promise.all([
-    query.provider.getLogs({
-      ...range,
-      topics: [ORDER_STARTED, zeroPadValue(account, 32)]
-    }),
-    query.provider.getLogs({ ...range, topics: [ORDER_REUSED] })
-  ])
+  const [started, reused] = await bound(
+    Promise.all([
+      query.provider.getLogs({
+        ...range,
+        topics: [ORDER_STARTED, zeroPadValue(account, 32)]
+      }),
+      query.provider.getLogs({ ...range, topics: [ORDER_REUSED] })
+    ])
+  )
 
   const seen = new Set<string>()
 
@@ -412,7 +480,12 @@ async function readCandidates(
  * stands for, if both nodes accept it with `lifetime` left, and whether the candidate is
  * usable as it stands: sent to the datatoken, with its own provider fee kept by the node.
  */
-function checker(query: PreviousOrderQuery, now: number, lifetime: number) {
+function checker(
+  query: PreviousOrderQuery,
+  bound: Bound,
+  now: number,
+  lifetime: number
+) {
   const datatoken = query.datatokenAddress.toLowerCase()
   const account = query.account.toLowerCase()
   const feeAddress = query.providerFeeAddress?.toLowerCase()
@@ -426,7 +499,7 @@ function checker(query: PreviousOrderQuery, now: number, lifetime: number) {
       receipts.set(txId, pending)
     }
 
-    return pending
+    return bound(pending)
   }
 
   const feeAccepted = (event: Event | undefined, minedAt: number) => {

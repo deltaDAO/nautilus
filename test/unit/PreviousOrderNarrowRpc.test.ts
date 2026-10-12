@@ -127,6 +127,8 @@ class StubRpc {
   refusal: Refusal = 'block range too large (-32000)'
   /** Milliseconds before each answer. */
   latency = 0
+  /** Milliseconds more before an answer to these methods: a stalled RPC. */
+  stalls: Record<string, number> = {}
   /** Refuse with HTTP 400 and `PONTUS_X_REFUSAL`, as rpc.pontus-x.eu does. */
   http400 = false
   /** Widest range served, in blocks. */
@@ -144,8 +146,16 @@ class StubRpc {
       })
       incoming.on('end', async () => {
         const payload = JSON.parse(body)
-        if (this.latency)
-          await new Promise((resolve) => setTimeout(resolve, this.latency))
+        const stall = Math.max(
+          0,
+          ...(Array.isArray(payload) ? payload : [payload]).map(
+            (message: { method: string }) => this.stalls[message.method] ?? 0
+          )
+        )
+        if (this.latency + stall)
+          await new Promise((resolve) =>
+            setTimeout(resolve, this.latency + stall)
+          )
         const refused = this.refused
         const answers = (Array.isArray(payload) ? payload : [payload]).map(
           (message: { id: number; method: string; params: unknown[] }) => ({
@@ -180,6 +190,7 @@ class StubRpc {
     this.cap = cap
     this.refusal = refusal
     this.latency = 0
+    this.stalls = {}
     this.http400 = false
     this.widest = 0
     this.logs = []
@@ -504,4 +515,25 @@ describe('the previous-order lookup on narrower or slower RPCs', () => {
     expect(thrown.checkedHours).to.be.below(1)
     expect(Date.now() - started).to.be.below(1_500)
   }, 60_000)
+
+  // A call the RPC never answers in time: each wait is bounded by the time left, so the
+  // lookup ends near its limit, not when the RPC's answer comes (6 s here).
+  for (const [label, method, ordered] of [
+    ['the newest block', 'eth_getBlockByNumber', false],
+    ['an eth_getLogs call', 'eth_getLogs', false],
+    ['a candidate receipt', 'eth_getTransactionReceipt', true]
+  ] as const)
+    it(`ends at its time limit, as incomplete, while it waits for ${label}`, async () => {
+      if (ordered) rpc.order(tx(1), 3_600)
+      rpc.stalls[method] = 6_000
+      const started = Date.now()
+
+      const thrown = await findPreviousOrder(query(), {
+        timeLimit: 300
+      }).catch((error) => error)
+
+      expect(thrown).to.be.instanceOf(IncompleteOrderLookupError)
+      expect(thrown).to.include({ windowHours: 24, limit: 'reads' })
+      expect(Date.now() - started).to.be.below(3_000)
+    }, 60_000)
 })
