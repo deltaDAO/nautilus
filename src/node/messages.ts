@@ -18,7 +18,8 @@ import { redactKeyValues } from '../log/keyValues.js'
 import {
   INVISIBLE_CHARACTERS,
   SCHEMELESS_URL,
-  trailingPunctuation
+  trailingPunctuation,
+  unescapeJson
 } from '../log/textShapes.js'
 
 /** A non-2xx answer of the node. A `FetchedText` is one. */
@@ -95,7 +96,8 @@ const ANSI_ESCAPE =
  * - the value of every key the log-field redaction treats as secret (`redactsValue`,
  *   `log/keys.ts`: signatures, tokens, nonces, session ids, passwords, API keys, S3 and
  *   OAuth secrets, private keys, cookies, presentations, signed transactions, …), given as
- *   `key=value`, as a JSON field (also inside a JSON string, `\"key\":\"value\"`), or as
+ *   `key=value`, as a JSON field (also inside a JSON string, `\"key\":\"value\"`, and
+ *   under any deeper JSON escaping, `\u0022` escapes included: see `redactSecrets`), or as
  *   `key: value` or `'key': 'value'`; a quoted, bracketed or `Bearer`/`Basic` value is
  *   redacted whole. As for fields, a `…token` holding an EVM address is kept, and so is a
  *   `…code` that reads as an error code (`code=SERVER_ERROR`, `"code": -32005`), so RPC
@@ -109,6 +111,20 @@ const ANSI_ESCAPE =
  * brackets (`127.0.0.1:8545/v3/<key>` reads `127.0.0.1:8545`): see `SCHEMELESS_URL`.
  */
 export function redactSecrets(text: string): string {
+  const once = redactShallow(text)
+  const unescaped = unescapeJson(once)
+  if (unescaped === once) return once
+
+  // JSON escapes hide a key (`\\\"apiToken\\\":…`, `\u0022apiToken\u0022:…`) from the
+  // patterns, as an RPC's answer quoted in an ethers error message has it: the text is
+  // read again with them undone (`unescapeJson`), what the first pass redacted staying
+  // redacted. When that finds more, the unescaped text is what is returned.
+  const deep = redactShallow(unescaped)
+  return deep === unescaped ? once : deep
+}
+
+/** `redactSecrets` of the text as it is, without undoing JSON escapes. */
+function redactShallow(text: string): string {
   return redactKeyValues(
     text.replace(URL_PATTERN, originOnly).replace(SCHEMELESS_URL, hostOnly),
     SECRET_KEYS

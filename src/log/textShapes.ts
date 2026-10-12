@@ -39,3 +39,32 @@ export function trailingPunctuation(url: string): string {
   while (start > 0 && TRAILING_PUNCTUATION.test(url[start - 1])) start--
   return url.slice(start)
 }
+
+/** How many levels of JSON string escaping `unescapeJson` undoes. */
+const MAX_UNESCAPE_LEVELS = 6
+
+/**
+ * One level of JSON string escaping: `\"`, `\\`, `\/`, and `\u00XX` for a printable ASCII
+ * character (`"`, as an HTML-safe serialiser writes a quote). Matched from left to
+ * right in one pass, so `\\u0022` is a backslash and `u0022` at this level.
+ */
+const JSON_ESCAPE = /\\(?:(["\\/])|u00([2-6][0-9a-f]|7[0-9a-e]))/gi
+
+/**
+ * `text` with up to `MAX_UNESCAPE_LEVELS` levels of JSON string escaping undone: a body
+ * quoted in JSON inside JSON (an RPC's answer inside an ethers error message) hides a key
+ * (`\\\"apiToken\\\"`) or a URL from the patterns. Linear in the length of `text` per level.
+ */
+export function unescapeJson(text: string): string {
+  let current = text
+  for (let level = 0; level < MAX_UNESCAPE_LEVELS; level++) {
+    const next = current.replace(
+      JSON_ESCAPE,
+      (_match, char: string | undefined, code: string | undefined) =>
+        char ?? String.fromCharCode(Number.parseInt(code ?? '', 16))
+    )
+    if (next === current) break
+    current = next
+  }
+  return current
+}
