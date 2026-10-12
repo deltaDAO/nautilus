@@ -102,7 +102,7 @@ Each event is a `LogEvent`:
 | `event` | `string` | The catalogued name, `component.step.outcome`. Stable: filter and alert on it, not on `msg`. |
 | `component` | `LogComponent` | |
 | `msg` | `string` | A readable sentence. It may change between versions. |
-| `opId` | `string` | The [operation](#telling-operations-apart) the event belongs to: 8 random hex characters, the same on every event of one call. Unset outside one. |
+| `opId` | `string` | The [operation](#telling-operations-apart) the event belongs to: 12 random hex characters, the same on every event of one call. Unset outside one. |
 | `operation` | `string` | The call `opId` belongs to, e.g. `publish` or `getComputeResult`. |
 | `did`, `txHash`, `durationMs` | | Set when the event is about an asset, a transaction or a timed step. |
 | `fields` | `Record<string, unknown>` | The event's own data. |
@@ -224,7 +224,7 @@ lines of calls that run at the same time (a `Promise.all`, a server handling sev
 requests) can be told apart:
 
 ```
-[nautilus] [compute] info: compute finished in 4210 ms. (compute.operation.finished opId=3f9a2c1b operation=compute durationMs=4210)
+[nautilus] [compute] info: compute finished in 4210 ms. (compute.operation.finished opId=3f9a2c1b07e4 operation=compute durationMs=4210)
 ```
 
 The error a call throws carries the same id as `error.opId`, so an error in a bug report
@@ -241,28 +241,41 @@ try {
 }
 ```
 
-`error.opId` is not enumerable: the error compares, prints and serialises as before. An error
-that already had an `opId` keeps it, and a frozen error or a thrown value that is not an
-object gets none.
+`error.opId` is not enumerable: the error compares, prints and serialises as before. One
+error object can be thrown by several calls, e.g. a rejection your code caches, or the
+`reason` of one `AbortSignal` passed to several calls. Its `opId` is then the latest call's,
+and `error.opIds` (not enumerable either) lists every call's, the first one first: the first
+and the latest 15 of more than 16. An error whose own `opId` nautilus did not set keeps it,
+and a frozen error, a thrown value that is not an object or a `Proxy` that refuses the
+property gets none; each is rethrown as it was.
 
 Each operation starts with a `…started` event (`debug`) and ends with `…finished` or
 `…failed`, with its `durationMs`; `failed` also has the redacted `error`. They are `info`
 (`publish.operation.*`, `edit.operation.*`, `lifecycle.operation.*`, `access.operation.*`,
 `compute.operation.*`, `node.operation.*` for `waitForIndexer`), except for the job reads
 apps poll, `getComputeStatus` and `getComputeResult`, whose `compute.query.*` events are all
-`debug`. A call made from inside another, e.g. from a `confirmProviderFees` callback, joins
-that operation and has no events or `opId` of its own.
+`debug`.
+
+In Node 22.3 or newer, a call made from inside another call of the same logger, e.g. from a
+`confirmProviderFees` callback, joins that operation: it has no events or `opId` of its own,
+and its error carries the outer `opId`. Only a call that is still running is joined. Work a
+call leaves behind, such as a timer or an event listener it started, starts an operation of
+its own when it calls nautilus after the call has ended, and so does a call on an instance
+with another logger (another tenant's). In a browser, and in Node 22.0 to 22.2, each call is
+an operation of its own (see below).
 
 The `opId` is random and the operation one of the names above: neither carries data of
 yours, of the node or of the chain. Both go through the same redaction as every other field.
 
-In Node, the operation follows the call through every `await`, timer and callback
-(`AsyncLocalStorage`), so the node client's events, an instance logger's, the process-wide
-logger's and the [debug channel](/docs/api/nautilus/setDebug)'s all carry it. A browser has
-no `AsyncLocalStorage`: there the call hands its logger, bound to the operation, to the
-steps it runs (orders, escrow, the NFT mint, price changes, compute start), and their
-events carry
-the `opId`; events of code that is not handed that logger (the node client, the
-policy-session resolver, publish's checks before the first transaction, an
-`S3RemoteStore`) and the debug channel's have none, never a wrong one. `error.opId` is set
-everywhere.
+In Node 22.3 or newer, the operation follows the call through every `await`, timer and
+callback (`AsyncLocalStorage`, read through `process.getBuiltinModule`), so the node
+client's events, an instance logger's, the process-wide logger's and the
+[debug channel](/docs/api/nautilus/setDebug)'s all carry it. A browser has no
+`AsyncLocalStorage`, and Node 22.0 to 22.2 has no `process.getBuiltinModule`: there the call
+hands its logger, bound to the operation, to the steps it runs (orders, escrow, the NFT
+mint, price changes, compute start, publish's and edit's checks and metadata transaction),
+and their events carry the `opId`. Events of code that is not handed that logger (the node
+client, the policy-session resolver, the signer's nonce guard, an `S3RemoteStore`) and the
+debug channel's have none, never a wrong one. `error.opId` is set everywhere. The `opId`s
+are 12 random hex characters: among millions of calls two can share one, so when you
+correlate over a long time, go by the `opId` and the time.
