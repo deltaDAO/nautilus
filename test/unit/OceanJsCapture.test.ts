@@ -966,6 +966,90 @@ describe('inside a nautilus operation (10c)', () => {
     }
   })
 
+  describe('with another copy of nautilus in the process', () => {
+    afterEach(() => {
+      vi.resetModules()
+    })
+
+    /** A second copy's logger and operation context, loaded together. */
+    async function secondCopy() {
+      vi.resetModules()
+      const logger = await import('../../src/log/logger.js')
+      const context = await import('../../src/log/context.js')
+      return { logger, context }
+    }
+
+    /** The case 16 refusal inside a `compute` operation the second copy runs. */
+    async function refusedInCopy(copy: Awaited<ReturnType<typeof secondCopy>>) {
+      let opId: string | undefined
+      await copy.context
+        .runOperation(
+          copy.logger.createLogger({ level: 'silent' }),
+          'compute',
+          async () => {
+            opId = copy.context.currentOperation()?.opId
+            throw await refusedFreeCompute()
+          }
+        )
+        .catch(() => undefined)
+      return opId
+    }
+
+    it('the copy that captures stamps the opId of an operation another copy runs', async () => {
+      const copy = await secondCopy()
+      // This copy (the first) receives ocean.js's lines; the second runs the operation.
+      configureLogging({ oceanjs: 'capture' })
+      const log = captureLog()
+
+      const opId = await refusedInCopy(copy)
+
+      expect(opId).to.be.a('string')
+      const lines = log.named('oceanjs.logger.error')
+      expect(lines).to.have.length(2)
+      for (const event of lines) {
+        expect(event.opId).to.equal(opId)
+        expect(event.operation).to.equal('compute')
+      }
+    })
+
+    it("the inner operation's opId, never the outer one, when one copy's operation runs inside the other's", async () => {
+      const copy = await secondCopy()
+      configureLogging({ oceanjs: 'capture' })
+      const log = captureLog()
+
+      let outer: string | undefined
+      let inner: string | undefined
+      await runOperation(
+        createLogger({ level: 'silent' }),
+        'access',
+        async () => {
+          outer = currentOperation()?.opId
+          inner = await refusedInCopy(copy)
+        }
+      )
+
+      expect(outer).to.be.a('string')
+      expect(inner).to.be.a('string')
+      expect(inner).not.to.equal(outer)
+      const lines = log.named('oceanjs.logger.error')
+      expect(lines).to.have.length(2)
+      for (const event of lines) expect(event.opId).to.equal(inner)
+    })
+
+    it('carries no opId when the capturing copy has no AsyncLocalStorage', async () => {
+      const copy = await secondCopy()
+      configureLogging({ oceanjs: 'capture' })
+      const log = captureLog()
+      useAsyncContext(false)
+
+      await refusedInCopy(copy)
+
+      const lines = log.named('oceanjs.logger.error')
+      expect(lines).to.have.length(2)
+      for (const event of lines) expect(event).not.to.have.property('opId')
+    })
+  })
+
   it("'passthrough': ocean.js prints its own lines; nautilus's operation events stay redacted", async () => {
     configureLogging({ oceanjs: 'passthrough', level: 'trace' })
     const out = output()

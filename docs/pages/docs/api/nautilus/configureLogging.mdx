@@ -238,7 +238,9 @@ Notes:
   `configureLogging`, else to the first copy loaded. When another copy does that, e.g. a
   plugin that sets `'passthrough'` for itself, which makes ocean.js print unredacted for the
   whole process, the copy that received the lines until then logs an
-  `oceanjs.capture.moved` warning with the new `mode`.
+  `oceanjs.capture.moved` warning with the new `mode`. The copies share the operation too:
+  a line ocean.js logs during a call made through one copy carries that call's `opId`,
+  whichever copy receives the line.
 - A line ocean.js logs while nautilus captures another, e.g. from a `sink` or a debug sink
   that logs through `LoggerInstance`, is dropped, never printed: through ocean.js it would
   print unredacted. One `oceanjs.capture.nested_dropped` warning says so. Hand a sink's
