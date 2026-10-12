@@ -16,11 +16,12 @@ lines: not the level, not the sink, not the redaction.
   nautilus events of the component `oceanjs`: `oceanjs.logger.error`, `oceanjs.logger.warn`,
   `oceanjs.logger.log` (`info`, also ocean.js's `bypass`) and `oceanjs.logger.debug`, with the
   text ocean.js logged as the message and the objects after it in `fields.args` (a JSON
-  string holding an object is read as the object), redacted by field and by text like every
+  string holding an object is read as the object, up to 64 KB), redacted by field and by text like every
   other event: the payload's `nonce`, `signature` and `sessionId`s are `<redacted>`. They
   print at nautilus's level, in its format and to its sink, so the payload dump now prints as
   a redacted `[oceanjs] error` line on stderr instead of an unredacted one on the console.
-  The raw lines reach only the `sensitive` debug tier (topic `node`).
+  The raw lines reach only the debug channel (topic `node`): its `sensitive` tier, or
+  `secrets` for a credential (an RPC key, a Bearer token, a signed transaction).
 - `'passthrough'` keeps the old behaviour: ocean.js prints itself, unredacted. `'silent'`
   drops ocean.js's lines. `oceanjs: undefined` goes back to `'capture'`.
 - ocean.js's own level (`LoggerInstance.setLevel`, errors only by default) still decides first
@@ -35,4 +36,10 @@ lines: not the level, not the sink, not the redaction.
 - Not captured: the few ocean.js functions that write to `console` directly (none of them on
   the paths nautilus calls logs a request payload), and the logger of ocean.js's other bundle,
   which an app gets when it loads ocean.js through `require`.
-- The `config.oceanjs.not_active` warning is gone.
+- Several copies of nautilus in one process share the capture: a copy loaded later keeps the
+  mode in force, `getLoggingConfig().oceanjs` is that mode whichever copy set it, and the
+  lines go to the copy that last set `oceanjs` (else to the first one loaded).
+- A line ocean.js logs while nautilus captures one (a `sink` or debug sink that logs through
+  `LoggerInstance`) is dropped, with one `oceanjs.capture.nested_dropped` warning; it never
+  prints unredacted. A frozen `LoggerInstance` is left alone: nothing is captured, and
+  `oceanjs.capture.unavailable` warns once when nautilus is imported.
