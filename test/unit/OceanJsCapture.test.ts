@@ -19,7 +19,7 @@ import {
   resetLogging
 } from '../../src/log/logger.js'
 import type { LogEvent } from '../../src/log/types.js'
-import { captureLog } from '../helpers.js'
+import { captureLog, cpuTime } from '../helpers.js'
 import { FAKE } from '../secretScan.js'
 
 const NODE = 'https://node.test.invalid'
@@ -723,6 +723,38 @@ describe('reading a captured line', () => {
       expect(payload.nonce).to.equal('<redacted>')
     }
     expectNoJ1Secret(JSON.stringify(log.events))
+  })
+
+  it("bounds a node's large answer body: 31.7 MB costs milliseconds, not seconds (D42)", async () => {
+    // ocean.js logs a node's error body at error level, and the node is the asset
+    // publisher's choice. The round-2 review's shape: 20 keys a level, 5 levels, 3.2 million
+    // leaves, 31.7 MB as JSON. Each level reuses one object, so it builds at once; the
+    // redaction walks it as it would the parsed body.
+    let body: unknown = 'x'
+    for (let level = 0; level < 5; level++) {
+      const next: Record<string, unknown> = {}
+      for (let key = 0; key < 20; key++) next[`k${key}`] = body
+      body = next
+    }
+    expect(JSON.stringify(body).length).to.be.greaterThan(31_000_000)
+    // The capture is timed, not the debug channel's hand-over of the raw body, which runs
+    // only when a user turns debug on: off here, also under NAUTILUS_TEST_DEBUG.
+    setDebug({ level: 'off' })
+    const log = captureLog()
+
+    const spent = await cpuTime(() =>
+      LoggerInstance.error('Compute start failed:', body)
+    )
+
+    // 6.6 s with the deeper args and no budget; 12 ms before the deeper args.
+    expect(spent).to.be.below(300)
+    const printed = JSON.stringify(log.events)
+    expect(log.events).to.have.length(1)
+    expect(printed.length).to.be.below(100_000)
+    // Where the budget ran out, each level says how much it left out.
+    const [arg] = log.events[0].fields.args as [Record<string, unknown>]
+    expect(arg.k0).to.have.property('k0')
+    expect(arg['…']).to.match(/^\d+ more$/)
   })
 
   it('puts a JSON string over 64 KB in args, as text, redacted', () => {
