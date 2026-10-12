@@ -49,19 +49,26 @@ import { Interface, toUtf8String, zeroPadValue } from 'ethers'
 import { rateLimitOf } from './rpcErrors.js'
 
 /**
- * Blocks per `eth_getLogs` call at first, halved while the RPC refuses the range. A rate
- * limit is not a range refusal: it is thrown, not halved.
+ * Blocks per `eth_getLogs` call: the first size, then each narrower one in turn while the
+ * RPC refuses the range. The size that worked is kept for the rest of the scan. A rate
+ * limit is not a range refusal: it is thrown, not narrowed.
  */
-const CHUNK_BLOCKS = 2_000
+const CHUNKS = [2_000, 1_000, 500, 200, 100, 50, 20, 10, 5, 2, 1]
+const CHUNK_BLOCKS = CHUNKS[0] as number
 
 /**
- * The lookup's bounds: blocks back from the newest confirmed one, and rounds of
- * `eth_getLogs` calls (one round per chunk, retries included). A lookup that reaches either
- * before the end of the service's timeout, with no order found, throws an
- * `IncompleteOrderLookupError`: an order beyond them cannot be ruled out.
+ * The lookup's bounds: blocks back from the newest confirmed one; rounds of `eth_getLogs`
+ * calls the RPC answered, enough to read the blocks at `MIN_CHUNK_BLOCKS` per round and at
+ * least `MIN_READS`; and time, from the start of the lookup. A refused range is not a round:
+ * it only narrows the chunk, at most once per size. A lookup that reaches a bound before the
+ * end of the service's timeout, with no order found, throws an `IncompleteOrderLookupError`:
+ * an order beyond it cannot be ruled out. An RPC that serves fewer than `MIN_CHUNK_BLOCKS`
+ * blocks per call may run out of rounds.
  */
 const MAX_BLOCKS = 100_000
-const MAX_READS = 100
+const MIN_CHUNK_BLOCKS = 100
+const MIN_READS = 100
+const TIME_LIMIT_MS = 300_000
 
 /**
  * Candidates checked at most, each costing up to two receipt reads: anyone can place an
@@ -107,7 +114,7 @@ export interface PreviousOrderQuery {
 }
 
 /**
- * Which bound stopped a lookup short: the rounds of reads (`MAX_READS`, a slow or narrow
+ * Which bound stopped a lookup short: the rounds of reads or their time (a slow or narrow
  * RPC), the blocks read back (`MAX_BLOCKS`, a timeout longer than that, or none), or the
  * candidates checked (`MAX_CHECKS`).
  */
@@ -184,19 +191,21 @@ export interface PreviousOrder {
  *
  * The events are read newest first, in chunks of blocks, from the newest block with
  * `CONFIRMATIONS` down to the first block still inside the service's timeout, and no
- * further than `MAX_BLOCKS` and `MAX_READS`; at most `MAX_CHECKS` candidates are checked,
- * after which the best extendable order found is returned. A chunk the RPC refuses as too
- * large is read again in halves; any other error is thrown, a rate limit included.
+ * further than `MAX_BLOCKS`, the rounds of reads and `options.timeLimit` (milliseconds,
+ * `TIME_LIMIT_MS` by default); at most `MAX_CHECKS` candidates are checked, after which the
+ * best extendable order found is returned. A chunk the RPC refuses as too large is read
+ * again with the next narrower size; any other error is thrown, a rate limit included.
  *
  * `undefined` means the whole window was read and holds no such order. A lookup that
- * stopped before it covered the window (at `MAX_BLOCKS`, `MAX_READS` or `MAX_CHECKS`) with
- * no order found throws an `IncompleteOrderLookupError` instead.
+ * stopped before it covered the window (at a bound) with no order found throws an
+ * `IncompleteOrderLookupError` instead.
  */
 export async function findPreviousOrder(
   query: PreviousOrderQuery,
-  options: { now?: number } = {}
+  options: { now?: number; timeLimit?: number } = {}
 ): Promise<PreviousOrder | undefined> {
   const { provider } = query
+  const deadline = Date.now() + (options.timeLimit ?? TIME_LIMIT_MS)
   const now = options.now ?? Math.floor(Date.now() / 1000)
 
   // Seconds after its block an order is still reused: the node's `elapsed > timeout`, with
@@ -230,22 +239,28 @@ export async function findPreviousOrder(
   let checks = 0
   let to = latest
   let reads = 0
+  const maxReads = Math.max(
+    MIN_READS,
+    Math.ceil((latest - stop + 1) / MIN_CHUNK_BLOCKS)
+  )
   /** Set when the scan reached a block older than the window: all of it was read. */
   let covered = false
   /** Set when `MAX_CHECKS` stopped the scan: the time of the first candidate not checked. */
   let cappedAt: number | undefined
 
-  scan: for (; to >= stop && reads < MAX_READS; reads++) {
+  scan: while (to >= stop && reads < maxReads && Date.now() < deadline) {
     const from = Math.max(stop, to - chunk + 1)
     let candidates: Candidate[]
 
     try {
       candidates = await readCandidates(query, from, to)
     } catch (error) {
-      if (chunk === 1 || !isRangeError(error)) throw error
-      chunk = Math.floor(chunk / 2)
+      const narrower = CHUNKS.find((size) => size < chunk)
+      if (narrower === undefined || !isRangeError(error)) throw error
+      chunk = narrower
       continue
     }
+    reads++
 
     for (const candidate of candidates) {
       // Every older candidate is older still, and so is the order it names.
@@ -593,7 +608,7 @@ function decode(log: Pick<Log, 'topics' | 'data'>): Event | undefined {
 /**
  * Whether an RPC refused `eth_getLogs` for its range or its number of results. A rate limit
  * is not one, though its text often reads like one ("exceeded maximum retry limit", "limit
- * exceeded"): halving on it spends the reads until the window cannot be covered.
+ * exceeded"): narrowing on it spends the reads until the window cannot be covered.
  */
 function isRangeError(error: unknown): boolean {
   if (rateLimitOf(error)) return false
