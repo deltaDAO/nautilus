@@ -122,10 +122,12 @@ buys; for an older order that is still valid, that pays a second time. Within ab
 of a purchase, the order is found and reused.
 
 **Workaround:** publish paid services with a timeout of at most 48 hours. That also needs an
-RPC that serves wide block ranges per `eth_getLogs` call: with a small range, the reads end
-before they cover 48 hours, and `access()` stops with an `incomplete`
+RPC that answers `eth_getLogs` for at least 100 blocks per call, within the 5 minutes the
+check takes at most: with a narrower range or a slower RPC, the reads end before they cover
+the timeout, and `access()` stops with an `incomplete`
 [`OrderCheckError`](/docs/api/nautilus/access#ordercheckerror) that asks for another RPC
-(nothing is paid). Use the opt-in only for a first purchase, when you know the account holds
+(nothing is paid). On an RPC that serves only 100 blocks per call, the check of a 24-hour
+service reads about 450 times, which can take a few minutes. Use the opt-in only for a first purchase, when you know the account holds
 no order for the service.
 
 **Fixed by:** the next beta (a deeper read, and for `timeout: 0` a read from the datatoken's

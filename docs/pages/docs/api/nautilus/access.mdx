@@ -301,12 +301,14 @@ Fields, so a program need not parse the text:
 | `incomplete` | the check covered only the last 16 of the 24 hours an order stays valid: the lookup stopped before it covered the order window (below) |
 | `rpc-error` | the RPC returned an error: … (the RPC's own words, redacted); or the RPC's answer lacked data the check needs (…): no newest block, no receipt for an order transaction its own logs list, or a receipt without that order's event, as a load-balanced RPC whose backends lag each other can answer |
 
-The lookup reads at most 100 000 blocks back, in at most 100 rounds of reads, and checks
+The lookup reads at most 100 000 blocks back, in as many rounds of reads as the blocks to
+read need at 100 blocks per round (at least 100 rounds) and for at most 5 minutes, and checks
 at most 50 candidate orders. When one of those bounds ends it before the service's
 `timeout` with no order found, the result is `incomplete`, not "not found":
 
-- **Out of reads** (the RPC refuses large block ranges, so each round reads only a few
-  blocks): the next step is "Use another RPC, or retry."
+- **Out of reads** (the RPC serves fewer than 100 blocks per `eth_getLogs` call, or answers
+  so slowly that the reads take more than 5 minutes): the next step is "Use another RPC, or
+  retry."
 - **Out of depth** (a `timeout` longer than 100 000 blocks, about 55 hours on OP Sepolia,
   or `0`, so orders never expire) or **out of candidates**: a retry ends the same way. The
   message says so, and when the account has not bought the service in that window (never,
