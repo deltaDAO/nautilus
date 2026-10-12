@@ -21,8 +21,10 @@ why instead of "ocean.js returned no transaction".
   fresh nonce, at most three times. An order, purchase, approval or escrow payment is sent
   again only with proof from two RPCs that the first can never be mined (the account's
   mined count past its nonce on both, read first; the hash unknown on both; and, in the
-  blocks since the send on each RPC, another call of the account holding that nonce, not
-  the same call to the same contract, which may be this one sped up or retried), so never
+  blocks since the send on each RPC, another call of the account holding that nonce in a
+  finalized block, not the same call to the same contract, which may be this one sped up
+  or retried; nautilus does not wait for finality, so on a chain that finalizes in minutes
+  a fresh collision stops), so never
   without a `verificationProvider`; otherwise it stops with the new **`NonceGuardError`**
   (`reason: 'may-have-been-sent'`). A timeout, network error or any other refusal is never
   retried; a resend that fails that way is a `NonceGuardError` too, keeping the earlier

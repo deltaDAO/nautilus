@@ -69,7 +69,8 @@ type MinedTx = {
 /**
  * A chain with `latest` mined transactions of the wallet, a pending count that may lag
  * (`stale`), and known transactions by hash. `broadcast` decides each send. Blocks from
- * `head` on list the transactions `blocks` puts in them; a broadcast adds none.
+ * `head` on list the transactions `blocks` puts in them; a broadcast adds none. The
+ * `finalized` block is the head unless `finalize()` holds it back.
  */
 function fakeChain(options: {
   latest?: number
@@ -82,17 +83,19 @@ function fakeChain(options: {
   const broadcasts: Transaction[] = []
   let latest = options.latest ?? 10
   let head = options.head ?? 100
+  let finalized: number | undefined
   const blocks = new Map<number, MinedTx[]>()
   const reads: string[] = []
 
   const provider = {
     getNetwork: async () => ({ chainId: BigInt(CHAIN_ID) }),
     getBlockNumber: vi.fn(async () => head),
-    getBlock: vi.fn(async (number: number) =>
-      number > head
+    getBlock: vi.fn(async (tag: number | string) => {
+      const number = tag === 'finalized' ? (finalized ?? head) : Number(tag)
+      return number > head
         ? null
         : { number, prefetchedTransactions: blocks.get(number) ?? [] }
-    ),
+    }),
     getFeeData: async () => ({
       gasPrice: 1n,
       maxFeePerGas: 2n,
@@ -134,6 +137,10 @@ function fakeChain(options: {
     mineBlock: (...txs: MinedTx[]) => {
       head += 1
       blocks.set(head, txs)
+    },
+    /** Holds the finalized block at `number` (`undefined`: the head again). */
+    finalize: (number?: number) => {
+      finalized = number
     }
   }
 }
@@ -161,9 +168,9 @@ function secondRpc(
       if (!blocksOf) throw new Error('not asked in these tests')
       return blocksOf.getBlockNumber()
     },
-    getBlock: vi.fn(async (number: number) => {
+    getBlock: vi.fn(async (tag: number | string) => {
       if (!blocksOf) throw new Error('not asked in these tests')
-      return blocksOf.getBlock(number)
+      return blocksOf.getBlock(tag)
     })
   }
 }
@@ -969,9 +976,13 @@ describe('NonceGuardSigner: money sends', () => {
   async function slotProof(holders: {
     primary: MinedTx | 'ours'
     verifier: MinedTx | 'ours' | null
+    /** The finalized block of each RPC; by default its head, the holder's block. */
+    finalized?: { primary?: number; verifier?: number }
   }) {
     const chain = fakeChain({ latest: 10, head: 100 })
     const second = fakeChain({ latest: 10, head: 100 })
+    chain.finalize(holders.finalized?.primary)
+    second.finalize(holders.finalized?.verifier)
     chain.provider.broadcastTransaction.mockImplementationOnce(
       async (raw: string) => {
         const tx = Transaction.from(raw)
@@ -1074,6 +1085,63 @@ describe('NonceGuardSigner: money sends', () => {
     })
 
     expect(outcome?.reason).to.equal('may-have-been-sent')
+    expect(chain.broadcasts).to.have.length(1)
+  })
+
+  it('does not resend an order whose slot holder is not finalized on either RPC (PR #217 review, 4249882126)', async () => {
+    // Both RPCs show another call at nonce 10, but only in their unfinalized tip (block
+    // 101, finalized 100). Should that tip be reorganised and the order take nonce 10, a
+    // resend at nonce 11 would charge the user twice.
+    const other = await otherTx(10)
+    const { chain, outcome } = await slotProof({
+      primary: other,
+      verifier: other,
+      finalized: { primary: 100, verifier: 100 }
+    })
+
+    expect(outcome?.reason).to.equal('may-have-been-sent')
+    expect(chain.broadcasts).to.have.length(1)
+  })
+
+  it('does not resend an order whose slot holder is finalized on the primary only (PR #217 review, 4249882126)', async () => {
+    const other = await otherTx(10)
+    const { chain, outcome } = await slotProof({
+      primary: other,
+      verifier: other,
+      finalized: { verifier: 100 }
+    })
+
+    expect(outcome?.reason).to.equal('may-have-been-sent')
+    expect(chain.broadcasts).to.have.length(1)
+  })
+
+  it('does not resend an order when an RPC has no finalized block (PR #217 review, 4249882126)', async () => {
+    const other = await otherTx(10)
+    const chain = fakeChain({ latest: 10, head: 100 })
+    const second = fakeChain({ latest: 10, head: 100 })
+    const blocks = second.provider.getBlock.getMockImplementation()
+    second.provider.getBlock.mockImplementation(async (tag: number | string) => {
+      if (tag === 'finalized') throw new Error("unknown block tag 'finalized'")
+      return blocks?.(tag)
+    })
+    chain.provider.broadcastTransaction.mockImplementationOnce(
+      async (raw: string) => {
+        chain.broadcasts.push(Transaction.from(raw))
+        chain.mineBlock(other)
+        second.mineBlock(other)
+        chain.setLatest(11)
+        second.setLatest(11)
+        throw refusal('NONCE_EXPIRED', 'nonce too low', raw)
+      }
+    )
+
+    const error = (await failure(
+      guard(chain, {
+        verificationProvider: second.provider as never
+      }).sendTransaction(request(ORDER_CALL))
+    )) as NonceGuardError
+
+    expect(error.reason).to.equal('may-have-been-sent')
     expect(chain.broadcasts).to.have.length(1)
   })
 

@@ -720,17 +720,21 @@ export async function provenNeverSent(params: {
 }
 
 /**
- * Positive proof that none of `attempts` was mined: for each one's nonce, the transaction
- * of `address` with that nonce found in the blocks since the send (`fromBlock`, read just
- * before the first broadcast, minus one), and it is another call. **Every** provider must
+ * Positive proof that none of `attempts` can ever be mined: for each one's nonce, the
+ * transaction of `address` with that nonce found in a **finalized** block since the send
+ * (`fromBlock`, read just before the first broadcast, minus one), and it is another call.
+ * A holder only in the unfinalized tip proves nothing: a reorganisation can drop it and
+ * mine the attempt in its slot, so a resend would land as well. **Every** provider must
  * show this for every nonce on its own: a provider on another fork, or one that forged a
  * block, cannot prove it alone. No proof when any provider shows one of `attempts` in a
- * block, does not return a block up to its head, has more than `MAX_PROOF_BLOCKS` blocks
- * to read, or fails a read; nor when the transaction holding a nonce makes the same call
- * (`call`: same recipient and same function), which may be this send sped up in a wallet
- * or retried by another process, so this send would land twice. A nonce taken before the
- * send (the stale read of the beta.2 run) is not in those blocks either, so such a send
- * stops with "may have been sent".
+ * block, has a holder above its finalized block (or no finalized block), does not return
+ * a block up to its head, has more than `MAX_PROOF_BLOCKS` blocks to read, or fails a
+ * read; nor when the transaction holding a nonce makes the same call (`call`: same
+ * recipient and same function), which may be this send sped up in a wallet or retried by
+ * another process, so this send would land twice. A nonce taken before the send (the
+ * stale read of the beta.2 run) is not in those blocks either, so such a send stops with
+ * "may have been sent"; so does, in practice, a collision a moment ago on a chain that
+ * takes minutes to finalize (an OP Stack chain): nautilus does not wait for finality.
  */
 export async function provenSlotsTaken(params: {
   providers: Provider[]
@@ -761,6 +765,10 @@ export async function provenSlotsTaken(params: {
 
   try {
     for (const provider of [...new Set(params.providers)]) {
+      // Read first: a block at or below it, read afterwards, is final.
+      const finalized = (await provider.getBlock('finalized'))?.number
+      if (typeof finalized !== 'number')
+        return verdict(false, 'no finalized block')
       const head = await provider.getBlockNumber()
       if (head - start + 1 > MAX_PROOF_BLOCKS)
         return verdict(false, 'too many blocks since the send')
@@ -779,6 +787,11 @@ export async function provenSlotsTaken(params: {
           if (!open.has(tx.nonce)) continue
           if (call && sameCall(tx, call))
             return verdict(false, `${tx.hash} makes the same call`)
+          if (number > finalized)
+            return verdict(
+              false,
+              `${tx.hash} holds nonce ${tx.nonce} in block ${number}, above the finalized block ${finalized}`
+            )
           open.delete(tx.nonce)
           taken[tx.nonce] = tx.hash
         }

@@ -122,11 +122,15 @@ With the default `nonceManagement: 'auto'` and a signer that signs locally (an e
     value) is sent again only with proof from **two RPCs** that the first one can never be
     mined: the account's mined count past its nonce on both, its hash unknown on both, and,
     in the blocks since the send **on each RPC**, another transaction of the account
-    holding that nonce. One RPC's blocks are not enough (it may be on another fork); a
-    block either RPC does not return, a read that fails, or the transaction itself in a
-    block, is no proof. Nor is a slot holder that makes **the same call** (same contract,
-    same function): it may be this order sped up in a wallet or retried by another
-    process, so sending it again could pay twice.
+    holding that nonce in a **finalized** block. One RPC's blocks are not enough (it may be
+    on another fork); a holder only in the unfinalized tip is not either (a reorganisation
+    can drop it and mine the order in its slot); a block either RPC does not return, an RPC
+    without a `finalized` block, a read that fails, or the transaction itself in a block,
+    is no proof. Nor is a slot holder that makes **the same call** (same contract, same
+    function): it may be this order sped up in a wallet or retried by another process, so
+    sending it again could pay twice. nautilus does not wait for finality: on a chain that
+    finalizes in minutes (an OP Stack chain), a collision of a moment ago stops with "may
+    have been sent" too.
     Without a [`verificationProvider`](/docs/api/nautilus/create#verificationprovider) it
     is never sent again. Otherwise nautilus stops with a `NonceGuardError` whose `reason`
     is `'may-have-been-sent'`: check the account's transactions before retrying. A nonce
