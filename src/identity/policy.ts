@@ -29,7 +29,8 @@ import {
   genericTypeProblem,
   isDid,
   isPlainObject,
-  mergeAttributeSchemas
+  mergeAttributeSchemas,
+  shownValue
 } from './attributes.js'
 
 /**
@@ -136,13 +137,18 @@ export function setVpPolicies(
  *
  * An empty list removes the list's `SSIpolicy` entry, and with it the credential gate: the
  * policy server refuses every consumer of an entry that requests no credential. Address and
- * access-list entries are kept. The removal logs `identity.policy.gate_removed`, and throws
- * a `TypeError` when the list's addresses admit `'*'`, which would leave no gate at all.
+ * access-list entries are kept. The removal logs `identity.policy.gate_removed`. On the
+ * `allow` list it throws a `TypeError` when that would leave no gate at all: when the list's
+ * addresses admit `'*'`, and, for an asset's list (`scope.level`, the default), when no
+ * address or access-list entry remains, since the node lets every address in through an
+ * empty allow list. A service's list is checked together with the asset's
+ * (`scope.assetCredentials`) when that is known; otherwise the event says to check it.
  */
 export function setRequestCredentials(
   credentials: DdoCredentials,
   list: CredentialListTypes,
-  requestCredentials: RequestCredential[]
+  requestCredentials: RequestCredential[],
+  scope: RequestCredentialsScope = {}
 ): DdoCredentials {
   if (!Array.isArray(requestCredentials))
     throw new TypeError(
@@ -156,14 +162,45 @@ export function setRequestCredentials(
     if (!entries.some(isSsiPolicyCredential)) return credentials
 
     const kept = entries.filter((entry) => !isSsiPolicyCredential(entry))
-    if (list === CredentialListTypes.ALLOW && addressList(kept).includes('*'))
+    const removed = `setRequestCredentials(${list}, []) removed the ${list} list's SSIpolicy entry, with its VC and VP policies: the credential gate is gone`
+    if (list !== CredentialListTypes.ALLOW) {
+      log.emit(
+        'identity.policy.gate_removed',
+        `${removed}, and only the address and access-list entries remain.`,
+        { list }
+      )
+      return { ...credentials, [list]: kept }
+    }
+
+    if (addressList(kept).includes('*'))
       throw new TypeError(
         "setRequestCredentials(allow, []) would remove the credential gate of a list that lets every address in ('*'), leaving no gate at all. Replace '*' with explicit addresses first, or keep a request credential."
       )
 
+    const service = scope.level === 'service'
+    const addressGate = kept.some(
+      (entry) => isAddressCredential(entry) || entry?.type === 'accessList'
+    )
+    if (!addressGate && !service)
+      throw new TypeError(
+        "setRequestCredentials(allow, []) would leave the asset's allow list without an address or access-list entry, and the node lets every address in through an empty allow list: no gate would remain. Add the addresses to admit first (addCredentialAddresses), or keep a request credential."
+      )
+    if (
+      !addressGate &&
+      scope.assetCredentials &&
+      admitsEveryAddress(scope.assetCredentials)
+    )
+      throw new TypeError(
+        "setRequestCredentials(allow, []) would leave this service's allow list without an address or access-list entry while the asset's allow list admits every address: no gate would remain. Add the addresses to admit first (addCredentialAddresses), or keep a request credential."
+      )
+
     log.emit(
       'identity.policy.gate_removed',
-      `setRequestCredentials(${list}, []) removed the ${list} list's SSIpolicy entry, with its VC and VP policies: the credential gate is gone, and only the address and access-list entries remain.`,
+      addressGate
+        ? `${removed}, and only the address and access-list entries remain.`
+        : scope.assetCredentials
+          ? `${removed}; no address entries remain on this service, so the asset's allow list alone decides who gets in.`
+          : `${removed}; no address entries remain on this service; check the asset's list: if it admits every address, so does this service.`,
       { list }
     )
     return { ...credentials, [list]: kept }
@@ -205,7 +242,7 @@ export function requireCredentialAttributes(
     const existing = (policies[index] as { args?: unknown }).args
     if (!isPlainObject(existing))
       throw new TypeError(
-        `The '${type}' request credential has a 'schema' policy whose arguments are not a JSON Schema object, so the attribute requirements cannot be added to it. Replace it with setRequestCredentials().`
+        `The '${shownType(type)}' request credential has a 'schema' policy whose arguments are not a JSON Schema object, so the attribute requirements cannot be added to it. Replace it with setRequestCredentials().`
       )
 
     const merged = [...policies]
@@ -234,12 +271,12 @@ export function trustIssuers(
 ): DdoCredentials {
   if (!Array.isArray(issuers) || !issuers.length)
     throw new TypeError(
-      `trustIssuers('${type}') needs a non-empty list of issuer DIDs: an empty one trusts no issuer and refuses every consumer.`
+      `trustIssuers('${shownType(type)}') needs a non-empty list of issuer DIDs: an empty one trusts no issuer and refuses every consumer.`
     )
   const bad = issuers.find((issuer) => !isDid(issuer))
   if (bad !== undefined)
     throw new TypeError(
-      `trustIssuers('${type}'): ${JSON.stringify(bad)?.slice(0, 100)} is not a DID (did:<method>:<id>, e.g. did:web:example.com).`
+      `trustIssuers('${shownType(type)}'): ${shownValue(bad, 'node')} is not a DID (did:<method>:<id>, e.g. did:web:example.com).`
     )
 
   return updateRequestCredential(credentials, type, options, (policies) => {
@@ -252,7 +289,7 @@ export function trustIssuers(
     const existing = (policies[index] as { args?: unknown }).args
     if (credentialPolicyProblem('allowed-issuer', existing))
       throw new TypeError(
-        `The '${type}' request credential has an 'allowed-issuer' policy whose arguments are not a list of DIDs, so issuers cannot be added to it. Replace it with setRequestCredentials().`
+        `The '${shownType(type)}' request credential has an 'allowed-issuer' policy whose arguments are not a list of DIDs, so issuers cannot be added to it. Replace it with setRequestCredentials().`
       )
 
     const merged = [...policies]
@@ -306,8 +343,8 @@ function updateRequestCredential(
       if (other)
         throw new TypeError(
           ofType.length
-            ? `'${shownType(type)}' is already requested with format ${JSON.stringify(other.format ?? null)}, and walt.id keeps one policy list per type and refuses a session whose requests have different formats. Leave out the format option, or change the request with setRequestCredentials().`
-            : `The allow list already requests ${JSON.stringify(other.type)} with format ${JSON.stringify(other.format ?? null)}, and walt.id refuses a session whose requests have different formats. Use that format, or leave out the format option.`
+            ? `'${shownType(type)}' is already requested with format ${shownValue(other.format ?? null, 'node')}, and walt.id keeps one policy list per type and refuses a session whose requests have different formats. Leave out the format option, or change the request with setRequestCredentials().`
+            : `The allow list already requests ${shownValue(other.type, 'node')} with format ${shownValue(other.format ?? null, 'node')}, and walt.id refuses a session whose requests have different formats. Use that format, or leave out the format option.`
         )
     }
 
@@ -336,6 +373,27 @@ function updateRequestCredential(
       requests.map((credential) => updated.get(credential) ?? credential)
     )
   })
+}
+
+/** For `setRequestCredentials`: where the list sits, which decides what an empty one means. */
+export interface RequestCredentialsScope {
+  /** `'asset'` (the default) or `'service'`: the node checks a service's list and the asset's. */
+  level?: 'asset' | 'service'
+  /** For a service's list: the asset's credentials, when known (e.g. on an edit). */
+  assetCredentials?: DdoCredentials
+}
+
+/**
+ * Whether an allow list lets every address through the node: empty, or only address entries
+ * admitting `'*'`, or `'*'` under `match_allow: 'any'`.
+ */
+function admitsEveryAddress(credentials: DdoCredentials): boolean {
+  const allow = (credentials.allow ?? []) as DdoCredential[]
+  if (credentials.match_allow === 'any' && addressList(allow).includes('*'))
+    return true
+  return allow.every(
+    (entry) => isAddressCredential(entry) && addressList([entry]).includes('*')
+  )
 }
 
 /** The addresses of a list's `address` entries, as the policy server reads them. */
@@ -834,7 +892,7 @@ function assertRequestCredential(credential: RequestCredential): void {
   if (policies === undefined) return
   if (!Array.isArray(policies))
     throw new TypeError(
-      `The '${type}' request credential's policies must be a list.`
+      `The '${shownType(type)}' request credential's policies must be a list.`
     )
   const generic = policies.length ? genericTypeProblem(type) : undefined
   if (generic) throw new TypeError(generic)
@@ -857,7 +915,7 @@ function policyArgumentsError(
   problem: string
 ): TypeError {
   return new TypeError(
-    `The '${type}' request credential's '${policy}' policy ${problem}.${policy === 'schema' ? ' Pass the schema as an object, not JSON.stringify(schema), or use requireCredentialAttributes().' : ' Use trustIssuers(type, [did, …]).'}`
+    `The '${shownType(type)}' request credential's '${shownType(policy)}' policy ${problem}.${policy === 'schema' ? ' Pass the schema as an object, not JSON.stringify(schema), or use requireCredentialAttributes().' : ' Use trustIssuers(type, [did, …]).'}`
   )
 }
 

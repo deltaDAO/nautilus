@@ -11,7 +11,8 @@
  * Its arguments must be a JSON object: a string or an array makes walt.id fail the policy for
  * every presentation.
  */
-import { sanitize } from '../node/messages.js'
+import type { DebugTopic } from '../log/debug.js'
+import { sanitize, stripControlCharacters } from '../node/messages.js'
 
 /** A value an attribute can be required to have. */
 export type CredentialAttributeValue = string | number | boolean
@@ -367,18 +368,33 @@ export function credentialPolicyProblem(
   return undefined
 }
 
-/** JSON Schema draft 7's keywords: walt.id's validator ignores any other key. */
-const DRAFT7_KEYWORDS = new Set([
+/**
+ * The JSON Schema dialects walt.id's validator (optimumcode json-schema-validator 0.5.5)
+ * supports, by `$schema` (scheme and trailing `#` ignored). Without `$schema` it validates as
+ * 2020-12, the library's default, although walt.id's policy description says draft 7.
+ */
+type SchemaDialect =
+  | 'draft-04'
+  | 'draft-06'
+  | 'draft-07'
+  | '2019-09'
+  | '2020-12'
+const SCHEMA_DIALECTS: Record<string, SchemaDialect> = {
+  'json-schema.org/draft-04/schema': 'draft-04',
+  'json-schema.org/draft-06/schema': 'draft-06',
+  'json-schema.org/draft-07/schema': 'draft-07',
+  'json-schema.org/draft/2019-09/schema': '2019-09',
+  'json-schema.org/draft/2020-12/schema': '2020-12'
+}
+const DEFAULT_SCHEMA_DIALECT: SchemaDialect = '2020-12'
+
+const DRAFT4_KEYWORDS = [
   '$schema',
-  '$id',
+  'id',
   '$ref',
-  '$comment',
   'title',
   'description',
   'default',
-  'readOnly',
-  'writeOnly',
-  'examples',
   'definitions',
   'multipleOf',
   'maximum',
@@ -393,7 +409,6 @@ const DRAFT7_KEYWORDS = new Set([
   'maxItems',
   'minItems',
   'uniqueItems',
-  'contains',
   'maxProperties',
   'minProperties',
   'required',
@@ -401,42 +416,103 @@ const DRAFT7_KEYWORDS = new Set([
   'patternProperties',
   'additionalProperties',
   'dependencies',
-  'propertyNames',
-  'const',
   'enum',
   'type',
   'format',
-  'contentMediaType',
-  'contentEncoding',
-  'if',
-  'then',
-  'else',
   'allOf',
   'anyOf',
   'oneOf',
-  'not'
-])
+  'not',
+  // Not in draft 4 itself, but walt.id's validator applies them there too.
+  'const',
+  'contains',
+  'propertyNames'
+]
+const DRAFT6_KEYWORDS = [
+  ...DRAFT4_KEYWORDS.filter((key) => key !== 'id'),
+  '$id',
+  'examples'
+]
+const DRAFT7_KEYWORDS = [
+  ...DRAFT6_KEYWORDS,
+  '$comment',
+  'if',
+  'then',
+  'else',
+  'readOnly',
+  'writeOnly',
+  'contentMediaType',
+  'contentEncoding'
+]
+// `definitions` stays: 2019-09 and later resolve a `$ref` into it like any JSON pointer.
+const DRAFT2019_KEYWORDS = [
+  ...DRAFT7_KEYWORDS.filter((key) => key !== 'dependencies'),
+  '$anchor',
+  '$vocabulary',
+  '$defs',
+  '$recursiveRef',
+  '$recursiveAnchor',
+  'dependentRequired',
+  'dependentSchemas',
+  'unevaluatedProperties',
+  'unevaluatedItems',
+  'maxContains',
+  'minContains',
+  'deprecated',
+  'contentSchema'
+]
+const DRAFT2020_KEYWORDS = [
+  ...DRAFT2019_KEYWORDS.filter(
+    (key) =>
+      key !== 'additionalItems' &&
+      key !== '$recursiveRef' &&
+      key !== '$recursiveAnchor'
+  ),
+  'prefixItems',
+  '$dynamicRef',
+  '$dynamicAnchor'
+]
+/** Each dialect's keywords: walt.id's validator ignores any other key. */
+const DIALECT_KEYWORDS: Record<SchemaDialect, Set<string>> = {
+  'draft-04': new Set(DRAFT4_KEYWORDS),
+  'draft-06': new Set(DRAFT6_KEYWORDS),
+  'draft-07': new Set(DRAFT7_KEYWORDS),
+  '2019-09': new Set(DRAFT2019_KEYWORDS),
+  '2020-12': new Set(DRAFT2020_KEYWORDS)
+}
 
 /** Keywords that hold subschemas, or nothing to check, rather than a check of their own. */
 const NON_CONSTRAINING_KEYWORDS = new Set([
   '$schema',
+  'id',
   '$id',
   '$comment',
+  '$anchor',
+  '$vocabulary',
+  '$recursiveAnchor',
+  '$dynamicAnchor',
   'title',
   'description',
   'default',
   'readOnly',
   'writeOnly',
+  'deprecated',
   'examples',
   'definitions',
+  '$defs',
   'contentMediaType',
   'contentEncoding',
+  'contentSchema',
   'properties',
   'patternProperties',
   'additionalProperties',
+  'unevaluatedProperties',
   'additionalItems',
+  'unevaluatedItems',
   'items',
+  'prefixItems',
   'dependencies',
+  'dependentSchemas',
   'contains',
   'propertyNames',
   'if',
@@ -447,27 +523,75 @@ const NON_CONSTRAINING_KEYWORDS = new Set([
   'oneOf'
 ])
 
-/** The `$schema` drafts walt.id's validator (optimumcode json-schema-validator) supports. */
-const KNOWN_SCHEMA_DRAFTS = new Set([
-  'json-schema.org/draft-04/schema',
-  'json-schema.org/draft-06/schema',
-  'json-schema.org/draft-07/schema',
-  'json-schema.org/draft/2019-09/schema',
-  'json-schema.org/draft/2020-12/schema'
+/** Keys next to a `$ref` that warn nothing when draft 4-7 ignore them: they check nothing. */
+const REF_SIBLINGS_KEPT = new Set([
+  '$ref',
+  '$schema',
+  'id',
+  '$id',
+  '$comment',
+  'title',
+  'description',
+  'default',
+  'examples',
+  'definitions',
+  'readOnly',
+  'writeOnly'
 ])
 
+/** Keywords whose value is an object of subschemas. */
+const SUBSCHEMA_MAP_KEYWORDS = [
+  'patternProperties',
+  'definitions',
+  '$defs',
+  'dependencies',
+  'dependentSchemas'
+]
+/** Keywords whose value is one subschema. */
+const SUBSCHEMA_KEYWORDS = [
+  'additionalProperties',
+  'unevaluatedProperties',
+  'additionalItems',
+  'unevaluatedItems',
+  'contains',
+  'propertyNames',
+  'if',
+  'then',
+  'else',
+  'not'
+]
+/** Keywords whose value is a list of subschemas (or, for `items` before 2020-12, either). */
+const SUBSCHEMA_LIST_KEYWORDS = [
+  'items',
+  'prefixItems',
+  'allOf',
+  'anyOf',
+  'oneOf'
+]
+
 /**
- * Why a per-credential `schema` written by hand may check less than it seems, for a warning:
- * keys outside JSON Schema draft 7 (walt.id ignores them, e.g. the credential's own shape
- * pasted as a schema, or a misspelled `required`), a schema that constrains nothing, an
- * attribute under `properties` missing from that level's `required` (a credential without it
- * passes), and a `$schema` walt.id does not support (it fails every presentation). Schemas
- * from `credentialAttributeSchema` give none.
+ * Why a per-credential `schema` written by hand may check less than it seems, for a warning.
+ * It follows the dialect walt.id's validator uses: the one `$schema` names, or 2020-12 without
+ * one. Reported: keys that dialect does not define (walt.id ignores them, e.g. the
+ * credential's own shape pasted as a schema, a misspelled `required`, or draft 7's
+ * `dependencies` without a draft-7 `$schema`), keys next to `$ref` before 2019-09 (ignored
+ * there), a schema that constrains nothing, an attribute under `properties` missing from that
+ * level's `required` (a credential without it passes), and a `$schema` walt.id does not
+ * support or an `items` list under 2020-12 (either fails every presentation). Schemas from
+ * `credentialAttributeSchema` give none.
  */
 export function schemaWeaknesses(schema: Record<string, unknown>): string[] {
+  const rootDraft = schema.$schema
+  const dialect =
+    rootDraft === undefined ? DEFAULT_SCHEMA_DIALECT : schemaDialect(rootDraft)
+  const keywords = dialect && DIALECT_KEYWORDS[dialect]
+  const refSiblingsIgnored =
+    dialect === 'draft-04' || dialect === 'draft-06' || dialect === 'draft-07'
   const unknownKeys = new Set<string>()
   const optional: string[] = []
   const drafts = new Set<string>()
+  let refSiblings = false
+  let itemsList = false
   let constrains = false
 
   const visit = (node: unknown, path: string[], depth: number) => {
@@ -476,14 +600,27 @@ export function schemaWeaknesses(schema: Record<string, unknown>): string[] {
       return
     }
     if (!isPlainObject(node)) return
+    const known = (key: string) => !keywords || keywords.has(key)
+    if (refSiblingsIgnored && Object.hasOwn(node, '$ref')) {
+      // Before 2019-09 a `$ref` replaces its whole schema object.
+      if (Object.keys(node).some((key) => !REF_SIBLINGS_KEPT.has(key)))
+        refSiblings = true
+      if (
+        Object.hasOwn(node, '$schema') &&
+        schemaDialect(node.$schema) === undefined
+      )
+        drafts.add(shownValue(node.$schema))
+      constrains = true
+      return
+    }
 
     for (const [key, value] of Object.entries(node)) {
-      if (!DRAFT7_KEYWORDS.has(key)) {
+      if (key === '$schema' && schemaDialect(value) === undefined)
+        drafts.add(shownValue(value))
+      if (!known(key)) {
         unknownKeys.add(key)
         continue
       }
-      if (key === '$schema' && !isKnownDraft(value))
-        drafts.add(shownValue(value))
       // The checked credential is always an object: `type: 'object'` at the root checks nothing.
       if (
         !NON_CONSTRAINING_KEYWORDS.has(key) &&
@@ -492,6 +629,7 @@ export function schemaWeaknesses(schema: Record<string, unknown>): string[] {
       )
         constrains = true
     }
+    if (dialect === '2020-12' && Array.isArray(node.items)) itemsList = true
 
     if (isPlainObject(node.properties)) {
       const required = Array.isArray(node.required) ? node.required : []
@@ -500,27 +638,19 @@ export function schemaWeaknesses(schema: Record<string, unknown>): string[] {
         visit(child, [...path, key], depth + 1)
       }
     }
-    for (const key of ['patternProperties', 'definitions', 'dependencies'])
-      if (isPlainObject(node[key]))
+    for (const key of SUBSCHEMA_MAP_KEYWORDS)
+      if (known(key) && isPlainObject(node[key]))
         for (const child of Object.values(node[key] as object))
           visit(child, path, depth + 1)
-    for (const key of [
-      'additionalProperties',
-      'additionalItems',
-      'contains',
-      'propertyNames',
-      'if',
-      'then',
-      'else',
-      'not'
-    ])
-      if (isPlainObject(node[key]) || node[key] === false)
+    for (const key of SUBSCHEMA_KEYWORDS)
+      if (known(key) && (isPlainObject(node[key]) || node[key] === false))
         visit(node[key], path, depth + 1)
-    for (const key of ['items', 'allOf', 'anyOf', 'oneOf'])
-      for (const child of Array.isArray(node[key])
-        ? (node[key] as unknown[])
-        : [node[key]])
-        visit(child, path, depth + 1)
+    for (const key of SUBSCHEMA_LIST_KEYWORDS)
+      if (known(key))
+        for (const child of Array.isArray(node[key])
+          ? (node[key] as unknown[])
+          : [node[key]])
+          visit(child, path, depth + 1)
   }
   visit(schema, [], 0)
 
@@ -529,14 +659,29 @@ export function schemaWeaknesses(schema: Record<string, unknown>): string[] {
     weaknesses.push(
       `declares $schema ${[...drafts].join(', ')}, which walt.id's validator does not support, so it fails every presentation`
     )
-  if (unknownKeys.size)
+  if (itemsList)
     weaknesses.push(
-      `uses ${[...unknownKeys]
-        .slice(0, 10)
-        .map((key) => `'${sanitize(key, 100, null)}'`)
-        .join(
-          ', '
-        )}, which JSON Schema draft 7 does not define, so walt.id ignores ${unknownKeys.size === 1 ? 'it' : 'them'}`
+      "gives 'items' as a list, which JSON Schema 2020-12 does not accept (use 'prefixItems', or declare an earlier $schema), so it fails every presentation"
+    )
+  if (unknownKeys.size) {
+    const names = [...unknownKeys]
+      .slice(0, 10)
+      .map((key) => `'${sanitize(key, 100, null)}'`)
+      .join(', ')
+    const dialectName =
+      rootDraft === undefined
+        ? `JSON Schema ${dialect} (what walt.id's validator uses without $schema)`
+        : `JSON Schema ${dialect} (its $schema)`
+    const hint = unknownKeys.has('dependencies')
+      ? "; in place of draft 7's 'dependencies', use 'dependentRequired' or 'dependentSchemas', or declare a draft-07 $schema"
+      : ''
+    weaknesses.push(
+      `uses ${names}, which ${dialectName} does not define, so walt.id ignores ${unknownKeys.size === 1 ? 'it' : 'them'}${hint}`
+    )
+  }
+  if (refSiblings)
+    weaknesses.push(
+      `puts keys next to '$ref', which JSON Schema ${dialect} (its $schema) ignores; wrap them with the $ref in 'allOf'`
     )
   if (!constrains)
     weaknesses.push('constrains nothing, so every credential passes it')
@@ -547,11 +692,11 @@ export function schemaWeaknesses(schema: Record<string, unknown>): string[] {
   return weaknesses
 }
 
-function isKnownDraft(uri: unknown): boolean {
-  return (
-    typeof uri === 'string' &&
-    KNOWN_SCHEMA_DRAFTS.has(uri.replace(/^https?:\/\//, '').replace(/#$/, ''))
-  )
+/** The dialect a `$schema` value names, or `undefined` when walt.id does not support it. */
+function schemaDialect(uri: unknown): SchemaDialect | undefined {
+  return typeof uri === 'string'
+    ? SCHEMA_DIALECTS[uri.replace(/^https?:\/\//, '').replace(/#$/, '')]
+    : undefined
 }
 
 // #endregion
@@ -781,15 +926,27 @@ export function shownPath(path: unknown[]): string {
 }
 
 function shownValues(values: unknown[]): string {
-  return values.map(shownValue).join(' or ')
+  return values.map((value) => shownValue(value)).join(' or ')
 }
 
-function shownValue(value: unknown): string {
+/**
+ * A value quoted in a message: its JSON form, sanitised and bounded. With a `topic`, a value
+ * that changes goes to the debug channel under it (`sanitize`).
+ */
+export function shownValue(
+  value: unknown,
+  topic: DebugTopic | null = null
+): string {
   let text: string
   try {
-    text = JSON.stringify(value) ?? String(value)
+    // Control characters go before quoting: JSON's escapes for them would hide a token
+    // that follows from the redaction.
+    text =
+      JSON.stringify(value, (_key, item) =>
+        typeof item === 'string' ? stripControlCharacters(item) : item
+      ) ?? String(value)
   } catch {
     text = String(value)
   }
-  return sanitize(text, 100, null)
+  return sanitize(text, 100, topic)
 }

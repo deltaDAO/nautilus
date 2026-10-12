@@ -385,14 +385,21 @@ export const LOG_EVENTS = {
     level: 'warn',
     component: 'identity',
     description:
-      'AssetBuilder.build(): a per-credential schema checks less than it seems: keys outside JSON Schema draft 7 (walt.id ignores them), no constraint at all, attributes under properties missing from required (a credential without them passes), or a $schema walt.id does not support (it fails every presentation).',
+      "AssetBuilder.build(): a per-credential schema checks less than it seems, judged in the JSON Schema dialect walt.id's validator uses (the schema's $schema, or 2020-12 without one): keys that dialect does not define (walt.id ignores them, e.g. draft 7's dependencies without a draft-07 $schema), keys next to $ref before 2019-09 (ignored), no constraint at all, attributes under properties missing from required (a credential without them passes), or a $schema walt.id does not support or an items list under 2020-12 (either fails every presentation).",
+    fields: ['where', 'credentialType']
+  },
+  'identity.policy.format_ignores_type': {
+    level: 'warn',
+    component: 'identity',
+    description:
+      "AssetBuilder.build(): per-credential policies on a vc+sd-jwt or mso_mdoc request credential. walt.id's presentation definition for these formats does not ask for the requested type (any vct; fixed mDL fields), so a wallet presenting a credential of another type skips the policies.",
     fields: ['where', 'credentialType']
   },
   'identity.policy.gate_removed': {
     level: 'warn',
     component: 'identity',
     description:
-      "setRequestCredentials(list, []) removed the list's SSIpolicy entry with its VC and VP policies: the credential gate is gone, and only the address and access-list entries remain.",
+      "setRequestCredentials(list, []) removed the list's SSIpolicy entry with its VC and VP policies: the credential gate is gone. The message says what still decides who gets in: the list's address and access-list entries, or, on a service with none left, the asset's allow list (named when the builder edits the asset's service, otherwise to be checked).",
     fields: ['list']
   },
   'identity.preflight.skipped': {

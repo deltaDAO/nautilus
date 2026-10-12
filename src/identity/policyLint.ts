@@ -95,6 +95,7 @@ export type SsiPolicyWarningCode =
   | 'issuer-not-did'
   | 'weak-schema'
   | 'unknown-policy-name'
+  | 'format-ignores-type'
 
 /** One problem the lint found. */
 export interface SsiPolicyFinding {
@@ -128,7 +129,9 @@ export interface SsiPolicyFinding {
    * - `issuer-not-did`: an `allowed-issuer` entry that is not a DID (walt.id compares the
    *   credential's `iss` with it as written);
    * - `weak-schema`: a per-credential `schema` that checks less than it seems;
-   * - `unknown-policy-name`: a policy name walt.id does not know.
+   * - `unknown-policy-name`: a policy name walt.id does not know;
+   * - `format-ignores-type`: per-credential policies on a `vc+sd-jwt` or `mso_mdoc` request,
+   *   whose presentation definition walt.id does not tie to the requested type.
    */
   code: SsiPolicyFatalCode | SsiPolicyWarningCode
   /** `true` for setups that cannot work: these throw whatever the lint mode. */
@@ -188,6 +191,13 @@ const VP_INTEGER_POLICIES = new Set([
   'maximum-credentials'
 ])
 
+/**
+ * Request formats whose presentation definition walt.id does not tie to the requested type:
+ * `vc+sd-jwt` asks for any `$.vct` (the policy server forwards no `vct`), `mso_mdoc` for
+ * fixed mDL fields. Verified on the dev stack's verifier.
+ */
+const TYPE_UNFILTERED_FORMATS = new Set(['vc+sd-jwt', 'mso_mdoc'])
+
 /** Request formats whose generated presentation definition filters on `$.vc.type`. */
 const VC_TYPE_FILTER_FORMATS = new Set(['jwt_vc_json', 'jwt_vc'])
 
@@ -203,7 +213,8 @@ const WARNING_EVENTS: Record<SsiPolicyWarningCode, LogEventName> = {
   'no-issuer-trust': 'identity.policy.no_issuer_trust',
   'issuer-not-did': 'identity.policy.issuer_not_did',
   'weak-schema': 'identity.policy.weak_schema',
-  'unknown-policy-name': 'identity.policy.unknown_name'
+  'unknown-policy-name': 'identity.policy.unknown_name',
+  'format-ignores-type': 'identity.policy.format_ignores_type'
 }
 
 /** The policy server's environment may add policies nautilus cannot see (D4). */
@@ -487,6 +498,17 @@ function lintRequestedTypes(
       })
       continue
     }
+
+    const format = effective?.credential.format
+    if (effective && TYPE_UNFILTERED_FORMATS.has(String(format)))
+      add({
+        code: 'format-ignores-type',
+        fatal: false,
+        where: effective.where,
+        policy: policyNames(effective.policies).map(shown).join(', '),
+        credentialType: type,
+        message: `The ${effective.where} request for '${shown(type)}' credentials has the format '${shown(String(format))}', for which walt.id's presentation definition does not ask for the requested type (${format === 'mso_mdoc' ? 'it asks for fixed mDL fields' : "it asks for any 'vct'"}). Its per-credential policies run only on a presented credential walt.id files under '${shown(type)}', so a wallet that presents one of another type for this request skips them. Request credentials checked by per-credential policies as 'jwt_vc_json'.`
+      })
 
     lintSchemas(where, type, effective?.policies ?? [], add)
 

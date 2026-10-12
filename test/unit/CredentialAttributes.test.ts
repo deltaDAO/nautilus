@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AssetV5 } from '../../src/ddo/index.js'
 import {
@@ -6,7 +8,8 @@ import {
 } from '../../src/ddo/types.js'
 import {
   credentialAttributeSchema,
-  evaluateAttributeSchema
+  evaluateAttributeSchema,
+  schemaWeaknesses
 } from '../../src/identity/attributes.js'
 import {
   addRequestCredentials,
@@ -604,6 +607,180 @@ describe('per-credential policy validation in addRequestCredentials and setReque
     )
   })
 
+  it('setRequestCredentials refuses to leave an empty allow list, which the node reads as "allow everyone" (sec R2-m1)', () => {
+    const gate = trustIssuers({}, LEGAL_PERSON, [TRUSTED])
+    const ssi = (gate.allow ?? [])[0]
+
+    // Asset level: no address or access-list entry would remain.
+    expect(() => setRequestCredentials(gate, ALLOW, [])).to.throw(
+      TypeError,
+      /would leave the asset's allow list without an address or access-list entry/
+    )
+    expect(() =>
+      deGate()
+        .removeCredentialAddresses(ALLOW, [OWNER_ADDRESS])
+        .setRequestCredentials(ALLOW, [])
+    ).not.to.throw() // an emptied address entry stays and denies everyone
+    expect(() =>
+      newAsset()
+        .trustIssuers(LEGAL_PERSON, [TRUSTED])
+        .setRequestCredentials(ALLOW, [])
+    ).to.throw(TypeError, /lets every address in through an empty allow list/)
+    const withAccessList = {
+      allow: [
+        ssi,
+        { type: 'accessList' as const, chainId: 11155420, accessList: '0x1' }
+      ]
+    }
+    expect(
+      setRequestCredentials(withAccessList, ALLOW, []).allow?.map(
+        (entry) => entry.type
+      )
+    ).to.deep.equal(['accessList'])
+    // The deny list has no such rule: an empty deny list denies no one.
+    expect(
+      setRequestCredentials({ deny: [ssi] }, CredentialListTypes.DENY, [])
+    ).to.deep.equal({
+      deny: []
+    })
+
+    // A new service: the asset is unknown, so the event says to check it.
+    const fresh = events(() =>
+      accessService()
+        .trustIssuers(LEGAL_PERSON, [TRUSTED])
+        .setRequestCredentials(ALLOW, [])
+    ).filter((event) => event.event === 'identity.policy.gate_removed')
+    expect(fresh).to.have.length(1)
+    expect(fresh[0].msg).to.contain(
+      "no address entries remain on this service; check the asset's list"
+    )
+    expect(fresh[0].msg).not.to.contain('only the address')
+
+    // An edited service: the asset's list decides.
+    const edit = (assetAllow: DdoCredentials) =>
+      new ServiceBuilder({
+        asset: gatedAsset(assetAllow, { allow: [ssi] }),
+        serviceId: SERVICE_ID
+      }).setRequestCredentials(ALLOW, [])
+    const open =
+      /while the asset's allow list admits every address: no gate would remain/
+    expect(() => edit({})).to.throw(TypeError, open)
+    expect(() =>
+      edit({ allow: [{ type: 'address', values: [{ address: '*' }] }] })
+    ).to.throw(TypeError, open) // the D27 shape
+    expect(() =>
+      edit({
+        match_allow: 'any',
+        allow: [{ type: 'address', values: ['*'] }, ssi]
+      })
+    ).to.throw(TypeError, open)
+    const closed = events(() =>
+      edit({ allow: [{ type: 'address', values: [OWNER_ADDRESS] }] })
+    ).filter((event) => event.event === 'identity.policy.gate_removed')
+    expect(closed[0].msg).to.contain(
+      "no address entries remain on this service, so the asset's allow list alone decides"
+    )
+    expect(() =>
+      edit({ allow: [{ type: 'address', values: ['*'] }, ssi] })
+    ).not.to.throw() // the asset's own gate still applies
+  })
+
+  it('quotes types, issuers and policy names sanitised in builder TypeErrors (sec R2-m4)', () => {
+    const JWT = 'eyJhbGciOiJub25lIn0.eyJGQUtFTUFSS0VSIjoxfQ.c2lnRkFLRQ'
+    const ESC = '\u001b[2J\u0007'
+    const URL_TEXT =
+      'https://issuer.test.invalid/path/FAKEPATHMARKER?token=FAKEQUERYMARKER'
+    const TYPE = `gx:T${ESC}${JWT}`
+    const message = (run: () => unknown) => {
+      try {
+        run()
+      } catch (error) {
+        expect(error).to.be.instanceOf(TypeError)
+        return (error as Error).message
+      }
+      expect.fail('no TypeError')
+    }
+    const stored = (policy: unknown) => ({
+      allow: [
+        {
+          type: 'SSIpolicy' as const,
+          values: [
+            {
+              request_credentials: [
+                {
+                  type: TYPE,
+                  format: 'jwt_vc_json',
+                  policies: [JSON.stringify(policy)]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    })
+    const messages = [
+      message(() => trustIssuers({}, 'T', [`${URL_TEXT}${ESC}${JWT}`])),
+      message(() => trustIssuers({}, TYPE, [])),
+      message(() =>
+        addRequestCredentials({}, ALLOW, [
+          {
+            type: TYPE,
+            format: 'jwt_vc_json',
+            policies: [
+              { policy: 'allowed-issuer', args: [`${URL_TEXT}${JWT}`] }
+            ]
+          }
+        ])
+      ),
+      message(() =>
+        addRequestCredentials({}, ALLOW, [
+          {
+            type: TYPE,
+            format: 'jwt_vc_json',
+            policies: [{ policy: 'schema', args: JWT }]
+          }
+        ])
+      ),
+      message(() =>
+        addRequestCredentials({}, ALLOW, [
+          { type: TYPE, format: 'jwt_vc_json', policies: 'x' as never }
+        ])
+      ),
+      message(() =>
+        trustIssuers(
+          stored({ policy: 'allowed-issuer', args: { x: JWT } }),
+          TYPE,
+          [TRUSTED]
+        )
+      ),
+      message(() =>
+        requireCredentialAttributes(
+          stored({ policy: 'schema', args: JWT }),
+          TYPE,
+          DE
+        )
+      ),
+      message(() =>
+        trustIssuers(
+          stored({ policy: 'allowed-issuer', args: [TRUSTED] }),
+          'U',
+          [TRUSTED],
+          { format: `jwt${ESC}${JWT}` }
+        )
+      )
+    ]
+    for (const text of messages)
+      for (const marker of [
+        'eyJGQUtF',
+        'FAKEPATHMARKER',
+        'FAKEQUERYMARKER',
+        '\u001b',
+        '\u0007'
+      ])
+        expect(text, text).not.to.contain(marker)
+    expect(messages[0]).to.contain('is not a DID')
+  })
+
   it('setRequestCredentials validates like addRequestCredentials', () => {
     expect(() =>
       setRequestCredentials({}, ALLOW, [
@@ -893,7 +1070,7 @@ describe('SSI policy lint for per-credential policies', () => {
       credentialSubject: { 'gx:legalAddress': { 'gx:countryCode': 'DE' } }
     })
     expect(shape).to.contain(
-      "uses 'credentialSubject', which JSON Schema draft 7 does not define, so walt.id ignores it"
+      "uses 'credentialSubject', which JSON Schema 2020-12 (what walt.id's validator uses without $schema) does not define, so walt.id ignores it"
     )
     expect(shape).to.contain('constrains nothing')
     expect(warn({})[0]).to.contain('constrains nothing')
@@ -936,6 +1113,180 @@ describe('SSI policy lint for per-credential policies', () => {
         ])
       )
     ).to.deep.equal([])
+  })
+
+  it("judges a hand-written schema in walt.id's dialect: 2020-12 without $schema, the given one otherwise (D43)", () => {
+    // Each case verified on walt.id's verifier (optimumcode json-schema-validator 0.5.5) with
+    // an FR credential (`.scratch/fix2-13/dialect-new.log`, `schema2-new.log`).
+    const D7 = 'http://json-schema.org/draft-07/schema#'
+    const D19 = 'https://json-schema.org/draft/2019-09/schema'
+    const subject = (keys: Record<string, unknown>, extra = {}) => ({
+      ...extra,
+      type: 'object',
+      required: ['credentialSubject'],
+      properties: {
+        credentialSubject: {
+          type: 'object',
+          required: ['gx:legalAddress'],
+          ...keys
+        }
+      }
+    })
+    const country = (check: Record<string, unknown>, extra = {}) =>
+      subject(
+        {
+          properties: {
+            'gx:legalAddress': {
+              type: 'object',
+              required: ['gx:countryCode'],
+              properties: { 'gx:countryCode': check }
+            }
+          }
+        },
+        extra
+      )
+    const dependentRequired = {
+      dependentRequired: { 'gx:legalAddress': ['gx:extra'] }
+    }
+    const dependencies = { dependencies: { 'gx:legalAddress': ['gx:extra'] } }
+
+    // Enforced by walt.id without $schema (2020-12): no warning.
+    expect(schemaWeaknesses(subject(dependentRequired))).to.deep.equal([])
+    expect(
+      schemaWeaknesses(
+        country({ $ref: '#/$defs/de' }, { $defs: { de: { const: 'DE' } } })
+      )
+    ).to.deep.equal([])
+    expect(
+      schemaWeaknesses(
+        country(
+          { $ref: '#/definitions/str', const: 'DE' },
+          {
+            definitions: { str: { type: 'string' } }
+          }
+        )
+      )
+    ).to.deep.equal([])
+    expect(
+      schemaWeaknesses(subject(dependentRequired, { $schema: D19 }))
+    ).to.deep.equal([])
+
+    // Draft 7's `dependencies` without a draft-07 $schema: walt.id ignores it.
+    const [ignored] = schemaWeaknesses(subject(dependencies))
+    expect(ignored).to.contain(
+      "uses 'dependencies', which JSON Schema 2020-12 (what walt.id's validator uses without $schema) does not define, so walt.id ignores it"
+    )
+    expect(ignored).to.contain("use 'dependentRequired'")
+    expect(
+      schemaWeaknesses(subject(dependencies, { $schema: D19 }))[0]
+    ).to.contain(
+      "uses 'dependencies', which JSON Schema 2019-09 (its $schema) does not define"
+    )
+    expect(
+      schemaWeaknesses(subject(dependencies, { $schema: D7 }))
+    ).to.deep.equal([])
+
+    // A declared draft 7 applies draft 7: later keywords and keys next to `$ref` are ignored.
+    expect(
+      schemaWeaknesses(subject(dependentRequired, { $schema: D7 }))
+    ).to.deep.equal([
+      "uses 'dependentRequired', which JSON Schema draft-07 (its $schema) does not define, so walt.id ignores it"
+    ])
+    expect(
+      schemaWeaknesses(
+        country(
+          { $ref: '#/definitions/str', const: 'DE' },
+          {
+            $schema: D7,
+            definitions: { str: { type: 'string' } }
+          }
+        )
+      )
+    ).to.deep.equal([
+      "puts keys next to '$ref', which JSON Schema draft-07 (its $schema) ignores; wrap them with the $ref in 'allOf'"
+    ])
+    // ...and draft 6 has no `if`/`then`.
+    expect(
+      schemaWeaknesses(
+        country(JSON.parse('{"if":{"const":"FR"},"then":false}'), {
+          $schema: 'http://json-schema.org/draft-06/schema#'
+        })
+      )[0]
+    ).to.contain("uses 'if', 'then', which JSON Schema draft-06 (its $schema)")
+
+    // 2020-12 refuses an `items` list as invalid: every presentation fails.
+    expect(
+      schemaWeaknesses(
+        subject({ properties: { 'gx:tags': { items: [{ const: 'a' }] } } })
+      )
+    ).to.contain(
+      "gives 'items' as a list, which JSON Schema 2020-12 does not accept (use 'prefixItems', or declare an earlier $schema), so it fails every presentation"
+    )
+    expect(
+      schemaWeaknesses(
+        subject(
+          { properties: { 'gx:tags': { items: [{ const: 'a' }] } } },
+          { $schema: D19 }
+        )
+      )
+    ).not.to.satisfy((found: string[]) =>
+      found.some((text) => text.includes("'items' as a list"))
+    )
+  })
+
+  it('warns for per-credential policies on vc+sd-jwt and mso_mdoc, whose definition ignores the type (sec R2-m3)', () => {
+    // On walt.id (:7003) a vc+sd-jwt request asks for any `$.vct`, an mso_mdoc one for fixed
+    // mDL fields; the W3C formats filter on `$.vc.type` (`.scratch/fix2-13/formats.log`).
+    const gate = (format: string) =>
+      newAsset()
+        .addCredentialAddresses(ALLOW, [OWNER_ADDRESS])
+        .trustIssuers(LEGAL_PERSON, [TRUSTED], { format })
+        .setVcPolicies(ALLOW, ['signature'])
+        .setVpPolicies(ALLOW, [
+          { policy: 'signature' },
+          { policy: 'minimum-credentials', args: '1' }
+        ])
+    const warned = (format: string) =>
+      events(() => gate(format).build()).filter(
+        (event) => event.event === 'identity.policy.format_ignores_type'
+      )
+
+    for (const format of ['vc+sd-jwt', 'mso_mdoc']) {
+      const [event, ...rest] = warned(format)
+      expect(rest, format).to.deep.equal([])
+      expect(event.level).to.equal('warn')
+      expect(event.fields).to.deep.equal({
+        where: 'asset',
+        credentialType: LEGAL_PERSON
+      })
+      expect(event.msg).to.contain(
+        `has the format '${format}', for which walt.id's presentation definition does not ask for the requested type`
+      )
+      expect(() => gate(format).setSsiPolicyLint('error').build(), format)
+        .to.throw(SsiPolicyError)
+        .with.property('findings')
+        .that.satisfies((findings: { code: string }[]) =>
+          findings.some((finding) => finding.code === 'format-ignores-type')
+        )
+    }
+    for (const format of ['jwt_vc_json', 'jwt_vc', 'ldp_vc'])
+      expect(warned(format), format).to.deep.equal([])
+
+    // A request without per-credential policies is not affected.
+    const plain = events(() =>
+      newAsset()
+        .addCredentialAddresses(ALLOW, [OWNER_ADDRESS])
+        .addRequestCredentials(ALLOW, [
+          { type: LEGAL_PERSON, format: 'vc+sd-jwt' }
+        ])
+        .setVcPolicies(ALLOW, ['signature'])
+        .setVpPolicies(ALLOW, [
+          { policy: 'signature' },
+          { policy: 'minimum-credentials', args: '1' }
+        ])
+        .build()
+    )
+    expect(names(plain)).not.to.contain('identity.policy.format_ignores_type')
   })
 
   it('warns about a policy name walt.id does not know, at every level', () => {
@@ -1573,3 +1924,26 @@ describe('evaluateAttributeSchema', () => {
 })
 
 // #endregion
+
+describe('upgrade notes for the SSI checks (code m2, round 2)', () => {
+  const root = join(import.meta.dirname, '../..')
+  const read = (file: string) =>
+    readFileSync(join(root, file), 'utf8').replace(/\s+/g, ' ')
+
+  it('state once, without internal PR numbers, that never-run per-credential policies throw', () => {
+    for (const file of ['MIGRATION.md', 'docs/pages/docs/migration.mdx']) {
+      const text = read(file)
+      expect(text, file).not.to.match(/\bPR ?#?\d+/)
+      // Not in the warning list: the same release makes it fatal.
+      expect(text, file).not.to.contain(
+        'and for per-credential policies that never run'
+      )
+      expect(text, file).to.contain(
+        'Per-credential policies that never run because the type is requested twice throw'
+      )
+    }
+    const changeset = read('.changeset/credential-attribute-requirements.md')
+    expect(changeset).not.to.contain('credential_policies_replaced')
+    expect(changeset).not.to.contain('a warning before')
+  })
+})

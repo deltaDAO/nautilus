@@ -10,6 +10,7 @@ import type {
   TrustedAlgorithmAsset
 } from '../../../@types/Publish.js'
 import {
+  getCredentials,
   getDatatokens,
   getService,
   getServiceCredentials
@@ -401,7 +402,9 @@ export class ServiceBuilder<
    * Replaces this service's request credentials, keeping its VC and VP policies. Unlike
    * `addRequestCredentials`, it can remove a request credential or a per-credential policy.
    * An empty list removes the service's credential gate of that list, with a `warn` event
-   * (`identity.policy.gate_removed`), and throws if the service's list admits `'*'`.
+   * (`identity.policy.gate_removed`). On the `allow` list it throws if the service's list
+   * admits `'*'`, or if no address or access-list entry remains and the asset's allow list
+   * admits every address (checked when editing; a new service's event says to check it).
    * Per-credential policies check only credentials of the requested type (identity guide,
    * "Known limitation").
    */
@@ -412,7 +415,12 @@ export class ServiceBuilder<
     this.service.credentials = setRequestCredentials(
       this.service.credentials,
       list,
-      requestCredentials
+      requestCredentials,
+      {
+        level: 'service',
+        assetCredentials:
+          'asset' in this.config ? getCredentials(this.config.asset) : undefined
+      }
     )
     return this
   }

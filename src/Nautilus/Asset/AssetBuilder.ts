@@ -333,7 +333,8 @@ export class AssetBuilder implements IAssetBuilder {
    * Replaces the request credentials, keeping the VC and VP policies. Unlike
    * `addRequestCredentials`, it can remove a request credential or a per-credential policy,
    * e.g. on an edit. An empty list removes the credential gate of that list, with a `warn`
-   * event (`identity.policy.gate_removed`), and throws if the list admits `'*'`. Its
+   * event (`identity.policy.gate_removed`), and throws if the allow list would then admit
+   * everyone: `'*'`, or no address or access-list entry left. Its
    * per-credential policies check only credentials of the requested type (identity guide,
    * "Known limitation").
    */
