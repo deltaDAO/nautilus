@@ -11,7 +11,7 @@ needs a change outside nautilus.
 | [Buying the same service in parallel from one key](#buying-the-same-service-in-parallel-from-one-key) | No, gas only | Don't buy the same service concurrently from one key |
 | [A second `access()` right after buying can buy again](#a-second-access-right-after-buying-can-buy-again) | Yes, one extra purchase | Wait until at least 2 more blocks are mined after the purchase; use a reliable RPC |
 | [Every `compute()` buys its paid inputs again](#every-compute-buys-its-paid-inputs-again) | Yes, one purchase per input per job | Price compute services as free, or expect one purchase per job |
-| [Orders older than about 55 hours are not found](#orders-older-than-about-55-hours-are-not-found) | Yes, with the opt-in | Paid services with a timeout of at most 48 hours; opt in only for a first purchase |
+| [Orders older than about 55 hours are not found](#orders-older-than-about-55-hours-are-not-found) | Yes, with the opt-in | Paid services with a timeout of at most 24 hours (48 on an RPC serving 1,000+ blocks per `eth_getLogs`); opt in only for a first purchase |
 | [A stuck fee approval gives an unclear error](#a-stuck-fee-approval-gives-an-unclear-error) | No | None needed |
 | [`getAssets` returns nothing on ocean-node 4.2](#getassets-returns-nothing-on-ocean-node-42) | No | Use `getAsset(did)` per asset |
 | [Revoking after deprecating](#revoking-after-deprecating) | No | Revoke directly, or keep the asset object from before deprecating |
@@ -121,14 +121,17 @@ is older than about 55 hours. Passing
 buys; for an older order that is still valid, that pays a second time. Within about 55 hours
 of a purchase, the order is found and reused.
 
-**Workaround:** publish paid services with a timeout of at most 48 hours. That also needs an
-RPC that answers `eth_getLogs` for at least 100 blocks per call, within the 5 minutes the
-check takes at most: with a narrower range or a slower RPC, the reads end before they cover
-the timeout, and `access()` stops with an `incomplete`
-[`OrderCheckError`](/docs/api/nautilus/access#ordercheckerror) that asks for another RPC
-(nothing is paid). On an RPC that serves only 100 blocks per call, the check of a 24-hour
-service reads about 450 times, which can take a few minutes. Use the opt-in only for a first purchase, when you know the account holds
-no order for the service.
+**Workaround:** publish paid services with a timeout the check can read within its 5
+minutes, and use the opt-in only for a first purchase, when you know the account holds no
+order for the service. How long a timeout that allows depends on the RPC: the check needs an
+RPC that answers `eth_getLogs` for at least 100 blocks per call, and reads the whole timeout
+before it pays. On an RPC that serves only 100 blocks per call (about 0.4 s per call), a
+24-hour service takes about 450 reads, about 3 minutes, and a 48-hour service does not fit in
+the 5 minutes. So keep paid services at **24 hours or less** on such an RPC; an RPC that
+serves 1,000 blocks or more per call allows up to the 48 hours the 100,000-block depth
+covers. When the reads end before they cover the timeout, `access()` stops with an
+`incomplete` [`OrderCheckError`](/docs/api/nautilus/access#ordercheckerror) that asks for
+another RPC, and nothing is paid.
 
 **Fixed by:** the next beta (a deeper read, and for `timeout: 0` a read from the datatoken's
 creation).
