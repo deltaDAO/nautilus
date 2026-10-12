@@ -50,7 +50,9 @@ why instead of "ocean.js returned no transaction".
   record). No error carries a raw signed transaction or the RPC's URL path any more:
   ethers' errors reach you with `<signed transaction 0x…hash>` in place of the signed bytes
   (also where the RPC echoes them), the RPC URL cut to its origin (its path may hold an API
-  key), and the HTTP `request`, `response` and response body of a failed request dropped;
+  key), and the HTTP `request`, `response` and response body of a failed request dropped
+  (an error that cannot be changed in place, frozen or with read-only fields, is thrown as
+  a sanitised copy with its `name`, `code`, `reason`, hashes and redacted messages);
   the raw values go to the debug channel (`NAUTILUS_DEBUG=sensitive`, topic `nonce`), with
   the nonce reads and the guard's decisions.
 - **A metadata transaction refused for its nonce** keeps its stored envelope unless it is

@@ -1158,10 +1158,13 @@ describe('NonceGuardSigner: money sends', () => {
     const chain = fakeChain({ latest: 10, head: 100 })
     const second = fakeChain({ latest: 10, head: 100 })
     const blocks = second.provider.getBlock.getMockImplementation()
-    second.provider.getBlock.mockImplementation(async (tag: number | string) => {
-      if (tag === 'finalized') throw new Error("unknown block tag 'finalized'")
-      return blocks?.(tag)
-    })
+    second.provider.getBlock.mockImplementation(
+      async (tag: number | string) => {
+        if (tag === 'finalized')
+          throw new Error("unknown block tag 'finalized'")
+        return blocks?.(tag)
+      }
+    )
     chain.provider.broadcastTransaction.mockImplementationOnce(
       async (raw: string) => {
         chain.broadcasts.push(Transaction.from(raw))
@@ -1344,6 +1347,79 @@ describe('reporting', () => {
     expect(error.message).to.match(
       /^startOrder failed: request timeout.*It may have been sent: check the account's latest transactions before retrying\.$/
     )
+  })
+
+  for (const [shape, lock] of [
+    ['frozen', <T extends object>(error: T) => Object.freeze(error)],
+    [
+      'read-only',
+      <T extends object>(error: T) => {
+        for (const key of Reflect.ownKeys(error)) {
+          const field = Object.getOwnPropertyDescriptor(error, key)
+          if (field && 'value' in field)
+            Object.defineProperty(error, key, { writable: false })
+        }
+        return error
+      }
+    ]
+  ] as const)
+    it(`throws a sanitised copy of a ${shape} error: no signed transaction, no URL path (PR #217 review, 4249882135)`, async () => {
+      const chain = fakeChain({ latest: 10 })
+      chain.provider.broadcastTransaction.mockImplementation(
+        async (raw: string) => {
+          throw lock(
+            makeError(
+              'request timeout at https://rpc.example.org/v3/k3y',
+              'TIMEOUT',
+              {
+                transaction: raw,
+                info: { requestUrl: 'https://rpc.example.org/v3/k3y' }
+              } as never
+            )
+          )
+        }
+      )
+      const signer = guard(chain)
+
+      const thrown = await failure(signer.sendTransaction(request(ORDER_CALL)))
+      const confirmed = await failure(
+        confirmTransaction('startOrder', null, signer, TO)
+      )
+
+      expect((thrown as { code?: string }).code).to.equal('TIMEOUT')
+      expect(thrown.message).to.match(/request timeout/)
+      expect(confirmed.message).to.match(/may have been sent/)
+      for (const text of [
+        inspect(thrown, { depth: 12 }),
+        inspect(confirmed, { depth: 12 }),
+        JSON.stringify(confirmed.cause),
+        JSON.stringify(thrown)
+      ]) {
+        expect(text).not.to.match(/k3y/)
+        expect(text).not.to.match(LONG_HEX)
+      }
+    })
+
+  it('returns one sanitised copy of a frozen error, however often it is asked (PR #217 review, 4249882135)', async () => {
+    const raw = await new Wallet(PRIVATE_KEY).signTransaction({
+      ...request(),
+      nonce: 1,
+      chainId: CHAIN_ID
+    })
+    const error = Object.freeze(
+      makeError('request timeout', 'TIMEOUT', {
+        transaction: raw,
+        info: { requestUrl: 'https://rpc.example.org/v3/k3y' }
+      } as never)
+    )
+
+    const copy = withoutSignedTransaction(error) as Error & { code?: string }
+
+    expect(copy).not.to.equal(error)
+    expect(withoutSignedTransaction(error)).to.equal(copy)
+    expect(withoutSignedTransaction(copy)).to.equal(copy)
+    expect(copy.code).to.equal('TIMEOUT')
+    expect(inspect(copy, { depth: 12 })).not.to.match(/k3y|0x[0-9a-f]{130,}/i)
   })
 
   it("finds a failure sent through ocean.js's confidential-chain wrapper (code review m2)", async () => {

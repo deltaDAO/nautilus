@@ -8,6 +8,7 @@
  * revert remove the envelope, and only a transaction that may have changed the metadata
  * keeps it. Everything but the chain runs for real.
  */
+import { inspect } from 'node:util'
 import type { StorageObject } from '@oceanprotocol/lib'
 import { makeError, Transaction, Wallet } from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -195,6 +196,38 @@ describe('the stored envelope after the metadata transaction', () => {
       new RegExp(`metadata transaction ${hash} was sent but not confirmed`)
     )
     expect(removed).to.have.length(0)
+  })
+
+  it('carries neither the signed transaction nor the RPC URL path of a frozen error (PR #217 review, 4249882135)', async () => {
+    const { send, edit, removed } = await setup()
+    const raw = await new Wallet(PRIVATE_KEY).signTransaction({
+      to: '0x00000000000000000000000000000000000000aa',
+      data: '0x1234',
+      nonce: 0,
+      gasLimit: 100000n,
+      gasPrice: 1n,
+      chainId: CHAIN_ID
+    })
+    send.mockRejectedValue(
+      Object.freeze(
+        makeError(
+          'request timeout at https://rpc.example.org/v3/k3y',
+          'TIMEOUT',
+          {
+            transaction: raw,
+            info: { requestUrl: 'https://rpc.example.org/v3/k3y' }
+          } as never
+        )
+      )
+    )
+
+    const { error } = await edit()
+
+    expect(error?.stored.cleanup).to.equal('kept')
+    expect(removed).to.have.length(0)
+    const text = inspect(error, { depth: 12 })
+    expect(text).not.to.match(/k3y/)
+    expect(text.toLowerCase()).not.to.include(raw.slice(2, 122).toLowerCase())
   })
 
   it('is kept, and the edit succeeds, when the wallet sped the transaction up', async () => {

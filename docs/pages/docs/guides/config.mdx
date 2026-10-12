@@ -152,7 +152,10 @@ With the default `nonceManagement: 'auto'` and a signer that signs locally (an e
   `code`, `shortMessage` and its message, redacted). The error a send throws is redacted
   too: no signed transaction (an unmined one can be broadcast by anyone who reads it), no
   RPC URL path or query (it may hold the RPC's API key), no HTTP request or response body.
-  The raw values go to the debug channel (topic `nonce`).
+  It is redacted in place; an error that does not let its fields be changed (a frozen
+  error, a read-only field) is thrown as a sanitised copy instead, with its `name`, `code`,
+  `reason`, the transaction hashes and its messages, redacted. The raw values go to the
+  debug channel (topic `nonce`).
 
 ```ts twoslash
 import { JsonRpcProvider, Wallet } from 'ethers'
