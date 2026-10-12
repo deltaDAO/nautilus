@@ -1162,7 +1162,7 @@ describe('NonceGuardSigner: money sends', () => {
       async (tag: number | string) => {
         if (tag === 'finalized')
           throw new Error("unknown block tag 'finalized'")
-        return blocks?.(tag)
+        return (await blocks?.(tag)) ?? null
       }
     )
     chain.provider.broadcastTransaction.mockImplementationOnce(
