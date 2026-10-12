@@ -757,6 +757,32 @@ describe('resolve', () => {
     )
   })
 
+  it('explains a DDO dropped for a DEPRECATED or REVOKED asset (ocean-node 4.2.2 record)', async () => {
+    stubFetch({
+      [ddo]: { status: 404, body: 'DDO not found' },
+      // As 4.2.2 with Elasticsearch files it after a deprecate: no nft, valid, an error.
+      [state(ASSET_DID)]: {
+        status: 200,
+        body: JSON.stringify({
+          chainId: 8996,
+          did: ASSET_DID,
+          nft: null,
+          txId: ' ',
+          valid: true,
+          error: 'Schema for version deprecated not found'
+        })
+      },
+      [state(DID_OP)]: { status: 404, body: '' }
+    })
+
+    const error = await rejection(() => client().resolve(ASSET_DID))
+
+    expect(error).to.be.instanceOf(AssetNotFoundError)
+    expect(error.message).to.match(
+      /the node recorded an indexing error: Schema for version deprecated not found\. Hint: the asset's NFT is DEPRECATED \(2\) or REVOKED_BY_PUBLISHER \(3\) on chain.*getAssetLifecycleState\(<NFT address>\)/
+    )
+  })
+
   it('refuses a redirect to an internal host and relays none of its answer', async () => {
     vi.stubGlobal(
       'fetch',
@@ -888,6 +914,34 @@ describe('resolve', () => {
       expect(error.message).to.match(
         /^\[ocean-node\] resolveMany: .*whose id is "did:ope:e0de.*not one of the DIDs asked for/
       )
+    })
+
+    it("in resolveMany, in ocean-node 4.x's answer shape", async () => {
+      vi.spyOn(Aquarius.prototype, 'querySearch').mockResolvedValueOnce([
+        { results: [{ id: ASSET_DID }, { id: OTHER_DID }], totalResults: 2 }
+      ] as never)
+
+      const error = await rejection(() => client().resolveMany([ASSET_DID]))
+
+      expect(error.message).to.match(
+        /^\[ocean-node\] resolveMany: .*whose id is "did:ope:e0de.*the DID asked for/
+      )
+    })
+
+    it("reads ocean-node 4.x's answer shape in resolveMany (getAssets)", async () => {
+      // POST /api/aquarius/assets/metadata/query on 4.2.2: one page per element.
+      vi.spyOn(Aquarius.prototype, 'querySearch')
+        .mockResolvedValueOnce([
+          { results: [{ id: ASSET_DID }], totalResults: 1 }
+        ] as never)
+        .mockResolvedValueOnce([{ results: [], totalResults: 0 }] as never)
+        .mockResolvedValueOnce({ unexpected: true } as never)
+
+      expect(await client().resolveMany([ASSET_DID])).to.deep.equal({
+        [ASSET_DID]: { id: ASSET_DID }
+      })
+      expect(await client().resolveMany([ASSET_DID])).to.deep.equal({})
+      expect(await client().resolveMany([ASSET_DID])).to.deep.equal({})
     })
 
     it('but accepts the other form and case of the same DID', async () => {

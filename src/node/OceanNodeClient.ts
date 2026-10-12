@@ -412,6 +412,9 @@ export class IndexerNonceStuckError extends OceanNodeError {
  * lists the likely causes.
  */
 function indexingErrorHint(error: string): string | undefined {
+  if (/Schema for version (deprecated|revoked) not found/i.test(error))
+    return "the asset's NFT is DEPRECATED (2) or REVOKED_BY_PUBLISHER (3) on chain, and this node (ocean-node 4.2.x with Elasticsearch) stops serving such an asset; the change is one-way. Read the state from the chain with getAssetLifecycleState(<NFT address>), and pass the NFT address to setAssetLifecycleState()"
+
   if (/invalid codepoint|UNEXPECTED_CONTINUE|invalid BytesLike/i.test(error))
     return "the node could not decrypt the envelope (its decrypt call returned a 401 nonce or authorization error, a 413 for an envelope over its 100 KB request limit, or a 429/403 rate-limit answer); check the node's logs, AUTHORIZED_DECRYPTERS and MAX_REQ_PER_MINUTE"
 
@@ -1815,23 +1818,25 @@ export class OceanNodeClient {
   /**
    * Resolves many DIDs in one query, keyed by lower-cased DID. Throws an `OceanNodeError`
    * when the node answers with a DDO whose `id` is none of `dids` (see `resolve`).
+   *
+   * Reads both answer shapes: ocean-node 4.x's `[{ results: [ddo…], totalResults }]` and
+   * an Elasticsearch-style `{ hits: { hits: [{ _source: ddo }] } }`.
    */
   async resolveMany(dids: string[]): Promise<Record<string, AssetV5>> {
     if (!dids.length) return {}
 
-    const response = (await this.query({
+    const response = await this.query({
       query: {
         bool: {
           filter: [{ ids: { values: dids.map((d) => d.toLowerCase()) } }]
         }
       },
       size: dids.length
-    })) as { hits?: { hits?: { _source?: AssetV5 }[] } }
+    })
 
     const assets: Record<string, AssetV5> = {}
 
-    for (const hit of response?.hits?.hits || []) {
-      const asset = hit._source
+    for (const asset of queryResults(response)) {
       if (!asset?.id) continue
 
       assertServedDid('resolveMany', dids, asset)
@@ -3082,6 +3087,25 @@ function assertServedDid(
     operation,
     `the node answered with a DDO whose id is ${typeof id === 'string' ? `"${sanitize(id, 100, null)}"` : 'missing'}, not ${dids.length === 1 ? `the DID asked for, ${dids[0]}` : 'one of the DIDs asked for'}. Refused: its nftAddress names another asset's NFT.`
   )
+}
+
+/**
+ * The DDOs in a metadata query's answer. ocean-node 4.x answers
+ * `[{ results: [ddo…], totalResults }]` (one page per element); an Elasticsearch-style
+ * answer is `{ hits: { hits: [{ _source: ddo }] } }`. Anything else has none.
+ */
+function queryResults(response: unknown): (AssetV5 | undefined)[] {
+  if (Array.isArray(response))
+    return response.flatMap((page) => {
+      const results = (page as { results?: unknown } | null)?.results
+      return Array.isArray(results) ? (results as (AssetV5 | undefined)[]) : []
+    })
+
+  const hits = (response as { hits?: { hits?: unknown } } | null)?.hits?.hits
+
+  return Array.isArray(hits)
+    ? hits.map((hit) => (hit as { _source?: AssetV5 } | null)?._source)
+    : []
 }
 
 /** The path of `GET /api/aquarius/assets/ddo/<did>`. */
