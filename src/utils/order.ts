@@ -65,12 +65,41 @@ const NO_CONSUME_MARKET_FEE = {
 }
 
 /**
+ * Thrown before anything is sent when an order waited too long for another one of this
+ * process: for an allowance the other holds until its order is confirmed (`order()`,
+ * `reuseOrder()`), or for the other's purchase of the same service by the same account
+ * (`access()`, `settleOrder()`). That one's transaction may be pending, or dropped and
+ * never confirmed. Nothing was approved, ordered or paid by this call: retry once the
+ * other has finished.
+ */
+export class OrderInProgressError extends Error {
+  readonly code = 'ORDER_IN_PROGRESS' as const
+  /** Always `true`: nothing was sent. */
+  readonly retryable = true as const
+
+  constructor(message: string) {
+    super(message)
+    this.name = 'OrderInProgressError'
+  }
+}
+
+/**
+ * How long an order waits for another one of this process before it throws an
+ * `OrderInProgressError`. Five minutes: long enough for a confirmation on a slow chain,
+ * and for a person answering `confirmProviderFees`. Tests shorten it.
+ */
+export const orderWait = { ms: 300_000 }
+
+/**
  * One allowance at a time per (chain, payer, token, spender), process-wide: an approval
  * *sets* the allowance, so concurrent orders that each approve their own amount leave one
  * amount, the first order spends it, and the others revert (two of three
  * `buyFromFreAndOrder`s from one key for one asset). An order holds the lock of every pair
  * it approves from its first approval until it is confirmed, so the next one reads the
- * allowance the first left. Other processes and other tools are not covered.
+ * allowance the first left. One that waits longer than `orderWait` throws an
+ * `OrderInProgressError` before its first approval: a pending or dropped transaction
+ * does not hold every later order of the pair. Other processes and other tools are not
+ * covered.
  */
 const allowanceLock = createKeyedLock()
 
@@ -95,7 +124,13 @@ async function withAllowances<T>(
   const holding = (index: number): Promise<T> =>
     index === keys.length
       ? task()
-      : allowanceLock(keys[index], () => holding(index + 1))
+      : allowanceLock(keys[index], () => holding(index + 1), {
+          ms: orderWait.ms,
+          error: () =>
+            new OrderInProgressError(
+              `The order was not sent: another order from ${payer} in this process has held the allowance of token ${keys[index].split(' ')[2]} for more than ${Math.round(orderWait.ms / 1000)} seconds, until its transaction is confirmed (it may be pending, or dropped). Nothing was approved, ordered or paid by this call; retry once that order has finished.`
+            )
+        })
 
   return holding(0)
 }

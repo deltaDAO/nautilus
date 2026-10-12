@@ -23,11 +23,17 @@ import {
 } from 'ethers'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { access, OrderCheckError, settleOrder } from '../../src/access/index.js'
+import { forgetConfirmedOrders } from '../../src/access/settlement.js'
 import { compute } from '../../src/compute/index.js'
 import type { AssetV5 } from '../../src/ddo/index.js'
 import { type DebugEvent, setDebug } from '../../src/log/debug.js'
 import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
-import { order, reuseOrder } from '../../src/utils/order.js'
+import {
+  OrderInProgressError,
+  order,
+  orderWait,
+  reuseOrder
+} from '../../src/utils/order.js'
 import {
   findPreviousOrder,
   IncompleteOrderLookupError,
@@ -129,6 +135,7 @@ vi.mock('ethers', async (importOriginal) => ({
 // #region fixtures
 
 const CONSUMER = '0x4C84000000000000000000000000000000004A52'
+const OTHER_CONSUMER = '0x0000000000000000000000000000000000000bad'
 const SERVICE_NAME = 'Download (JSON)'
 const ASSET_NAME = 'Test Dataset'
 
@@ -307,6 +314,8 @@ function expectNothingRaw(text: string) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Each test is a fresh process: no order recorded by an earlier one.
+  forgetConfirmedOrders()
   pricing.total = '1.002'
   pricing.publishMarketFee = '0'
   pricing.fail = undefined
@@ -444,10 +453,33 @@ describe('access() on a paid service whose previous order cannot be checked', ()
 
     const thrown = await download().running.catch((caught) => caught)
 
+    // The check worked: the order is held, not unknown, and no option buys it again.
     expect(thrown.message).to.contain(
-      'Cause: this account has an order in the newest blocks that has no confirmations yet. Retry in a few seconds, once the chain has mined two more blocks. To buy anyway, pass `orderOnLookupFailure: true`.'
+      `access() stopped before paying for service "${SERVICE_NAME}" of asset "${ASSET_NAME}" (did:ope:7e033810…): 0x4C84…4A52 already has an order for it that is too new to use, and buying again would make you pay twice (1.002 devEURAU). Nothing was ordered or paid; it is safe to retry.`
     )
+    expect(thrown.message).to.contain(
+      'Cause: the order is in the newest blocks, or not yet shown by the RPC, and has no confirmations there yet. Retry in a few seconds, once the chain has mined two more blocks (a local chain that mines only on demand needs two more transactions); the retry then reuses that order.'
+    )
+    expect(thrown.message).not.to.contain('could not check')
+    expect(thrown.message).not.to.contain('orderOnLookupFailure')
     expectNothingRaw(thrown.message)
+  })
+
+  it('does not buy an order without confirmations again, even with orderOnLookupFailure', async () => {
+    // The opt-in bought a second order of one the account holds and could use seconds
+    // later: following the message paid twice.
+    vi.mocked(findPreviousOrder).mockRejectedValue(
+      new IncompleteOrderLookupError(Number.NaN, 24, 'unconfirmed')
+    )
+
+    const thrown = await download({ orderOnLookupFailure: true }).running.catch(
+      (caught) => caught
+    )
+
+    expect(thrown).to.be.instanceOf(OrderCheckError)
+    expect(thrown).to.include({ reason: 'incomplete', limit: 'unconfirmed' })
+    expect(vi.mocked(order)).not.toHaveBeenCalled()
+    expect(vi.mocked(reuseOrder)).not.toHaveBeenCalled()
   })
 
   it('refuses when the RPC’s newest block is older than the order window, naming it', async () => {
@@ -457,9 +489,29 @@ describe('access() on a paid service whose previous order cannot be checked', ()
 
     expect(thrown).to.include({ reason: 'rpc-error' })
     expect(thrown.message).to.contain(
-      "Cause: the RPC's newest block is 27 hours old, older than the order window, so the RPC lags or this computer's clock is off. Retry in a minute or use another RPC."
+      "Cause: the RPC's newest block is 27 hours old, older than the order window: the RPC lags, this computer's clock is off, or the chain has not mined a block since (a local chain that mines only on demand). Retry in a minute or use another RPC."
     )
     expect(vi.mocked(order)).not.toHaveBeenCalled()
+  })
+
+  it('names a short head age in seconds or minutes, not "0 hours"', async () => {
+    // A 120 s service: a head 100 s old is already older than its window.
+    for (const [hours, age] of [
+      [100 / 3_600, '100 seconds'],
+      [45 / 60, '45 minutes'],
+      [2.55, '2.5 hours']
+    ] as const) {
+      vi.mocked(findPreviousOrder).mockRejectedValue(
+        new StaleRpcHeadError(hours)
+      )
+
+      const thrown = await download().running.catch((caught) => caught)
+
+      expect(thrown.message).to.contain(
+        `Cause: the RPC's newest block is ${age} old, older than the order window`
+      )
+      expect(thrown.cause.message).to.contain(`is ${age} old`)
+    }
   })
 
   it('leaves the hours out for the other reasons', async () => {
@@ -572,6 +624,24 @@ describe('access() orders without the check', () => {
     )
   })
 
+  it('warns for a free service with an order without confirmations without saying it could not check', async () => {
+    pricing.total = '0'
+    vi.mocked(findPreviousOrder).mockRejectedValue(
+      new IncompleteOrderLookupError(Number.NaN, 24, 'unconfirmed')
+    )
+
+    const warnings = await stderrWarnings(async () => {
+      await download().running
+    })
+
+    expect(vi.mocked(order)).toHaveBeenCalledOnce()
+    expect(warnings).to.have.length(1)
+    expect(warnings[0]).to.contain(
+      `0x4C84…4A52 already has an order for service \\"${SERVICE_NAME}\\" of asset \\"${ASSET_NAME}\\" (did:ope:7e033810…) that is too new to use: the order is in the newest blocks, or not yet shown by the RPC, and has no confirmations there yet. The service is free: a new order will be placed, which costs only gas.`
+    )
+    expect(warnings[0]).not.to.contain('Could not check')
+  })
+
   it('orders a paid service with orderOnLookupFailure, and still warns', async () => {
     vi.mocked(findPreviousOrder).mockRejectedValue(
       await FAILURES['a timeout'].error()
@@ -593,7 +663,8 @@ describe('access() orders without the check', () => {
   it('reuses an order the lookup finds, paying nothing', async () => {
     vi.mocked(findPreviousOrder).mockResolvedValue({
       orderTxId: '0xorder',
-      usableTxId: '0xorder'
+      usableTxId: '0xorder',
+      startedAt: Math.floor(Date.now() / 1000)
     })
 
     const result = await download().running
@@ -1064,5 +1135,165 @@ describe('compute() and the previous-order lookup', () => {
     // has no lookup of its own to fail.
     expect(vi.mocked(findPreviousOrder)).not.toHaveBeenCalled()
     expect(node.computeStart).toHaveBeenCalledOnce()
+  })
+})
+
+describe('concurrent purchases of one service by one account', () => {
+  /** `order()` confirmed after `ms`. */
+  function slowOrder(ms = 5) {
+    vi.mocked(order).mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(
+            () => resolve({ transferTxId: '0xfresh', reused: false }),
+            ms
+          )
+        )
+    )
+  }
+
+  function settle(serviceIndex = 0, consumer = CONSUMER) {
+    return settleOrder({
+      signer,
+      chainConfig,
+      datatokenAddress: DATATOKEN_ADDRESS,
+      serviceIndex,
+      initialized: {
+        providerFee: signedProviderFee({ providerFeeAmount: '0' })
+      },
+      consumer,
+      service: { id: SERVICE_ID, timeout: 86400 }
+    })
+  }
+
+  it('pays once for three concurrent downloads, which all use its order', async () => {
+    // Each call looked the order up before any was placed, and each bought (D44).
+    vi.mocked(findPreviousOrder).mockResolvedValue(undefined)
+    slowOrder()
+    const client = accessNode()
+
+    const results = await Promise.all(
+      [1, 2, 3].map(() => download({}, client).running)
+    )
+
+    expect(vi.mocked(order)).toHaveBeenCalledOnce()
+    expect(vi.mocked(findPreviousOrder)).toHaveBeenCalledOnce()
+    expect(results.map((result) => result.transferTxId)).to.deep.equal([
+      '0xfresh',
+      '0xfresh',
+      '0xfresh'
+    ])
+    expect(results.map((result) => result.reusedOrder)).to.deep.equal([
+      false,
+      true,
+      true
+    ])
+    expect(client.getDownloadUrl).toHaveBeenCalledTimes(3)
+  })
+
+  it('gives the first call’s error to the calls that waited for it, ordering nothing', async () => {
+    vi.mocked(findPreviousOrder).mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      throw await FAILURES['a timeout'].error()
+    })
+
+    const results = await Promise.allSettled([settle(), settle(), settle()])
+
+    expect(results.map((result) => result.status)).to.deep.equal([
+      'rejected',
+      'rejected',
+      'rejected'
+    ])
+    for (const result of results)
+      expect((result as PromiseRejectedResult).reason).to.be.instanceOf(
+        OrderCheckError
+      )
+    expect(vi.mocked(findPreviousOrder)).toHaveBeenCalledOnce()
+    expect(vi.mocked(order)).not.toHaveBeenCalled()
+  })
+
+  it('runs purchases of other services or accounts side by side', async () => {
+    vi.mocked(findPreviousOrder).mockResolvedValue(undefined)
+    slowOrder()
+
+    await Promise.all([settle(0), settle(1), settle(0, OTHER_CONSUMER)])
+
+    expect(vi.mocked(order)).toHaveBeenCalledTimes(3)
+  })
+
+  it('looks up again after the first finished, and does not buy the order it placed again', async () => {
+    vi.mocked(findPreviousOrder).mockResolvedValue(undefined)
+    await settle()
+
+    // The RPC does not show the new order yet (a backend a block behind).
+    const thrown = await settle().catch((caught) => caught)
+
+    expect(thrown).to.be.instanceOf(OrderCheckError)
+    expect(thrown).to.include({ reason: 'incomplete', limit: 'unconfirmed' })
+    expect(vi.mocked(findPreviousOrder)).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(order)).toHaveBeenCalledOnce()
+
+    // Once it shows the order with its confirmations, the order is used as it stands.
+    vi.mocked(findPreviousOrder).mockResolvedValue({
+      orderTxId: '0xfresh',
+      usableTxId: '0xfresh',
+      startedAt: Math.floor(Date.now() / 1000)
+    })
+    expect(await settle()).to.deep.equal({
+      transferTxId: '0xfresh',
+      reused: true
+    })
+    expect(vi.mocked(order)).toHaveBeenCalledOnce()
+  })
+
+  it('does not extend an order again that it extended, while the RPC shows only the order', async () => {
+    const startedAt = Math.floor(Date.now() / 1000) - 3_600
+    vi.mocked(findPreviousOrder).mockResolvedValue({
+      orderTxId: '0xold',
+      startedAt
+    })
+    await settle()
+
+    const thrown = await settle().catch((caught) => caught)
+
+    expect(thrown).to.include({ limit: 'unconfirmed' })
+    expect(vi.mocked(reuseOrder)).toHaveBeenCalledOnce()
+    expect(vi.mocked(order)).not.toHaveBeenCalled()
+  })
+
+  it('buys again once the order it placed is past the service’s timeout', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.mocked(findPreviousOrder).mockResolvedValue(undefined)
+      await settle()
+
+      vi.setSystemTime(Date.now() + 86_400_000)
+      await settle()
+
+      expect(vi.mocked(order)).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('refuses, ordering nothing, a call that waits too long for another purchase', async () => {
+    const saved = orderWait.ms
+    orderWait.ms = 20
+    try {
+      vi.mocked(findPreviousOrder).mockResolvedValue(undefined)
+      slowOrder(200)
+
+      const [first, second] = await Promise.allSettled([settle(), settle()])
+
+      expect(first.status).to.equal('fulfilled')
+      const reason = (second as PromiseRejectedResult).reason
+      expect(reason).to.be.instanceOf(OrderInProgressError)
+      expect(reason.message).to.match(
+        /^settleOrder\(\) did not order: another purchase of service .* for 0x4C84…4A52 in this process has not finished after 0 seconds \(its transaction may be pending, or dropped\)\. Nothing was ordered or paid by this call; retry once that purchase has finished\.$/
+      )
+      expect(vi.mocked(order)).toHaveBeenCalledOnce()
+    } finally {
+      orderWait.ms = saved
+    }
   })
 })

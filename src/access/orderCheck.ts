@@ -11,12 +11,9 @@
  * channel under the `order` topic.
  */
 import { debugRaw } from '../log/debug.js'
+import { stripControlCharacters } from '../node/messages.js'
 import {
-  isErrorCode,
-  sanitize,
-  stripControlCharacters
-} from '../node/messages.js'
-import {
+  describeAge,
   type IncompleteLookupLimit,
   IncompleteOrderLookupError,
   InconsistentRpcAnswerError,
@@ -27,7 +24,8 @@ import {
   codeOf,
   errorChain,
   messageOf,
-  rateLimitOf
+  rateLimitOf,
+  redactedError
 } from '../utils/rpcErrors.js'
 
 /** Why the previous order could not be checked. */
@@ -78,8 +76,6 @@ export interface OrderSubject {
   consumer: string
 }
 
-/** How much of the RPC's error text goes into a message. */
-const MAX_DETAIL_LENGTH = 200
 /** How much of a publisher-chosen name goes into a message. */
 const MAX_NAME_LENGTH = 80
 
@@ -106,21 +102,14 @@ const NETWORK =
   /\b(?:timeout|timed out|fetch failed|socket hang up|network error|connection (?:refused|reset|closed))\b/i
 
 /**
- * A URL: `scheme://…`, also with its slashes JSON-escaped (`https:\/\/host\/path`). Applied
- * only to `sanitize`'s output, where a URL is down to its origin already: this drops the
- * origin too.
- */
-const URL_TEXT = /[a-z][a-z0-9+.-]{0,31}:(?:\\*\/){2}(?:[^\s"'<>\\]|\\+\/)*/gi
-/** A URL without its scheme: `host.tld[:port]/path…`. */
-const HOST_PATH =
-  /\b(?:[a-z0-9-]{1,63}\.)+[a-z]{2,24}(?::\d{1,5})?\\*\/(?:[^\s"'<>\\]|\\+\/)*/gi
-
-/**
  * Thrown by `access()` (and `settleOrder()`) before it pays for a service when it could not
  * check whether the account already holds a valid order: buying without that check could
- * pay twice. Nothing was ordered or paid, and the call can be retried. Pass
- * `orderOnLookupFailure: true` to order anyway. `compute()` does not throw it: it makes no
- * lookup of its own (it orders every input the node does not report as validly ordered).
+ * pay twice. Also when it found an order of the account too new to have confirmations
+ * (`limit: 'unconfirmed'`): buying then would pay twice for certain. Nothing was ordered or
+ * paid, and the call can be retried. Pass `orderOnLookupFailure: true` to order anyway,
+ * except for an `unconfirmed` order, which no option buys again. `compute()` does not
+ * throw it: it makes no lookup of its own (it orders every input the node does not report
+ * as validly ordered).
  */
 export class OrderCheckError extends Error {
   readonly code = 'ORDER_CHECK_FAILED' as const
@@ -167,11 +156,18 @@ export class OrderCheckError extends Error {
     failure: LookupFailure,
     operation = 'access()'
   ) {
-    const optIn = costs
-      ? ' To buy anyway, pass `orderOnLookupFailure: true`.'
-      : ''
+    const unconfirmed = failure.limit === 'unconfirmed'
+    // An order too new to count is held, not unknown: buying again is never offered.
+    const optIn =
+      costs && !unconfirmed
+        ? ' To buy anyway, pass `orderOnLookupFailure: true`.'
+        : ''
+    const price = costs ? describeCosts(costs) : 'the price could not be read'
+    const lead = unconfirmed
+      ? `${shortHex(subject.consumer)} already has an order for it that is too new to use, and buying again would make you pay twice (${price})`
+      : `it could not check whether ${shortHex(subject.consumer)} already holds a valid order, and buying without that check could make you pay twice (${costs ? price : 'the price could not be read either'})`
     super(
-      `${operation} stopped before paying for ${describeSubject(subject)}: it could not check whether ${shortHex(subject.consumer)} already holds a valid order, and buying without that check could make you pay twice (${costs ? describeCosts(costs) : 'the price could not be read either'}). Nothing was ordered or paid; it is safe to retry. Cause: ${failure.phrase}. ${nextStep(failure)}${optIn}`,
+      `${operation} stopped before paying for ${describeSubject(subject)}: ${lead}. Nothing was ordered or paid; it is safe to retry. Cause: ${failure.phrase}. ${nextStep(failure)}${optIn}`,
       { cause: failure.cause }
     )
     this.name = 'OrderCheckError'
@@ -199,7 +195,7 @@ function nextStep(failure: LookupFailure): string {
     return 'Retry in a minute or use another RPC.'
   if (failure.limit === 'reads') return 'Use another RPC, or retry.'
   if (failure.limit === 'unconfirmed')
-    return 'Retry in a few seconds, once the chain has mined two more blocks.'
+    return 'Retry in a few seconds, once the chain has mined two more blocks (a local chain that mines only on demand needs two more transactions); the retry then reuses that order.'
 
   const window = failure.windowHours ?? Number.NaN
   return `A retry ends the same way. If this account ${
@@ -218,6 +214,9 @@ export function lookupFailedWarning(
   failure: LookupFailure,
   costs: OrderCheckPrice[]
 ): string {
+  if (failure.limit === 'unconfirmed')
+    return `${shortHex(subject.consumer)} already has an order for ${describeSubject(subject)} that is too new to use: ${failure.phrase}. The service is free: a new order will be placed, which costs only gas.`
+
   const head = `Could not check whether ${shortHex(subject.consumer)} already holds an order for ${describeSubject(subject)}: ${failure.phrase}. A new order will be placed`
 
   return costs.length
@@ -255,7 +254,7 @@ function classify(error: unknown): LookupFailure {
       reason: 'incomplete',
       phrase:
         incomplete.limit === 'unconfirmed'
-          ? 'this account has an order in the newest blocks that has no confirmations yet'
+          ? 'the order is in the newest blocks, or not yet shown by the RPC, and has no confirmations there yet'
           : incompletePhrase(incomplete.checkedHours, incomplete.windowHours),
       cause: redactedError(incomplete),
       checkedHours: incomplete.checkedHours,
@@ -280,7 +279,7 @@ function classify(error: unknown): LookupFailure {
   if (stale)
     return {
       reason: 'rpc-error',
-      phrase: `the RPC's newest block is ${hours(stale.ageHours, 'down')} hours old, older than the order window, so the RPC lags or this computer's clock is off`,
+      phrase: `the RPC's newest block is ${describeAge(stale.ageHours)} old, older than the order window: the RPC lags, this computer's clock is off, or the chain has not mined a block since (a local chain that mines only on demand)`,
       cause: redactedError(stale)
     }
 
@@ -346,7 +345,7 @@ function describeCosts(costs: OrderCheckPrice[]): string {
 
 /**
  * `the check covered only the last 16 of the 24 hours an order stays valid`; for orders
- * that never expire, `… the last 55 hours, and orders of this service never expire`.
+ * that never expire, `… the last 555 hours, and orders of this service never expire`.
  */
 function incompletePhrase(checked: number, window: number): string {
   const never = !Number.isFinite(window)
@@ -390,39 +389,4 @@ function hours(value: number, round: 'down' | 'nearest'): string {
   const tenths =
     round === 'down' ? Math.floor(value * 10) : Math.round(value * 10)
   return String(tenths / 10)
-}
-
-/**
- * The error's most specific text, made safe to show: the RPC's own JSON-RPC message when
- * there is one, else ethers' short message, else the message; first line only, through
- * `sanitize` (credentials redacted before and after invisible characters are stripped, at
- * most 200 characters, a word split by the cut dropped), then with every URL removed, also
- * one without a scheme (`sanitize` keeps a URL's origin), and long hex shortened. Keeps the
- * name, and an error code such as `SERVER_ERROR` or `-32000`.
- */
-function redactedError(error: unknown): Error {
-  const chain = errorChain(error)
-  // ethers keeps the RPC's JSON-RPC error in `error` or `info.error`: the deepest message is
-  // the RPC's own words, without ethers' request and payload dump.
-  const texts = chain.map(messageOf).filter((text) => text !== undefined)
-  const raw = texts.length ? texts[texts.length - 1] : String(error)
-
-  // Redaction first, on the RPC's whole first line: the URL removal below cannot cut a URL
-  // short of a token in it (`https://host/x\y/v3/<token>`) before `sanitize` sees it. The
-  // raw error is in the debug channel already (`classifyLookupFailure`).
-  const text = sanitize(raw.split(/\r?\n/)[0] ?? '', MAX_DETAIL_LENGTH, null)
-    .replace(URL_TEXT, '<url>')
-    .replace(HOST_PATH, '<url>')
-    .replace(
-      /\b0x[0-9a-f]{16,}\b/gi,
-      (hex) => `${hex.slice(0, 6)}…${hex.slice(-4)}`
-    )
-
-  const safe = new Error(text || 'unknown error')
-  const first = chain[0]
-  if (first instanceof Error) safe.name = safeName(first.name, 40)
-  const code = chain.map(codeOf).find((value) => value && isErrorCode(value))
-  if (code) Object.assign(safe, { code })
-
-  return safe
 }

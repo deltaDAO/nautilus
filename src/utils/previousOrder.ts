@@ -45,50 +45,64 @@
  *
  * The scan is built to be quick on a slow or rate-limited RPC without ever reading "not
  * checked" as "not found": 10,000-block chunks, the newest alone and then up to four in
- * flight, checked strictly newest first; range refusals halve a chunk and accepted reads
- * grow it back (remembered per provider instance and chain, never by URL); rate limits are
- * waited out, not halved; an `OrderReused` flood falls back to the account's indexed
- * `OrderStarted`; the account's unconfirmed orders, a head older than the window and a
- * never-expiring service's unproven creation block all end as errors, not as "not found".
- * Not exported from the package.
+ * flight, checked strictly newest first. A range refusal splits the refused chunk, and
+ * every chunk not asked for yet, to a smaller size; the size grows back after reads the
+ * RPC accepts, never to a range the RPC refused in this lookup, and is remembered per
+ * provider instance and chain, never by URL. Rate limits are waited out within one budget
+ * per lookup, not halved. An `OrderReused` read refused for its volume is read again in
+ * halves, and only a single block refused that way is read with the account's indexed
+ * `OrderStarted` alone. The account's unconfirmed orders, a head older than the window
+ * and a never-expiring service's unproven creation block all end as errors, not as "not
+ * found". Not exported from the package.
  */
 import type { Block, Log, Provider, TransactionReceipt } from 'ethers'
 import { Interface, toUtf8String, zeroPadValue } from 'ethers'
+import { debug } from '../log/debug.js'
 import { rateLimitOf, retryAfterSeconds } from './rpcErrors.js'
 
 /**
- * Blocks per `eth_getLogs` call at first, and at most. Halved while the RPC refuses the
- * range; doubled again after `GROW_AFTER` reads it accepts in a row. A rate limit is not a
- * range refusal: it is waited out and read again, never halved.
+ * Blocks per `eth_getLogs` call at first, and at most. Split while the RPC refuses the
+ * range (see `chunkSize`); grown again after `GROW_AFTER` full reads it accepts in a row.
+ * A rate limit is not a range refusal: it is waited out and read again, never split.
  */
 const CHUNK_BLOCKS = 10_000
 const GROW_AFTER = 2
 
 /**
  * The smallest chunk remembered for the next lookup on the same provider and chain. A
- * lookup may halve below it; the next one starts here and halves again if it must.
+ * lookup may split below it; the next one starts here and splits again if it must.
  */
 const MIN_REMEMBERED_CHUNK = 500
+
+/**
+ * How long the smallest range the RPC refused is remembered: lookups within it never ask
+ * for a range as wide. After it, the size may grow past it again, one step per lookup.
+ */
+const REMEMBER_REFUSAL_MS = 3_600_000
 
 /** Chunks read in parallel after the first, which is read alone (a reuse is usually there). */
 const WAVE = 4
 
 /**
- * Reads of a rate-limited chunk after the first, waiting `Retry-After` (else 1, 2, 4 s),
- * at most `MAX_BACKOFF_MS` each. Then the rate limit is thrown.
+ * Reads of a rate-limited call after the first, waiting `Retry-After` (else 1, 2, 4 s), at
+ * most `MAX_BACKOFF_MS` each, and all of them within `BACKOFF_BUDGET_MS` of the lookup's
+ * first wait. Then the rate limit is thrown.
  */
 const RATE_LIMIT_RETRIES = 3
 const MAX_BACKOFF_MS = 8_000
+const BACKOFF_BUDGET_MS = 20_000
 
 /**
- * The lookup's bounds: blocks back from the newest one, and chunk reads (retries
- * of a refused range included). A lookup that reaches either before the end of the
- * service's timeout, with no order found, throws an `IncompleteOrderLookupError`: an order
- * beyond them cannot be ruled out. `MAX_BLOCKS` is what `MAX_READS` covers at full chunks:
- * about 23 days of 2 s blocks.
+ * The lookup's bounds: blocks back from the newest one, chunk reads (an `OrderReused`
+ * read again in halves counts as one each), and range refusals. A lookup that reaches
+ * one before the end of the service's timeout, with no order found, throws an
+ * `IncompleteOrderLookupError`: an order beyond them cannot be ruled out. `MAX_BLOCKS` is
+ * about 23 days of 2 s blocks, which 100 full chunks cover; `MAX_READS` leaves room for an
+ * RPC that serves 1,000 blocks per call to cover two days.
  */
 const MAX_BLOCKS = 1_000_000
-const MAX_READS = 100
+const MAX_READS = 150
+const MAX_REFUSALS = 20
 
 /**
  * Candidates checked at most, each costing up to two receipt reads: anyone can place an
@@ -149,10 +163,11 @@ export interface PreviousOrderQuery {
 }
 
 /**
- * Which bound stopped a lookup short: the chunk reads (`MAX_READS`, a slow or narrow
- * RPC), the blocks read back (`MAX_BLOCKS`, a timeout longer than that, or none and a
- * datatoken older than that), the candidates checked (`MAX_CHECKS`), or an order of the
- * account in the newest blocks, not confirmed yet (`unconfirmed`).
+ * Which bound stopped a lookup short: the chunk reads or range refusals (`MAX_READS`,
+ * `MAX_REFUSALS`: a slow or narrow RPC), the blocks read back (`MAX_BLOCKS`, a timeout
+ * longer than that, or none and a datatoken older than that), the candidates checked
+ * (`MAX_CHECKS`), or an order of the account in the newest blocks, not confirmed yet, or
+ * one this process placed that the RPC does not show yet (`unconfirmed`).
  */
 export type IncompleteLookupLimit =
   | 'reads'
@@ -229,7 +244,7 @@ export class StaleRpcHeadError extends Error {
 
   constructor(ageHours: number) {
     super(
-      `The RPC's newest block is ${roughHours(ageHours)} hours old, older than the order window.`
+      `The RPC's newest block is ${describeAge(ageHours)} old, older than the order window.`
     )
     this.name = 'StaleRpcHeadError'
     this.ageHours = ageHours
@@ -241,6 +256,20 @@ function roughHours(hours: number): string {
   return Number.isFinite(hours) ? hours.toFixed(1) : 'unlimited'
 }
 
+/**
+ * An age as people read it: `45 seconds` below two minutes, `12 minutes` below two hours,
+ * else `2.5 hours` (whole hours from 10 on). Rounded down: never older than it is.
+ */
+export function describeAge(hours: number): string {
+  if (!Number.isFinite(hours)) return `${hours} hours`
+  const seconds = Math.max(0, hours * 3_600)
+  if (seconds < 120) return `${Math.floor(seconds)} seconds`
+  if (seconds < 7_200) return `${Math.floor(seconds / 60)} minutes`
+  return hours >= 10
+    ? `${Math.floor(hours)} hours`
+    : `${Math.floor(hours * 10) / 10} hours`
+}
+
 export interface PreviousOrder {
   /** The `OrderStarted` transaction: the one `reuseOrder` extends. */
   orderTxId: string
@@ -249,18 +278,37 @@ export interface PreviousOrder {
    * reuse of it. Absent when none does, and the order needs a `reuseOrder` with a new fee.
    */
   usableTxId?: string
+  /** The order's block time (its `OrderStarted`), from which its timeout runs. */
+  startedAt: number
 }
 
 /** For tests: the clock and the wait between rate-limited reads. */
 export interface PreviousOrderOptions {
+  /** Chain time now, in seconds. */
   now?: number
-  sleep?: (ms: number) => Promise<void>
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>
+  /** Milliseconds, for the rate-limit budget. */
+  clock?: () => number
 }
 
-/** The wait between rate-limited reads when no `sleep` is given; tests replace it. */
+/**
+ * The wait between rate-limited reads and the clock of their budget, when the options
+ * give none; tests replace them. A wait ends early, and keeps no process alive, once its
+ * lookup has returned or thrown.
+ */
 export const scanTiming = {
-  sleep: (ms: number): Promise<void> =>
-    new Promise((resolve) => setTimeout(resolve, ms))
+  sleep: (ms: number, signal?: AbortSignal): Promise<void> =>
+    new Promise((resolve) => {
+      if (signal?.aborted) return resolve()
+      const done = () => {
+        clearTimeout(timer)
+        signal?.removeEventListener('abort', done)
+        resolve()
+      }
+      const timer = setTimeout(done, ms)
+      signal?.addEventListener('abort', done, { once: true })
+    }),
+  clock: (): number => Date.now()
 }
 
 /**
@@ -269,32 +317,54 @@ export const scanTiming = {
  *
  * The events are read newest first, in chunks of blocks, from the newest block down to the
  * first block still inside the service's timeout (for a service whose orders never expire,
- * the datatoken's creation block when it can be proven), and no further than `MAX_BLOCKS`
- * and `MAX_READS`. The first chunk is read alone, in parallel with the reads that place the
- * window's start; then up to `WAVE` chunks at a time, their candidates checked newest
- * first. Orders are reused only with `CONFIRMATIONS`; at most `MAX_CHECKS` candidates are
+ * the datatoken's creation block when it can be proven), and no further than `MAX_BLOCKS`,
+ * `MAX_READS` and `MAX_REFUSALS`. The first chunk is read alone, in parallel with the
+ * reads that place the window's start, and an order it holds is returned without waiting
+ * for them; then up to `WAVE` chunks at a time, their candidates checked newest first.
+ * Orders are reused only with `CONFIRMATIONS`; at most `MAX_CHECKS` candidates are
  * checked, after which the best extendable order found is returned.
  *
- * A chunk the RPC refuses as too large is read again in halves, and the size grows back
- * after reads it accepts. When only the `OrderReused` read is refused (a flood of reuses,
- * which anyone can send for gas), that chunk is read with the account's `OrderStarted`
- * alone. A rate limit is waited out and the chunk read again, up to `RATE_LIMIT_RETRIES`
- * times, then thrown. Any other error is thrown.
+ * A chunk the RPC refuses as too large is read again in pieces of a smaller size (see
+ * `chunkSize`). When only the `OrderReused` read is refused for its volume (a flood of
+ * reuses, which anyone can send for gas), it is read again in halves, and a single block
+ * still refused is read with the account's `OrderStarted` alone. A rate limit on any read
+ * is waited out and the read made again, up to `RATE_LIMIT_RETRIES` times within
+ * `BACKOFF_BUDGET_MS`, then thrown. Any other error is thrown. Once the lookup returns or
+ * throws, the reads still running make no further call and wait no longer.
  *
  * `undefined` means the whole window was read and holds no such order. Otherwise it throws
- * an `IncompleteOrderLookupError` when it stopped before it covered the window (at
- * `MAX_BLOCKS`, `MAX_READS` or `MAX_CHECKS`) with no order found, or when the account has
- * an order in the newest blocks not confirmed yet and none confirmed is usable; a
- * `StaleRpcHeadError` when the RPC's newest block is older than the window; and an
- * `InconsistentRpcAnswerError` when the RPC's answers contradict each other.
+ * an `IncompleteOrderLookupError` when it stopped before it covered the window with no
+ * order found, or when the account has an order in the newest blocks not confirmed yet and
+ * none confirmed is usable; a `StaleRpcHeadError` when the RPC's newest block is older
+ * than the window; and an `InconsistentRpcAnswerError` when the RPC's answers contradict
+ * each other.
  */
 export async function findPreviousOrder(
   query: PreviousOrderQuery,
   options: PreviousOrderOptions = {}
 ): Promise<PreviousOrder | undefined> {
+  const reads = session(
+    options.sleep ?? scanTiming.sleep,
+    options.clock ?? scanTiming.clock
+  )
+
+  try {
+    return await readOrders(
+      query,
+      options.now ?? Math.floor(Date.now() / 1000),
+      reads
+    )
+  } finally {
+    reads.settle()
+  }
+}
+
+async function readOrders(
+  query: PreviousOrderQuery,
+  now: number,
+  reads: Session
+): Promise<PreviousOrder | undefined> {
   const { provider } = query
-  const now = options.now ?? Math.floor(Date.now() / 1000)
-  const sleep = options.sleep ?? scanTiming.sleep
 
   // Seconds after its block an order is still reused: the node's `elapsed > timeout`, with
   // the margin. `NaN` (a missing timeout) never compares greater, as at the node.
@@ -310,7 +380,7 @@ export async function findPreviousOrder(
 
   // A block mined before `cutoff` holds no order that is still reused.
   const cutoff = now - lifetime
-  const head = await provider.getBlock('latest')
+  const head = await reads.call(() => provider.getBlock('latest'))
 
   if (!head) throw new InconsistentRpcAnswerError('no newest block')
   // Its whole window is newer than the RPC's newest block: it cannot show an order there.
@@ -319,24 +389,27 @@ export async function findPreviousOrder(
 
   const latest = head.number - CONFIRMATIONS + 1
   const floor = Math.max(0, head.number - MAX_BLOCKS + 1)
-  const chunk = chunkSize(provider, query.chainId)
-  const read = reader(query, sleep)
+  const chunk = chunkSize(provider, query.chainId, reads.clock)
+  const read = reader(query, reads)
 
   // Where the window starts, and whether `MAX_BLOCKS` cut it, read while the first chunk is.
+  // Not awaited before the first chunk's candidates: an order there is returned at once.
   const windowing = Number.isFinite(cutoff)
-    ? windowStart(provider, head, floor, cutoff)
-    : neverExpiring(query, head, floor)
+    ? windowStart(provider, reads, head, floor, cutoff)
+    : neverExpiring(query, reads, head, floor)
+  windowing.catch(() => undefined)
 
-  const check = checker(query, now, lifetime, margin)
+  const check = checker(query, reads, now, lifetime, margin)
   let extendable: { orderTxId: string; timestamp: number } | undefined
   let checks = 0
-  let reads = 0
+  let refusals = 0
   /**
-   * The ranges being read or to be read, newest first, each with its answer once asked.
-   * Up to `WAVE` are read at a time (the first alone), and each is checked only once
-   * every newer one has been, so the newest order is found first whatever answers first.
+   * The ranges asked for or to be asked for, newest first, each with its answer once
+   * asked. Up to `WAVE` are in flight (the first alone), at most one of them wider than
+   * the RPC has accepted, and each is checked only once every newer one has been, so the
+   * newest order is found first whatever answers first.
    */
-  const queue: Chunk[] = []
+  let queue: Chunk[] = []
   /** The newest block not queued yet: the newest of all, to see unconfirmed orders. */
   let next = head.number
   /** Set when the scan reached a block older than the window: all of it was read. */
@@ -347,32 +420,60 @@ export async function findPreviousOrder(
   let pending = false
   /** Whether a chunk has been read: the first is read alone. */
   let started = false
-  let stop = floor
   let window: Window | undefined
 
-  scan: for (;;) {
-    // Queue the next ranges down to the window's start, and ask for up to `WAVE` of them.
-    while (queue.length < WAVE && next >= stop) {
-      const from = Math.max(stop, next - chunk.size + 1)
-      queue.push({ from, to: next })
-      next = from - 1
-    }
-    for (const range of queue.slice(0, started ? WAVE : 1))
-      if (!range.answer && reads < MAX_READS) {
-        reads++
-        range.answer = read(range.from, range.to).then(
-          (candidates) => ({ candidates }),
-          (error: unknown) => ({ error })
-        )
+  /** Asks for the newest ranges not asked yet, queuing new ones down to the window. */
+  const fill = () => {
+    for (;;) {
+      const asked = queue.filter((range) => range.answer)
+      const full = asked.length >= (started ? WAVE : 1)
+
+      let range = queue.find((range) => !range.answer)
+      if (!range) {
+        // Before the window is known, only the first chunk is queued (the rest of the
+        // window is, once known).
+        if (full || window || queue.length) return
+        range = { from: Math.max(floor, next - chunk.size + 1), to: next }
+        queue.push(range)
+        next = range.from - 1
       }
 
-    if (!window) {
-      window = await windowing
-      stop = window.start
-      // Ranges wholly before the window hold no order in force.
-      while (queue.length > 1 && (queue.at(-1) as Chunk).to < stop) queue.pop()
-      next = Math.min(next, (queue.at(-1) as Chunk).from - 1)
+      // Ranges not asked for yet are joined, and asked for in pieces of the size now,
+      // newest first: a size that grew since they were cut applies to them too.
+      for (
+        let index = queue.indexOf(range) + 1;
+        queue[index] &&
+        !queue[index].answer &&
+        queue[index].to === range.from - 1;
+      ) {
+        range.from = queue[index].from
+        queue.splice(index, 1)
+      }
+      if (range.to - range.from + 1 > chunk.size) {
+        const piece = { from: range.to - chunk.size + 1, to: range.to }
+        queue.splice(queue.indexOf(range), 1, piece, {
+          from: range.from,
+          to: piece.from - 1
+        })
+        range = piece
+      }
+
+      // The newest range is always asked for: it is the one awaited. Others wait for a
+      // free place, and a size the RPC has not accepted yet is tried one range at a time.
+      const wider = (other: Chunk) => other.to - other.from + 1 > chunk.proven
+      if (range !== queue[0] && (full || (wider(range) && asked.some(wider))))
+        return
+
+      if (!reads.spend()) return
+      range.answer = read(range.from, range.to).then(
+        (candidates) => ({ candidates }),
+        (error: unknown) => ({ error })
+      )
     }
+  }
+
+  scan: for (;;) {
+    fill()
 
     const range = queue[0]
     if (!range?.answer) break
@@ -381,16 +482,15 @@ export async function findPreviousOrder(
     const width = range.to - range.from + 1
 
     if ('error' in answer) {
+      // The reads ran out: the range stays first, unread.
+      if (answer.error instanceof ReadsSpent) break
       if (width === 1 || !isRangeError(answer.error)) throw answer.error
-      chunk.refused(width)
-      // Read again in two halves; the answers for older ranges are kept.
-      const middle = range.from + Math.floor(width / 2)
-      queue.splice(
-        0,
-        1,
-        { from: middle, to: range.to },
-        { from: range.from, to: middle - 1 }
-      )
+      if (++refusals > MAX_REFUSALS) break
+
+      chunk.refused(width, isResultsRefusal(answer.error) ? 'results' : 'range')
+      // Read again, in pieces of the size when asked for (see `fill`), as is every range
+      // not asked for yet; the answers for older ranges are kept.
+      queue[0] = { from: range.from, to: range.to }
       continue
     }
 
@@ -417,16 +517,31 @@ export async function findPreviousOrder(
       const verdict = await check(candidate)
 
       if (verdict?.usable)
-        return { orderTxId: verdict.orderTxId, usableTxId: candidate.txId }
+        return {
+          orderTxId: verdict.orderTxId,
+          usableTxId: candidate.txId,
+          startedAt: verdict.timestamp
+        }
 
       if (verdict && verdict.timestamp > (extendable?.timestamp ?? -1))
         extendable = verdict
     }
-  }
 
-  window ??= await windowing
-  /** The newest block not read: the read is complete when it is older than `stop`. */
-  const to = queue[0]?.to ?? next
+    if (!window) {
+      window = await windowing
+      const { start } = window
+      // Ranges wholly before the window hold no order in force; one not asked for yet is
+      // cut at its start.
+      queue = queue.flatMap((other) => {
+        if (other.to < start) return []
+        if (other.answer || other.from >= start) return [other]
+        return [{ from: start, to: other.to }]
+      })
+      // The rest of the window, asked for in pieces (see `fill`).
+      if (next >= start) queue.push({ from: start, to: next })
+      next = Math.min(next, start - 1)
+    }
+  }
 
   const windowHours = Number.isFinite(lifetime)
     ? Number(query.timeout) / 3600
@@ -435,7 +550,11 @@ export async function findPreviousOrder(
   // A newer order may be about to count: extending an older one or buying again would pay.
   if (pending)
     throw new IncompleteOrderLookupError(Number.NaN, windowHours, 'unconfirmed')
-  if (extendable) return { orderTxId: extendable.orderTxId }
+  if (extendable)
+    return {
+      orderTxId: extendable.orderTxId,
+      startedAt: extendable.timestamp
+    }
   if (covered) return undefined
 
   // Nothing found, but not everything read: "not found" would buy again blind.
@@ -448,17 +567,30 @@ export async function findPreviousOrder(
       windowHours,
       'candidates'
     )
-  if (to >= stop)
+
+  window ??= await windowing
+  /** The newest block not read: the read is complete when it is older than the window. */
+  const to = queue[0]?.to ?? next
+
+  if (to >= window.start) {
+    // The window's start is placed early: the blocks left may all be older than it.
+    const unread =
+      to === head.number ? head.timestamp : await blockTime(provider, reads, to)
+    if (unread !== undefined && unread < cutoff) return undefined
+
     throw new IncompleteOrderLookupError(
       to === head.number
         ? hoursSince(head.timestamp)
-        : hoursSince(await blockTime(provider, to + 1)),
+        : hoursSince(await blockTime(provider, reads, to + 1)),
       windowHours,
       'reads'
     )
+  }
   if (window.cut)
     throw new IncompleteOrderLookupError(
-      hoursSince(window.time ?? (await blockTime(provider, stop))),
+      hoursSince(
+        window.time ?? (await blockTime(provider, reads, window.start))
+      ),
       windowHours,
       'depth'
     )
@@ -466,13 +598,86 @@ export async function findPreviousOrder(
   return undefined
 }
 
+/**
+ * The reads of one lookup: each RPC call through `call`, which waits a rate limit out
+ * within the lookup's budget, and the count of chunk reads (`spend`). Once `settle`d, no
+ * call is made and every wait ends.
+ */
+interface Session {
+  call<T>(read: () => Promise<T>): Promise<T>
+  /** Counts one chunk read; `false` once `MAX_READS` are spent. */
+  spend(): boolean
+  settle(): void
+  clock: () => number
+}
+
+/** Thrown into a read that would start after its lookup returned or threw. */
+class LookupSettled extends Error {
+  constructor() {
+    super('The previous-order lookup has ended.')
+    this.name = 'LookupSettled'
+  }
+}
+
+/** Thrown by a read that needs more chunk reads than `MAX_READS` leaves. */
+class ReadsSpent extends Error {
+  constructor() {
+    super('The previous-order lookup spent its reads.')
+    this.name = 'ReadsSpent'
+  }
+}
+
+function session(
+  sleep: (ms: number, signal?: AbortSignal) => Promise<void>,
+  clock: () => number
+): Session {
+  const settled = new AbortController()
+  let firstWait: number | undefined
+  let reads = 0
+
+  return {
+    clock,
+    async call<T>(read: () => Promise<T>): Promise<T> {
+      for (let attempt = 0; ; attempt++) {
+        if (settled.signal.aborted) throw new LookupSettled()
+        try {
+          return await read()
+        } catch (error) {
+          if (attempt === RATE_LIMIT_RETRIES || !rateLimitOf(error)) throw error
+
+          const asked = retryAfterSeconds(error)
+          const wait = Math.min(
+            MAX_BACKOFF_MS,
+            asked === undefined ? 1_000 * 2 ** attempt : asked * 1_000
+          )
+          const now = clock()
+          firstWait ??= now
+          // One budget for every wait of the lookup: past it, the rate limit is thrown.
+          if (now - firstWait + wait > BACKOFF_BUDGET_MS) throw error
+
+          await sleep(wait, settled.signal)
+        }
+      }
+    },
+    spend() {
+      if (reads >= MAX_READS) return false
+      reads++
+      return true
+    },
+    settle() {
+      settled.abort()
+    }
+  }
+}
+
 /** A block's time, or `undefined` when it cannot be read: only for the message. */
 async function blockTime(
   provider: Provider,
+  reads: Session,
   block: number
 ): Promise<number | undefined> {
   try {
-    return (await provider.getBlock(block))?.timestamp
+    return (await reads.call(() => provider.getBlock(block)))?.timestamp
   } catch {
     return undefined
   }
@@ -499,11 +704,12 @@ interface Window {
  */
 async function windowStart(
   provider: Provider,
+  reads: Session,
   head: Block,
   floor: number,
   cutoff: number
 ): Promise<Window> {
-  const base = await provider.getBlock(floor)
+  const base = await reads.call(() => provider.getBlock(floor))
 
   if (!base || base.timestamp >= cutoff)
     return { start: floor, cut: floor > 0, time: base?.timestamp }
@@ -516,7 +722,7 @@ async function windowStart(
     const estimate = linear - early * factor
     if (estimate <= floor) return { start: floor, cut: false }
 
-    const block = await provider.getBlock(estimate)
+    const block = await reads.call(() => provider.getBlock(estimate))
     if (block && block.timestamp < cutoff)
       return { start: estimate, cut: false }
   }
@@ -531,12 +737,13 @@ async function windowStart(
  */
 async function neverExpiring(
   query: PreviousOrderQuery,
+  reads: Session,
   head: Block,
   floor: number
 ): Promise<Window> {
   if (floor === 0) return { start: 0, cut: false }
 
-  const created = await creationBlock(query, head, floor)
+  const created = await creationBlock(query, reads, head, floor)
 
   return created === undefined
     ? { start: floor, cut: true }
@@ -556,11 +763,12 @@ const creations = new WeakMap<Provider, Map<string, number>>()
  * late and hide older orders; so the answer counts only when the chain's NFT factory
  * (`nftFactoryAddress`, which deploys every datatoken) logged its `TokenCreated` for it in
  * that very block. Without the factory's address there is no proof. An RPC that cannot read old state
- * at all (an error) gives `undefined`, as does any other failed read, except a rate limit,
- * which is thrown.
+ * at all (an error) gives `undefined`, as does any other failed read, except a rate limit
+ * that outlasts its waits, which is thrown.
  */
 async function creationBlock(
   query: PreviousOrderQuery,
+  reads: Session,
   head: Block,
   floor: number
 ): Promise<number | undefined> {
@@ -574,7 +782,7 @@ async function creationBlock(
   if (!factory) return undefined
 
   const exists = async (block: number) =>
-    !/^0x0*$/i.test(await provider.getCode(datatoken, block))
+    !/^0x0*$/i.test(await reads.call(() => provider.getCode(datatoken, block)))
 
   try {
     if (await exists(floor - 1)) return undefined
@@ -600,12 +808,14 @@ async function creationBlock(
       }
     }
 
-    const logs = await provider.getLogs({
-      address: factory,
-      topics: [TOKEN_CREATED, zeroPadValue(datatoken, 32)],
-      fromBlock: hi,
-      toBlock: hi
-    })
+    const logs = await reads.call(() =>
+      provider.getLogs({
+        address: factory,
+        topics: [TOKEN_CREATED, zeroPadValue(datatoken, 32)],
+        fromBlock: hi,
+        toBlock: hi
+      })
+    )
 
     if (
       !logs.some(
@@ -624,43 +834,98 @@ async function creationBlock(
   }
 }
 
-/** Chunk sizes the RPC accepted, per provider instance, by chain. */
-const chunks = new WeakMap<Provider, Map<string, number>>()
+/** What the lookup remembers of an RPC's chunk sizes, per provider instance, by chain. */
+interface ChunkMemory {
+  /** A size the RPC accepted, at least `MIN_REMEMBERED_CHUNK`. */
+  size: number
+  /** The smallest range it refused for its width, and until when that is kept. */
+  refused?: number
+  until?: number
+}
+
+const chunks = new WeakMap<Provider, Map<string, ChunkMemory>>()
 
 /**
  * The chunk size of one lookup: the one the RPC last accepted on this provider and chain,
- * else `CHUNK_BLOCKS`. Halved on a range refusal, doubled after `GROW_AFTER` accepted reads
- * in a row (up to `CHUNK_BLOCKS`), and remembered, no smaller than `MIN_REMEMBERED_CHUNK`,
- * only after a read the RPC accepted. Keyed by the provider instance, never by its URL,
+ * else `CHUNK_BLOCKS`.
+ *
+ * A refused read sets the size to the widest one accepted in this lookup when that is
+ * narrower, else to half the refused width. A refusal for the range's width (a block-range
+ * cap) is a ceiling: no read as wide is asked for again in this lookup, nor, for
+ * `REMEMBER_REFUSAL_MS`, in the next ones. A refusal for the number of results depends on
+ * the blocks read (a flood of events in some of them) and is no ceiling, unless it refused
+ * a size grown past the widest accepted one: that size is not tried again in this lookup.
+ * After `GROW_AFTER` full reads in a row the size grows: doubled, or halfway to the
+ * ceiling, and not by less than an eighth. `proven` is the widest read accepted (in this
+ * lookup, or the remembered size); the scan tries a wider one alone. The size is
+ * remembered after each accepted read. Keyed by the provider instance, never by its URL,
  * which can hold an API key.
  */
-function chunkSize(provider: Provider, chainId: number | undefined) {
+function chunkSize(
+  provider: Provider,
+  chainId: number | undefined,
+  clock: () => number
+) {
   const key = String(chainId ?? '?')
-  const remembered = chunks.get(provider) ?? new Map<string, number>()
+  const remembered = chunks.get(provider) ?? new Map<string, ChunkMemory>()
   chunks.set(provider, remembered)
 
-  let size = remembered.get(key) ?? CHUNK_BLOCKS
+  const memory = remembered.get(key)
+  let size = memory?.size ?? CHUNK_BLOCKS
+  let proven = memory?.size ?? 0
+  /** The smallest width refused for the range, kept for the next lookups. */
+  let rangeCeiling =
+    memory?.refused !== undefined && (memory.until ?? 0) > clock()
+      ? memory.refused
+      : Number.POSITIVE_INFINITY
+  let until = memory?.until
+  /** The smallest width not to ask for again in this lookup. */
+  let ceiling = rangeCeiling
   let streak = 0
+
+  const remember = () =>
+    remembered.set(key, {
+      size: Math.max(MIN_REMEMBERED_CHUNK, Math.min(size, proven)),
+      ...(Number.isFinite(rangeCeiling) ? { refused: rangeCeiling, until } : {})
+    })
 
   return {
     get size() {
       return size
     },
-    /** A read of `used` blocks was refused as too large. */
-    refused(used: number) {
+    get proven() {
+      return proven
+    },
+    /** A read of `used` blocks was refused, for its width or for its results. */
+    refused(used: number, kind: 'range' | 'results') {
       streak = 0
-      // Reads asked for before an earlier refusal can be refused too: no smaller than half.
-      size = Math.max(1, Math.min(size, Math.floor(used / 2)))
+      if (kind === 'range' && used < rangeCeiling) {
+        rangeCeiling = used
+        until = clock() + REMEMBER_REFUSAL_MS
+      }
+      // A size grown past what was accepted, refused even for its results: not again.
+      if (kind === 'range' || (proven > 0 && used > proven))
+        ceiling = Math.min(ceiling, used)
+      if (used <= proven) proven = 0
+      size = Math.max(
+        1,
+        Math.min(size, proven > 0 ? proven : Math.floor(used / 2))
+      )
     },
     /** A read of `used` blocks was accepted. */
     accepted(used: number) {
-      // A half of a refused range says nothing about the size.
-      if (used < size) return
-      remembered.set(key, Math.max(MIN_REMEMBERED_CHUNK, size))
-      if (++streak >= GROW_AFTER && size < CHUNK_BLOCKS) {
-        size = Math.min(CHUNK_BLOCKS, size * 2)
-        streak = 0
-      }
+      proven = Math.max(proven, used)
+      remember()
+      // A piece narrower than the size says nothing about a wider one.
+      if (used < size || ++streak < GROW_AFTER) return
+      streak = 0
+
+      const limit = Math.min(CHUNK_BLOCKS, ceiling - 1)
+      const target = Math.min(
+        limit,
+        Number.isFinite(ceiling) ? Math.floor((size + ceiling) / 2) : size * 2
+      )
+      if (target - size >= Math.ceil(size / 8)) size = target
     }
   }
 }
@@ -687,52 +952,127 @@ interface Candidate {
 }
 
 /**
- * Reads the account's `OrderStarted` and `OrderReused` transactions in a range, newest
- * first. A rate-limited call is waited out and made again; an `OrderReused` call refused
- * for its range or volume, while the `OrderStarted` one is answered, leaves the account's
- * `OrderStarted` alone for that range: every order in force has its `OrderStarted` in the
- * window, and that event is indexed by consumer, so no flood of other accounts' events can
- * fill it.
+ * The width of the `OrderReused` reads of one lookup: unbounded (a chunk's own) until one
+ * is refused for its volume. A refused read sets it to the widest one accepted when that
+ * is narrower, else to half the refused width, and no read as wide is asked for again;
+ * after an accepted one it grows halfway to that, or doubles, and not by less than an
+ * eighth. A refusal of a single block is about that block's events, not the width: it
+ * lifts the ceiling, so the width grows back from one block.
  */
-function reader(
-  query: PreviousOrderQuery,
-  sleep: (ms: number) => Promise<void>
-) {
-  const account = query.account.toLowerCase()
+function reuseWidths() {
+  let now = Number.POSITIVE_INFINITY
+  let widest = 0
+  let ceiling = Number.POSITIVE_INFINITY
 
-  const logs = async (filter: Parameters<Provider['getLogs']>[0]) => {
-    for (let attempt = 0; ; attempt++) {
+  return {
+    get now() {
+      return now
+    },
+    refused(used: number) {
+      if (used === 1) {
+        ceiling = Number.POSITIVE_INFINITY
+        now = 1
+        return
+      }
+      ceiling = Math.min(ceiling, used)
+      now = widest > 0 && widest < used ? widest : Math.floor(used / 2)
+    },
+    accepted(used: number) {
+      widest = Math.max(widest, used)
+      if (used < now) return
+      const target = Number.isFinite(ceiling)
+        ? Math.floor((used + ceiling) / 2)
+        : Math.min(CHUNK_BLOCKS, used * 2)
+      if (target - used >= Math.max(1, Math.ceil(used / 8))) now = target
+    }
+  }
+}
+
+/**
+ * Reads the account's `OrderStarted` and `OrderReused` transactions in a range, newest
+ * first. A rate-limited call is waited out and made again (see `Session`).
+ *
+ * An `OrderReused` call refused for its range or volume, while the `OrderStarted` one is
+ * answered, is made again alone in pieces (see `reuseWidths`), each counted as a chunk
+ * read; later ranges of the lookup read their reuses in pieces of that width from the
+ * start. A single block still refused leaves the account's `OrderStarted` alone
+ * for that block: every order in force has its `OrderStarted` in the window, and that
+ * event is indexed by consumer, so no flood of other accounts' events can fill it (but an
+ * order the account holds only as the payer of another consumer's order, and reused in
+ * that block, is not seen). A refusal that names a timeout is no volume refusal: it is
+ * thrown, and the scan splits the whole chunk.
+ */
+function reader(query: PreviousOrderQuery, reads: Session) {
+  const account = query.account.toLowerCase()
+  const address = query.datatokenAddress
+  const width = reuseWidths()
+
+  const logs = (filter: Parameters<Provider['getLogs']>[0]) =>
+    reads.call(() => query.provider.getLogs(filter))
+  const reuses = (fromBlock: number, toBlock: number) =>
+    logs({ address, fromBlock, toBlock, topics: [ORDER_REUSED] })
+
+  /** A block whose `OrderReused` read is refused even alone: no reuse is seen there. */
+  const startedAlone = (block: number) =>
+    debug(
+      'sensitive',
+      'order',
+      "previous-order lookup: the RPC refused the OrderReused read of one block; the account's OrderStarted is read alone there",
+      { datatoken: address, block }
+    )
+
+  /** The `OrderReused` logs of a range, in pieces of at most `width.now` blocks. */
+  const reusesInPieces = async (from: number, to: number): Promise<Log[]> => {
+    const found: Log[] = []
+
+    for (let top = to; top >= from; ) {
+      const bottom = Math.max(from, top - width.now + 1)
+      if (!reads.spend()) throw new ReadsSpent()
+
       try {
-        return await query.provider.getLogs(filter)
+        found.push(...(await reuses(bottom, top)))
+        width.accepted(top - bottom + 1)
+        top = bottom - 1
       } catch (error) {
-        if (attempt === RATE_LIMIT_RETRIES || !rateLimitOf(error)) throw error
-        const asked = retryAfterSeconds(error)
-        await sleep(
-          Math.min(
-            MAX_BACKOFF_MS,
-            asked === undefined ? 1_000 * 2 ** attempt : asked * 1_000
-          )
-        )
+        if (!isVolumeRefusal(error)) throw error
+        width.refused(top - bottom + 1)
+        if (bottom === top) {
+          startedAlone(top)
+          top = bottom - 1
+        }
       }
     }
+
+    return found
   }
 
   return async (fromBlock: number, toBlock: number): Promise<Candidate[]> => {
-    const range = { address: query.datatokenAddress, fromBlock, toBlock }
+    const range = { address, fromBlock, toBlock }
+    const whole = toBlock - fromBlock + 1 <= width.now
     const [started, reused] = await Promise.allSettled([
       logs({ ...range, topics: [ORDER_STARTED, zeroPadValue(account, 32)] }),
-      logs({ ...range, topics: [ORDER_REUSED] })
+      whole ? reuses(fromBlock, toBlock) : Promise.resolve(undefined)
     ])
 
     if (started.status === 'rejected') throw started.reason
-    if (reused.status === 'rejected' && !isRangeError(reused.reason))
-      throw reused.reason
+
+    let reusesFound: Log[]
+    if (reused.status === 'fulfilled' && reused.value) {
+      reusesFound = reused.value
+      width.accepted(toBlock - fromBlock + 1)
+    } else if (reused.status === 'fulfilled')
+      reusesFound = await reusesInPieces(fromBlock, toBlock)
+    else if (!isVolumeRefusal(reused.reason)) throw reused.reason
+    else {
+      width.refused(toBlock - fromBlock + 1)
+      if (fromBlock === toBlock) {
+        startedAlone(fromBlock)
+        reusesFound = []
+      } else reusesFound = await reusesInPieces(fromBlock, toBlock)
+    }
 
     const seen = new Set<string>()
-    const all = [
-      ...started.value,
-      ...(reused.status === 'fulfilled' ? reused.value : [])
-    ]
+    const all = [...started.value, ...reusesFound]
 
     return all.sort(newestFirst).flatMap((log) => {
       const event = decode(log)
@@ -764,6 +1104,7 @@ function reader(
  */
 function checker(
   query: PreviousOrderQuery,
+  reads: Session,
   now: number,
   lifetime: number,
   margin: number
@@ -777,7 +1118,7 @@ function checker(
     let pending = receipts.get(txId)
 
     if (!pending) {
-      pending = query.provider.getTransactionReceipt(txId)
+      pending = reads.call(() => query.provider.getTransactionReceipt(txId))
       receipts.set(txId, pending)
     }
 
@@ -963,19 +1304,40 @@ function decode(log: Pick<Log, 'topics' | 'data'>): Event | undefined {
 /**
  * Whether an RPC refused `eth_getLogs` for its range or its number of results. A rate limit
  * is not one, though its text often reads like one ("exceeded maximum retry limit", "limit
- * exceeded"): halving on it spends the reads until the window cannot be covered.
+ * exceeded"): splitting on it spends the reads until the window cannot be covered.
  */
 function isRangeError(error: unknown): boolean {
   if (rateLimitOf(error)) return false
+  return /range|limit|exceed|too (many|large|wide|big)|more than/i.test(
+    errorText(error)
+  )
+}
 
+/**
+ * Whether a refusal is for the number of results (or the size of the answer), which
+ * depends on the events in the range, rather than for the range's width.
+ */
+function isResultsRefusal(error: unknown): boolean {
+  return /results|response (size|too)|too many (logs|events)|more than \d+ (logs|events)/i.test(
+    errorText(error)
+  )
+}
+
+/**
+ * A refusal of the range or of its volume, which a narrower read can pass. One that names
+ * a timeout ("query timeout exceeded") may be transient: it is no reason to read an
+ * `OrderReused` range with the account's `OrderStarted` alone.
+ */
+function isVolumeRefusal(error: unknown): boolean {
+  return isRangeError(error) && !/time(d)?[\s-]?out/i.test(errorText(error))
+}
+
+function errorText(error: unknown): string {
   const { message, info } = (error ?? {}) as {
     message?: unknown
     info?: { error?: { message?: unknown } }
   }
-
-  return /range|limit|exceed|too (many|large|wide|big)|more than/i.test(
-    `${message} ${info?.error?.message}`
-  )
+  return `${message} ${info?.error?.message}`
 }
 
 function newestFirst(a: Log, b: Log): number {

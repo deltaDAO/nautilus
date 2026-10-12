@@ -93,4 +93,42 @@ describe('createKeyedLock()', () => {
 
     expect(log).to.deep.equal(['one:start', 'two:start', 'two:end', 'one:end'])
   })
+
+  it('throws, without running the task, after waiting longer than its limit, and keeps the order', async () => {
+    const lock = createKeyedLock()
+    const log: string[] = []
+    const wait = { ms: 500, error: () => new Error('waited too long') }
+
+    const first = lock('a', task(log, 'first', 2000))
+    const second = lock('a', task(log, 'second', 10), wait).catch(
+      (error: Error) => error.message
+    )
+    // Queued behind the one that gave up: it still waits for the first.
+    const third = lock('a', task(log, 'third', 10))
+    await vi.runAllTimersAsync()
+
+    expect(await first).to.equal('first')
+    expect(await second).to.equal('waited too long')
+    expect(await third).to.equal('third')
+    expect(log).to.deep.equal([
+      'first:start',
+      'first:end',
+      'third:start',
+      'third:end'
+    ])
+  })
+
+  it('runs the task when the lock comes free within the limit', async () => {
+    const lock = createKeyedLock()
+    const log: string[] = []
+    const wait = { ms: 5000, error: () => new Error('waited too long') }
+
+    const all = Promise.all([
+      lock('a', task(log, 'first', 1000)),
+      lock('a', task(log, 'second', 10), wait)
+    ])
+    await vi.runAllTimersAsync()
+
+    expect(await all).to.deep.equal(['first', 'second'])
+  })
 })

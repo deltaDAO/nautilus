@@ -23,7 +23,12 @@ import {
 } from '@oceanprotocol/lib'
 import { getAddress, type Signer } from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { order, reuseOrder } from '../../src/utils/order.js'
+import {
+  OrderInProgressError,
+  order,
+  orderWait,
+  reuseOrder
+} from '../../src/utils/order.js'
 import { ProviderFeeNotAllowedError } from '../../src/utils/paymentLimits.js'
 import type { OrderPrice, PricingInfo } from '../../src/utils/pricing.js'
 import { ProviderFeeSignatureError } from '../../src/utils/providerFee.js'
@@ -977,5 +982,97 @@ describe('order() from one payer, concurrently', () => {
       `approve ${DATATOKEN}`,
       `approve ${other}`
     ])
+  })
+
+  it('holds a reuseOrder() and an order() that approve the same fee token for the datatoken one after the other', async () => {
+    // Both set the provider fee's allowance to the datatoken: run together, the second
+    // approval replaced the first, and one of them reverted short (N17).
+    const steps: string[] = []
+    const { datatoken } = mockChain()
+    vi.mocked(approveWei).mockImplementation((async () => {
+      steps.push('approve fee')
+      return { hash: '0xapproval' }
+    }) as never)
+    datatoken.reuseOrder.mockImplementation(async () => {
+      steps.push('reuse sent')
+      return {
+        wait: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 5))
+          steps.push('reuse confirmed')
+          return { hash: '0xreused' }
+        }
+      }
+    })
+    datatoken.buyFromFreAndOrder.mockImplementation(async () => {
+      steps.push('order sent')
+      return transaction('0xatomic')
+    })
+
+    await Promise.all([
+      reuseOrder({
+        signer,
+        config: chainConfig,
+        datatokenAddress: DATATOKEN,
+        validOrderTx: '0xexisting',
+        providerFees: providerFeeIn(FEE_TOKEN),
+        ...ANY_FEE
+      }),
+      placeOrder(fixed(2, NO_PUBLISH_FEE), providerFeeIn(FEE_TOKEN))
+    ])
+
+    expect(steps).to.deep.equal([
+      'approve fee',
+      'reuse sent',
+      'reuse confirmed',
+      'approve fee',
+      'order sent'
+    ])
+  })
+
+  it('refuses, sending nothing, an order that waits too long behind one never confirmed', async () => {
+    // A dropped transaction held every later order of the pair, without an error.
+    const saved = orderWait.ms
+    orderWait.ms = 30
+    let confirm = () => undefined as unknown
+    try {
+      const { datatoken } = mockChain()
+      datatoken.buyFromFreAndOrder.mockImplementationOnce(async () => ({
+        wait: () =>
+          new Promise((resolve) => {
+            confirm = () => resolve({ hash: '0xlate' })
+          })
+      }))
+      const hung = placeOrder(fixed(2, NO_PUBLISH_FEE), free)
+      hung.catch(() => undefined)
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      vi.mocked(approve).mockClear()
+
+      const thrown = await placeOrder(fixed(2, NO_PUBLISH_FEE), free).catch(
+        (caught) => caught
+      )
+
+      expect(thrown).to.be.instanceOf(OrderInProgressError)
+      expect(thrown).to.include({ code: 'ORDER_IN_PROGRESS', retryable: true })
+      expect(thrown.message).to.match(
+        /^The order was not sent: another order from 0x[0-9a-fA-F]{40} in this process has held the allowance of token 0x[0-9a-f]{40} for more than 0 seconds/
+      )
+      expect(thrown.message).to.contain(
+        'Nothing was approved, ordered or paid by this call'
+      )
+      expect(vi.mocked(approve)).not.toHaveBeenCalled()
+      expect(datatoken.buyFromFreAndOrder).toHaveBeenCalledOnce()
+
+      // Another datatoken is not held up.
+      const other = '0x6666666666666666666666666666666666666666'
+      await placeOrder(
+        { ...fixed(2, NO_PUBLISH_FEE), datatokenAddress: other },
+        free
+      )
+      expect(datatoken.buyFromFreAndOrder).toHaveBeenCalledTimes(2)
+    } finally {
+      orderWait.ms = saved
+      // Let the first order end, so no later test waits for its allowance.
+      confirm()
+    }
   })
 })

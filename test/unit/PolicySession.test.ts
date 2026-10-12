@@ -71,6 +71,11 @@ vi.mock('../../src/access/settlement.js', () => ({
     async ({ datatokenAddress }: { datatokenAddress: string }) => ({
       transferTxId: `tx-${datatokenAddress}`
     })
+  ),
+  settleShared: vi.fn(
+    async ({ datatokenAddress }: { datatokenAddress: string }) => ({
+      transferTxId: `tx-${datatokenAddress}`
+    })
   )
 }))
 

@@ -16,10 +16,14 @@ import { Contract, type Signer } from 'ethers'
 import { debugRaw } from '../log/debug.js'
 import { type Logger, log } from '../log/logger.js'
 import { sanitize } from '../node/messages.js'
+import { atMost } from '../utils/keyedLock.js'
 import {
   checkOrder,
+  OrderInProgressError,
   type OrderRequest,
+  type OrderResult,
   order,
+  orderWait,
   payingAccount,
   reuseOrder
 } from '../utils/order.js'
@@ -29,7 +33,10 @@ import {
   type ProviderFeeLimits,
   quoteProviderFee
 } from '../utils/paymentLimits.js'
-import { findPreviousOrder } from '../utils/previousOrder.js'
+import {
+  findPreviousOrder,
+  IncompleteOrderLookupError
+} from '../utils/previousOrder.js'
 import {
   getOrderPrice,
   getPricingInfo,
@@ -78,7 +85,9 @@ export type SettleOrderParams = {
    * scan, not "no order found") on a service that costs anything, place a new order anyway,
    * with a warning, instead of throwing an `OrderCheckError`. A new order may pay twice for
    * an order the account already holds. Only `true` opts in. Default `false`. A free
-   * service is ordered either way, with a warning.
+   * service is ordered either way, with a warning. It does not apply to an order of the
+   * account too new to use (`limit: 'unconfirmed'`): that one is held, and is reused by a
+   * retry a few seconds later.
    */
   orderOnLookupFailure?: boolean
   /** Where this call's log events go. Default: the process-wide logger. */
@@ -97,9 +106,25 @@ export type SettlementPlan =
       kind: 'reuse'
       datatokenAddress: string
       request: Parameters<typeof reuseOrder>[0]
+      record?: Recording
     }
   /** A fresh order. */
-  | { kind: 'order'; datatokenAddress: string; request: OrderRequest }
+  | {
+      kind: 'order'
+      datatokenAddress: string
+      request: OrderRequest
+      record?: Recording
+    }
+
+/**
+ * How `sendSettlement` records the order it confirms, for a plan made with a lookup on
+ * chain: the service's key, and when the order started (`undefined`: the order is new).
+ */
+interface Recording {
+  key: string
+  lifetime: number
+  startedAt?: number
+}
 
 /**
  * Decides how to settle the order and runs every check of that path, without sending
@@ -129,6 +154,7 @@ export async function planSettlement(
     return { pricing, price }
   })
   const previous = await reusableOrder(params, quote, operation)
+  const record: Recording | undefined = previous?.looked ?? lookedUp(params)
 
   // An order in force and no new fee needed: reuse the transaction as it stands. Nothing
   // is sent, so no fee is checked or asked for, whatever the node quoted.
@@ -181,7 +207,8 @@ export async function planSettlement(
         validOrderTx: previous.transferTxId,
         providerFees,
         ...allowed
-      }
+      },
+      record: record && { ...record, startedAt: previous.startedAt }
     }
 
   const { pricing, price } = await quote()
@@ -202,7 +229,7 @@ export async function planSettlement(
   // Pricing that cannot be ordered is refused here.
   await checkOrder(request)
 
-  return { kind: 'order', datatokenAddress, request }
+  return { kind: 'order', datatokenAddress, request, record }
 }
 
 /**
@@ -222,7 +249,16 @@ async function reusableOrder(
   params: SettleOrderParams,
   quote: () => Promise<Quote>,
   operation: string
-): Promise<{ transferTxId: string; feeDue: boolean } | undefined> {
+): Promise<
+  | {
+      transferTxId: string
+      feeDue: boolean
+      /** For an order found on chain: when it started, and how to record its reuse. */
+      startedAt?: number
+      looked?: Recording
+    }
+  | undefined
+> {
   const { initialized, service } = params
   const logger = params.logger ?? log
 
@@ -238,6 +274,7 @@ async function reusableOrder(
 
   const providerFee = initialized.providerFee as ProviderFeeLike | undefined
 
+  let failed = false
   const previous = await findPreviousOrder({
     provider,
     datatokenAddress: params.datatokenAddress,
@@ -251,7 +288,26 @@ async function reusableOrder(
       providerFee?.providerFeeAddress === undefined
         ? undefined
         : String(providerFee.providerFeeAddress)
-  }).catch((error: unknown) => onLookupFailure(params, error, quote, operation))
+  }).catch((error: unknown) => {
+    failed = true
+    return onLookupFailure(params, error, quote, operation)
+  })
+
+  // An order this process confirmed that the RPC does not show as usable yet (a backend
+  // a block or more behind the one that confirmed it): buying or extending would pay
+  // twice. Using an order as it stands pays nothing. A failed lookup was handled above.
+  const looked = lookedUp(params)
+  if (!failed && looked && recentOrder(looked) && !previous?.usableTxId)
+    return onLookupFailure(
+      params,
+      new IncompleteOrderLookupError(
+        Number.NaN,
+        windowHoursOf(service.timeout),
+        'unconfirmed'
+      ),
+      quote,
+      operation
+    )
 
   if (!previous) return undefined
 
@@ -267,7 +323,80 @@ async function reusableOrder(
 
   return previous.usableTxId
     ? { transferTxId: previous.usableTxId, feeDue: false }
-    : { transferTxId: previous.orderTxId, feeDue: true }
+    : {
+        transferTxId: previous.orderTxId,
+        feeDue: true,
+        startedAt: previous.startedAt,
+        looked
+      }
+}
+
+/** Seconds of a service's timeout an order is reused for: as `findPreviousOrder` counts. */
+function lifetimeOf(timeout: number | undefined): number {
+  const seconds = timeout === 0 ? Number.NaN : Number(timeout)
+  if (Number.isNaN(seconds)) return Number.POSITIVE_INFINITY
+  return seconds - Math.min(MARGIN_SECONDS, Math.floor(seconds / 2))
+}
+
+function windowHoursOf(timeout: number | undefined): number {
+  const seconds = timeout === 0 ? Number.NaN : Number(timeout)
+  return Number.isNaN(seconds) ? Number.POSITIVE_INFINITY : seconds / 3600
+}
+
+/** `findPreviousOrder`'s margin: an order with less of its timeout left is not reused. */
+const MARGIN_SECONDS = 600
+
+/**
+ * The key of an order: (chain, datatoken, consumer, service index). One purchase per key
+ * runs at a time in this process (`settleShared`), and the orders it confirms are recorded
+ * under it (`recordOrder`).
+ */
+function orderKey(params: SettleOrderParams): string {
+  return [
+    params.chainConfig.chainId,
+    params.datatokenAddress,
+    params.consumer,
+    params.serviceIndex
+  ]
+    .join(' ')
+    .toLowerCase()
+}
+
+/** How a plan made with a lookup records its order; `undefined` without a lookup. */
+function lookedUp(params: SettleOrderParams): Recording | undefined {
+  if (!params.service || !params.signer.provider) return undefined
+  if (hasReusableOrder(params.initialized)) return undefined
+  return {
+    key: orderKey(params),
+    lifetime: lifetimeOf(params.service.timeout)
+  }
+}
+
+/**
+ * Orders this process confirmed after a lookup on chain, by `orderKey`, while they may be
+ * in force: the transaction, and until when (in seconds) the lookup would reuse it.
+ */
+const confirmed = new Map<string, { transferTxId: string; until: number }>()
+
+/** The order this process confirmed for the key that may still be in force. */
+function recentOrder(record: Recording): { transferTxId: string } | undefined {
+  const now = Date.now() / 1000
+  for (const [key, entry] of confirmed)
+    if (entry.until <= now) confirmed.delete(key)
+  return confirmed.get(record.key)
+}
+
+/** Records an order `sendSettlement` confirmed (see `recentOrder`). */
+function recordOrder(record: Recording | undefined, transferTxId: string) {
+  if (!record) return
+  const now = Date.now() / 1000
+  const until = (record.startedAt ?? now) + record.lifetime
+  if (until > now) confirmed.set(record.key, { transferTxId, until })
+}
+
+/** Forgets every order recorded. Only for tests; not exported from the package. */
+export function forgetConfirmedOrders(): void {
+  confirmed.clear()
 }
 
 type Quote = { pricing: PricingInfo; price: OrderPrice }
@@ -303,7 +432,11 @@ async function onLookupFailure(
     consumer: params.consumer
   }
 
-  if (!costs || (costs.length && params.orderOnLookupFailure !== true))
+  // An order of the account too new to count is held, not unknown: no opt-in buys again.
+  const optIn =
+    params.orderOnLookupFailure === true && failure.limit !== 'unconfirmed'
+
+  if (!costs || (costs.length && !optIn))
     throw new OrderCheckError(subject, costs, failure, operation)
 
   logger.emit(
@@ -421,12 +554,61 @@ export async function sendSettlement(
   if (plan.kind === 'reused')
     return { transferTxId: plan.transferTxId, reused: true }
 
-  if (plan.kind === 'reuse') return reuseOrder(plan.request)
+  const result =
+    plan.kind === 'reuse'
+      ? await reuseOrder(plan.request)
+      : await order(plan.request)
 
-  return order(plan.request)
+  // A retry that looks the order up through a lagging RPC must not buy it again.
+  recordOrder(plan.record, result.transferTxId)
+
+  return result
+}
+
+/** The purchases in flight in this process, by `orderKey`. */
+const flights = new Map<string, Promise<OrderResult>>()
+
+/**
+ * Plans and sends the order for one service, once at a time per (chain, datatoken,
+ * consumer, service index) in this process: a call made while another one for the same
+ * key runs waits for it and shares its result, its `transferTxId` (with `reused: true`)
+ * or its error, and sends nothing. The order the first one placed covers every download
+ * within its timeout, so concurrent calls pay once. A call that waits longer than
+ * `orderWait` throws an `OrderInProgressError`, having sent nothing. A call made after the
+ * first one finished runs its own lookup (see `reusableOrder`).
+ */
+export async function settleShared(
+  params: SettleOrderParams,
+  operation: string
+): Promise<OrderResult> {
+  const key = orderKey(params)
+  const running = flights.get(key)
+
+  if (running) {
+    const { transferTxId } = await atMost(running, {
+      ms: orderWait.ms,
+      error: () =>
+        new OrderInProgressError(
+          `${operation} did not order: another purchase of service ${safeName(shortHex(params.service?.id ?? String(params.serviceIndex)))} for ${shortHex(params.consumer)} in this process has not finished after ${Math.round(orderWait.ms / 1000)} seconds (its transaction may be pending, or dropped). Nothing was ordered or paid by this call; retry once that purchase has finished.`
+        )
+    })
+    return { transferTxId, reused: true }
+  }
+
+  const flight = planSettlement(params, operation).then(sendSettlement)
+  flights.set(key, flight)
+
+  try {
+    return await flight
+  } finally {
+    if (flights.get(key) === flight) flights.delete(key)
+  }
 }
 
 /**
+ * Runs as `settleShared`: one call per (chain, datatoken, consumer, service index) at a
+ * time in this process, concurrent calls sharing its result.
+ *
  * Reuses a valid order when the node reports one, or, given `service`, when the account
  * holds one on chain the node would accept: as it stands when no new provider fee is
  * needed, otherwise extended with `reuseOrder`. Without one, places a fresh order.
@@ -443,11 +625,13 @@ export async function sendSettlement(
  *
  * When the lookup on chain fails or stops short (an RPC error or an incomplete scan, not
  * "no order found") and a new order costs anything, it throws an `OrderCheckError` before
- * anything is sent, unless `orderOnLookupFailure` is `true`. That error is thrown before the
- * fee checks above, so it wins over them: retrying is what to do first either way.
+ * anything is sent, unless `orderOnLookupFailure` is `true` (never for an order of the
+ * account too new to use, nor one this process confirmed that the RPC does not show yet).
+ * That error is thrown before the fee checks above, so it wins over them: retrying is what
+ * to do first either way.
  */
 export async function settleOrder(
   params: SettleOrderParams
 ): Promise<{ transferTxId: string; reused: boolean }> {
-  return sendSettlement(await planSettlement(params))
+  return settleShared(params, 'settleOrder()')
 }

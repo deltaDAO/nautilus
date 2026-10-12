@@ -44,6 +44,7 @@ export {
 } from './utils/nonceGuard.js'
 export {
   confirmTransaction,
+  OrderInProgressError,
   type OrderRequest,
   type OrderResult,
   order,

@@ -22,6 +22,8 @@ import {
 } from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { access, OrderCheckError, settleOrder } from '../../src/access/index.js'
+import { forgetConfirmedOrders } from '../../src/access/settlement.js'
+import { type DebugEvent, setDebug } from '../../src/log/debug.js'
 import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
 import { order, reuseOrder } from '../../src/utils/order.js'
 import {
@@ -303,8 +305,15 @@ function query(
   }
 }
 
+/** The order found, without its start time (checked on its own). */
 const find = (overrides: Partial<PreviousOrderQuery> = {}) =>
-  findPreviousOrder(query(overrides), { now: NOW })
+  findPreviousOrder(query(overrides), { now: NOW }).then(withoutStart)
+
+function withoutStart<T extends { startedAt?: number } | undefined>(found: T) {
+  if (!found) return found
+  const { startedAt: _, ...rest } = found
+  return rest
+}
 
 /** The block ranges `eth_getLogs` was asked for, newest first, one per round. */
 const ranges = () =>
@@ -335,6 +344,8 @@ const rpcError = (code: number, message: string) =>
     { code: 'UNKNOWN_ERROR', error: { code, message } }
   )
 
+const REUSED = EVENTS.getEvent('OrderReused')?.topicHash
+
 /** What `find()` threw (or found). */
 const failure = (overrides: Partial<PreviousOrderQuery> = {}) =>
   find(overrides).then(
@@ -344,6 +355,8 @@ const failure = (overrides: Partial<PreviousOrderQuery> = {}) =>
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Each test is a fresh process: no order recorded by an earlier one.
+  forgetConfirmedOrders()
   chain = new Chain()
   // No real waits between rate-limited reads.
   vi.spyOn(scanTiming, 'sleep').mockResolvedValue()
@@ -687,7 +700,7 @@ describe('findPreviousOrder', () => {
     )
     expect(new Set(widths)).to.deep.equal(new Set([CHUNK - 1]))
     expect(scanTiming.sleep).toHaveBeenCalledOnce()
-    expect(scanTiming.sleep).toHaveBeenCalledWith(1_000)
+    expect(vi.mocked(scanTiming.sleep).mock.calls[0][0]).to.equal(1_000)
   })
 
   it('throws a rate limit that lasts, after three waits that double', async () => {
@@ -967,9 +980,18 @@ describe('findPreviousOrder reads fast and keeps reading', () => {
     chain.getLogs.mockClear()
     await find()
 
-    // 10,000 halved to 1,250, the largest accepted, and remembered.
+    // 10,000 halved to 1,250 and accepted, then grown: the widest accepted read (the
+    // last, cut at the window's start, may be wider) is remembered, below the refusal.
     const [from, to] = ranges()[0]
-    expect(to - from + 1).to.equal(1_250)
+    expect(to - from + 1).to.be.within(1_250, 1_999)
+    // A width refused once in this lookup was not tried again.
+    expect(
+      chain.getLogs.mock.calls.filter(
+        ([filter]) =>
+          filter.toBlock - filter.fromBlock >= 2_000 &&
+          filter.toBlock - filter.fromBlock < CHUNK - 1
+      ).length
+    ).to.be.at.most(2 * 3)
 
     // Another provider instance starts afresh.
     const other = new Chain()
@@ -1015,28 +1037,45 @@ describe('findPreviousOrder reads fast and keeps reading', () => {
       .slice(0, -1)
       .map(([from, to]) => to - from + 1)
     expect(Math.min(...widths)).to.be.below(600)
+    // A refusal for the number of results is no ceiling: past the flood, the size
+    // grows back well beyond the refused width.
     const smallest = widths.indexOf(Math.min(...widths))
-    expect(Math.max(...widths.slice(smallest))).to.equal(CHUNK)
-    // Halving for good would take ~80 reads for a day; growing back takes ~15.
-    expect(widths.length).to.be.below(20)
+    expect(Math.max(...widths.slice(smallest))).to.be.above(4_000)
+    // Halving for good would take ~145 reads for a day; growing back takes ~30.
+    expect(widths.length).to.be.below(32)
   })
 
-  it('reads the account’s OrderStarted alone where a flood of reuses is refused', async () => {
+  it('reads the reuses alone in smaller pieces where a flood of them is refused, not the account’s orders', async () => {
     // Anyone can call `reuseOrder` for gas; `OrderReused` is not indexed, so a flood fills
-    // the RPC's results cap in every range, and halving ran the reads out ("incomplete" for
+    // the RPC's results cap, and halving both reads ran the reads out ("incomplete" for
     // every consumer).
     chain.started(tx(1), 20 * 3_600)
     const read = chain.getLogs.getMockImplementation()
     chain.getLogs.mockImplementation(async (filter: LogFilter) => {
-      if (filter.topics[0] === EVENTS.getEvent('OrderReused')?.topicHash)
+      if (
+        filter.topics[0] === REUSED &&
+        filter.toBlock - filter.fromBlock >= 2_500
+      )
         throw rpcError(-32005, 'query returned more than 10000 results')
       return read?.(filter) ?? []
     })
 
     expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(1) })
-    // Never halved: only the last range, cut at the window's start, is shorter.
-    for (const [from, to] of ranges().slice(0, -1))
-      expect(to - from + 1).to.equal(CHUNK)
+    // The account's orders are read in full chunks; only the last range, cut at the
+    // window's start, is shorter.
+    const started = chain.getLogs.mock.calls
+      .map(([filter]) => filter)
+      .filter((filter) => filter.topics[0] !== REUSED)
+    for (const { fromBlock, toBlock } of started.slice(0, -1))
+      expect(toBlock - fromBlock + 1).to.equal(CHUNK)
+    // The reuses in pieces of about 2,500 once refused (a few wider reads tried as the
+    // width grows back), without a refused read per chunk.
+    const refused = chain.getLogs.mock.calls.filter(
+      ([filter]) =>
+        filter.topics[0] === REUSED &&
+        filter.toBlock - filter.fromBlock >= 2_500
+    )
+    expect(refused.length).to.be.at.most(4)
   })
 
   it('still halves when the account’s own OrderStarted read is refused', async () => {
@@ -1159,6 +1198,275 @@ describe('findPreviousOrder for a service whose orders never expire', () => {
       'code',
       'SERVER_ERROR'
     )
+  })
+})
+
+describe('findPreviousOrder on an RPC that caps eth_getLogs', () => {
+  /** An RPC that refuses a range wider than `cap`, counting requests in flight. */
+  function capped(cap: number) {
+    const read = chain.getLogs.getMockImplementation()
+    const flight = { now: 0, max: 0 }
+    chain.getLogs.mockImplementation(async (filter: LogFilter) => {
+      flight.max = Math.max(flight.max, ++flight.now)
+      await new Promise((resolve) => setTimeout(resolve, 1))
+      flight.now--
+      if (filter.toBlock - filter.fromBlock + 1 > cap)
+        throw rpcError(-32005, `block range too large, max ${cap} blocks`)
+      return read?.(filter) ?? []
+    })
+    return flight
+  }
+
+  for (const cap of [1_000, 2_000])
+    for (const hours of [24, 48])
+      it(`covers a ${hours} h service on an RPC that serves ${cap} blocks per call`, async () => {
+        // Ranges were queued at the size before a refusal, split one step per read, and
+        // grown back above the cap: two thirds of the reads were refusals, and the reads
+        // ran out ("incomplete": every paid purchase refused).
+        const flight = capped(cap)
+        chain.started(tx(1), (hours - 1) * 3_600, { fee: { address: OTHER } })
+
+        expect(await find({ timeout: hours * 3_600 })).to.deep.equal({
+          orderTxId: tx(1)
+        })
+        // Up to four chunks in flight, two requests each, also while splitting.
+        expect(flight.max).to.be.at.most(8)
+        // No width the RPC refused in this lookup is asked for again.
+        const refused = chain.getLogs.mock.calls.filter(
+          ([filter]) => filter.toBlock - filter.fromBlock + 1 > cap
+        )
+        expect(refused.length).to.be.at.most(2 * 6)
+      })
+
+  it('remembers the refused width for the next lookup, and splits nothing already accepted', async () => {
+    capped(1_000)
+    await find()
+    chain.getLogs.mockClear()
+
+    await find()
+
+    const widths = chain.getLogs.mock.calls.map(
+      ([filter]) => filter.toBlock - filter.fromBlock + 1
+    )
+    expect(Math.max(...widths)).to.be.at.most(1_000)
+  })
+
+  it('keeps at most four chunks in flight after a range is split', async () => {
+    // A split range took two places in the queue: five chunks, ten requests, in flight.
+    const read = chain.getLogs.getMockImplementation()
+    const flight = { now: 0, max: 0 }
+    let refusals = 0
+    chain.getLogs.mockImplementation(async (filter: LogFilter) => {
+      flight.max = Math.max(flight.max, ++flight.now)
+      await new Promise((resolve) => setTimeout(resolve, 1))
+      flight.now--
+      // The second wave's newest range is refused once.
+      if (filter.toBlock === LATEST - CHUNK && refusals++ < 2)
+        throw rpcError(-32005, 'query returned more than 10000 results')
+      return read?.(filter) ?? []
+    })
+
+    expect(await find({ timeout: 3 * DAY })).to.equal(undefined)
+    expect(flight.max).to.be.at.most(8)
+  })
+})
+
+describe('findPreviousOrder and a flood of reuses', () => {
+  const REUSE_CAP = 2_500
+
+  /** An RPC whose `OrderReused` reads fail for ranges wider than `cap` with `error`. */
+  function flooded(
+    cap: number,
+    error = () => rpcError(-32005, 'query returned more than 10000 results')
+  ) {
+    const read = chain.getLogs.getMockImplementation()
+    chain.getLogs.mockImplementation(async (filter: LogFilter) => {
+      if (
+        filter.topics[0] === REUSED &&
+        filter.toBlock - filter.fromBlock + 1 > cap
+      )
+        throw error()
+      return read?.(filter) ?? []
+    })
+  }
+
+  it('finds the account’s own reuse of an order it holds only as payer, where the reuse read is refused', async () => {
+    // The `OrderStarted`-only fallback hid it: "not found", and a second payment.
+    chain.started(tx(1), 10 * 3_600, {
+      consumer: OTHER,
+      payer: CONSUMER,
+      fee: { address: OTHER }
+    })
+    chain.reused(tx(2), tx(1), 3_600)
+    flooded(REUSE_CAP)
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(2) })
+  })
+
+  it('reads a block whose reuses are refused even alone with the account’s orders, and says so on the debug channel', async () => {
+    const events: DebugEvent[] = []
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    setDebug({
+      level: 'sensitive',
+      topics: ['order'],
+      sink: (e) => events.push(e)
+    })
+    const flood = blockAt(5 * 3_600)
+    const read = chain.getLogs.getMockImplementation()
+    chain.getLogs.mockImplementation(async (filter: LogFilter) => {
+      if (
+        filter.topics[0] === REUSED &&
+        filter.fromBlock <= flood &&
+        filter.toBlock >= flood
+      )
+        throw rpcError(-32005, 'query returned more than 10000 results')
+      return read?.(filter) ?? []
+    })
+    chain.started(tx(1), 20 * 3_600)
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(1) })
+    const fallbacks = events.filter((event) =>
+      event.message.includes('refused the OrderReused read of one block')
+    )
+    expect(fallbacks).to.have.length(1)
+    expect(fallbacks[0].data).to.deep.include({ block: flood })
+  })
+
+  it('does not drop the reuses for a timeout of the reuse read', async () => {
+    // "query timeout exceeded" read as a volume refusal: a transient timeout switched the
+    // range to the account's orders alone, hiding a reuse of an order it paid for.
+    chain.started(tx(1), 10 * 3_600, {
+      consumer: OTHER,
+      payer: CONSUMER,
+      fee: { address: OTHER }
+    })
+    chain.reused(tx(2), tx(1), 3_600)
+    flooded(0, () => rpcError(-32000, 'query timeout exceeded'))
+
+    const thrown = await failure()
+
+    expect(thrown).to.be.instanceOf(Error)
+    expect(thrown.message).to.contain('query timeout exceeded')
+  })
+})
+
+describe('findPreviousOrder and rate limits', () => {
+  /** A clock the waits move on, so the budget is spent without real waits. */
+  function virtualClock() {
+    let now = 0
+    vi.spyOn(scanTiming, 'clock').mockImplementation(() => now)
+    vi.mocked(scanTiming.sleep).mockImplementation(async (ms: number) => {
+      now += ms
+    })
+    return () => now
+  }
+
+  it('gives up after one back-off budget for the whole lookup, not minutes of waits', async () => {
+    // Every request answered 429 three times, then served: 192 waits, about 3 minutes, on
+    // a 7-day service.
+    const clock = virtualClock()
+    const read = chain.getLogs.getMockImplementation()
+    const tries = new Map<string, number>()
+    chain.getLogs.mockImplementation(async (filter: LogFilter) => {
+      const key = JSON.stringify(filter)
+      const count = (tries.get(key) ?? 0) + 1
+      tries.set(key, count)
+      if (count <= 3) throw rateLimited()
+      return read?.(filter) ?? []
+    })
+
+    const thrown = await failure({ timeout: 7 * DAY })
+
+    expect(thrown).to.have.property('code', 'SERVER_ERROR')
+    expect(clock()).to.be.at.most(20_000)
+    expect(vi.mocked(scanTiming.sleep).mock.calls.length).to.be.below(20)
+  })
+
+  it('waits out a rate limit on the newest block, the window’s start, a receipt and the code', async () => {
+    // Only `eth_getLogs` was waited out: one 429 elsewhere failed the lookup.
+    chain.started(tx(1), 3_600)
+    chain.created(LATEST - 400_000)
+    const block = chain.getBlock.getMockImplementation()
+    chain.getTransactionReceipt.mockRejectedValueOnce(rateLimited())
+    chain.getCode.mockRejectedValueOnce(rateLimited())
+    let latestRead = false
+    let windowRead = false
+    chain.getBlock.mockImplementation(async (tag: number | 'latest') => {
+      if (tag === 'latest' ? !latestRead : !windowRead) {
+        if (tag === 'latest') latestRead = true
+        else windowRead = true
+        throw rateLimited()
+      }
+      return block?.(tag) as never
+    })
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(1) })
+    // The creation search's first `getCode`, rate-limited once, read again.
+    expect(await find({ timeout: 0, account: OTHER })).to.equal(undefined)
+    expect(chain.getCode.mock.calls.length).to.be.at.least(2)
+    expect(windowRead).to.equal(true)
+    expect(vi.mocked(scanTiming.sleep).mock.calls.length).to.be.at.least(4)
+  })
+
+  it('makes no further call, and waits no longer, once the lookup has returned', async () => {
+    chain.started(tx(1), 3_600)
+    // The window's start keeps being rate-limited while the first chunk has the order.
+    const block = chain.getBlock.getMockImplementation()
+    chain.getBlock.mockImplementation(async (tag: number | 'latest') => {
+      if (tag !== 'latest') throw rateLimited()
+      return block?.(tag) as never
+    })
+    const waits: AbortSignal[] = []
+    vi.mocked(scanTiming.sleep).mockImplementation(
+      (_ms: number, signal?: AbortSignal) =>
+        new Promise((resolve) => {
+          if (signal) waits.push(signal)
+          signal?.addEventListener('abort', () => resolve())
+        })
+    )
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(1) })
+    const calls = chain.getBlock.mock.calls.length
+    await new Promise((resolve) => setTimeout(resolve, 5))
+
+    expect(waits.length).to.be.above(0)
+    expect(waits.every((signal) => signal.aborted)).to.equal(true)
+    expect(chain.getBlock.mock.calls.length).to.equal(calls)
+  })
+
+  it('waits for nothing on the default sleep once its lookup has ended', async () => {
+    // The real wait, not the suite's stub.
+    vi.mocked(scanTiming.sleep).mockRestore()
+    const ended = new AbortController()
+    const started = Date.now()
+    const waiting = scanTiming.sleep(60_000, ended.signal)
+    ended.abort()
+    await waiting
+    expect(Date.now() - started).to.be.below(1_000)
+  })
+})
+
+describe('findPreviousOrder for a never-expiring service, an order in the newest chunk', () => {
+  it('returns the order without waiting for the creation search', async () => {
+    // The search ran first: about 35 getCode calls, ~13 s on OP, before the order was
+    // returned.
+    chain.created(LATEST - 400_000)
+    chain.started(tx(1), 3_600, { fee: { validUntil: 0 } })
+    let release = () => undefined as unknown
+    const code = chain.getCode.getMockImplementation()
+    chain.getCode.mockImplementation(async (address: string, block: number) => {
+      await new Promise((resolve) => {
+        release = () => resolve(undefined)
+      })
+      return code?.(address, block) as never
+    })
+
+    expect(await find({ timeout: 0 })).to.deep.equal({
+      orderTxId: tx(1),
+      usableTxId: tx(1)
+    })
+    expect(chain.getCode).toHaveBeenCalledOnce()
+    release()
   })
 })
 
@@ -1455,6 +1763,96 @@ describe('settleOrder with an order on chain', () => {
 
     expect(result).to.deep.equal({ transferTxId: '0xfresh', reused: false })
     expect(vi.mocked(order)).toHaveBeenCalledOnce()
+  })
+
+  describe('right after a purchase, through an RPC a block or more behind', () => {
+    // The order just confirmed (block LATEST) is not in what a lagging backend serves: the
+    // lookup reads "not found", and a fast retry (a failed download) paid again.
+    const paid = () =>
+      settle({
+        providerFee: signedProviderFee({
+          providerData,
+          providerFeeAmount: '30'
+        })
+      })
+
+    async function purchased() {
+      expect(await paid()).to.deep.equal({
+        transferTxId: '0xfresh',
+        reused: false
+      })
+      chain.started(tx(1), 0)
+    }
+
+    const lags: [string, () => void][] = [
+      ...[1, 2, 3, 10].map(
+        (behind) =>
+          [
+            `its newest block ${behind} behind`,
+            () => {
+              const read = chain.getBlock.getMockImplementation()
+              chain.getBlock.mockImplementation(
+                async (tag: number | 'latest') =>
+                  read?.(tag === 'latest' ? LATEST - behind : tag) as never
+              )
+            }
+          ] as [string, () => void]
+      ),
+      [
+        'its logs 1 block behind its newest block',
+        () => {
+          const read = chain.getLogs.getMockImplementation()
+          chain.getLogs.mockImplementation(async (filter: LogFilter) =>
+            read
+              ? read({
+                  ...filter,
+                  toBlock: Math.min(filter.toBlock, LATEST - 1)
+                })
+              : []
+          )
+        }
+      ]
+    ]
+
+    for (const [name, lag] of lags)
+      it(`does not buy again with ${name}`, async () => {
+        await purchased()
+        lag()
+
+        const thrown = await paid().catch((caught) => caught)
+
+        expect(thrown).to.be.instanceOf(OrderCheckError)
+        expect(thrown).to.include({
+          reason: 'incomplete',
+          limit: 'unconfirmed'
+        })
+        expect(vi.mocked(order)).toHaveBeenCalledOnce()
+      })
+
+    it('reuses the order once the RPC shows it with its confirmations', async () => {
+      await purchased()
+      vi.useFakeTimers({ now: (NOW + 6) * 1000, toFake: ['Date'] })
+      chain.getBlock.mockImplementation(async (tag: number | 'latest') => {
+        const number = tag === 'latest' ? LATEST + 3 : tag
+        return { number, timestamp: timeOf(number) }
+      })
+
+      expect(await paid()).to.deep.equal({ transferTxId: tx(1), reused: true })
+      expect(vi.mocked(order)).toHaveBeenCalledOnce()
+    })
+
+    it('still buys again from a new process that has no record of it (documented)', async () => {
+      await purchased()
+      chain.getBlock.mockImplementation(async (tag: number | 'latest') => {
+        const number = tag === 'latest' ? LATEST - 1 : tag
+        return { number, timestamp: timeOf(number) }
+      })
+      forgetConfirmedOrders()
+
+      await paid()
+
+      expect(vi.mocked(order)).toHaveBeenCalledTimes(2)
+    })
   })
 
   it('follows the node’s validOrder without reading the chain', async () => {

@@ -18,8 +18,9 @@ import {
   providerFeeToSend
 } from '../utils/providerFee.js'
 import { assertAccessRequest } from './guards.js'
-import { planSettlement, sendSettlement } from './settlement.js'
+import { settleShared } from './settlement.js'
 
+export type { IncompleteLookupLimit } from '../utils/previousOrder.js'
 export {
   OrderCheckError,
   type OrderCheckFailure,
@@ -119,12 +120,16 @@ export async function access(
   //    The node's download `initialize` reports no `validOrder`, so a previous order is
   //    looked up on chain, within the service's timeout. A lookup that fails or stops short
   //    on a service that costs anything throws an `OrderCheckError` here, with nothing paid,
-  //    unless `orderOnLookupFailure` is `true`: buying blind could pay twice. The node chose the fee's token
+  //    unless `orderOnLookupFailure` is `true` (not for an order of ours too new to use):
+  //    buying blind could pay twice. The node chose the fee's token
   //    and amount, and in a download it is the publisher's node, so a non-zero fee is paid
   //    only within what the caller allowed. Consent is asked for the fee this path pays
   //    only: none for an order used as it stands, the quoted fee for an order extended or
   //    placed.
-  const plan = await planSettlement(
+  // 4. Reuse or place the order, paying exactly the fee allowed above, if any. One purchase
+  //    of this service for this account runs at a time in this process: a concurrent
+  //    `access()` waits for it and downloads with its order, paying nothing.
+  const { transferTxId, reused } = await settleShared(
     {
       signer,
       chainConfig,
@@ -142,9 +147,6 @@ export async function access(
     },
     'access()'
   )
-
-  // 4. Reuse or place the order, paying exactly the fee allowed above, if any.
-  const { transferTxId, reused } = await sendSettlement(plan)
 
   logger.emit(
     'access.order.settled',
