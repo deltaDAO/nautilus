@@ -297,7 +297,14 @@ export function maskUrl(url: string, nesting = 0): string {
 
   const [, scheme, authority, path, query = '', fragment = ''] = match
   const at = authority.lastIndexOf('@')
-  const host = at === -1 ? authority : `${REDACTED}@${authority.slice(at + 1)}`
+  // Without an `@`, anything but `host`, `host:port` or `[ipv6]:port` is user info whose
+  // `@` the URL never reached (a quote or a space in the password ended it).
+  const host =
+    at !== -1
+      ? `${REDACTED}@${authority.slice(at + 1)}`
+      : /^(?:\[[^\]]*\]|[^:[\]]*)(?::\d*)?$/.test(authority)
+        ? authority
+        : REDACTED
 
   const maskedPath = path
     .split(/([/\\])/)

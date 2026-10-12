@@ -886,6 +886,36 @@ describe('regressions (V f)', () => {
     })
   })
 
+  it('redacts JSON-escaped keys and URLs of an RPC body at the default level (PR #213 review)', () => {
+    const pathToken = 'rpc-escaped-path-7c1e'
+    const rpc = makeError(
+      'server response 500 Internal Server Error',
+      'SERVER_ERROR',
+      {
+        request: FAKE.rpcUrl,
+        info: {
+          requestUrl: FAKE.rpcUrl,
+          responseBody: `{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"session\\u0049d":"${FAKE.sessionId}","requestUrl":"https:\\/\\/rpc.example.org\\/v3\\/${pathToken}"}}`,
+          responseStatus: '500 Internal Server Error'
+        }
+      }
+    )
+    // The raw message carries both: the test would prove nothing otherwise.
+    expect(rpc.message).to.contain(FAKE.sessionId)
+    expect(rpc.message).to.contain(pathToken)
+
+    for (const error of [rpc, new Error('lookup', { cause: rpc })]) {
+      const log = captureLog()
+      createLogger().emit('access.order.lookup_failed', 'm', { error })
+      expect(log.events).to.have.length(1)
+      const output = JSON.stringify(log.events[0])
+      expect(output).not.to.contain(FAKE.sessionId)
+      expect(output).not.to.contain(pathToken)
+      expect(output).to.contain('SERVER_ERROR')
+      expect(output).to.contain('<redacted>')
+    }
+  })
+
   describe('errors (fix round)', () => {
     function error(value: unknown) {
       const log = captureLog({ level: 'trace' })
