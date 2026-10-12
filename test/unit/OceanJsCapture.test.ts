@@ -615,6 +615,8 @@ describe('several copies of nautilus in one process', () => {
 
   it('getLoggingConfig().oceanjs is the mode in force, whichever copy set it', async () => {
     const copy = await anotherCopy()
+    // Each change warns the copy that received the lines (see below), on stderr here.
+    output()
 
     copy.configureLogging({ oceanjs: 'passthrough' })
     expect(getLoggingConfig().oceanjs).to.equal('passthrough')
@@ -634,11 +636,39 @@ describe('several copies of nautilus in one process', () => {
     configureLogging({ oceanjs: 'capture' })
     LoggerInstance.error('three')
 
-    expect(first.events.map((event) => event.msg)).to.deep.equal([
-      'one',
-      'three'
+    const lines = (events: LogEvent[]) =>
+      events
+        .filter((event) => event.event === 'oceanjs.logger.error')
+        .map((event) => event.msg)
+    expect(lines(first.events)).to.deep.equal(['one', 'three'])
+    expect(lines(second)).to.deep.equal(['two'])
+  })
+
+  it('the copy that received the lines warns when another copy takes them or sets passthrough', async () => {
+    const first = captureLog()
+    const copy = await anotherCopy()
+    const second: LogEvent[] = []
+    copy.configureLogging({ sink: (event) => second.push(event) })
+    const moved = (events: LogEvent[]) =>
+      events
+        .filter((event) => event.event === 'oceanjs.capture.moved')
+        .map((event) => [event.level, event.fields.mode])
+
+    copy.configureLogging({ oceanjs: 'passthrough' })
+    // The copy that already receives them: nothing moves.
+    copy.configureLogging({ oceanjs: 'passthrough' })
+    configureLogging({ oceanjs: 'silent' })
+    copy.configureLogging({ oceanjs: 'capture' })
+
+    expect(moved(first.events)).to.deep.equal([
+      ['warn', 'passthrough'],
+      ['warn', 'capture']
     ])
-    expect(second.map((event) => event.msg)).to.deep.equal(['two'])
+    expect(moved(second)).to.deep.equal([['warn', 'silent']])
+    const [passthrough] = first.events.filter(
+      (event) => event.event === 'oceanjs.capture.moved'
+    )
+    expect(passthrough.msg).to.contain('unredacted')
   })
 
   it('keeps its state on LoggerInstance under a versioned key, and wraps ocean.js once', async () => {
@@ -671,7 +701,62 @@ describe('an ocean.js logger nautilus cannot take over', () => {
     logger.error('raw')
     expect(printed).to.deep.equal([['ocean.js', 'raw']])
     expect(() => copy.configureLogging({ oceanjs: 'silent' })).not.to.throw()
-    expect(copy.getLoggingConfig().oceanjs).to.equal('silent')
+  })
+
+  it("a frozen LoggerInstance: the mode reads 'passthrough', what ocean.js does, whatever is set", async () => {
+    const { logger } = fakeOceanJsLogger()
+    Object.freeze(logger)
+    output()
+    const copy = await copyWithOceanJsLogger(logger)
+
+    expect(copy.getLoggingConfig().oceanjs).to.equal('passthrough')
+    copy.configureLogging({ oceanjs: 'silent' })
+    expect(copy.getLoggingConfig().oceanjs).to.equal('passthrough')
+  })
+
+  it("one read-only method (error): that method prints itself, so the mode reads 'passthrough'", async () => {
+    const { logger, printed } = fakeOceanJsLogger()
+    Object.defineProperty(logger, 'error', {
+      value: (...args: unknown[]) => printed.push(['ocean.js', ...args]),
+      writable: false
+    })
+    const out = output()
+    const copy = await copyWithOceanJsLogger(logger)
+    copy.configureLogging({ oceanjs: 'capture' })
+
+    expect(copy.getLoggingConfig().oceanjs).to.equal('passthrough')
+    const [warning] = out.lines.map((line) => JSON.parse(line) as LogEvent)
+    expect(warning.fields).to.deep.equal({ methods: ['error'] })
+  })
+
+  it('tells how to silence ocean.js in a way that works: before freezing it, for a frozen logger', async () => {
+    const frozen = fakeOceanJsLogger().logger
+    Object.freeze(frozen)
+    const sealed = fakeOceanJsLogger().logger
+    // `setLevel` still works on a sealed logger: its level stays writable.
+    Object.seal(sealed)
+    const advice: Record<string, string> = {}
+
+    for (const [name, logger] of [
+      ['frozen', frozen],
+      ['sealed', sealed]
+    ] as const) {
+      const out = output()
+      await copyWithOceanJsLogger(logger)
+      const [warning] = out.lines.map((line) => JSON.parse(line) as LogEvent)
+      expect(warning.event).to.equal('oceanjs.capture.unavailable')
+      advice[name] = warning.msg
+      vi.restoreAllMocks()
+    }
+
+    expect(advice.frozen).to.contain('before freezing it')
+    expect(() => {
+      ;(frozen as { logLevel: number }).logLevel = 0
+    }).to.throw(TypeError)
+    expect(advice.sealed).not.to.contain('before freezing it')
+    expect(advice.sealed).to.contain(
+      'call LoggerInstance.setLevel(LogLevel.None) from @oceanprotocol/lib'
+    )
   })
 
   it("an app's own replacement made before nautilus loads: bypassed in 'capture', called in 'passthrough'", async () => {

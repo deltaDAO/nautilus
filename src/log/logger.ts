@@ -38,6 +38,7 @@ import {
   describeLine,
   getOceanJsMode,
   initOceanJsCapture,
+  isOceanJsLoggerFrozen,
   OCEANJS_EVENT,
   type OceanJsCapture,
   type OceanJsMethod,
@@ -134,7 +135,8 @@ export function configureLogging(options: LoggingConfig): void {
 
 /**
  * The process-wide logging configuration in force. `oceanjs` is the mode in force in the
- * process, whichever copy of nautilus set it.
+ * process, whichever copy of nautilus set it, and `'passthrough'` when nautilus could not
+ * take over ocean.js's logger (frozen): ocean.js then prints its lines itself.
  */
 export function getLoggingConfig(): Readonly<LoggingConfig> & {
   level: LoggingLevel
@@ -491,19 +493,31 @@ const oceanJsCapture: OceanJsCapture = {
       'ocean.js logged a line while nautilus was capturing one of its lines (a sink or a debug sink that logs through LoggerInstance): the nested line is dropped, not printed, so it cannot print unredacted. Log from a sink through something other than LoggerInstance.',
       undefined,
       { once: 'nested' }
+    ),
+  moved: (mode) =>
+    oceanJsLogger().emit(
+      'oceanjs.capture.moved',
+      mode === 'passthrough'
+        ? "Another copy of nautilus in this process set ocean.js's log mode to 'passthrough': ocean.js now prints its lines itself, unredacted (the payload dump after a refused compute start holds the request's nonce and the policy-server session ids), and this copy's logger no longer receives them."
+        : `Another copy of nautilus in this process set ocean.js's log mode to '${mode}' and now ${mode === 'silent' ? 'drops' : 'receives'} ocean.js's lines: this copy's logger and sink no longer receive them.`,
+      { mode }
     )
 }
 
 /** Installs the capture, unless another copy of nautilus did; the mode in force stays. */
 function startOceanJsCapture(): void {
   const methods = initOceanJsCapture(oceanJsCapture)
-  if (methods.length)
-    log.emit(
-      'oceanjs.capture.unavailable',
-      `ocean.js's LoggerInstance can't be changed (it is frozen or not extensible), so its lines are not captured: ocean.js prints them itself, unredacted, whatever configureLogging's oceanjs mode (the payload dump after a refused compute start holds the request's nonce and the policy-server session ids). To silence them, call LoggerInstance.setLevel(LogLevel.None) from @oceanprotocol/lib.`,
-      { methods },
-      { once: 'unavailable' }
-    )
+  if (!methods.length) return
+  // A frozen logger's level can't change either: `setLevel` would throw.
+  const advice = isOceanJsLoggerFrozen()
+    ? "it is frozen, so its level can't change either: to silence them, call LoggerInstance.setLevel(LogLevel.None) from @oceanprotocol/lib before freezing it, or don't freeze it"
+    : 'to silence them, call LoggerInstance.setLevel(LogLevel.None) from @oceanprotocol/lib'
+  log.emit(
+    'oceanjs.capture.unavailable',
+    `ocean.js's LoggerInstance can't be changed (it is frozen, sealed or not extensible, or a method is read-only), so its lines are not captured: ocean.js prints them itself, unredacted, whatever configureLogging's oceanjs mode (the payload dump after a refused compute start holds the request's nonce and the policy-server session ids), and the mode in force reads 'passthrough'. ${advice[0].toUpperCase()}${advice.slice(1)}.`,
+    { methods },
+    { once: 'unavailable' }
+  )
 }
 
 // #endregion
