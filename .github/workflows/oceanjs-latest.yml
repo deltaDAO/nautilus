@@ -1,0 +1,41 @@
+name: ocean.js contract (newest 9.x)
+# nautilus pins its own ocean.js to `~9.2.1`, but the peer range (`^9.2.1`) lets an app bring
+# any newer 9.x. nautilus works around several ocean.js behaviours, and
+# test/unit/OceanJsContract.test.ts pins each one. This runs that contract against the
+# newest 9.x release every week, so a breaking ocean.js release shows up here before users
+# hit it. A failure names the nautilus code that depends on the changed behaviour; see
+# "Supported ocean.js versions" in src/README.md for what to do.
+on:
+  schedule:
+    - cron: '17 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Contract against the newest ocean.js 9.x
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install dependencies
+        uses: ./.github/actions/install-dependencies
+
+      # Outside the workspace, with its own dependencies, as an app would install it; the
+      # lockfile and the pinned copy stay untouched.
+      - name: Install the newest ocean.js 9.x
+        run: |
+          npm install --prefix "$RUNNER_TEMP/oceanjs" --no-audit --no-fund '@oceanprotocol/lib@^9'
+          node -p "'ocean.js ' + require(process.env.RUNNER_TEMP + '/oceanjs/node_modules/@oceanprotocol/lib/package.json').version"
+
+      - name: Run the contract
+        run: npx vitest run test/unit/OceanJsContract.test.ts
+        env:
+          NAUTILUS_TEST_OCEANJS: ${{ runner.temp }}/oceanjs/node_modules/@oceanprotocol/lib
