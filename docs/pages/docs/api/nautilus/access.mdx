@@ -273,7 +273,7 @@ Fields, so a program need not parse the text:
 | `price` | `{ amount: string; symbol: string } \| undefined` | The main cost of a new order, in whole tokens: the datatoken's price (exchange fees included), or for a free datatoken the first fee due. `symbol` is `tokens of 0x…` when the token's symbol cannot be read. `undefined` when the pricing could not be read either. |
 | `costs` | `{ amount: string; symbol: string }[]` | Every part a new order would pay, each in its own token: the price, the publish-market fee and the provider fee, those that are not zero. The message names them all (`1.002 devEURAU + 0.1 OCEAN`). Empty when the pricing could not be read. |
 | `checkedHours`, `windowHours` | `number` | For `incomplete` only: how far back the check read (`NaN` when unknown), and the order window, the service's `timeout` (`Infinity` when its orders never expire). |
-| `cause` | `Error` | The RPC's error, redacted: first line only, no URL, long hex shortened, at most 200 characters. |
+| `cause` | `Error` | The RPC's error, redacted: first line only, `\u00XX` escapes undone (so a key spelt with them, `"api\u004bey"`, is redacted too), no URL, long hex shortened, at most 200 characters. |
 
 | `reason` | The cause in the message |
 | --- | --- |

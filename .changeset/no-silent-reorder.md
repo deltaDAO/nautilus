@@ -41,8 +41,9 @@ whole order window.
   `did`, `serviceId`, `consumer`, `price` (`{ amount, symbol }`, in whole tokens;
   `undefined` when the pricing could not be read either), `costs` (every part a new order
   pays: price, publish-market fee, provider fee), `checkedHours` and `windowHours` (for
-  `incomplete`; `windowHours` is `Infinity` for orders that never expire), and `cause`, the RPC's error
-  redacted (first line, no URL, long hex shortened, at most 200 characters). The unredacted
+  `incomplete`; `windowHours` is `Infinity` for orders that never expire), and `cause`, the
+  RPC's error redacted (first line, `\u00XX` escapes undone so that an escaped key is
+  redacted too, no URL, long hex shortened, at most 200 characters). The unredacted
   error goes to the debug channel (`NAUTILUS_DEBUG=sensitive`, topic `order`).
 - **`access({ orderOnLookupFailure: true })`** (also on `settleOrder()`) orders anyway, with a
   warning that it may pay twice. Only `true` opts in. When the price cannot be read either,

@@ -23,6 +23,7 @@ import {
 } from 'ethers'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { access, OrderCheckError, settleOrder } from '../../src/access/index.js'
+import { classifyLookupFailure } from '../../src/access/orderCheck.js'
 import { compute } from '../../src/compute/index.js'
 import type { AssetV5 } from '../../src/ddo/index.js'
 import { type DebugEvent, setDebug } from '../../src/log/debug.js'
@@ -43,7 +44,7 @@ import {
   SERVICE_ID
 } from '../fixtures/Asset.js'
 import { signedProviderFee } from '../fixtures/ProviderFee.js'
-import { captureLog } from '../helpers.js'
+import { captureLog, cpuBudget, cpuTime } from '../helpers.js'
 import {
   CREDENTIAL_SHAPES,
   FAKE,
@@ -888,6 +889,16 @@ describe('the cause of a failed lookup', () => {
       ['eyJhbGci', 'eyJzdWIi']
     ],
     [
+      'a JSON key spelt with \\u escapes',
+      'upstream {"api\\u004bey":"TOKENSECRET1","\\u0073ession\\u0049d":"T2SECRET"} failed',
+      ['TOKENSECRET1', 'T2SECRET']
+    ],
+    [
+      'a key spelt with \\u escapes in JSON inside a JSON string',
+      'upstream "{\\"api\\\\u004Bey\\":\\"TOKENSECRET1\\",\\"api\\u005cu0054oken\\":\\"T2SECRET\\"}" failed',
+      ['TOKENSECRET1', 'T2SECRET']
+    ],
+    [
       'a policy-server session id at character 2000, after a long URL',
       `failed at https://rpc.example.org/${'a'.repeat(1940)} id ${FAKE.policySessionId}`,
       ['5e555e555e55', '0dd50dd50dd5']
@@ -906,6 +917,18 @@ describe('the cause of a failed lookup', () => {
       expect(findSecrets(thrown.message)).to.deep.equal([])
       expect(thrown.cause.message.length).to.be.at.most(201)
     })
+
+  it('undoes \\u escapes in linear time in a long backslash run (security regression)', async () => {
+    // A run of backslashes not followed by `u00XX` was rescanned from each of them: 40,000
+    // took about 2 s.
+    const message = `api\\u004bey=TOKENSECRET1 ${'\\'.repeat(40_000)}x`
+    let cause = ''
+    const elapsed = await cpuTime(() => {
+      cause = classifyLookupFailure(new Error(message)).cause.message
+    })
+    expect(elapsed).to.be.below(cpuBudget(100))
+    expect(cause).not.to.contain('TOKENSECRET1')
+  })
 
   // Each credential shape the suite's secret scan knows, as the first line of the RPC's
   // answer: in the error, its cause, and the warning of an order placed with the opt-in.
