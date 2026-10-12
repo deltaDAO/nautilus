@@ -458,7 +458,10 @@ describe('AssetBuilder in edit mode', () => {
           type: 'SSIpolicy',
           values: [
             {
-              request_credentials: { type: 'VerifiableId' },
+              request_credentials: {
+                type: 'VerifiableId',
+                format: 'jwt_vc_json'
+              },
               vp_policies: 'holder-binding'
             }
           ]
@@ -482,7 +485,9 @@ describe('AssetBuilder in edit mode', () => {
         type: 'SSIpolicy',
         values: [
           {
-            request_credentials: [{ type: 'VerifiableId' }],
+            request_credentials: [
+              { type: 'VerifiableId', format: 'jwt_vc_json' }
+            ],
             vp_policies: [{ policy: 'holder-binding' }]
           }
         ]

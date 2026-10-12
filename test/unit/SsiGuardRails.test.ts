@@ -515,13 +515,15 @@ describe('SSI policy lint in AssetBuilder.build()', () => {
   })
 
   it('warns about presentation-definition with jwt_vc_json or jwt_vc, not with another format', () => {
+    // One format per session: walt.id refuses requests of different formats.
     const withPd = (format: string) =>
       events(() =>
-        safeSet(
-          newAsset().addRequestCredentials(ALLOW, [
+        newAsset()
+          .addCredentialAddresses(ALLOW, [OWNER_ADDRESS])
+          .addRequestCredentials(ALLOW, [
             { ...TRUST[0], type: 'VerifiableId', format }
           ])
-        )
+          .setVcPolicies(ALLOW, SAFE_VC)
           .setVpPolicies(ALLOW, [
             ...SAFE_VP,
             { policy: 'presentation-definition' }
@@ -531,20 +533,16 @@ describe('SSI policy lint in AssetBuilder.build()', () => {
 
     const seen = withPd('jwt_vc_json')
     expect(names(seen)).to.deep.equal([
-      'identity.policy.presentation_definition_vc_jwt',
       'identity.policy.presentation_definition_vc_jwt'
     ])
-    expect(seen.map((event) => event.fields)).to.deep.include({
+    expect(seen[0].fields).to.deep.equal({
       where: 'asset',
       credentialType: 'VerifiableId'
     })
     expect(
       withPd('jwt_vc').map((event) => event.fields?.credentialType)
-    ).to.include('VerifiableId')
-    // The safe set's own gx:LegalPerson is jwt_vc_json: only it warns.
-    expect(
-      withPd('ldp_vc').map((event) => event.fields?.credentialType)
-    ).to.deep.equal(['gx:LegalPerson'])
+    ).to.deep.equal(['VerifiableId'])
+    expect(withPd('ldp_vc')).to.deep.equal([])
   })
 
   it('warns about presentation-definition at asset level with a service-level jwt_vc_json request', () => {
@@ -1246,61 +1244,147 @@ describe("SSI policy lint: '*' with a credential gate (D6)", () => {
 describe('SSI policy lint: per-credential policies as walt.id resolves them', () => {
   const twice = (
     assetPolicies: RequestCredential['policies'],
-    servicePolicies: RequestCredential['policies']
+    servicePolicies: RequestCredential['policies'],
+    serviceFormat = 'jwt_vc_json'
   ) => {
     const service = serviceBuilder()
       .addRequestCredentials(ALLOW, [
         {
           type: 'gx:LegalPerson',
-          format: 'jwt_vc_json',
+          format: serviceFormat,
           policies: servicePolicies
         }
       ])
       .build()
-    return events(() =>
-      new AssetBuilder()
-        .setType('dataset')
-        .setName('Twice')
-        .setProvidedBy('deltaDAO AG')
-        .addService(service)
-        .addCredentialAddresses(ALLOW, [OWNER_ADDRESS])
-        .addRequestCredentials(ALLOW, [
-          {
-            type: 'gx:LegalPerson',
-            format: 'jwt_vc_json',
-            policies: assetPolicies
-          }
-        ])
-        .setVcPolicies(ALLOW, SAFE_VC)
-        .setVpPolicies(ALLOW, SAFE_VP)
-        .build()
-    )
+    return new AssetBuilder()
+      .setType('dataset')
+      .setName('Twice')
+      .setProvidedBy('deltaDAO AG')
+      .addService(service)
+      .addCredentialAddresses(ALLOW, [OWNER_ADDRESS])
+      .addRequestCredentials(ALLOW, [
+        {
+          type: 'gx:LegalPerson',
+          format: 'jwt_vc_json',
+          policies: assetPolicies
+        }
+      ])
+      .setVcPolicies(ALLOW, SAFE_VC)
+      .setVpPolicies(ALLOW, SAFE_VP)
   }
 
-  it('keeps issuer trust when a later request of the type has no policies', () => {
-    expect(names(twice(TRUST[0].policies, []))).to.deep.equal([])
-  })
+  /** The findings of the `SsiPolicyError` `run` throws, as `[code, where]`. */
+  const thrown = (run: () => unknown) => {
+    try {
+      run()
+    } catch (error) {
+      expect(error).to.be.instanceOf(SsiPolicyError)
+      return (error as SsiPolicyError).findings
+    }
+    throw new Error('expected an SsiPolicyError')
+  }
 
-  it('warns when a later non-empty list replaces the one with issuer trust', () => {
-    const seen = twice(TRUST[0].policies, [{ policy: 'schema', args: {} }])
+  /** A published asset gated with these stored request credentials and the safe set. */
+  const stored = (requestCredentials: unknown[]) => {
+    const published = getAssetFixture()
+    published.credentialSubject.credentials = {
+      allow: [
+        { type: 'address', values: [{ address: OWNER_ADDRESS }] },
+        {
+          type: 'SSIpolicy',
+          values: [
+            {
+              request_credentials: requestCredentials,
+              vc_policies: SAFE_VC,
+              vp_policies: SAFE_VP
+            }
+          ]
+        }
+      ]
+    } as never
+    return new AssetBuilder(published).setName('Edited')
+  }
+
+  it('keeps issuer trust when a later request of the type has no policies (case b)', () => {
     expect(
-      seen.map((event) => [event.event, event.fields?.where])
+      names(events(() => twice(TRUST[0].policies, []).build()))
+    ).to.deep.equal([])
+    // Either order: walt.id drops the empty list.
+    expect(
+      names(events(() => twice([], TRUST[0].policies).build()))
+    ).to.deep.equal([])
+  })
+
+  it('throws, in every mode, when a later non-empty list drops the issuer trust', () => {
+    for (const mode of ['warn', 'error', 'off'] as const) {
+      const findings = thrown(() =>
+        twice(TRUST[0].policies, [{ policy: 'not-before' }])
+          .setSsiPolicyLint(mode)
+          .build()
+      )
+      expect(findings[0]).to.include({
+        code: 'credential-policies-replaced',
+        fatal: true,
+        where: 'asset',
+        policy: 'allowed-issuer'
+      })
+      expect(findings[0].message).to.contain(
+        '(allowed-issuer) that never run, so the gate is weaker than written'
+      )
+    }
+
+    // In warn mode the error also lists the warnings, e.g. the lost issuer trust.
+    expect(
+      thrown(() =>
+        twice(TRUST[0].policies, [{ policy: 'not-before' }]).build()
+      ).map((finding) => [finding.code, finding.where])
     ).to.deep.equal([
-      ['identity.policy.credential_policies_replaced', 'asset'],
-      ['identity.policy.no_issuer_trust', 'service Access Service']
+      ['credential-policies-replaced', 'asset'],
+      ['no-issuer-trust', 'service Access Service']
     ])
   })
 
-  it('warns that an earlier list never runs, and no issuer warning when the last has trust', () => {
-    const seen = twice([{ policy: 'schema', args: {} }], TRUST[0].policies)
-    expect(names(seen)).to.deep.equal([
-      'identity.policy.credential_policies_replaced'
+  it('throws when an earlier list never runs, even when the last has trust', () => {
+    const findings = thrown(() =>
+      twice([{ policy: 'not-before' }], TRUST[0].policies).build()
+    )
+    expect(findings.map((finding) => finding.code)).to.deep.equal([
+      'credential-policies-replaced'
     ])
-    expect(seen[0].fields).to.deep.equal({
+    expect(findings[0]).to.include({
       where: 'asset',
       credentialType: 'gx:LegalPerson'
     })
-    expect(seen[0].msg).to.contain('(schema) that never run')
+    expect(findings[0].message).to.contain('(not-before) that never run')
+  })
+
+  it('accepts an earlier list whose policies all run in the last one', () => {
+    expect(
+      names(
+        events(() =>
+          twice(TRUST[0].policies, [
+            ...(TRUST[0].policies ?? []),
+            { policy: 'not-before' }
+          ]).build()
+        )
+      )
+    ).to.deep.equal([])
+  })
+
+  it('throws for a type requested in two formats, which walt.id refuses (case a)', () => {
+    // walt.id 90e568f refuses the session: "Credentials formats must be distinct for a
+    // presentation request" (local verifier, PR 13 fix round), identical policies or not.
+    const findings = thrown(() =>
+      twice(TRUST[0].policies, TRUST[0].policies, 'jwt_vc')
+        .setSsiPolicyLint('off')
+        .build()
+    )
+    expect(
+      findings.map((finding) => [finding.code, finding.fatal])
+    ).to.deep.equal([['request-format', true]])
+    expect(findings[0].message).to.contain(
+      "have the formats 'jwt_vc_json', 'jwt_vc'"
+    )
   })
 
   it('drops a repeated identical request at its first position, as the policy server does', () => {
@@ -1314,7 +1398,7 @@ describe('SSI policy lint: per-credential policies as walt.id resolves them', ()
         TRUST[0]
       ])
       .build()
-    const seen = events(() =>
+    const findings = thrown(() =>
       new AssetBuilder()
         .setType('dataset')
         .setName('Repeated')
@@ -1328,12 +1412,12 @@ describe('SSI policy lint: per-credential policies as walt.id resolves them', ()
     )
 
     expect(
-      seen.map((event) => [event.event, event.fields?.where])
+      findings.map((finding) => [finding.code, finding.where])
     ).to.deep.equal([
-      ['identity.policy.credential_policies_replaced', 'asset'],
-      ['identity.policy.no_issuer_trust', 'service Access Service']
+      ['credential-policies-replaced', 'asset'],
+      ['no-issuer-trust', 'service Access Service']
     ])
-    expect(seen[0].msg).to.contain('(allowed-issuer) that never run')
+    expect(findings[0].message).to.contain('(allowed-issuer) that never run')
   })
 
   it('reads the policies the policy server forwards for a type', () => {
@@ -1380,6 +1464,7 @@ describe('SSI policy lint: per-credential policies as walt.id resolves them', ()
   })
 
   it('throws for an allowed-issuer that names no issuer, in every mode', () => {
+    // The builders refuse these; a stored asset can hold them.
     for (const policy of [
       'allowed-issuer',
       { policy: 'allowed-issuer', args: [] },
@@ -1389,15 +1474,13 @@ describe('SSI policy lint: per-credential policies as walt.id resolves them', ()
       for (const mode of ['warn', 'off'] as const)
         expect(
           thrownCodes(() =>
-            safeSet(
-              newAsset().addRequestCredentials(ALLOW, [
-                {
-                  type: 'VerifiableId',
-                  format: 'jwt_vc_json',
-                  policies: [policy]
-                }
-              ])
-            )
+            stored([
+              {
+                type: 'VerifiableId',
+                format: 'jwt_vc_json',
+                policies: [JSON.stringify(policy)]
+              }
+            ])
               .setSsiPolicyLint(mode)
               .build()
           )
@@ -1407,15 +1490,18 @@ describe('SSI policy lint: per-credential policies as walt.id resolves them', ()
     expect(
       names(
         events(() =>
-          safeSet(
-            newAsset().addRequestCredentials(ALLOW, [
-              {
-                type: 'VerifiableId',
-                format: 'jwt_vc_json',
-                policies: [{ policy: 'allowed-issuer', args: ['*', TRUSTED] }]
-              }
-            ])
-          ).build()
+          stored([
+            {
+              type: 'VerifiableId',
+              format: 'jwt_vc_json',
+              policies: [
+                JSON.stringify({
+                  policy: 'allowed-issuer',
+                  args: ['*', TRUSTED]
+                })
+              ]
+            }
+          ]).build()
         )
       )
     ).to.deep.equal([])

@@ -29,11 +29,19 @@
  *   requests, which VCDM 2.0 credentials do not have: a warning.
  * - walt.id keeps one per-credential policy list per requested type, the last non-empty one
  *   (`VerifierService.kt:104-108`), after the policy server drops repeats of an identical
- *   request, keeping the first one's position (`waltIdPolicyHandler.ts:873-890`). A requested type whose effective list has no
- *   `allowed-issuer` accepts a credential of that type from any issuer, a self-issued one
- *   included; a non-empty list that a later one replaces never runs. Warnings.
- * - A per-credential `schema` whose arguments are not a JSON Schema object fails every
- *   presentation: it throws.
+ *   request, keeping the first one's position (`waltIdPolicyHandler.ts:873-890`). A policy
+ *   of a list it drops never runs, so the gate is weaker than written: that throws. A
+ *   requested type whose effective list has no `allowed-issuer` accepts a credential of that
+ *   type from any issuer, a self-issued one included: a warning.
+ * - walt.id files a presented credential under the last entry of its `type`, so policies
+ *   requested for `VerifiableCredential` never run on a credential with a more specific
+ *   type, which a wallet still presents: that throws.
+ * - walt.id refuses a session whose request credentials lack a format, mix formats, or use
+ *   one it does not request (`VerifierService.getPresentationFormat`): that throws.
+ * - A per-credential `schema` whose arguments are not a JSON Schema object throws. A
+ *   hand-written schema that
+ *   checks less than it seems (keys walt.id ignores, no constraint, optional attributes, an
+ *   unsupported `$schema`) and an `allowed-issuer` entry that is not a DID: warnings.
  * - A policy name walt.id does not know: a warning (a deployment may have more).
  *
  * No warning for a missing `presentation-definition`: it would push publishers into the
@@ -48,7 +56,14 @@ import type {
 import type { LogEventName } from '../log/events.js'
 import { type Logger, log } from '../log/logger.js'
 import { sanitize } from '../node/messages.js'
-import { credentialPolicyProblem, KNOWN_SSI_POLICIES } from './attributes.js'
+import {
+  credentialPolicyProblem,
+  GENERIC_CREDENTIAL_TYPES,
+  isDid,
+  KNOWN_SSI_POLICIES,
+  REQUEST_FORMATS,
+  schemaWeaknesses
+} from './attributes.js'
 import { isSsiPolicyCredential } from './policy.js'
 
 /**
@@ -64,7 +79,9 @@ export type SsiPolicyFatalCode =
   | 'vc-policy-arguments'
   | 'vp-policy-arguments'
   | 'credential-policy-arguments'
-  | 'duplicate-request-type'
+  | 'credential-policies-replaced'
+  | 'generic-request-type'
+  | 'request-format'
 
 /** Codes of findings that are warnings, each logged as its own event (see `SsiPolicyFinding.code`). */
 export type SsiPolicyWarningCode =
@@ -75,7 +92,8 @@ export type SsiPolicyWarningCode =
   | 'holder-binding'
   | 'presentation-definition-vc-jwt'
   | 'no-issuer-trust'
-  | 'credential-policies-replaced'
+  | 'issuer-not-did'
+  | 'weak-schema'
   | 'unknown-policy-name'
 
 /** One problem the lint found. */
@@ -88,7 +106,15 @@ export interface SsiPolicyFinding {
    *   arguments, which the policy server drops;
    * - `vp-policy-arguments`: a VP policy whose arguments walt.id cannot read (missing or of
    *   the wrong shape);
-   * - `credential-policy-arguments`: a per-credential `allowed-issuer` that admits no issuer.
+   * - `credential-policy-arguments`: a per-credential `allowed-issuer` that admits no issuer,
+   *   or a `schema` whose arguments are not a JSON Schema object;
+   * - `credential-policies-replaced`: per-credential policies of a type requested more than
+   *   once that never run, because walt.id keeps only the last non-empty list per type;
+   * - `generic-request-type`: per-credential policies on `VerifiableCredential` or
+   *   `VerifiablePresentation`, which walt.id never runs on a credential with a more
+   *   specific type;
+   * - `request-format`: request credentials without a format, with different formats, or
+   *   with one walt.id does not request, which makes it refuse every session.
    *
    * Warnings:
    * - `no-vc-signature`, `no-vp-signature`, `no-minimum-credentials`: a gate weaker than the
@@ -99,10 +125,9 @@ export interface SsiPolicyFinding {
    *   `jwt_vc` request credential;
    * - `no-issuer-trust`: a requested type whose effective per-credential policies have no
    *   `allowed-issuer`;
-   * - `credential-policies-replaced`: per-credential policies of a type requested twice that
-   *   never run, because walt.id keeps the last non-empty list.
-   * - `duplicate-request-type`: a credential type requested more than once with different
-   *   policies, of which walt.id keeps only the last;
+   * - `issuer-not-did`: an `allowed-issuer` entry that is not a DID (walt.id compares the
+   *   credential's `iss` with it as written);
+   * - `weak-schema`: a per-credential `schema` that checks less than it seems;
    * - `unknown-policy-name`: a policy name walt.id does not know.
    */
   code: SsiPolicyFatalCode | SsiPolicyWarningCode
@@ -176,8 +201,8 @@ const WARNING_EVENTS: Record<SsiPolicyWarningCode, LogEventName> = {
   'presentation-definition-vc-jwt':
     'identity.policy.presentation_definition_vc_jwt',
   'no-issuer-trust': 'identity.policy.no_issuer_trust',
-  'credential-policies-replaced':
-    'identity.policy.credential_policies_replaced',
+  'issuer-not-did': 'identity.policy.issuer_not_did',
+  'weak-schema': 'identity.policy.weak_schema',
   'unknown-policy-name': 'identity.policy.unknown_name'
 }
 
@@ -252,13 +277,6 @@ export function lintSsiPolicies(
 
     lintValues(asset.where, assetValues, add)
     if (service.where) lintValues(service.where, serviceValues, add)
-    lintRequestTypes(
-      asset.where,
-      assetValues,
-      service.where,
-      serviceValues,
-      add
-    )
 
     lintPresentationDefinition(asset, service, assetValues, merged, add)
     lintRequestedTypes(
@@ -380,24 +398,11 @@ function lintValues(
 
     for (const credential of requestCredentials(value))
       for (const raw of toArray(credential.policies)) {
-        const policy = readCredentialPolicy(raw)
-        if (!policy.name) continue
-
-        if (!KNOWN_SSI_POLICIES.has(policy.name))
-          add(
-            unknownName(where, 'per-credential', policy.name, credential.type)
-          )
-
-        const problem = credentialPolicyProblem(policy.name, policy.args)
-        if (problem)
-          add({
-            code: 'credential-policy-arguments',
-            fatal: true,
-            where,
-            policy: policy.name,
-            credentialType: credential.type,
-            message: `The ${where} request for '${shown(credential.type)}' credentials has a per-credential '${shown(policy.name)}' policy that ${problem}. ${policy.name === 'schema' ? 'Pass the schema as an object (not JSON.stringify(schema)), or use requireCredentialAttributes().' : 'Use trustIssuers(type, [did, …]).'}`
-          })
+        // As the policy server parses it; the builders and an edit store each as JSON.
+        const [parsed] = parseCredentialPolicy(raw)
+        const { name } = readPolicy(parsed)
+        if (name && !KNOWN_SSI_POLICIES.has(name))
+          add(unknownName(where, 'per-credential', name, credential.type))
       }
   }
 }
@@ -433,9 +438,9 @@ function lintPresentationDefinition(
 }
 
 /**
- * Per requested type, the per-credential policies walt.id runs (see `requestedTypes`): a type
- * whose effective list has no `allowed-issuer`, or one that admits no issuer, and non-empty
- * lists that never run.
+ * Per requested type, the per-credential policies walt.id runs (see `requestedTypes`): lists
+ * it drops with a policy that then never runs, policies on a generic type, the effective
+ * list's issuer trust and schema; and the formats of the session's requests.
  */
 function lintRequestedTypes(
   assetWhere: string,
@@ -448,21 +453,42 @@ function lintRequestedTypes(
     { where: assetWhere, values: assetValues },
     { where: serviceWhere, values: serviceValues }
   ])
+  lintRequestFormats(forwarded, add)
 
   for (const [type, { effective, replaced, requests }] of requestedTypes(
     forwarded
   )) {
     const where = (effective ?? requests[requests.length - 1]).where
 
-    for (const earlier of replaced)
+    for (const earlier of replaced) {
+      const runs = new Set(effective?.policies.map((p) => JSON.stringify(p)))
+      const lost = earlier.policies.filter((p) => !runs.has(JSON.stringify(p)))
+      if (!lost.length) continue
+
+      const names = policyNames(lost).map(shown).join(', ') || 'policies'
       add({
         code: 'credential-policies-replaced',
-        fatal: false,
+        fatal: true,
         where: earlier.where,
-        policy: policyNames(earlier.policies).join(', ') || 'policies',
+        policy: names,
         credentialType: type,
-        message: `The ${earlier.where} request for '${shown(type)}' credentials carries per-credential policies (${policyNames(earlier.policies).map(shown).join(', ')}) that never run: '${shown(type)}' is also requested at ${effective?.where} with other policies, and walt.id keeps only the last non-empty policy list per requested type (the policy server first drops a repeat of an identical request, keeping the first one's position). Put all of the type's policies on one request.`
+        message: `The ${earlier.where} request for '${shown(type)}' credentials carries per-credential policies (${names}) that never run, so the gate is weaker than written: walt.id keeps only the last non-empty policy list per requested type, here the one at ${effective?.where} (the policy server first drops a repeat of an identical request, keeping the first one's position). Put all of the type's policies on one request: trustIssuers() and requireCredentialAttributes() add to it, setRequestCredentials() replaces the list.`
       })
+    }
+
+    if (effective && GENERIC_CREDENTIAL_TYPES.has(type)) {
+      add({
+        code: 'generic-request-type',
+        fatal: true,
+        where: effective.where,
+        policy: policyNames(effective.policies).map(shown).join(', '),
+        credentialType: type,
+        message: `The ${effective.where} request for '${shown(type)}' credentials carries per-credential policies that never run on a credential with a more specific type: walt.id files a presented credential under the last entry of its type (e.g. 'gx:LegalPerson' for ['VerifiableCredential', 'gx:LegalPerson']), and every wallet presents such a credential for this request. Request the credential's own type, the last entry of its type list.`
+      })
+      continue
+    }
+
+    lintSchemas(where, type, effective?.policies ?? [], add)
 
     const issuers = (effective?.policies ?? []).filter(
       (policy) => readPolicy(policy).name === 'allowed-issuer'
@@ -479,7 +505,10 @@ function lintRequestedTypes(
       continue
     }
 
-    if (!issuers.some((policy) => admitsAnIssuer(readPolicy(policy).args)))
+    const entries = issuers.flatMap((policy) =>
+      issuerEntries(readPolicy(policy).args)
+    )
+    if (!entries.some(isUsableIssuer)) {
       add({
         code: 'credential-policy-arguments',
         fatal: true,
@@ -488,7 +517,104 @@ function lintRequestedTypes(
         credentialType: type,
         message: `The ${where} per-credential 'allowed-issuer' for '${shown(type)}' credentials names no issuer (it needs a DID or a list of DIDs; '*' is not a wildcard in walt.id), so walt.id refuses every '${shown(type)}' credential and every consumer. Write it as { policy: 'allowed-issuer', args: ['did:…'] }.`
       })
+      continue
+    }
+
+    const notDids = entries.filter(
+      (entry) => isUsableIssuer(entry) && !isDid(entry)
+    )
+    if (notDids.length)
+      add({
+        code: 'issuer-not-did',
+        fatal: false,
+        where,
+        policy: 'allowed-issuer',
+        credentialType: type,
+        message: `The ${where} per-credential 'allowed-issuer' for '${shown(type)}' credentials lists ${notDids
+          .slice(0, 5)
+          .map((entry) => `'${shown(String(entry))}'`)
+          .join(
+            ', '
+          )}, which ${notDids.length === 1 ? 'is not a DID' : 'are not DIDs'}. walt.id compares a credential's iss with each entry as written, so it trusts only an issuer whose iss is exactly that text. Use the issuer's DID (trustIssuers() takes DIDs only).`
+      })
   }
+}
+
+/** The effective list's `schema` policies: arguments walt.id cannot use, or that check less than they seem. */
+function lintSchemas(
+  where: string,
+  type: string,
+  policies: unknown[],
+  add: (finding: SsiPolicyFinding) => void
+): void {
+  for (const policy of policies) {
+    const { name, args } = readPolicy(policy)
+    if (name !== 'schema') continue
+
+    const problem = credentialPolicyProblem('schema', args)
+    if (problem) {
+      add({
+        code: 'credential-policy-arguments',
+        fatal: true,
+        where,
+        policy: 'schema',
+        credentialType: type,
+        message: `The ${where} request for '${shown(type)}' credentials has a per-credential 'schema' policy that ${problem}. Pass the schema as an object (not JSON.stringify(schema)), or use requireCredentialAttributes().`
+      })
+      continue
+    }
+
+    const weaknesses = schemaWeaknesses(args as Record<string, unknown>)
+    if (weaknesses.length)
+      add({
+        code: 'weak-schema',
+        fatal: false,
+        where,
+        policy: 'schema',
+        credentialType: type,
+        message: `The ${where} per-credential 'schema' for '${shown(type)}' credentials ${weaknesses.join('; ')}. Write attribute requirements with requireCredentialAttributes(), which generates a schema that checks each one.`
+      })
+  }
+}
+
+/**
+ * walt.id opens a session only when every request credential has a format, the same one, of
+ * those it requests (`VerifierService.getPresentationFormat`): otherwise it refuses every
+ * consumer ("Credentials formats must be distinct for a presentation request").
+ */
+function lintRequestFormats(
+  forwarded: ForwardedRequest[],
+  add: (finding: SsiPolicyFinding) => void
+): void {
+  if (!forwarded.length) return
+  const formats = [
+    ...new Set(forwarded.map(({ credential }) => credential.format))
+  ]
+  const known = formats.length === 1 && REQUEST_FORMATS.has(String(formats[0]))
+  if (known) return
+
+  const odd =
+    forwarded.find(
+      ({ credential }) =>
+        typeof credential.format !== 'string' ||
+        !REQUEST_FORMATS.has(credential.format)
+    ) ??
+    forwarded.find(({ credential }) => credential.format !== formats[0]) ??
+    forwarded[0]
+  const listed = formats
+    .map((format) =>
+      typeof format === 'string' ? `'${shown(format)}'` : 'none'
+    )
+    .join(', ')
+
+  add({
+    code: 'request-format',
+    fatal: true,
+    where: odd.where,
+    policy: 'request_credentials',
+    credentialType: odd.credential.type,
+    message: `The request credentials of the ${odd.where} have the format${formats.length === 1 ? '' : 's'} ${listed}: walt.id opens a session only when every requested credential has the same format, one of ${[...REQUEST_FORMATS].join(', ')}, and refuses every consumer otherwise ("Credentials formats must be distinct for a presentation request"). Give every request credential of the asset and the service one format, e.g. 'jwt_vc_json'.`
+  })
 }
 
 /** D4's safe set on the merged view: VC and VP `signature`, `minimum-credentials` ≥ 1. */
@@ -564,14 +690,14 @@ function lintWildcard(
   })
 }
 
-/** Whether walt.id's `allowed-issuer` with these arguments can accept any issuer. */
-function admitsAnIssuer(args: unknown): boolean {
-  const issuers =
-    typeof args === 'string' ? [args] : Array.isArray(args) ? args : []
-  return issuers.some(
-    (issuer) =>
-      typeof issuer === 'string' && issuer.trim() !== '' && issuer !== '*'
-  )
+/** walt.id's `allowed-issuer` entries: one string, or a list. */
+function issuerEntries(args: unknown): unknown[] {
+  return typeof args === 'string' ? [args] : Array.isArray(args) ? args : []
+}
+
+/** Whether walt.id can match a credential's issuer against this entry. */
+function isUsableIssuer(entry: unknown): boolean {
+  return typeof entry === 'string' && entry.trim() !== '' && entry !== '*'
 }
 
 /** Why walt.id cannot read a VP policy's arguments, or `undefined` when it can. */
@@ -763,6 +889,25 @@ export function requestedTypes(
 }
 
 /**
+ * Per requested type, the per-credential policies walt.id runs for one service, from the
+ * stored `credentials` blocks of the asset and the service: the policy server's merge and
+ * dedupe (`policyServerRequests`), then walt.id's last non-empty list (`requestedTypes`).
+ */
+export function effectiveRequestPolicies(
+  asset: DdoCredentials | undefined,
+  service: DdoCredentials | undefined
+): Map<string, unknown[]> {
+  const forwarded = policyServerRequests([
+    { where: 'asset', values: ssiValues(asset) },
+    { where: 'service', values: ssiValues(service) }
+  ])
+  const policies = new Map<string, unknown[]>()
+  for (const [type, { effective }] of requestedTypes(forwarded))
+    if (effective) policies.set(type, effective.policies)
+  return policies
+}
+
+/**
  * A per-credential policy as the policy server parses it (`parsePolicies`): an object as it
  * is, a string JSON-parsed, an unparseable string or anything else dropped.
  */
@@ -809,21 +954,6 @@ function isPlainObject(raw: unknown): raw is Record<string, unknown> {
   return typeof raw === 'object' && raw !== null && !Array.isArray(raw)
 }
 
-/** A per-credential policy's name and arguments: stored JSON-encoded, or as the builder takes it. */
-function readCredentialPolicy(raw: unknown): { name?: string; args?: unknown } {
-  let policy = raw
-  if (typeof raw === 'string')
-    try {
-      policy = JSON.parse(raw)
-    } catch {
-      return { name: raw }
-    }
-
-  if (typeof policy === 'string') return { name: policy }
-  const { name } = readPolicy(policy)
-  return { name, args: (policy as { args?: unknown } | null)?.args }
-}
-
 function unknownName(
   where: string,
   level: string,
@@ -837,53 +967,6 @@ function unknownName(
     policy: name,
     ...(credentialType !== undefined ? { credentialType } : {}),
     message: `The ${where} ${level} policy '${shown(name)}'${credentialType !== undefined ? ` for '${shown(credentialType)}' credentials` : ''} is not one walt.id 90e568f knows. If the verifier doesn't know it either, it fails every presentation. Check the spelling.`
-  }
-}
-
-/**
- * Throws (as a finding) for a credential type requested more than once, asset and service
- * merged as the policy server merges them, with different per-credential policies: walt.id
- * keeps the last non-empty list for the type and drops the others without a word.
- * Requests the policy server deduplicates (same type, format and policies) count once.
- */
-function lintRequestTypes(
-  assetWhere: string,
-  assetValues: SsiPolicyValue[],
-  serviceWhere: string,
-  serviceValues: SsiPolicyValue[],
-  add: (finding: SsiPolicyFinding) => void
-): void {
-  const byType = new Map<
-    string,
-    { where: string; key: string; hasPolicies: boolean }[]
-  >()
-
-  for (const [where, values] of [
-    [assetWhere, assetValues],
-    [serviceWhere, serviceValues]
-  ] as const)
-    for (const credential of values.flatMap(requestCredentials)) {
-      const policies = toArray(credential.policies).map(readCredentialPolicy)
-      const key = JSON.stringify([credential.format ?? null, policies])
-      const seen = byType.get(credential.type) ?? []
-      if (!seen.some((entry) => entry.key === key))
-        seen.push({ where, key, hasPolicies: policies.length > 0 })
-      byType.set(credential.type, seen)
-    }
-
-  for (const [type, entries] of byType) {
-    if (entries.length < 2 || !entries.some((entry) => entry.hasPolicies))
-      continue
-
-    const where = entries[entries.length - 1].where || assetWhere
-    add({
-      code: 'duplicate-request-type',
-      fatal: true,
-      where,
-      policy: 'request_credentials',
-      credentialType: type,
-      message: `'${shown(type)}' credentials are requested ${entries.length} times with different formats or policies (${[...new Set(entries.map((entry) => entry.where || assetWhere))].join(', ')}). walt.id keeps only the last request's per-credential policies for a type and silently drops the others, e.g. issuer trust. Request each type once, with all its policies: trustIssuers() and requireCredentialAttributes() add to the one request, setRequestCredentials() replaces the list.`
-    })
   }
 }
 

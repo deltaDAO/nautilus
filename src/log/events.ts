@@ -339,13 +339,6 @@ export const LOG_EVENTS = {
       'AssetBuilder.build(): a requested credential type has no per-credential allowed-issuer among the policies walt.id runs for it (the last non-empty list for the type, after the policy server drops repeats of an identical request), so a credential of that type from any issuer, a self-issued one included, is accepted.',
     fields: ['where', 'credentialType']
   },
-  'identity.policy.credential_policies_replaced': {
-    level: 'warn',
-    component: 'identity',
-    description:
-      'AssetBuilder.build(): a credential type is requested more than once with different per-credential policies. walt.id keeps only the last non-empty policy list per type, after the policy server drops repeats of an identical request (the first one keeps its position), so the other lists never run.',
-    fields: ['where', 'credentialType']
-  },
   'identity.policy.no_vc_signature': {
     level: 'warn',
     component: 'identity',
@@ -380,6 +373,27 @@ export const LOG_EVENTS = {
     description:
       'AssetBuilder.build(): a VC, VP or per-credential policy name is not one walt.id 90e568f knows. A verifier that does not know it fails every presentation; a newer one may.',
     fields: ['where', 'policy', 'credentialType']
+  },
+  'identity.policy.issuer_not_did': {
+    level: 'warn',
+    component: 'identity',
+    description:
+      "AssetBuilder.build(): a stored per-credential allowed-issuer lists an entry that is not a DID. walt.id compares a credential's iss with it as written, so it trusts only an issuer whose iss is exactly that text.",
+    fields: ['where', 'credentialType']
+  },
+  'identity.policy.weak_schema': {
+    level: 'warn',
+    component: 'identity',
+    description:
+      'AssetBuilder.build(): a per-credential schema checks less than it seems: keys outside JSON Schema draft 7 (walt.id ignores them), no constraint at all, attributes under properties missing from required (a credential without them passes), or a $schema walt.id does not support (it fails every presentation).',
+    fields: ['where', 'credentialType']
+  },
+  'identity.policy.gate_removed': {
+    level: 'warn',
+    component: 'identity',
+    description:
+      "setRequestCredentials(list, []) removed the list's SSIpolicy entry with its VC and VP policies: the credential gate is gone, and only the address and access-list entries remain.",
+    fields: ['list']
   },
   'identity.preflight.skipped': {
     level: 'debug',

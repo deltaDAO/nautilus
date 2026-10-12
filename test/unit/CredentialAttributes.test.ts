@@ -12,10 +12,15 @@ import {
   addRequestCredentials,
   requireCredentialAttributes,
   setRequestCredentials,
+  setVpPolicies,
   trustIssuers
 } from '../../src/identity/policy.js'
 import { SsiPolicyError } from '../../src/identity/policyLint.js'
-import { CredentialRejectedLocallyError } from '../../src/identity/preflight.js'
+import {
+  assertCredentialAttributes,
+  assertHolderBinding,
+  CredentialRejectedLocallyError
+} from '../../src/identity/preflight.js'
 import {
   WaltIdCredentialProvider,
   type WaltIdCredentialProviderOptions
@@ -121,7 +126,7 @@ describe('credentialAttributeSchema', () => {
     const schema = credentialAttributeSchema([
       { path: COUNTRY, oneOf: ['DE', 'AT'] },
       { path: ['gx:legalName'], exists: true },
-      { path: ['gx:registrationNumber'] },
+      { path: ['gx:registrationNumber'], exists: true },
       { path: ['gx:vatID'], oneOf: ['X'] },
       { path: ['gx:active'], equals: true },
       { path: ['gx:employees'], equals: 10 }
@@ -194,8 +199,14 @@ describe('credentialAttributeSchema', () => {
         { path: COUNTRY, equals: 'DE' },
         { path: COUNTRY, equals: 'FR' }
       ],
-      [{ path: COUNTRY, equals: 'DE' }, { path: [...COUNTRY, 'deeper'] }],
-      [{ path: [...COUNTRY, 'deeper'] }, { path: COUNTRY, equals: 'DE' }]
+      [
+        { path: COUNTRY, equals: 'DE' },
+        { path: [...COUNTRY, 'deeper'], exists: true }
+      ],
+      [
+        { path: [...COUNTRY, 'deeper'], exists: true },
+        { path: COUNTRY, equals: 'DE' }
+      ]
     ]
 
     for (const requirements of invalid)
@@ -210,6 +221,29 @@ describe('credentialAttributeSchema', () => {
         { path: COUNTRY, equals: 'FR' }
       ])
     ).to.throw(/cannot be both "DE" and "FR"/)
+  })
+
+  it('refuses a requirement key set to undefined, and one with no condition (M2)', () => {
+    // An unset variable must not turn "country = DE" into "a country exists".
+    const unset: string | undefined = undefined
+    for (const key of ['equals', 'oneOf', 'exists'])
+      expect(
+        () => credentialAttributeSchema([{ path: COUNTRY, [key]: unset }]),
+        key
+      ).to.throw(
+        TypeError,
+        new RegExp(
+          `gx:legalAddress\\.gx:countryCode has ${key}: undefined \\(an unset variable\\?\\)`
+        )
+      )
+
+    expect(() => credentialAttributeSchema([{ path: COUNTRY }])).to.throw(
+      TypeError,
+      /sets none of equals, oneOf and exists\. Pass exists: true/
+    )
+    expect(
+      credentialAttributeSchema([{ path: COUNTRY, exists: true }])
+    ).to.deep.include({ required: ['credentialSubject'] })
   })
 })
 
@@ -287,7 +321,7 @@ describe('requireCredentialAttributes and trustIssuers', () => {
     ).to.deep.equal(['allowed-issuer', 'schema', 'signature'])
   })
 
-  it('use the existing request of a type without a format, and a new jwt_vc_json one otherwise', () => {
+  it("use the existing request of a type, and give a new one the list's format, else jwt_vc_json", () => {
     const ldp = addRequestCredentials({}, ALLOW, [
       { type: LEGAL_PERSON, format: 'ldp_vc' }
     ])
@@ -297,17 +331,83 @@ describe('requireCredentialAttributes and trustIssuers', () => {
     expect(
       requests(trustIssuers(ldp, LEGAL_PERSON, [TRUSTED]))[0].format
     ).to.equal('ldp_vc')
+    expect(
+      requests(trustIssuers(ldp, 'VerifiableId', [TRUSTED]))[1].format
+    ).to.equal('ldp_vc')
 
     const fresh = trustIssuers({}, 'VerifiableId', [TRUSTED])
     expect(requests(fresh)[0].format).to.equal('jwt_vc_json')
+    expect(
+      requests(
+        trustIssuers({}, 'VerifiableId', [TRUSTED], { format: 'jwt_vc' })
+      )[0].format
+    ).to.equal('jwt_vc')
+  })
 
-    const both = trustIssuers(ldp, LEGAL_PERSON, [TRUSTED], {
-      format: 'jwt_vc_json'
-    })
-    expect(requests(both).map((request) => request.format)).to.deep.equal([
-      'ldp_vc',
-      'jwt_vc_json'
+  it('throw at the call when format would add a second request of the type or a second format (code m1)', () => {
+    // walt.id keeps one policy list per type, and refuses a session whose requests have
+    // different formats ("Credentials formats must be distinct for a presentation request").
+    const ldp = addRequestCredentials({}, ALLOW, [
+      { type: LEGAL_PERSON, format: 'ldp_vc' }
     ])
+    expect(() =>
+      trustIssuers(ldp, LEGAL_PERSON, [TRUSTED], { format: 'jwt_vc_json' })
+    ).to.throw(
+      TypeError,
+      /'gx:LegalPerson' is already requested with format "ldp_vc"/
+    )
+    expect(() =>
+      requireCredentialAttributes(ldp, 'VerifiableId', DE, {
+        format: 'jwt_vc_json'
+      })
+    ).to.throw(
+      TypeError,
+      /already requests "gx:LegalPerson" with format "ldp_vc".*different formats/
+    )
+    expect(
+      requests(trustIssuers(ldp, LEGAL_PERSON, [TRUSTED], { format: 'ldp_vc' }))
+    ).to.have.length(1)
+  })
+
+  it('refuse VerifiableCredential and VerifiablePresentation as the type (B1, D31)', () => {
+    // walt.id files a credential under the last entry of its type, so policies on
+    // VerifiableCredential never run on a ['VerifiableCredential', 'gx:LegalPerson'], which
+    // a wallet presents for the request: an FR credential from another issuer was verified.
+    for (const type of ['VerifiableCredential', 'VerifiablePresentation']) {
+      expect(() => trustIssuers({}, type, [TRUSTED]), type).to.throw(
+        TypeError,
+        new RegExp(`Per-credential policies on '${type}' check nothing`)
+      )
+      expect(() => requireCredentialAttributes({}, type, DE), type).to.throw(
+        TypeError,
+        /the last entry of its type/
+      )
+      expect(
+        () =>
+          addRequestCredentials({}, ALLOW, [
+            {
+              type,
+              format: 'jwt_vc_json',
+              policies: [{ policy: 'allowed-issuer', args: [TRUSTED] }]
+            }
+          ]),
+        type
+      ).to.throw(TypeError, /check nothing/)
+      expect(
+        () =>
+          setRequestCredentials({}, ALLOW, [
+            { type, format: 'jwt_vc_json', policies: ['not-before'] }
+          ]),
+        type
+      ).to.throw(TypeError, /check nothing/)
+    }
+
+    // Without per-credential policies the request is harmless.
+    expect(() =>
+      addRequestCredentials({}, ALLOW, [
+        { type: 'VerifiableCredential', format: 'jwt_vc_json' }
+      ])
+    ).not.to.throw()
   })
 
   it('combine requirements of several calls with AND, and issuers of several calls with OR', () => {
@@ -383,9 +483,13 @@ describe('requireCredentialAttributes and trustIssuers', () => {
   })
 
   it('refuse a type that is not a string', () => {
-    expect(() => trustIssuers({}, '', [TRUSTED])).to.throw(TypeError)
+    expect(() => trustIssuers({}, '', [TRUSTED])).to.throw(
+      TypeError,
+      /credential type must be a non-empty string/
+    )
     expect(() => requireCredentialAttributes({}, 7 as never, DE)).to.throw(
-      TypeError
+      TypeError,
+      /credential type must be a non-empty string/
     )
   })
 
@@ -466,17 +570,38 @@ describe('per-credential policy validation in addRequestCredentials and setReque
     ])
   })
 
-  it('setRequestCredentials with an empty list removes the credential gate, not the address list', () => {
-    const credentials = deGate().setRequestCredentials(ALLOW, []).build().ddo
-      .credentials as { allow?: { type: string }[] }
+  it('setRequestCredentials with an empty list removes the credential gate, not the address list, and says so', () => {
+    let credentials: { allow?: { type: string }[] } | undefined
+    const seen = events(() => {
+      credentials = deGate().setRequestCredentials(ALLOW, []).build().ddo
+        .credentials as typeof credentials
+    })
 
-    expect(credentials.allow?.map((entry) => entry.type)).to.deep.equal([
+    expect(credentials?.allow?.map((entry) => entry.type)).to.deep.equal([
       'address'
     ])
-    expect(
-      setRequestCredentials({}, ALLOW, []),
-      'nothing to remove'
-    ).to.deep.equal({})
+    const removed = seen.filter(
+      (event) => event.event === 'identity.policy.gate_removed'
+    )
+    expect(removed).to.have.length(1)
+    expect(removed[0].level).to.equal('warn')
+    expect(removed[0].fields).to.deep.equal({ list: 'allow' })
+
+    const nothing = events(() =>
+      expect(
+        setRequestCredentials({}, ALLOW, []),
+        'nothing to remove'
+      ).to.deep.equal({})
+    )
+    expect(names(nothing)).to.deep.equal([])
+  })
+
+  it("setRequestCredentials refuses to remove the gate of a list that admits '*' (sec m2)", () => {
+    const open = deGate().addCredentialAddresses(ALLOW, ['*'])
+    expect(() => open.setRequestCredentials(ALLOW, [])).to.throw(
+      TypeError,
+      /would remove the credential gate of a list that lets every address in \('\*'\)/
+    )
   })
 
   it('setRequestCredentials validates like addRequestCredentials', () => {
@@ -484,9 +609,13 @@ describe('per-credential policy validation in addRequestCredentials and setReque
       setRequestCredentials({}, ALLOW, [
         { type: LEGAL_PERSON, policies: [{ policy: 'schema', args: 'x' }] }
       ])
-    ).to.throw(TypeError)
+    ).to.throw(
+      TypeError,
+      /'gx:LegalPerson' request credential's 'schema' policy/
+    )
     expect(() => setRequestCredentials({}, ALLOW, 'x' as never)).to.throw(
-      TypeError
+      TypeError,
+      /takes a list of request credentials/
     )
   })
 
@@ -555,7 +684,7 @@ describe('SSI policy lint for per-credential policies', () => {
     expect(finding.message).to.contain('a string, not a JSON Schema object')
   })
 
-  it('throws when a type is requested twice with different policies: walt.id keeps only the last', () => {
+  it('throws when issuer trust at asset level is dropped for a service-level attribute check (R7)', () => {
     const service = accessService()
       .requireCredentialAttributes(LEGAL_PERSON, DE)
       .build()
@@ -566,37 +695,247 @@ describe('SSI policy lint for per-credential policies', () => {
 
     let error: unknown
     try {
-      builder.build()
+      builder.setSsiPolicyLint('off').build()
     } catch (caught) {
       error = caught
     }
 
     expect(error).to.be.instanceOf(SsiPolicyError)
-    expect(
-      (error as SsiPolicyError).findings.map((finding) => finding.code)
-    ).to.include('duplicate-request-type')
+    expect((error as SsiPolicyError).findings[0]).to.include({
+      code: 'credential-policies-replaced',
+      fatal: true,
+      where: 'asset',
+      policy: 'allowed-issuer',
+      credentialType: LEGAL_PERSON
+    })
     expect((error as Error).message).to.contain(
-      "walt.id keeps only the last request's per-credential policies"
+      'walt.id keeps only the last non-empty policy list per requested type'
     )
   })
 
-  it('throws for two formats of one type in one block, but not for the same request twice', () => {
-    expect(() =>
-      deGate()
-        .trustIssuers(LEGAL_PERSON, [TRUSTED], { format: 'ldp_vc' })
-        .build()
-    ).to.throw(SsiPolicyError, /requested 2 times/)
-
+  it('accepts the same request at asset and service level, which the policy server sends once', () => {
     const service = accessService()
       .trustIssuers(LEGAL_PERSON, [TRUSTED])
       .build()
-    const builder = newAsset()
+    const builder = deGate(
+      newAsset()
+        .addCredentialAddresses(ALLOW, [OWNER_ADDRESS])
+        .trustIssuers(LEGAL_PERSON, [TRUSTED])
+    )
+    builder.addService(service)
+    // The asset's own list (issuer trust + DE) is the one walt.id keeps; the service's
+    // issuer trust also runs in it.
+    expect(() => builder.build()).to.throw(SsiPolicyError, /never run/)
+
+    const same = newAsset()
       .addCredentialAddresses(ALLOW, [OWNER_ADDRESS])
       .trustIssuers(LEGAL_PERSON, [TRUSTED])
-    builder.addService(service)
-    expect(names(events(() => builder.build()))).not.to.include(
-      'identity.policy.no_issuer_trust'
+      .setVcPolicies(ALLOW, ['signature', 'not-before', 'revoked-status-list'])
+      .setVpPolicies(ALLOW, [
+        { policy: 'signature' },
+        { policy: 'minimum-credentials', args: '1' }
+      ])
+    same.addService(service)
+    expect(names(events(() => same.build()))).to.deep.equal([])
+  })
+
+  it('throws for a stored request of VerifiableCredential with per-credential policies (B1, D31)', () => {
+    const published = publishedWith({
+      request_credentials: [
+        {
+          type: 'VerifiableCredential',
+          format: 'jwt_vc_json',
+          policies: [`{"policy":"allowed-issuer","args":["${TRUSTED}"]}`]
+        }
+      ],
+      vc_policies: ['signature'],
+      vp_policies: [
+        { policy: 'signature' },
+        { policy: 'minimum-credentials', args: '1' }
+      ]
+    })
+
+    for (const mode of ['warn', 'off'] as const) {
+      let error: unknown
+      try {
+        new AssetBuilder(published).setSsiPolicyLint(mode).build()
+      } catch (caught) {
+        error = caught
+      }
+      expect(error, mode).to.be.instanceOf(SsiPolicyError)
+      expect((error as SsiPolicyError).findings[0]).to.include({
+        code: 'generic-request-type',
+        fatal: true,
+        credentialType: 'VerifiableCredential'
+      })
+      expect((error as Error).message).to.contain(
+        'walt.id files a presented credential under the last entry of its type'
+      )
+    }
+  })
+
+  it('throws for request credentials walt.id refuses to open a session for: no format, or mixed (case a)', () => {
+    const stored = (formats: (string | undefined)[]) =>
+      publishedWith({
+        request_credentials: formats.map((format, index) => ({
+          type: index ? 'VerifiableId' : LEGAL_PERSON,
+          ...(format === undefined ? {} : { format }),
+          policies: [`{"policy":"allowed-issuer","args":["${TRUSTED}"]}`]
+        })),
+        vc_policies: ['signature'],
+        vp_policies: [
+          { policy: 'signature' },
+          { policy: 'minimum-credentials', args: '1' }
+        ]
+      })
+    const codes = (published: AssetV5) => {
+      try {
+        new AssetBuilder(published).setSsiPolicyLint('off').build()
+      } catch (error) {
+        return (error as SsiPolicyError).findings.map((finding) => finding.code)
+      }
+      return []
+    }
+
+    // Each refused by the local walt.id verifier at session creation (PR 13 fix round).
+    expect(codes(stored([undefined]))).to.deep.equal(['request-format'])
+    expect(codes(stored(['jwt_vc_json', 'jwt_vc']))).to.deep.equal([
+      'request-format'
+    ])
+    expect(codes(stored(['jwt_vc_json', undefined]))).to.deep.equal([
+      'request-format'
+    ])
+    expect(codes(stored(['jwt_vp_json']))).to.deep.equal(['request-format'])
+    expect(codes(stored(['jwt_vc', 'jwt_vc']))).to.deep.equal([])
+  })
+
+  it('warns, without throwing, about an issuer that is not a DID next to a usable one (code m2)', () => {
+    // walt.id compares the credential's iss with each entry as written.
+    const published = publishedWith({
+      request_credentials: [
+        {
+          type: LEGAL_PERSON,
+          format: 'jwt_vc_json',
+          policies: [
+            JSON.stringify({
+              policy: 'allowed-issuer',
+              args: ['https://issuer.example.org']
+            })
+          ]
+        }
+      ],
+      vc_policies: ['signature'],
+      vp_policies: [
+        { policy: 'signature' },
+        { policy: 'minimum-credentials', args: '1' }
+      ]
+    })
+
+    const seen = events(() => new AssetBuilder(published).build())
+    expect(names(seen)).to.deep.equal(['identity.policy.issuer_not_did'])
+    expect(seen[0].msg).to.contain(
+      "lists 'https://issuer.example.org', which is not a DID. walt.id compares a credential's iss with each entry as written"
     )
+  })
+
+  it('throws for a stored bare allowed-issuer, which the edit writes back without issuers', () => {
+    const published = publishedWith({
+      request_credentials: [
+        {
+          type: LEGAL_PERSON,
+          format: 'jwt_vc_json',
+          policies: ['allowed-issuer']
+        }
+      ],
+      vc_policies: ['signature'],
+      vp_policies: [
+        { policy: 'signature' },
+        { policy: 'minimum-credentials', args: '1' }
+      ]
+    })
+    expect(() =>
+      new AssetBuilder(published).setSsiPolicyLint('off').build()
+    ).to.throw(
+      SsiPolicyError,
+      /'allowed-issuer' for 'gx:LegalPerson' credentials names no issuer/
+    )
+  })
+
+  it('warns about a hand-written schema that checks less than it seems (sec m1, code n4)', () => {
+    const warn = (schema: unknown) => {
+      const seen = events(() =>
+        newAsset()
+          .addCredentialAddresses(ALLOW, [OWNER_ADDRESS])
+          .setRequestCredentials(ALLOW, [
+            {
+              type: LEGAL_PERSON,
+              format: 'jwt_vc_json',
+              policies: [
+                { policy: 'allowed-issuer', args: [TRUSTED] },
+                { policy: 'schema', args: schema }
+              ]
+            }
+          ])
+          .setVcPolicies(ALLOW, ['signature'])
+          .setVpPolicies(ALLOW, [
+            { policy: 'signature' },
+            { policy: 'minimum-credentials', args: '1' }
+          ])
+          .build()
+      )
+      return seen
+        .filter((event) => event.event === 'identity.policy.weak_schema')
+        .map((event) => event.msg)
+    }
+
+    // The reviewers' A1-A5, each verified by walt.id for an FR credential.
+    const [shape] = warn({
+      credentialSubject: { 'gx:legalAddress': { 'gx:countryCode': 'DE' } }
+    })
+    expect(shape).to.contain(
+      "uses 'credentialSubject', which JSON Schema draft 7 does not define, so walt.id ignores it"
+    )
+    expect(shape).to.contain('constrains nothing')
+    expect(warn({})[0]).to.contain('constrains nothing')
+    expect(warn({ type: 'object', additionalProperties: true })[0]).to.contain(
+      'constrains nothing'
+    )
+    const misspelled = {
+      ...DE_SCHEMA_FIXTURE,
+      required: undefined,
+      require: ['credentialSubject']
+    }
+    const [typo] = warn(JSON.parse(JSON.stringify(misspelled)))
+    expect(typo).to.contain("uses 'require'")
+    expect(typo).to.contain(
+      "does not list credentialSubject in 'required', so a credential without it passes"
+    )
+    expect(
+      warn({
+        ...DE_SCHEMA_FIXTURE,
+        $schema: 'https://example.org/my-schema'
+      })[0]
+    ).to.contain(
+      // URL paths are redacted like any node-supplied URL.
+      'declares $schema "https://example.org", which walt.id\'s validator does not support, so it fails every presentation'
+    )
+
+    // Generated schemas, and hand-written ones with a known draft, give none.
+    expect(warn(DE_SCHEMA_FIXTURE)).to.deep.equal([])
+    expect(
+      warn({
+        ...DE_SCHEMA_FIXTURE,
+        $schema: 'http://json-schema.org/draft-07/schema#'
+      })
+    ).to.deep.equal([])
+    expect(
+      warn(
+        credentialAttributeSchema([
+          { path: COUNTRY, oneOf: ['DE', 'AT'] },
+          { path: ['gx:legalName'], exists: true }
+        ])
+      )
+    ).to.deep.equal([])
   })
 
   it('warns about a policy name walt.id does not know, at every level', () => {
@@ -917,6 +1256,141 @@ describe('attribute preflight in WaltIdCredentialProvider', () => {
     expect((await present(asset, [legalPerson(address('FR'))])).error).to.equal(
       undefined
     )
+  })
+
+  it('mirrors the policy server for repeated requests: the first position is kept (sec m3)', async () => {
+    // Asset [T{schema DE}, T{issuer trust}], service [T{schema DE}]: the policy server drops
+    // the service's repeat, so walt.id keeps the asset's issuer-trust list and never checks
+    // the country. The preflight must not refuse an FR credential the verifier accepts.
+    const schema = JSON.parse(
+      requests(requireCredentialAttributes({}, LEGAL_PERSON, DE))[0]
+        .policies?.[0] ?? ''
+    )
+    const value = (list: unknown[][]) => ({
+      allow: [
+        {
+          type: 'SSIpolicy',
+          values: [
+            {
+              request_credentials: list.map((policies) => ({
+                type: LEGAL_PERSON,
+                format: 'jwt_vc_json',
+                policies: policies.map((policy) => JSON.stringify(policy))
+              }))
+            }
+          ]
+        }
+      ]
+    })
+    const asset = gatedAsset(
+      value([
+        [schema],
+        [{ policy: 'allowed-issuer', args: [TRUSTED] }]
+      ]) as never,
+      value([[schema]]) as never
+    )
+    expect((await present(asset, [legalPerson(address('FR'))])).error).to.equal(
+      undefined
+    )
+
+    // A policy string the policy server cannot parse is dropped: it hides nothing.
+    const unparseable = gatedAsset(
+      value([[schema]]) as never,
+      {
+        allow: [
+          {
+            type: 'SSIpolicy',
+            values: [
+              {
+                request_credentials: [
+                  {
+                    type: LEGAL_PERSON,
+                    format: 'jwt_vc_json',
+                    policies: ['not json']
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      } as never
+    )
+    expect(
+      (await present(unparseable, [legalPerson(address('FR'))])).error
+    ).to.be.instanceOf(CredentialRejectedLocallyError)
+  })
+
+  it('reads the type as walt.id does: a present type: null is "null", not vc.type (nits)', async () => {
+    const credential = {
+      id: 'credential-1',
+      document: jwt({
+        iss: TRUSTED,
+        type: null,
+        vc: {
+          type: ['VerifiableCredential', LEGAL_PERSON],
+          credentialSubject: address('FR')
+        }
+      }),
+      parsedDocument: { vc: { type: ['VerifiableCredential', LEGAL_PERSON] } }
+    } as WaltIdCredential
+    // walt.id files it under "null" and runs no per-credential policy (code probe C7).
+    expect((await present(deAsset(), [credential])).error).to.equal(undefined)
+  })
+
+  it('sanitises credentialType on the error fields, schema and holder-binding (sec m4)', () => {
+    // A node-served type with control characters, matched by the credential's own type.
+    const type = 'gx:LegalPerson\u001b[31m\u0007'
+    const credential = legalPerson(address('FR'), {}, type)
+    const thrown = (run: () => void) => {
+      try {
+        run()
+      } catch (error) {
+        return error as CredentialRejectedLocallyError
+      }
+      throw new Error('expected a CredentialRejectedLocallyError')
+    }
+
+    const schema = thrown(() =>
+      assertCredentialAttributes({
+        asset: gatedAsset(requireCredentialAttributes({}, type, DE)),
+        serviceId: SERVICE_ID,
+        credentials: [credential]
+      })
+    )
+    expect(schema).to.be.instanceOf(CredentialRejectedLocallyError)
+    expect(schema.credentialType).to.equal('gx:LegalPerson')
+
+    const binding = thrown(() =>
+      assertHolderBinding({
+        asset: gatedAsset(
+          setVpPolicies(
+            addRequestCredentials({}, ALLOW, [{ type, format: 'jwt_vc_json' }]),
+            ALLOW,
+            [{ policy: 'holder-binding' }]
+          )
+        ),
+        serviceId: SERVICE_ID,
+        holderDid: 'did:key:z6Mkholder',
+        credentials: [credential],
+        typeOf: () => type
+      })
+    )
+    expect(binding.reason).to.equal('no-sub')
+    expect(binding.credentialType).to.equal('gx:LegalPerson')
+  })
+
+  it('points to onSelectCredentials when several credentials of the type were selected (code n5)', async () => {
+    const two = await present(deAsset(), [
+      legalPerson(address('DE')),
+      legalPerson(address('FR'), { id: 'credential-2' })
+    ])
+    expect((two.error as Error).message).to.contain(
+      'Your wallet selected 2 `gx:LegalPerson` credentials and walt.id checks each'
+    )
+    expect((two.error as Error).message).to.contain('onSelectCredentials')
+
+    const one = await present(deAsset(), [legalPerson(address('FR'))])
+    expect((one.error as Error).message).not.to.contain('onSelectCredentials')
   })
 
   it('skips a schema outside the evaluated subset, at debug', async () => {

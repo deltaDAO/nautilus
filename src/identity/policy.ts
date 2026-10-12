@@ -18,12 +18,15 @@ import {
   type VcPolicy,
   type VpPolicy
 } from '../ddo/types.js'
+import { log } from '../log/logger.js'
+import { sanitize } from '../node/messages.js'
 import {
   type CredentialAttributeRequirement,
   type CredentialRequirementOptions,
   credentialAttributeSchema,
   credentialPolicyProblem,
   DEFAULT_REQUEST_FORMAT,
+  genericTypeProblem,
   isDid,
   isPlainObject,
   mergeAttributeSchemas
@@ -133,7 +136,8 @@ export function setVpPolicies(
  *
  * An empty list removes the list's `SSIpolicy` entry, and with it the credential gate: the
  * policy server refuses every consumer of an entry that requests no credential. Address and
- * access-list entries are kept.
+ * access-list entries are kept. The removal logs `identity.policy.gate_removed`, and throws
+ * a `TypeError` when the list's addresses admit `'*'`, which would leave no gate at all.
  */
 export function setRequestCredentials(
   credentials: DdoCredentials,
@@ -148,13 +152,21 @@ export function setRequestCredentials(
   const encoded = requestCredentials.map(encodeRequestCredential)
 
   if (!encoded.length) {
-    const entries = credentials[list]
-    return entries
-      ? {
-          ...credentials,
-          [list]: entries.filter((entry) => !isSsiPolicyCredential(entry))
-        }
-      : credentials
+    const entries = credentials[list] ?? []
+    if (!entries.some(isSsiPolicyCredential)) return credentials
+
+    const kept = entries.filter((entry) => !isSsiPolicyCredential(entry))
+    if (list === CredentialListTypes.ALLOW && addressList(kept).includes('*'))
+      throw new TypeError(
+        "setRequestCredentials(allow, []) would remove the credential gate of a list that lets every address in ('*'), leaving no gate at all. Replace '*' with explicit addresses first, or keep a request credential."
+      )
+
+    log.emit(
+      'identity.policy.gate_removed',
+      `setRequestCredentials(${list}, []) removed the ${list} list's SSIpolicy entry, with its VC and VP policies: the credential gate is gone, and only the address and access-list entries remain.`,
+      { list }
+    )
+    return { ...credentials, [list]: kept }
   }
 
   return updateSsiPolicy(credentials, list, (value) => {
@@ -172,9 +184,9 @@ export function setRequestCredentials(
  * The schema is checked against the credential as walt.id reads it: the JWT payload for
  * VCDM 2.0, the `vc` claim for VCDM 1.1, both with `credentialSubject` at the root.
  *
- * Like every per-credential policy, it runs only on presented credentials of that type: a
- * hand-built presentation holding a credential of another type is not checked (see the
- * identity guide, "Known limitation").
+ * Like every per-credential policy, it runs only on presented credentials whose last `type`
+ * entry is `type`: a hand-built presentation, or a self-issued credential carrying `type`
+ * before its last entry, is not checked (see the identity guide, "Known limitation").
  */
 export function requireCredentialAttributes(
   credentials: DdoCredentials,
@@ -210,8 +222,9 @@ export function requireCredentialAttributes(
  * per-credential `allowed-issuer` policy on the `allow` list. Adds the request credential
  * if it is not there yet. Issuers of several calls are combined: any of them is trusted.
  *
- * Like every per-credential policy, it runs only on presented credentials of that type (see
- * the identity guide, "Known limitation").
+ * Like every per-credential policy, it runs only on presented credentials whose last `type`
+ * entry is `type` (see the identity guide, "Known limitation"). walt.id compares each entry,
+ * as written, with the credential's raw `iss`; the builders take DIDs only.
  */
 export function trustIssuers(
   credentials: DdoCredentials,
@@ -255,11 +268,15 @@ export function trustIssuers(
 }
 
 /**
- * Changes the per-credential policies of one request credential on the `allow` list,
- * creating it if needed: the one of `type` and `options.format`, or without a format the one
- * request for `type` already there (walt.id keeps a single policy list per type), else a new
- * `jwt_vc_json` one. The policies are then ordered issuer trust first, then attribute checks,
- * then the rest, so the stored form does not depend on the order of the calls.
+ * Changes the per-credential policies of the request credentials of `type` on the `allow`
+ * list, creating one if there is none (format `options.format`, else `jwt_vc_json`). walt.id
+ * keeps a single policy list per type, so every request of the type gets the change. The
+ * policies are then ordered issuer trust first, then attribute checks, then the rest, so the
+ * stored form does not depend on the order of the calls.
+ *
+ * Throws a `TypeError` for a generic type (`VerifiableCredential`), and for a `format` that
+ * would add a second request of the type or a second format to the list: walt.id refuses a
+ * session whose request credentials do not share one format.
  */
 function updateRequestCredential(
   credentials: DdoCredentials,
@@ -269,6 +286,8 @@ function updateRequestCredential(
 ): DdoCredentials {
   if (typeof type !== 'string' || !type)
     throw new TypeError('The credential type must be a non-empty string.')
+  const generic = genericTypeProblem(type)
+  if (generic) throw new TypeError(generic)
   if (
     options.format !== undefined &&
     (typeof options.format !== 'string' || !options.format)
@@ -278,34 +297,63 @@ function updateRequestCredential(
   return updateSsiPolicy(credentials, CredentialListTypes.ALLOW, (value) => {
     const requests = [...(value.request_credentials ?? [])]
     const ofType = requests.filter((credential) => credential.type === type)
-    const format = options.format
+    const { format } = options
 
-    let target =
-      format === undefined
-        ? ofType.length === 1
-          ? ofType[0]
-          : ofType.find(
-              (credential) => credential.format === DEFAULT_REQUEST_FORMAT
-            )
-        : ofType.find((credential) => credential.format === format)
-
-    if (!target) {
-      target = { type, format: format ?? DEFAULT_REQUEST_FORMAT }
-      requests.push(target)
+    if (format !== undefined) {
+      const other = (ofType.length ? ofType : requests).find(
+        (credential) => credential.format !== format
+      )
+      if (other)
+        throw new TypeError(
+          ofType.length
+            ? `'${shownType(type)}' is already requested with format ${JSON.stringify(other.format ?? null)}, and walt.id keeps one policy list per type and refuses a session whose requests have different formats. Leave out the format option, or change the request with setRequestCredentials().`
+            : `The allow list already requests ${JSON.stringify(other.type)} with format ${JSON.stringify(other.format ?? null)}, and walt.id refuses a session whose requests have different formats. Use that format, or leave out the format option.`
+        )
     }
 
-    const policies = change((target.policies ?? []).map(decodeCredentialPolicy))
-    const updated: StoredRequestCredential = {
-      ...target,
-      policies: orderCredentialPolicies(policies).map(encodeCredentialPolicy)
-    }
+    // A new request takes the list's format, so the session keeps a single one.
+    const listFormat = requests.find(
+      (credential) => typeof credential.format === 'string'
+    )?.format
+    const targets: StoredRequestCredential[] = ofType.length
+      ? ofType
+      : [{ type, format: format ?? listFormat ?? DEFAULT_REQUEST_FORMAT }]
+    if (!ofType.length) requests.push(targets[0])
+
+    const updated = new Map(
+      targets.map((target) => [
+        target,
+        {
+          ...target,
+          policies: orderCredentialPolicies(
+            change((target.policies ?? []).map(decodeCredentialPolicy))
+          ).map(encodeCredentialPolicy)
+        }
+      ])
+    )
 
     value.request_credentials = dedupeRequestCredentials(
-      requests.map((credential) =>
-        credential === target ? updated : credential
-      )
+      requests.map((credential) => updated.get(credential) ?? credential)
     )
   })
+}
+
+/** The addresses of a list's `address` entries, as the policy server reads them. */
+function addressList(entries: DdoCredential[]): string[] {
+  return entries.flatMap((entry) => {
+    if (entry.type !== 'address' || !Array.isArray(entry.values)) return []
+    return (entry.values as unknown[]).flatMap((value) => {
+      const address =
+        typeof value === 'string'
+          ? value
+          : (value as { address?: unknown } | null)?.address
+      return typeof address === 'string' ? [address] : []
+    })
+  })
+}
+
+function shownType(type: unknown): string {
+  return sanitize(String(type), 100, 'node')
 }
 
 /** Issuer trust first, then attribute checks, then the rest, each group in its order. */
@@ -788,6 +836,8 @@ function assertRequestCredential(credential: RequestCredential): void {
     throw new TypeError(
       `The '${type}' request credential's policies must be a list.`
     )
+  const generic = policies.length ? genericTypeProblem(type) : undefined
+  if (generic) throw new TypeError(generic)
 
   for (const raw of policies) {
     const policy = decodeCredentialPolicy(readCredentialPolicy(raw))

@@ -20,8 +20,9 @@ export type CredentialAttributeValue = string | number | boolean
  * One attribute a credential must carry, by its path under `credentialSubject`, e.g.
  * `{ path: ['gx:legalAddress', 'gx:countryCode'], equals: 'DE' }`.
  *
- * At most one of `equals`, `oneOf` and `exists`. With none of them, the attribute must only
- * exist.
+ * Exactly one of `equals`, `oneOf` and `exists: true`. A key that is present with the value
+ * `undefined` (an unset variable, a missing config field) throws instead of weakening the
+ * requirement.
  */
 export interface CredentialAttributeRequirement {
   /** The keys from `credentialSubject` down to the attribute. */
@@ -30,7 +31,7 @@ export interface CredentialAttributeRequirement {
   equals?: CredentialAttributeValue
   /** The attribute must be one of these values. */
   oneOf?: CredentialAttributeValue[]
-  /** The attribute must exist, with any value. */
+  /** The attribute must be present, with any value (`null` included, as walt.id reads it). */
   exists?: true
 }
 
@@ -45,6 +46,39 @@ export interface CredentialRequirementOptions {
 
 /** The format a new request credential gets when none is given. */
 export const DEFAULT_REQUEST_FORMAT = 'jwt_vc_json'
+
+/**
+ * Request formats walt.id 90e568f opens a session for (`VerifierService.getPresentationFormat`).
+ * Every request credential of a session must have one, the same one: a missing, mixed or
+ * other format makes it refuse the session, and so every consumer.
+ */
+export const REQUEST_FORMATS: ReadonlySet<string> = new Set([
+  'jwt_vc_json',
+  'jwt_vc',
+  'jwt',
+  'ldp_vc',
+  'ldp',
+  'mso_mdoc',
+  'vc+sd-jwt'
+])
+
+/**
+ * Types every credential carries. walt.id files a presented credential under the **last**
+ * entry of its `type` (`Verifier.getW3CType`), so a credential with a more specific type is
+ * never filed under these, and per-credential policies requested for them never run on it.
+ * A wallet still presents it, since the request matches any `type` entry.
+ */
+export const GENERIC_CREDENTIAL_TYPES: ReadonlySet<string> = new Set([
+  'VerifiableCredential',
+  'VerifiablePresentation'
+])
+
+/** The `TypeError` message for per-credential policies on a generic type, or `undefined`. */
+export function genericTypeProblem(type: unknown): string | undefined {
+  if (typeof type !== 'string' || !GENERIC_CREDENTIAL_TYPES.has(type))
+    return undefined
+  return `Per-credential policies on '${type}' check nothing: walt.id files a presented credential under the last entry of its type (e.g. 'gx:LegalPerson' for ['VerifiableCredential', 'gx:LegalPerson']), so they never run on a credential with a more specific type, which every wallet still presents for this request. Request the credential's own type, the last entry of its type list.`
+}
 
 /** Path segments that would reach `Object.prototype` through a plain object. */
 const FORBIDDEN_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype'])
@@ -74,7 +108,7 @@ interface RequirementNode {
 /**
  * The JSON Schema for `requirements`, combined with AND: nested `required` and `properties`
  * from the root `credentialSubject`, with `const` (one value) or `enum` (several) at each
- * leaf, and `{}` for an attribute that must only exist. Throws a `TypeError` for an invalid
+ * leaf, and `{}` for `exists: true`. Throws a `TypeError` for an invalid
  * or contradictory requirement.
  *
  * The form matches the nautilus test harness's reviewed fixture, key order included.
@@ -101,8 +135,8 @@ function addRequirement(
   root: RequirementNode,
   requirement: CredentialAttributeRequirement
 ): void {
-  const { path, equals, oneOf, exists } = (requirement ??
-    {}) as Partial<CredentialAttributeRequirement>
+  const fields = (requirement ?? {}) as Partial<CredentialAttributeRequirement>
+  const { path, equals, oneOf, exists } = fields
 
   if (
     !Array.isArray(path) ||
@@ -119,10 +153,21 @@ function addRequirement(
       `The credential attribute path ${shownPath(path)} contains '${unsafe}', which is not allowed.`
     )
 
+  // An unset variable must not turn a value check into an existence check.
+  for (const key of ['equals', 'oneOf', 'exists'] as const)
+    if (Object.hasOwn(fields, key) && fields[key] === undefined)
+      throw new TypeError(
+        `The credential attribute requirement for ${shownPath(path)} has ${key}: undefined (an unset variable?). Pass a value, or leave the key out.`
+      )
+
   const given = [equals, oneOf, exists].filter((value) => value !== undefined)
   if (given.length > 1)
     throw new TypeError(
       `The credential attribute requirement for ${shownPath(path)} sets more than one of equals, oneOf and exists.`
+    )
+  if (!given.length)
+    throw new TypeError(
+      `The credential attribute requirement for ${shownPath(path)} sets none of equals, oneOf and exists. Pass exists: true to require only that it is present.`
     )
   if (exists !== undefined && exists !== true)
     throw new TypeError(
@@ -291,12 +336,13 @@ export const KNOWN_SSI_POLICIES: ReadonlySet<string> = new Set([
 ])
 
 /**
- * What is wrong with a per-credential policy's arguments, and what it does, for the policies
- * walt.id cannot run as meant without valid ones, or `undefined` when they are fine:
+ * What is wrong with a per-credential policy's arguments as the builders take them, or
+ * `undefined` when they are fine:
  *
  * - `schema`: a JSON Schema object (a string or an array fails every presentation);
- * - `allowed-issuer`: a non-empty list of DIDs, or one DID (anything else fails every
- *   presentation, or never matches an issuer).
+ * - `allowed-issuer`: a non-empty list of DIDs, or one DID. walt.id compares a credential's
+ *   `iss` with each entry as written, so a non-DID entry matches only an issuer that writes
+ *   exactly that; the builders take DIDs only. A stored asset is linted more leniently.
  */
 export function credentialPolicyProblem(
   name: string,
@@ -315,10 +361,197 @@ export function credentialPolicyProblem(
       return 'has an empty issuer list, so no issuer is trusted and every consumer is refused'
     const bad = issuers.find((issuer) => !isDid(issuer))
     if (bad !== undefined)
-      return `lists ${shownValue(bad)}, which is not a DID, so no credential's issuer can match it`
+      return `lists ${shownValue(bad)}, which is not a DID (the builders take issuer DIDs only)`
   }
 
   return undefined
+}
+
+/** JSON Schema draft 7's keywords: walt.id's validator ignores any other key. */
+const DRAFT7_KEYWORDS = new Set([
+  '$schema',
+  '$id',
+  '$ref',
+  '$comment',
+  'title',
+  'description',
+  'default',
+  'readOnly',
+  'writeOnly',
+  'examples',
+  'definitions',
+  'multipleOf',
+  'maximum',
+  'exclusiveMaximum',
+  'minimum',
+  'exclusiveMinimum',
+  'maxLength',
+  'minLength',
+  'pattern',
+  'additionalItems',
+  'items',
+  'maxItems',
+  'minItems',
+  'uniqueItems',
+  'contains',
+  'maxProperties',
+  'minProperties',
+  'required',
+  'properties',
+  'patternProperties',
+  'additionalProperties',
+  'dependencies',
+  'propertyNames',
+  'const',
+  'enum',
+  'type',
+  'format',
+  'contentMediaType',
+  'contentEncoding',
+  'if',
+  'then',
+  'else',
+  'allOf',
+  'anyOf',
+  'oneOf',
+  'not'
+])
+
+/** Keywords that hold subschemas, or nothing to check, rather than a check of their own. */
+const NON_CONSTRAINING_KEYWORDS = new Set([
+  '$schema',
+  '$id',
+  '$comment',
+  'title',
+  'description',
+  'default',
+  'readOnly',
+  'writeOnly',
+  'examples',
+  'definitions',
+  'contentMediaType',
+  'contentEncoding',
+  'properties',
+  'patternProperties',
+  'additionalProperties',
+  'additionalItems',
+  'items',
+  'dependencies',
+  'contains',
+  'propertyNames',
+  'if',
+  'then',
+  'else',
+  'allOf',
+  'anyOf',
+  'oneOf'
+])
+
+/** The `$schema` drafts walt.id's validator (optimumcode json-schema-validator) supports. */
+const KNOWN_SCHEMA_DRAFTS = new Set([
+  'json-schema.org/draft-04/schema',
+  'json-schema.org/draft-06/schema',
+  'json-schema.org/draft-07/schema',
+  'json-schema.org/draft/2019-09/schema',
+  'json-schema.org/draft/2020-12/schema'
+])
+
+/**
+ * Why a per-credential `schema` written by hand may check less than it seems, for a warning:
+ * keys outside JSON Schema draft 7 (walt.id ignores them, e.g. the credential's own shape
+ * pasted as a schema, or a misspelled `required`), a schema that constrains nothing, an
+ * attribute under `properties` missing from that level's `required` (a credential without it
+ * passes), and a `$schema` walt.id does not support (it fails every presentation). Schemas
+ * from `credentialAttributeSchema` give none.
+ */
+export function schemaWeaknesses(schema: Record<string, unknown>): string[] {
+  const unknownKeys = new Set<string>()
+  const optional: string[] = []
+  const drafts = new Set<string>()
+  let constrains = false
+
+  const visit = (node: unknown, path: string[], depth: number) => {
+    if (node === false || depth > MAX_SCHEMA_DEPTH) {
+      constrains = true
+      return
+    }
+    if (!isPlainObject(node)) return
+
+    for (const [key, value] of Object.entries(node)) {
+      if (!DRAFT7_KEYWORDS.has(key)) {
+        unknownKeys.add(key)
+        continue
+      }
+      if (key === '$schema' && !isKnownDraft(value))
+        drafts.add(shownValue(value))
+      // The checked credential is always an object: `type: 'object'` at the root checks nothing.
+      if (
+        !NON_CONSTRAINING_KEYWORDS.has(key) &&
+        !(key === 'type' && depth === 0 && value === 'object') &&
+        !(key === 'required' && Array.isArray(value) && !value.length)
+      )
+        constrains = true
+    }
+
+    if (isPlainObject(node.properties)) {
+      const required = Array.isArray(node.required) ? node.required : []
+      for (const [key, child] of Object.entries(node.properties)) {
+        if (!required.includes(key)) optional.push(shownPath([...path, key]))
+        visit(child, [...path, key], depth + 1)
+      }
+    }
+    for (const key of ['patternProperties', 'definitions', 'dependencies'])
+      if (isPlainObject(node[key]))
+        for (const child of Object.values(node[key] as object))
+          visit(child, path, depth + 1)
+    for (const key of [
+      'additionalProperties',
+      'additionalItems',
+      'contains',
+      'propertyNames',
+      'if',
+      'then',
+      'else',
+      'not'
+    ])
+      if (isPlainObject(node[key]) || node[key] === false)
+        visit(node[key], path, depth + 1)
+    for (const key of ['items', 'allOf', 'anyOf', 'oneOf'])
+      for (const child of Array.isArray(node[key])
+        ? (node[key] as unknown[])
+        : [node[key]])
+        visit(child, path, depth + 1)
+  }
+  visit(schema, [], 0)
+
+  const weaknesses: string[] = []
+  if (drafts.size)
+    weaknesses.push(
+      `declares $schema ${[...drafts].join(', ')}, which walt.id's validator does not support, so it fails every presentation`
+    )
+  if (unknownKeys.size)
+    weaknesses.push(
+      `uses ${[...unknownKeys]
+        .slice(0, 10)
+        .map((key) => `'${sanitize(key, 100, null)}'`)
+        .join(
+          ', '
+        )}, which JSON Schema draft 7 does not define, so walt.id ignores ${unknownKeys.size === 1 ? 'it' : 'them'}`
+    )
+  if (!constrains)
+    weaknesses.push('constrains nothing, so every credential passes it')
+  else if (optional.length)
+    weaknesses.push(
+      `does not list ${optional.slice(0, 10).join(', ')} in 'required', so a credential without ${optional.length === 1 ? 'it' : 'them'} passes`
+    )
+  return weaknesses
+}
+
+function isKnownDraft(uri: unknown): boolean {
+  return (
+    typeof uri === 'string' &&
+    KNOWN_SCHEMA_DRAFTS.has(uri.replace(/^https?:\/\//, '').replace(/#$/, ''))
+  )
 }
 
 // #endregion

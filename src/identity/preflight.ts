@@ -34,6 +34,7 @@ import {
   shownPath
 } from './attributes.js'
 import { isSsiPolicyCredential } from './policy.js'
+import { effectiveRequestPolicies } from './policyLint.js'
 import type { WaltIdCredential } from './waltid/client.js'
 
 /**
@@ -194,45 +195,31 @@ export function assertHolderBinding(params: {
         sub,
         urlSubject: hasUrlSubject(payload)
       }),
-      { policy: 'holder-binding', reason, credentialType, serviceId }
+      {
+        policy: 'holder-binding',
+        reason,
+        credentialType: fieldText(credentialType),
+        serviceId
+      }
     )
   }
 }
 
 /**
- * The per-credential policies walt.id runs on a presented credential of each type: the
- * service's effective request credentials (asset `allow` list, then the service's, as the
- * policy server merges them), keyed by type, the last non-empty policy list winning
- * (`VerifierService.kt:104-108`).
+ * The per-credential policies walt.id runs on a presented credential of each type, for this
+ * service: the policy server's merge of the asset's and the service's request credentials
+ * (repeats of an identical request dropped, the first keeping its position), then the last
+ * non-empty policy list per type (`VerifierService.kt:104-108`).
  */
 export function effectiveCredentialPolicies(
   asset: AssetV5,
   serviceId: string
 ): Map<string, unknown[]> {
   const service = getService(asset, serviceId)
-  const byType = new Map<string, unknown[]>()
-
-  for (const credentials of [
-    getCredentials(asset),
-    service ? getServiceCredentials(service) : undefined
-  ] as (DdoCredentials | undefined)[])
-    for (const entry of toArray(credentials?.allow))
-      if (isSsiPolicyCredential(entry as never))
-        for (const value of toArray((entry as { values?: unknown }).values))
-          for (const request of toArray(
-            (value as { request_credentials?: unknown } | null)
-              ?.request_credentials
-          )) {
-            const { type, policies } = (request ?? {}) as {
-              type?: unknown
-              policies?: unknown
-            }
-            const parsed = toArray(policies).flatMap(parseCredentialPolicy)
-            if (typeof type === 'string' && parsed.length)
-              byType.set(type, parsed)
-          }
-
-  return byType
+  return effectiveRequestPolicies(
+    getCredentials(asset) as DdoCredentials | undefined,
+    service ? (getServiceCredentials(service) as DdoCredentials) : undefined
+  )
 }
 
 /**
@@ -328,12 +315,18 @@ export function assertCredentialAttributes(params: {
           assetDid: asset.id,
           serviceId,
           credentialType: credentialType as string,
-          verdict
+          verdict,
+          selectedOfType: credentials.filter((other) => {
+            const decoded = decodeJwtPayload(other)
+            return (
+              decoded !== undefined && waltIdType(decoded) === credentialType
+            )
+          }).length
         }),
         {
           policy: 'schema',
           reason: 'attribute-mismatch',
-          credentialType,
+          credentialType: fieldText(credentialType),
           serviceId,
           // The keys come from the asset's schema, which the publisher wrote: no control
           // characters reach a terminal that prints them.
@@ -349,6 +342,8 @@ function attributeMessage(params: {
   serviceId: string
   credentialType: string
   verdict: Extract<AttributeSchemaVerdict, { outcome: 'fail' }>
+  /** How many selected credentials walt.id files under this type. */
+  selectedOfType: number
 }): string {
   const { verdict } = params
   const attribute = verdict.path.length
@@ -375,28 +370,46 @@ function attributeMessage(params: {
         ? `has a \`${attribute}\` of another type`
         : `has another \`${attribute}\``
 
-  return `Service ${shown(params.serviceId, 'node')} of ${shown(params.assetDid, 'node')} requires \`${attribute}\` of your \`${shown(params.credentialType, 'node')}\` credential ${requirement} (\`schema\` policy). Your credential ${problem}, so the verifier would reject it. Nothing was ordered or paid. Present a credential with the required attributes, or ask the publisher about the requirement.`
+  return `Service ${shown(params.serviceId, 'node')} of ${shown(params.assetDid, 'node')} requires \`${attribute}\` of your \`${shown(params.credentialType, 'node')}\` credential ${requirement} (\`schema\` policy). Your credential ${problem}, so the verifier would reject it. Nothing was ordered or paid. ${params.selectedOfType > 1 ? `Your wallet selected ${params.selectedOfType} \`${shown(params.credentialType, 'node')}\` credentials and walt.id checks each, so present only one with the required attributes: choose it with the provider's onSelectCredentials option.` : 'Present a credential with the required attributes, or ask the publisher about the requirement.'}`
 }
 
-/** A stored per-credential policy (JSON-encoded, or as given) as a name or object. */
-function parseCredentialPolicy(raw: unknown): unknown[] {
-  if (typeof raw !== 'string')
-    return raw === undefined || raw === null ? [] : [raw]
-  try {
-    return [JSON.parse(raw)]
-  } catch {
-    return [raw]
-  }
+/**
+ * A node- or wallet-supplied text for an error field an app may print: control characters
+ * stripped, length bounded, the raw value on the debug channel.
+ */
+function fieldText(text: string | undefined): string | undefined {
+  return text === undefined ? undefined : sanitize(text, 200, 'node')
 }
 
-/** walt.id's credential type: the last entry of `type`, `vc.type` or `vp.type`. */
+/**
+ * walt.id's credential type (`Verifier.getAnyType`): the first of `type`, `vc.type`, `vp.type`
+ * that is present, `null` included (JSON `null` reads as the text "null"), its last entry for
+ * a list; else `vct`. `undefined` where walt.id would fail on the credential.
+ */
 function waltIdType(payload: Record<string, unknown>): string | undefined {
-  const raw =
-    payload.type ??
-    (payload.vc as { type?: unknown } | undefined)?.type ??
-    (payload.vp as { type?: unknown } | undefined)?.type
-  const type = Array.isArray(raw) ? raw[raw.length - 1] : raw
-  return typeof type === 'string' ? type : undefined
+  const holder = (key: string) =>
+    isPlainObject(payload[key])
+      ? (payload[key] as Record<string, unknown>)
+      : undefined
+  const source = [payload, holder('vc'), holder('vp')].find(
+    (candidate) => candidate !== undefined && Object.hasOwn(candidate, 'type')
+  )
+  if (source) {
+    const raw = source.type
+    const type = Array.isArray(raw) ? raw[raw.length - 1] : raw
+    if (type !== undefined) return primitiveText(type)
+  }
+
+  const vct = Object.hasOwn(payload, 'vct') ? payload.vct : holder('vc')?.vct
+  return vct === undefined ? undefined : primitiveText(vct)
+}
+
+/** A JSON primitive's content as kotlinx reads it (`JsonPrimitive.content`), else `undefined`. */
+function primitiveText(value: unknown): string | undefined {
+  if (typeof value === 'string') return value
+  if (value === null || typeof value === 'number' || typeof value === 'boolean')
+    return String(value)
+  return undefined
 }
 
 function valueAt(data: unknown, path: string[]): unknown {

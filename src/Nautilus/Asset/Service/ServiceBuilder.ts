@@ -400,7 +400,10 @@ export class ServiceBuilder<
   /**
    * Replaces this service's request credentials, keeping its VC and VP policies. Unlike
    * `addRequestCredentials`, it can remove a request credential or a per-credential policy.
-   * An empty list removes the service's credential gate of that list.
+   * An empty list removes the service's credential gate of that list, with a `warn` event
+   * (`identity.policy.gate_removed`), and throws if the service's list admits `'*'`.
+   * Per-credential policies check only credentials of the requested type (identity guide,
+   * "Known limitation").
    */
   setRequestCredentials(
     list: CredentialListTypes,
@@ -431,6 +434,12 @@ export class ServiceBuilder<
   /**
    * Requires attributes of a credential this service requests, as a per-credential `schema`
    * policy (see `AssetBuilder.requireCredentialAttributes`).
+   * `type` is the last entry of the expected credentials' `type` array (walt.id files a
+   * credential under it); `VerifiableCredential` throws. Known limitation: it runs only on
+   * presented credentials whose last `type` entry is `type`, so a hand-built presentation, or
+   * a self-issued credential carrying `type` before its last entry, skips it. It filters
+   * honest consumers holding honest credentials; it is not access control (identity guide,
+   * "Known limitation").
    */
   requireCredentialAttributes(
     type: string,
@@ -449,6 +458,12 @@ export class ServiceBuilder<
   /**
    * Accepts credentials of `type` for this service only from these issuer DIDs, as a
    * per-credential `allowed-issuer` policy (see `AssetBuilder.trustIssuers`).
+   * `type` is the last entry of the expected credentials' `type` array (walt.id files a
+   * credential under it); `VerifiableCredential` throws. Known limitation: it runs only on
+   * presented credentials whose last `type` entry is `type`, so a hand-built presentation, or
+   * a self-issued credential carrying `type` before its last entry, skips it. It filters
+   * honest consumers holding honest credentials; it is not access control (identity guide,
+   * "Known limitation").
    */
   trustIssuers(
     type: string,
