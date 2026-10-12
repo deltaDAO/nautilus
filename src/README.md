@@ -267,6 +267,23 @@ npm run use:npm          # switch to the published package
 
 Full details, including the environment variables and the credential-gated setup, are in the [examples README](https://github.com/deltaDAO/nautilus/blob/main/examples/README.md) and on the [Examples](https://nautilus.delta-dao.com/docs/examples) docs page.
 
+## Supported ocean.js versions
+
+nautilus 2.x runs on `@oceanprotocol/lib` (ocean.js) **9.2.1**, the version it is tested against. Its own dependency is `~9.2.1`, so a plain install only picks up ocean.js patch releases; a newer minor arrives with a nautilus release. The peer range is `^9.2.1`: an app may bring any newer 9.x itself, and nautilus then uses that one.
+
+nautilus works around several ocean.js behaviours rather than changing ocean.js: how it sends and waits for transactions and returns `null` for a failed send, its process-wide `LoggerInstance`, which calls approve nothing, how it signs node requests, where it sends metadata queries. `test/unit/OceanJsContract.test.ts` pins each of them, in both of ocean.js's bundles, and each test names the nautilus code that depends on it. A weekly CI job runs that contract against the newest ocean.js 9.x.
+
+**Bumping ocean.js** (contributors):
+
+1. Run the contract against the candidate before changing anything: install it outside the workspace and point the test at it.
+   ```sh
+   npm install --prefix ../oceanjs-candidate @oceanprotocol/lib@<version>
+   NAUTILUS_TEST_OCEANJS=../oceanjs-candidate/node_modules/@oceanprotocol/lib npx vitest run test/unit/OceanJsContract.test.ts
+   ```
+2. For each failing test, fix the nautilus code its title names (ocean.js is not patched), then change the test to the new behaviour, in the same PR.
+3. Update both ranges in `src/package.json` and the lockfile, decide the peer range explicitly in the PR, and run the full gates (`npm test`, `npm run docs:build`, the examples).
+4. Update the version on this section and in `docs/pages/docs/getting-started.mdx`.
+
 ## Troubleshooting
 
 Errors, warnings and log events are redacted: no RPC token, session id, signature or JWT. When

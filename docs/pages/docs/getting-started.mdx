@@ -23,6 +23,11 @@ yarn add @deltadao/nautilus@beta ethers
 ```
 :::
 
+nautilus v2 runs on **ocean.js 9.2.1** (`@oceanprotocol/lib`). It installs its own copy
+(`~9.2.1`, patch releases only); if your app depends on ocean.js itself, any 9.x from 9.2.1
+on fits the peer range (`^9.2.1`), but only 9.2.1 is tested with each release. See
+[Supported ocean.js versions](https://github.com/deltaDAO/nautilus/blob/main/src/README.md#supported-oceanjs-versions).
+
 nautilus v2 requires **ethers v6** and Node 22 or later. If you are upgrading from v1, read
 [migration guide](/docs/migration) first — the DDO
 model, the transport and the signer library all changed.
