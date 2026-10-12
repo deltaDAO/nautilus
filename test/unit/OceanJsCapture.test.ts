@@ -26,7 +26,7 @@ import {
   resetLogging
 } from '../../src/log/logger.js'
 import type { LogEvent } from '../../src/log/types.js'
-import { captureLog, cpuTime } from '../helpers.js'
+import { captureLog, cpuBudget, cpuTime } from '../helpers.js'
 import { FAKE } from '../secretScan.js'
 
 const NODE = 'https://node.test.invalid'
@@ -840,7 +840,7 @@ describe('reading a captured line', () => {
     )
 
     // 6.6 s with the deeper args and no budget; 12 ms before the deeper args.
-    expect(spent).to.be.below(300)
+    expect(spent).to.be.below(cpuBudget(300))
     const printed = JSON.stringify(log.events)
     expect(log.events).to.have.length(1)
     expect(printed.length).to.be.below(100_000)
