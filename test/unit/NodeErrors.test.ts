@@ -1301,4 +1301,45 @@ describe("the node's text in a message", () => {
       )
     ).to.equal('https://h.example <redacted> and more')
   })
+
+  it('drops a URL the read limit cuts whole, so no user info is read as its host (security regression)', () => {
+    // `,`, `;` and brackets end a word but not a URL: cut at the one before the unseen `@`,
+    // what was left of the URL read `user:secret` as its host and kept it.
+    const secret = 'userinfo-secret-7Hq2Lm9Z'
+    const filler = 'x'.repeat(17_000)
+    for (const punctuation of [',', ';', '(', ')', '[', ']', '{', '}', "'"])
+      for (const url of [
+        `https://user:${secret}${punctuation}${filler}@rpc.example.org/path`,
+        `https:\\/\\/user:${secret}${punctuation}${filler}@rpc.example.org/path`
+      ]) {
+        for (const text of [url, `failed at ${url}`, `{"error":"${url}"}`]) {
+          const clean = sanitize(text, 200, null)
+          expect(clean, `${punctuation} ${text.slice(0, 40)}`).not.to.contain(
+            secret
+          )
+          expect(redactMessage(text)).not.to.contain(secret)
+          expect(nodeText(text)).not.to.contain(secret)
+        }
+      }
+    expect(
+      sanitize(`failed at https://user:${secret},${filler}@h/p`, 200, null)
+    ).to.equal('failed at…')
+    // A quote or a space ends a URL, also in its user info, cut or not: what is left is no
+    // host and port, and is not shown either.
+    for (const end of ["'", '"', ' '])
+      expect(
+        sanitize(`at https://user:${secret}${end}x@rpc.example.org/path`)
+      ).to.equal(`at https://<redacted>${end}x@rpc.example.org/path`)
+    for (const url of [
+      'https://h.example',
+      'https://h.example:8545',
+      'http://[::1]:8545',
+      'http://127.0.0.1:'
+    ])
+      expect(sanitize(`at ${url}/path`)).to.equal(`at ${url}`)
+    // A URL that ends before the cut keeps its origin, as in a text read whole.
+    expect(
+      sanitize(`failed at https://h.example/p, then ${'y '.repeat(9_000)}`)
+    ).to.match(/^failed at https:\/\/h\.example, then y y .*…$/)
+  })
 })

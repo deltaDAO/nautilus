@@ -100,15 +100,23 @@ export function redactSecrets(text: string): string {
 /** Whether `value` reads as an error code: see `log/keys.ts`. */
 export { isErrorCode }
 
-/** A URL as `scheme://host[:port]`, with the punctuation that ended its sentence kept. */
+/**
+ * A URL as `scheme://host[:port]`, with the punctuation that ended its sentence kept. An
+ * authority that is no host and port reads `<redacted>`.
+ */
 function originOnly(url: string): string {
   const trailing = trailingPunctuation(url)
   const core = url.slice(0, url.length - trailing.length).replace(/\\+\//g, '/')
   // A backslash ends the authority, as a URL parser reads `https://host\path`.
   const [, scheme, authority = ''] = /^([^:]+):\/\/([^/?#\\]*)/.exec(core) ?? []
   const host = authority.replace(/^.*@/, '')
+  // `host`, `host:port` or `[ipv6]:port`. Anything else is user info whose `@` the URL
+  // never reached (a quote or a space in the password ended it, `https://user:se'cret@…`).
+  const origin = /^(?:\[[^\]]*\]|[^:[\]]*)(?::\d*)?$/.test(host)
+    ? host
+    : '<redacted>'
 
-  return `${scheme}://${host}${trailing}`
+  return `${scheme}://${origin}${trailing}`
 }
 
 /** A `SCHEMELESS_URL` as its host and port, with the punctuation that ended its sentence. */
@@ -149,7 +157,10 @@ export function sanitize(
   topic: DebugTopic | null = 'node'
 ): string {
   const limit = readLimit(maxLength)
-  const read = text.length > limit ? beforeLastWord(text.slice(0, limit)) : text
+  const read =
+    text.length > limit
+      ? beforeLastWord(beforeOpenUrl(text.slice(0, limit)))
+      : text
   const redacted = redactSecrets(stripControlCharacters(redactSecrets(read)))
   const clean =
     read !== text && redacted.length <= maxLength
@@ -218,6 +229,22 @@ export function boundedNodeMessage(
  */
 function readLimit(maxLength: number): number {
   return Math.max(8 * maxLength, MIN_READ_LENGTH)
+}
+
+/**
+ * `text` without the URL it ends in, for a text `sanitize` cut: `,`, `;`, a bracket or a
+ * quote ends a word but may stand in a URL's user info (`https://user:secret,…@host`), so
+ * dropping the last word alone could leave `https://user:secret` and the redaction read
+ * the credential as the host. A URL that runs up to the cut, with a scheme or without
+ * (`URL_PATTERN`, `SCHEMELESS_URL`), is dropped whole. Both are scanned in linear time.
+ */
+function beforeOpenUrl(text: string): string {
+  let end = text.length
+  for (const pattern of [URL_PATTERN, SCHEMELESS_URL])
+    for (const match of text.matchAll(pattern))
+      if (match.index + match[0].length === text.length)
+        end = Math.min(end, match.index)
+  return text.slice(0, end)
 }
 
 /** What ends a word for `beforeLastWord`: whitespace, quotes, brackets, `,` and `;`. */
