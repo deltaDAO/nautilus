@@ -387,8 +387,8 @@ It also logs a warning (`identity.policy.*` events) for a gate weaker than the r
 set (no VC or VP `signature`, no `minimum-credentials` of at least 1), for `'*'` in the address
 allow list of a credential-gated service, for `holder-binding`, for `presentation-definition`
 with `jwt_vc_json` credentials, for a requested credential without a per-credential
-`allowed-issuer`, and for per-credential policies that never run because the type is requested
-twice. Assets published with the recommended set build without a warning; older ones without
+`allowed-issuer`. Per-credential policies that never run because the type is requested twice
+throw (see [Credential attribute requirements](#credential-attribute-requirements)). Assets published with the recommended set build without a warning; older ones without
 VP `signature` or `minimum-credentials` now warn on edit. `setSsiPolicyLint('error')` turns
 those into an `SsiPolicyError`, `'off'` silences them. See [`setSsiPolicyLint`](https://nautilus.delta-dao.com/docs/api/assetbuilder/setSsiPolicyLint).
 
@@ -424,7 +424,7 @@ assets alike, for:
 
 - the policies above (`credential-policy-arguments`, `generic-request-type`);
 - a type requested more than once where a non-empty per-credential list is dropped
-  (`credential-policies-replaced`, a warning in PR 12's checks, now fatal). walt.id keeps
+  (`credential-policies-replaced`). walt.id keeps
   only the last non-empty list per type, so issuer trust at asset level and an attribute
   check at service level silently became the attribute check alone. A request of the type
   without policies next to one with policies is fine;
@@ -451,15 +451,20 @@ Put every policy for a type on one request, in one format:
 
 It also warns about a policy name walt.id does not know (`identity.policy.unknown_name`), a
 hand-written `schema` that checks less than it seems (`identity.policy.weak_schema`: keys
-walt.id ignores, no constraint, attributes left out of `required`, an unsupported `$schema`)
-and a stored `allowed-issuer` entry that is not a DID (`identity.policy.issuer_not_did`).
+walt.id ignores in the schema's dialect, which is 2020-12 without `$schema`; no constraint;
+attributes left out of `required`; an unsupported `$schema`),
+a stored `allowed-issuer` entry that is not a DID (`identity.policy.issuer_not_did`), and
+per-credential policies on a `vc+sd-jwt` or `mso_mdoc` request, whose presentation definition
+walt.id does not tie to the requested type (`identity.policy.format_ignores_type`).
 
 **New:** `requireCredentialAttributes`, `trustIssuers` and `setRequestCredentials` on both
 builders. A requirement needs exactly one of `equals`, `oneOf` and `exists: true`; one with
 none, or with a key set to `undefined` (an unset variable), throws. Their `format` option
 throws when it would add a second request of the type or a second format.
 `setRequestCredentials(list, [])` removes the gate with a `warn` event
-(`identity.policy.gate_removed`), and throws when the list admits `'*'`. There is also an
+(`identity.policy.gate_removed`), and throws when that would leave no gate: an allow list
+admitting `'*'`, or one with no address or access-list entry left (the node then lets every
+address in) on the asset, or on an edited service whose asset admits everyone. There is also an
 attribute check before presenting: `WaltIdCredentialProvider` throws a
 `CredentialRejectedLocallyError` with `policy: 'schema'`, `reason: 'attribute-mismatch'` and
 `path` for a credential the verifier would refuse for its attributes. See
