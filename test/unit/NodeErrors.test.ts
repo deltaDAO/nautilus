@@ -1037,6 +1037,62 @@ describe("the node's text in a message", () => {
     }
   })
 
+  it('decodes JSON escapes in keys and URLs, nested JSON strings included (PR #213 review)', () => {
+    const sessionId = 'val-sid-u0049-x9'
+    const pathToken = 'rpc-path-escaped-x9'
+    const raw = [
+      // `I` is `I`: the key is `sessionId`, as a JSON parser reads it.
+      `{"session\\u0049d":"${sessionId}"}`,
+      `{"session\\u0000Id":"${sessionId}"}`,
+      // JSON may escape `/`: the URL is a URL all the same.
+      `{"requestUrl":"https:\\/\\/rpc.example.org\\/v3\\/${pathToken}"}`,
+      `{"note":"see https:\\u002f\\u002frpc.example.org\\u002fv3\\u002f${pathToken}"}`
+    ]
+    for (const body of raw) {
+      // As it is, inside a JSON string (ethers' `responseBody`), and two levels deep.
+      const once = JSON.stringify(body)
+      const twice = JSON.stringify(JSON.stringify({ body }))
+      for (const text of [
+        body,
+        `body=${once}`,
+        `info={ "responseBody": ${once} }`,
+        twice
+      ]) {
+        const out = redactSecrets(text)
+        expect(out, text).not.to.contain(sessionId)
+        expect(out, text).not.to.contain(pathToken)
+        expect(nodeText(text), text).not.to.match(/val-sid|rpc-path/)
+      }
+    }
+    expect(redactSecrets(raw[0])).to.equal('{"sessionId":"<redacted>"}')
+    expect(redactSecrets(raw[2])).to.equal(
+      '{"requestUrl":"https://rpc.example.org"}'
+    )
+    expect(
+      redactSecrets(JSON.stringify(JSON.stringify({ body: raw[0] })))
+    ).to.equal(
+      JSON.stringify(JSON.stringify({ body: '{"sessionId":"<redacted>"}' }))
+    )
+  })
+
+  it('keeps an escaped quote or delimiter inside a secret value from cutting it short', () => {
+    for (const text of [
+      '{"sessionId":"head\\u0022tail-x9"}',
+      'sessionId=head\\u0027tail-x9',
+      'sessionId=head\\u0026tail-x9',
+      'password: head\\u002ctail-x9',
+      JSON.stringify(JSON.stringify({ sessionId: 'head"tail-x9' })),
+      JSON.stringify(JSON.stringify({ sessionId: 'head\\"tail-x9' })),
+      JSON.stringify(
+        JSON.stringify(JSON.stringify({ sessionId: 'head"\\tail-x9' }))
+      )
+    ]) {
+      const out = redactSecrets(text)
+      expect(out, text).not.to.contain('tail-x9')
+      expect(out, text).to.contain('<redacted>')
+    }
+  })
+
   it('catches a key split by a control character, an escape or a line break', () => {
     for (const text of [
       'session\u0000Id=val-sid-x9',

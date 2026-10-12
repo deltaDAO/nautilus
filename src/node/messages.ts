@@ -35,6 +35,18 @@ const MAX_NODE_MESSAGE_LENGTH = 200
 const URL_PATTERN =
   /[a-z][a-z0-9+.-]{0,31}:(?:\\*\/){2}(?:[^\s"'<>\\]|\\+\/)*/gi
 
+/**
+ * A JSON escape for `/` or a `\uXXXX` character, after any number of backslashes: JSON
+ * nested in JSON strings doubles them at each level (`\/`, `\\/`, `\\\u0049`).
+ */
+const JSON_ESCAPE = /\\+(?:\/|u([0-9a-fA-F]{4}))/g
+/**
+ * What a `\uXXXX` escape may be decoded to: characters that are part of a key or a URL and
+ * that end no value in any form. A quote, a backslash or a delimiter stays escaped, so it
+ * cannot cut a value short.
+ */
+const DECODABLE = /^[A-Za-z0-9_\-.:/@~+]$/
+
 /** A `Bearer` or `Basic` credential, wherever it stands. */
 const BEARER = /((?:Bearer|Basic)\s+)[\w.~+/=-]+/gi
 /** A JWT (`eyJ…` header, payload and signature, base64url). */
@@ -90,7 +102,8 @@ const INVISIBLE_CHARACTERS =
  * - the value of every key the log-field redaction treats as secret (`redactsValue`,
  *   `log/keys.ts`: signatures, tokens, nonces, session ids, passwords, API keys, S3 and
  *   OAuth secrets, private keys, cookies, presentations, signed transactions, …), given as
- *   `key=value`, as a JSON field (also inside a JSON string, `\"key\":\"value\"`), or as
+ *   `key=value`, as a JSON field (also inside a JSON string, `\"key\":\"value\"`, at any
+ *   depth, JSON escapes in keys and URLs decoded first: `decodeJsonEscapes`), or as
  *   `key: value` or `'key': 'value'`; a quoted, bracketed or `Bearer`/`Basic` value is
  *   redacted whole. As for fields, a `…token` holding an EVM address is kept, and so is a
  *   `…code` that reads as an error code (`code=SERVER_ERROR`, `"code": -32005`), so RPC
@@ -102,13 +115,32 @@ const INVISIBLE_CHARACTERS =
  * server's redirect URI, an internal path) are dropped, and so are its user and password.
  */
 export function redactSecrets(text: string): string {
-  return redactKeyValues(text.replace(URL_PATTERN, originOnly), SECRET_KEYS)
+  return redactKeyValues(
+    decodeJsonEscapes(text).replace(URL_PATTERN, originOnly),
+    SECRET_KEYS
+  )
     .replace(BEARER, '$1<redacted>')
     .replace(JWT, '<redacted>')
     .replace(HEX_SIGNATURE, '<redacted>')
     .replace(SIGNED_TRANSACTION, (hex) =>
       isSignedTransaction(hex) ? '<redacted>' : hex
     )
+}
+
+/**
+ * `text` with the JSON escapes a key or a URL may hide behind decoded, at any level of
+ * nesting: `session\u0049d` is `sessionId`, `https:\/\/host\/path` a URL, as a JSON parser
+ * reads them. An invisible character is dropped, as `stripControlCharacters` does. Only
+ * characters that end no value are decoded (`DECODABLE`), so the structure stays as it was.
+ */
+function decodeJsonEscapes(text: string): string {
+  return text.replace(JSON_ESCAPE, (sequence, hex: string | undefined) => {
+    if (hex === undefined) return '/'
+    const char = String.fromCharCode(Number.parseInt(hex, 16))
+    INVISIBLE_CHARACTERS.lastIndex = 0
+    if (INVISIBLE_CHARACTERS.test(char)) return ''
+    return DECODABLE.test(char) ? char : sequence
+  })
 }
 
 /** Whether `value` reads as an error code: see `log/keys.ts`. */

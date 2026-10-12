@@ -142,9 +142,10 @@ whitespace or invisible characters, and matched whole, however long, so `session
 Every other text, the message and error messages included, has URLs reduced to their origin,
 and the value of every key the rules above redact is redacted there too when the text gives
 it as `key=value`, `key: value`, `'key': 'value'`, a JSON field `"key": value` or a JSON
-field inside a JSON string (`\"key\":\"value\"`, as ethers quotes a response body), a
-`Cookie` header to the end of its line, and a URL also with JSON-escaped slashes
-(`https:\/\/…`);
+field inside a JSON string (`\"key\":\"value\"`, as ethers quotes a response body, and
+deeper), a `Cookie` header to the end of its line, and a URL also with JSON-escaped slashes
+(`https:\/\/…`); JSON escapes in a key or a URL are decoded first, so `"session\u0049d"` is
+`sessionId`;
 `Bearer` and `Basic` credentials, JWTs, 65-byte hex signatures and raw signed transactions
 are redacted wherever they stand. Text is redacted before and after control characters are
 stripped, so a key split by one is still caught. Free text is matched by pattern, not
