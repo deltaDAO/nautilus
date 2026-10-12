@@ -55,8 +55,8 @@ credential the verifier would reject for `holder-binding`.
     (`identity.policy.presentation_definition_vc_jwt`);
   - a requested type whose effective per-credential policies (walt.id keeps the last
     non-empty list per type, after the policy server drops repeats of an identical request)
-    have no `allowed-issuer` (`identity.policy.no_issuer_trust`),
-    and earlier lists that never run (`identity.policy.credential_policies_replaced`).
+    have no `allowed-issuer` (`identity.policy.no_issuer_trust`). Lists that never run
+    throw (`credential-policies-replaced`; see the credential attribute changeset).
 
   `AssetBuilder.setSsiPolicyLint('warn' | 'error' | 'off')` chooses whether they are logged
   (the default), thrown as an `SsiPolicyError`, or skipped. The warnings go to the
