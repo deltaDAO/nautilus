@@ -26,17 +26,20 @@ after 128 blocks: it stops with "may have been sent".
   again). An order, purchase, approval or escrow payment is sent
   again only with proof from two RPCs that the first can never be mined (the account's
   mined count past its nonce on both, read first; the hash unknown on both; and, in the
-  blocks since the send on each RPC, another call of the account holding that nonce, not
-  the same call to the same contract, which may be this one sped up or retried, searched
-  over at most 128 blocks), so never without a `verificationProvider`; otherwise it stops with the new **`NonceGuardError`**
+  blocks since the send on each RPC, another call of the account holding that nonce in a
+  finalized block, not the same call to the same contract, which may be this one sped up
+  or retried, searched over at most 128 blocks; nautilus does not wait for finality, so on
+  a chain that finalizes in minutes a fresh collision stops), so never without a
+  `verificationProvider`; otherwise it stops with the new **`NonceGuardError`**
   (`reason: 'may-have-been-sent'`). A timeout, network error or any other refusal is never
   retried; a resend that fails that way is a `NonceGuardError` too, keeping the earlier
   refused transactions in `attempts` (`attemptsComplete` says whether that list is whole).
   `NonceGuardError` has `code`, `reason` (`'may-have-been-sent'`, `'attempts-exhausted'`,
   `'unverifiable'` or `'not-managed'`), `attempts`, `attemptsComplete` and `moneySend`.
-- **The counter survives a lagging RPC.** It falls back to the RPC's pending count only for
-  a transaction dropped from the pool: sent over a minute ago, unknown on two reads, and the
-  account not mined past its nonce.
+- **The counter survives a lagging RPC.** A send takes the RPC's pending count instead only
+  when the earliest transaction the pending count does not cover was dropped from the pool
+  (sent over a minute ago, unknown on two reads, and the account not mined past its nonce),
+  so a dropped transaction no longer leaves a gap that later ones wait behind for ever.
 - **New options on `Nautilus.create`:** `nonceManagement: 'auto' | 'off'` (default `'auto'`;
   `'off'` never sets a nonce or resends) and `verificationProvider`, a second RPC on the
   same chain for the "never sent" proofs, recommended for paid flows; `create` checks its
@@ -56,7 +59,9 @@ after 128 blocks: it stops with "may have been sent".
   recorded failure. No error from a failed send carries a raw signed transaction or the RPC's URL path any more:
   ethers' errors reach you with `<signed transaction 0x…hash>` in place of the signed bytes
   (also where the RPC echoes them), the RPC URL cut to its origin (its path may hold an API
-  key), and the HTTP `request`, `response` and response body of a failed request dropped;
+  key), and the HTTP `request`, `response` and response body of a failed request dropped
+  (an error that cannot be changed in place, frozen or with read-only fields, is thrown as
+  a sanitised copy with its `name`, `code`, `reason`, hashes and redacted messages);
   the raw values go to the debug channel (`NAUTILUS_DEBUG=sensitive`, topic `nonce`), with
   the nonce reads and the guard's decisions; credentials such as an RPC URL's token only at
   `NAUTILUS_DEBUG=secrets`.

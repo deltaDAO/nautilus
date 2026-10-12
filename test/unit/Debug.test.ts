@@ -7,6 +7,7 @@
  * it is off, on a debug event that is not one line, and on a `sensitive` event holding a
  * long-lived fixture credential.
  */
+import { ProviderInstance } from '@oceanprotocol/lib'
 import { FetchRequest, makeError } from 'ethers'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CredentialProvider } from '../../src/identity/CredentialProvider.js'
@@ -45,7 +46,7 @@ import { Nautilus } from '../../src/Nautilus/index.js'
 import { redactSecrets, sanitize } from '../../src/node/messages.js'
 import {
   OceanNodeClient,
-  type OceanNodeError,
+  OceanNodeError,
   PolicyServerAction
 } from '../../src/node/OceanNodeClient.js'
 import { IpfsRemoteStore } from '../../src/remote/IpfsRemoteStore.js'
@@ -465,6 +466,66 @@ describe("sensitive: the raw value in the channel, never in the caller's error",
     expect(JSON.stringify(record.data)).to.contain(FAKE.jwt)
   })
 
+  it("checkSessionId: an answer that is not the policy server's envelope reaches the channel", async () => {
+    const body =
+      'upstream policy-server unreachable: connect ECONNREFUSED 10.0.0.7:8080'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(body, {
+            status: 502,
+            statusText: 'Bad Gateway',
+            headers: { 'Content-Type': 'text/plain' }
+          })
+      )
+    )
+    const events = captureDebug('sensitive', ['policy', 'node'])
+
+    const error = await nodeClient()
+      .checkPolicySession(SID)
+      .then(
+        () => undefined,
+        (thrown: unknown) => thrown
+      )
+
+    expect(error).to.be.instanceOf(OceanNodeError)
+    expect((error as Error).message).not.to.contain('ECONNREFUSED')
+    const answer = events.find((event) =>
+      String(JSON.stringify(event.data)).includes(body)
+    )
+    expect(answer?.topic).to.equal('policy')
+    expect(answer?.data).to.deep.include({ status: 502, body })
+  })
+
+  it('checkSessionId over P2P: an error without an envelope reaches the channel', async () => {
+    const cause = new Error(
+      'P2P command error: upstream policy-server unreachable: ECONNREFUSED'
+    )
+    vi.spyOn(ProviderInstance, 'PolicyServerPassthrough').mockRejectedValue(
+      cause
+    )
+    const events = captureDebug('sensitive', ['policy'])
+
+    const error = await new OceanNodeClient({
+      nodeUri: '16Uiu2HAmPeerIdOnly',
+      chainId: CHAIN_ID,
+      auth: { consumerAddress: NFT_ADDRESS, nonce: '1', signature: '0xsigned' },
+      consumerAddress: NFT_ADDRESS
+    })
+      .checkPolicySession(SID)
+      .then(
+        () => undefined,
+        (thrown: unknown) => thrown
+      )
+
+    expect(error).to.be.instanceOf(OceanNodeError)
+    const answer = events.find((event) =>
+      String(JSON.stringify(event.data)).includes('ECONNREFUSED')
+    )
+    expect(answer?.topic).to.equal('policy')
+  })
+
   it('after a failed presentation, reads the verifier record either way, shows it only with the policy topic on, and throws the same error', async () => {
     const failure = new Error('Presentation failed')
     const run = async () => {
@@ -831,6 +892,23 @@ describe('what the sensitive tier still hides', () => {
       expect(maskUrl(`https://host.test${kept}`)).to.equal(
         `https://host.test${kept}`
       )
+  })
+
+  it('masks user info a quote or a space ended before its `@` (security regression)', () => {
+    // The URL ends at the quote, so no `@` is left in it and `user:secret` read as the host.
+    const secret = 'userinfo-secret-7Hq2Lm9Z'
+    for (const end of ["'", '"', ' ']) {
+      const text = `at https://user:${secret}${end}x@rpc.example.org/path`
+      expect(maskText(text), text).not.to.contain(secret)
+    }
+    expect(maskUrl(`https://user:${secret}`)).to.equal('https://<redacted>')
+    for (const url of [
+      'https://host.test',
+      'https://host.test:8545/a',
+      'http://[::1]:8545/a',
+      'http://127.0.0.1:/a'
+    ])
+      expect(maskUrl(url)).to.equal(url)
   })
 
   it('masks auth headers and credential fields in text, and keeps JWTs, signatures and session ids', () => {

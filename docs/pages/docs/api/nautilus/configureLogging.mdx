@@ -145,9 +145,10 @@ whitespace or invisible characters, and matched whole, however long, so `session
 Every other text, the message and error messages included, has URLs reduced to their origin,
 and the value of every key the rules above redact is redacted there too when the text gives
 it as `key=value`, `key: value`, `'key': 'value'`, a JSON field `"key": value` or a JSON
-field inside a JSON string (`\"key\":\"value\"`, as ethers quotes a response body), a
-`Cookie` header to the end of its line, and a URL also with JSON-escaped slashes
-(`https:\/\/…`). The text is also read with up to eight levels of escaping undone: JSON
+field inside a JSON string (`\"key\":\"value\"`, as ethers quotes a response body, and
+deeper), a `Cookie` header to the end of its line, and a URL also with JSON-escaped slashes
+(`https:\/\/…`); JSON escapes in a key or a URL are decoded first, so `"session\u0049d"` is
+`sessionId`. The text is also read with up to eight levels of escaping undone: JSON
 escaping (a body quoted inside JSON several times, `\u0022` and `\'` quotes included) and
 percent-encoding (`apiToken%3D…`, `%22apiToken%22%3A…`, `https%3A%2F%2F…`). Deeper escaping
 is flattened and read once more: every escape is undone, and so is every escape that undoing
@@ -250,7 +251,9 @@ Notes:
   `configureLogging`, else to the first copy loaded. When another copy does that, e.g. a
   plugin that sets `'passthrough'` for itself, which makes ocean.js print unredacted for the
   whole process, the copy that received the lines until then logs an
-  `oceanjs.capture.moved` warning with the new `mode`.
+  `oceanjs.capture.moved` warning with the new `mode`. The copies share the operation too:
+  a line ocean.js logs during a call made through one copy carries that call's `opId`,
+  whichever copy receives the line.
 - A line ocean.js logs while nautilus captures another, e.g. from a `sink` or a debug sink
   that logs through `LoggerInstance`, is dropped, never printed: through ocean.js it would
   print unredacted. One `oceanjs.capture.nested_dropped` warning says so. Hand a sink's
@@ -296,7 +299,8 @@ Warnings of an [`S3RemoteStore`](/docs/api/remote/S3RemoteStore) and ocean.js's
 
 Each call of `publish`, `completePublish`, `edit`, `setServicePrice`,
 `setAssetLifecycleState`, `access`, `compute`, `freeCompute`, `stopCompute`,
-`getComputeStatus`, `getComputeResult` and `waitForIndexer` is an **operation** with its own
+`getComputeStatus`, `getComputeResult`, `streamComputeResult`, `getComputeLogs` and
+`waitForIndexer` is an **operation** with its own
 `opId`. Every event the call causes carries it, with the call's name as `operation`, so the
 lines of calls that run at the same time (a `Promise.all`, a server handling several
 requests) can be told apart:
@@ -330,9 +334,10 @@ property gets none; each is rethrown as it was.
 Each operation starts with a `…started` event (`debug`) and ends with `…finished` or
 `…failed`, with its `durationMs`; `failed` also has the redacted `error`. They are `info`
 (`publish.operation.*`, `edit.operation.*`, `lifecycle.operation.*`, `access.operation.*`,
-`compute.operation.*`, `node.operation.*` for `waitForIndexer`), except for the job reads
-apps poll, `getComputeStatus` and `getComputeResult`, whose `compute.query.*` events are all
-`debug`.
+`compute.operation.*`, `node.operation.*` for `waitForIndexer`), except for the job reads,
+`getComputeStatus` and `getComputeResult` (which apps poll), `streamComputeResult` and
+`getComputeLogs`, whose `compute.query.*` events are all `debug`. A stream call finishes once
+the stream is open; reading it is not part of the operation.
 
 In Node 22.3 or newer, a call made from inside another call of the same logger, e.g. from a
 `confirmProviderFees` callback, joins that operation: it has no events or `opId` of its own,

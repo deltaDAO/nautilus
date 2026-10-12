@@ -59,7 +59,10 @@ policy-server session id or the wallet's redirect URI any more.
 - **The policy-server session id is redacted from the wallet's text.** walt.id's verifier
   quotes it bare for an expired or unknown session (`Id parameter <id> doesn't refer to an
   existing session`), and the wallet passes that on. `WaltIdCredentialProvider` now removes
-  the session id (and each of its two halves) from the wallet's message, whatever its length, and every sanitiser
+  the session id (and each of its two halves) from the wallet's message, whatever its length,
+  also the start of it that a cut left before the message's closing `…` (`WaltIdHttpWallet`
+  bounds the message before the provider sees it, so an id that crosses the 500th character
+  is cut), and every sanitiser
   redacts the policy server's id shape (`<64 hex>-<64 hex>`, not after `0x`, which is a
   compute job id) wherever it stands, in node text and per-policy errors too. A URL quoted in
   the wallet's text still keeps its origin, so the verifier's host can appear.

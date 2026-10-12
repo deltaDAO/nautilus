@@ -150,11 +150,14 @@ const FAILURE_TTL_MS = 60_000
 const MAX_RECORDED_SENDS = 64
 
 /**
- * How long after its broadcast the last counted transaction is assumed in flight: an RPC
- * that does not return it yet (a lagging or load-balanced backend) does not reset the
- * counter within this time.
+ * How long after its broadcast a transaction is assumed in flight: an RPC that does not
+ * return it yet (a lagging or load-balanced backend) does not have its nonce taken again
+ * within this time.
  */
 const COUNTER_GRACE_MS = 60_000
+
+/** At most this many broadcasts per (chain, address) are kept to be checked for a drop. */
+const MAX_OUTSTANDING = 256
 
 /**
  * How far above every other nonce source the "next nonce" an RPC names in its refusal may
@@ -186,6 +189,15 @@ export class NonceGuardState {
   readonly lock = createKeyedLock()
   /** The next nonce per key, after the last successful broadcast at `at` (ms). */
   readonly next = new Map<string, SentAttempt & { next: number; at: number }>()
+  /**
+   * Per key, the latest `MAX_OUTSTANDING` broadcasts by nonce, each with its broadcast time
+   * `at` (ms): the earliest one the RPC's pending count does not cover, when dropped,
+   * leaves a gap no later transaction gets past.
+   */
+  readonly outstanding = new Map<
+    string,
+    Map<number, SentAttempt & { at: number }>
+  >()
 }
 
 const processState = new NonceGuardState()
@@ -455,11 +467,20 @@ export function notBroadcast(error: unknown): boolean {
  */
 const MAX_SCRUBBED_LENGTH = 16_000
 
-/** Errors `withoutSignedTransaction` already scrubbed. */
-const scrubbedErrors = new WeakSet<object>()
+/**
+ * Errors `withoutSignedTransaction` already handled, each with what it returned: the error
+ * itself, scrubbed in place, or a sanitised copy.
+ */
+const scrubbedErrors = new WeakMap<object, unknown>()
 
 /** The fields of an ethers error that can carry a signed transaction, a URL or RPC text. */
 interface ScrubbedFields {
+  name?: unknown
+  code?: unknown
+  reason?: unknown
+  action?: unknown
+  hash?: unknown
+  transactionHash?: unknown
   message?: unknown
   stack?: unknown
   shortMessage?: unknown
@@ -472,6 +493,7 @@ interface ScrubbedFields {
     transaction?: unknown
     requestUrl?: unknown
     responseBody?: unknown
+    sendTransactionHash?: unknown
     payload?: { params?: unknown[] }
     error?: { message?: unknown }
     info?: { error?: { message?: unknown } }
@@ -479,9 +501,8 @@ interface ScrubbedFields {
 }
 
 /**
- * A failed send's error made safe to throw and print, in place (an unmined signed
- * transaction can be broadcast by anyone who reads it, and an RPC's URL may carry its
- * API key):
+ * A failed send's error made safe to throw and print (an unmined signed transaction can be
+ * broadcast by anyone who reads it, and an RPC's URL may carry its API key):
  *
  * - the signed transaction, wherever ethers puts it (`transaction`, the payload's
  *   parameter, `info.transaction`) and wherever a message quotes it (an RPC's echo too, in
@@ -493,14 +514,15 @@ interface ScrubbedFields {
  *   characters and sanitised as `sanitize` does: URLs to their origin, credentials
  *   redacted, ANSI escapes and control characters stripped.
  *
- * The raw error goes to the debug channel (`nonce`) first. Fields a frozen error does not
- * let go are kept. `confirmTransaction()`'s `cause` is a sanitised copy instead
- * (`sanitizedSendError`).
+ * In place, so the caller keeps the error it would have got. When a field does not take
+ * its redacted value (a frozen error, a read-only field), the error is returned as a
+ * sanitised copy instead (`scrubbedCopy`); throw what this returns, never the argument.
+ * The raw error goes to the debug channel (`nonce`) first. `confirmTransaction()`'s
+ * `cause` is a sanitised copy either way (`sanitizedSendError`).
  */
 export function withoutSignedTransaction(error: unknown): unknown {
-  if (!error || typeof error !== 'object' || scrubbedErrors.has(error))
-    return error
-  scrubbedErrors.add(error)
+  if (!error || typeof error !== 'object') return error
+  if (scrubbedErrors.has(error)) return scrubbedErrors.get(error)
 
   const raw = signedTransactionOf(error)
   if (raw) debugRaw('nonce', 'signed transaction of a failed send', raw)
@@ -527,81 +549,122 @@ export function withoutSignedTransaction(error: unknown): unknown {
   }
 
   const target = error as ScrubbedFields
-  const set = (write: () => void) => {
+  // Whether every field took its redacted value.
+  let scrubbed = true
+  const set = (holder: object, key: string, value: unknown) => {
+    const fields = holder as Record<string, unknown>
     try {
-      write()
+      if (fields[key] === value) return
+      fields[key] = value
+      if (fields[key] !== value) scrubbed = false
     } catch {
-      // A frozen error, or a read-only field, keeps it.
+      // A frozen error, a read-only field or a throwing getter keeps it: copy instead.
+      scrubbed = false
     }
   }
 
   const message = target.message
   if (typeof message === 'string') {
     const cleaned = clean(message)
-    set(() => {
-      target.message = cleaned
-    })
+    set(target, 'message', cleaned)
     // The stack starts with the message as it was (its frames are left as they are).
     if (typeof target.stack === 'string' && cleaned !== message) {
       const stack = target.stack.split(message).join(cleaned)
-      set(() => {
-        target.stack = quoted ? stack.replace(quoted, replacement) : stack
-      })
+      set(target, 'stack', quoted ? stack.replace(quoted, replacement) : stack)
     }
   }
   const shortMessage = target.shortMessage
   if (typeof shortMessage === 'string')
-    set(() => {
-      target.shortMessage = clean(shortMessage)
-    })
+    set(target, 'shortMessage', clean(shortMessage))
   for (const nested of [
     target.error,
     target.info?.error,
     target.info?.info?.error
   ]) {
     const text = nested?.message
-    if (nested && typeof text === 'string')
-      set(() => {
-        nested.message = clean(text)
-      })
+    if (nested && typeof text === 'string') set(nested, 'message', clean(text))
   }
 
   if (raw) {
-    if (target.transaction === raw)
-      set(() => {
-        target.transaction = replacement
-      })
-    if (target.info?.transaction === raw) {
-      const info = target.info
-      set(() => {
-        info.transaction = replacement
-      })
-    }
+    if (target.transaction === raw) set(target, 'transaction', replacement)
+    if (target.info?.transaction === raw)
+      set(target.info, 'transaction', replacement)
     for (const params of [target.payload?.params, target.info?.payload?.params])
       if (Array.isArray(params) && params[0] === raw)
-        set(() => {
-          params[0] = replacement
-        })
+        set(params, '0', replacement)
   }
 
   for (const field of ['request', 'response'] as const)
     if (target[field] !== undefined)
-      set(() => {
-        target[field] = `<${field} omitted: NAUTILUS_DEBUG, topic nonce>`
-      })
+      set(target, field, `<${field} omitted: NAUTILUS_DEBUG, topic nonce>`)
   const info = target.info
-  if (info && typeof info.requestUrl === 'string') {
-    const url = info.requestUrl
-    set(() => {
-      info.requestUrl = redactSecrets(url)
-    })
-  }
+  if (info && typeof info.requestUrl === 'string')
+    set(info, 'requestUrl', redactSecrets(info.requestUrl))
   if (info && info.responseBody !== undefined && info.responseBody !== null)
-    set(() => {
-      info.responseBody = '<response body omitted: NAUTILUS_DEBUG, topic nonce>'
-    })
+    set(
+      info,
+      'responseBody',
+      '<response body omitted: NAUTILUS_DEBUG, topic nonce>'
+    )
 
-  return error
+  const result = scrubbed
+    ? error
+    : scrubbedCopy(target, clean, raw && replacement)
+  scrubbedErrors.set(error, result)
+  if (result !== error) scrubbedErrors.set(result as object, result)
+  return result
+}
+
+/**
+ * A new error for one that could not be redacted in place: its name, its ethers `code`,
+ * `reason`, `action` and the hashes a caller checks (`hash`, `transactionHash`,
+ * `info.sendTransactionHash`), and its messages redacted with `clean` (`message`,
+ * `shortMessage`, the RPC's in `error` and `info.error`), `info.requestUrl` cut to its
+ * origin, the signed transaction as `replacement`. No request, response, payload or body.
+ */
+function scrubbedCopy(
+  error: ScrubbedFields,
+  clean: (text: string) => string,
+  replacement?: string
+): Error {
+  const text = (value: unknown) =>
+    typeof value === 'string' ? clean(value) : undefined
+  const id = (value: unknown) => (typeof value === 'string' ? value : undefined)
+  try {
+    const copy = new Error(text(error.message) ?? 'The send failed.') as Error &
+      ScrubbedFields
+    if (typeof error.name === 'string') copy.name = error.name
+    for (const [key, value] of Object.entries({
+      code: id(error.code),
+      reason: id(error.reason),
+      action: id(error.action),
+      hash: id(error.hash),
+      transactionHash: id(error.transactionHash),
+      shortMessage: text(error.shortMessage),
+      transaction: replacement || undefined
+    }))
+      if (value !== undefined)
+        (copy as unknown as Record<string, unknown>)[key] = value
+
+    const rpcMessage = text(error.error?.message)
+    if (rpcMessage !== undefined) copy.error = { message: rpcMessage }
+    const info = {
+      sendTransactionHash: id(error.info?.sendTransactionHash),
+      requestUrl:
+        typeof error.info?.requestUrl === 'string'
+          ? redactSecrets(error.info.requestUrl)
+          : undefined,
+      error:
+        text(error.info?.error?.message) === undefined
+          ? undefined
+          : { message: text(error.info?.error?.message) }
+    }
+    if (Object.values(info).some((value) => value !== undefined))
+      copy.info = JSON.parse(JSON.stringify(info))
+    return copy
+  } catch {
+    return new Error('The send failed, with an error nautilus cannot read.')
+  }
 }
 
 /**
@@ -736,17 +799,21 @@ export async function provenNeverSent(params: {
 }
 
 /**
- * Positive proof that none of `attempts` was mined: for each one's nonce, the transaction
- * of `address` with that nonce found in the blocks since the send (`fromBlock`, read just
- * before the first broadcast, minus one), and it is another call. **Every** provider must
+ * Positive proof that none of `attempts` can ever be mined: for each one's nonce, the
+ * transaction of `address` with that nonce found in a **finalized** block since the send
+ * (`fromBlock`, read just before the first broadcast, minus one), and it is another call.
+ * A holder only in the unfinalized tip proves nothing: a reorganisation can drop it and
+ * mine the attempt in its slot, so a resend would land as well. **Every** provider must
  * show this for every nonce on its own: a provider on another fork, or one that forged a
  * block, cannot prove it alone. No proof when any provider shows one of `attempts` in a
- * block, does not return a block up to its head, has more than `MAX_PROOF_BLOCKS` blocks
- * to read, or fails a read; nor when the transaction holding a nonce makes the same call
- * (`call`: same recipient and same function), which may be this send sped up in a wallet
- * or retried by another process, so this send would land twice. A nonce taken before the
- * send (the stale read of the beta.2 run) is not in those blocks either, so such a send
- * stops with "may have been sent".
+ * block, has a holder above its finalized block (or no finalized block), does not return
+ * a block up to its head, has more than `MAX_PROOF_BLOCKS` blocks to read, or fails a
+ * read; nor when the transaction holding a nonce makes the same call (`call`: same
+ * recipient and same function), which may be this send sped up in a wallet or retried by
+ * another process, so this send would land twice. A nonce taken before the send (the
+ * stale read of the beta.2 run) is not in those blocks either, so such a send stops with
+ * "may have been sent"; so does, in practice, a collision a moment ago on a chain that
+ * takes minutes to finalize (an OP Stack chain): nautilus does not wait for finality.
  */
 export async function provenSlotsTaken(params: {
   providers: Provider[]
@@ -777,6 +844,10 @@ export async function provenSlotsTaken(params: {
 
   try {
     for (const provider of [...new Set(params.providers)]) {
+      // Read first: a block at or below it, read afterwards, is final.
+      const finalized = (await provider.getBlock('finalized'))?.number
+      if (typeof finalized !== 'number')
+        return verdict(false, 'no finalized block')
       const head = await provider.getBlockNumber()
       if (head - start + 1 > MAX_PROOF_BLOCKS)
         return verdict(false, 'too many blocks since the send')
@@ -795,6 +866,11 @@ export async function provenSlotsTaken(params: {
           if (!open.has(tx.nonce)) continue
           if (call && sameCall(tx, call))
             return verdict(false, `${tx.hash} makes the same call`)
+          if (number > finalized)
+            return verdict(
+              false,
+              `${tx.hash} holds nonce ${tx.nonce} in block ${number}, above the finalized block ${finalized}`
+            )
           open.delete(tx.nonce)
           taken[tx.nonce] = tx.hash
         }
@@ -1056,23 +1132,32 @@ export class NonceGuardSigner extends AbstractSigner {
 
   /**
    * The nonce for the next send: `max(local next, pending)`. A local counter ahead of the
-   * pending count is kept unless the last transaction it counted was dropped
-   * (`wasDropped`): one that was dropped would otherwise leave a gap no later transaction
-   * gets past.
+   * pending count is kept unless the earliest broadcast the pending count does not cover
+   * (else the last one counted) was dropped (`wasDropped`): one that was dropped leaves a
+   * gap no later transaction gets past, so this send takes the pending count, filling it.
+   * The counter stays, so the send after it skips the transactions still waiting behind
+   * the gap.
    */
   private async nextNonce(key: string, address: string): Promise<number> {
     const provider = this.requireProvider()
     const pending = await provider.getTransactionCount(address, 'pending')
     const local = this.state.next.get(key)
+    const outstanding = this.state.outstanding.get(key)
 
     let nonce = pending
     if (local && local.next > pending) {
-      if (await this.wasDropped(local, address)) {
-        this.state.next.delete(key)
+      // Below `pending` the RPC counts every slot (pending or mined): no gap there.
+      const uncounted = [...(outstanding?.keys() ?? [])].filter(
+        (sent) => sent >= pending
+      )
+      const gap =
+        (uncounted.length && outstanding?.get(Math.min(...uncounted))) || local
+      if (await this.wasDropped(gap, address)) {
+        outstanding?.delete(gap.nonce)
         this.log.emit(
           'chain.nonce.counter_reset',
-          `The RPC no longer knows transaction ${local.hash} (nonce ${local.nonce}) of ${address}, and the account has not mined past that nonce, so it was dropped: the nonce counter falls back to the RPC's pending count ${pending}.`,
-          { address, txNonce: local.nonce, pending, txHash: local.hash }
+          `The RPC no longer knows transaction ${gap.hash} (nonce ${gap.nonce}) of ${address}, and the account has not mined past that nonce, so it was dropped: the next transaction takes the RPC's pending count ${pending}.`,
+          { address, txNonce: gap.nonce, pending, txHash: gap.hash }
         )
       } else nonce = local.next
     }
@@ -1087,7 +1172,7 @@ export class NonceGuardSigner extends AbstractSigner {
   }
 
   /**
-   * Whether the last counted transaction was dropped, so the counter must fall back: sent
+   * Whether a counted transaction was dropped, so its nonce must be taken again: sent
    * more than `COUNTER_GRACE_MS` ago, unknown by hash on two reads (the second through
    * the verification provider, a moment later), and the account's mined count on each
    * provider not past its nonce. An RPC that merely lags (it answers `pending` and the
@@ -1117,13 +1202,19 @@ export class NonceGuardSigner extends AbstractSigner {
   }
 
   private advance(key: string, sent: SentAttempt): void {
+    const at = this.now()
     const current = this.state.next.get(key)
     if (!current || sent.nonce + 1 > current.next)
-      this.state.next.set(key, {
-        ...sent,
-        next: sent.nonce + 1,
-        at: this.now()
-      })
+      this.state.next.set(key, { ...sent, next: sent.nonce + 1, at })
+
+    let outstanding = this.state.outstanding.get(key)
+    if (!outstanding) {
+      outstanding = new Map()
+      this.state.outstanding.set(key, outstanding)
+    }
+    outstanding.set(sent.nonce, { ...sent, at })
+    if (outstanding.size > MAX_OUTSTANDING)
+      outstanding.delete(Math.min(...outstanding.keys()))
   }
 
   /**
@@ -1191,9 +1282,9 @@ export class NonceGuardSigner extends AbstractSigner {
     }
 
     // The refusal itself (with the RPC's unredacted text and the signed transaction) goes
-    // to the debug channel only: it is redacted in place, and the errors below name its
-    // code and the RPC's message, redacted.
-    withoutSignedTransaction(error)
+    // to the debug channel only: it is redacted (in place, else copied), and the errors
+    // below name its code and the RPC's message, redacted.
+    const refused = withoutSignedTransaction(error)
 
     const decoded = raw ? decode(raw) : undefined
 
@@ -1203,7 +1294,7 @@ export class NonceGuardSigner extends AbstractSigner {
     )
       return stop(
         'unverifiable',
-        `The transaction from ${address} was refused (${describeRefusal(error)}), and the refusal ${decoded ? 'names a different transaction' : 'carries no transaction nautilus can check'}, so nautilus cannot tell whether it was sent: it did not send it again. Check the account's latest transactions before retrying.`,
+        `The transaction from ${address} was refused (${describeRefusal(refused)}), and the refusal ${decoded ? 'names a different transaction' : 'carries no transaction nautilus can check'}, so nautilus cannot tell whether it was sent: it did not send it again. Check the account's latest transactions before retrying.`,
         false
       )
 
@@ -1230,14 +1321,14 @@ export class NonceGuardSigner extends AbstractSigner {
     } catch {
       return stop(
         'may-have-been-sent',
-        `Transaction ${sent.hash} (nonce ${sent.nonce}) of ${address} was refused for its nonce (${describeRefusal(error)}), and the RPC could not be asked whether it has it: it may have been sent, check the account's latest transactions before retrying.`
+        `Transaction ${sent.hash} (nonce ${sent.nonce}) of ${address} was refused for its nonce (${describeRefusal(refused)}), and the RPC could not be asked whether it has it: it may have been sent, check the account's latest transactions before retrying.`
       )
     }
     if (known) {
       if (params.key) this.advance(params.key, sent)
       this.log.emit(
         'chain.nonce.already_sent',
-        `The RPC refused transaction ${sent.hash} (nonce ${sent.nonce}) of ${address} as ${describeRefusal(error)}, but it already has it: nautilus waits for it instead of sending it again.`,
+        `The RPC refused transaction ${sent.hash} (nonce ${sent.nonce}) of ${address} as ${describeRefusal(refused)}, but it already has it: nautilus waits for it instead of sending it again.`,
         { address, txNonce: sent.nonce, txHash: sent.hash, code }
       )
       return { response: known }
@@ -1252,13 +1343,13 @@ export class NonceGuardSigner extends AbstractSigner {
     if (!params.resend || !params.key)
       return stop(
         'not-managed',
-        `Transaction ${sent.hash} of ${address} was refused for its nonce ${sent.nonce} (${describeRefusal(error)}). ${this.managesNonces ? 'The nonce was set by the caller' : this.nonceManagement === 'off' ? "nonceManagement is 'off'" : 'The wallet sets the nonce'}, so nautilus did not send it again.`
+        `Transaction ${sent.hash} of ${address} was refused for its nonce ${sent.nonce} (${describeRefusal(refused)}). ${this.managesNonces ? 'The nonce was set by the caller' : this.nonceManagement === 'off' ? "nonceManagement is 'off'" : 'The wallet sets the nonce'}, so nautilus did not send it again.`
       )
 
     if (params.attempt >= MAX_ATTEMPTS)
       return stop(
         'attempts-exhausted',
-        `Transaction of ${address} refused for its nonce ${MAX_ATTEMPTS} times (last ${sent.hash}, nonce ${sent.nonce}: ${describeRefusal(error)}). The RPC's nonce answers may be stale; nautilus stopped sending.`
+        `Transaction of ${address} refused for its nonce ${MAX_ATTEMPTS} times (last ${sent.hash}, nonce ${sent.nonce}: ${describeRefusal(refused)}). The RPC's nonce answers may be stale; nautilus stopped sending.`
       )
 
     if (moneySend) {
@@ -1266,7 +1357,7 @@ export class NonceGuardSigner extends AbstractSigner {
       if (!second)
         return stop(
           'may-have-been-sent',
-          `Transaction ${sent.hash} (nonce ${sent.nonce}) of ${address} moves value and was refused for its nonce (${describeRefusal(error)}). nautilus sends such a transaction again only with proof from a second RPC (the verificationProvider option, not set) that the first can never be mined: it may have been sent, check the account's latest transactions before retrying.`
+          `Transaction ${sent.hash} (nonce ${sent.nonce}) of ${address} moves value and was refused for its nonce (${describeRefusal(refused)}). nautilus sends such a transaction again only with proof from a second RPC (the verificationProvider option, not set) that the first can never be mined: it may have been sent, check the account's latest transactions before retrying.`
         )
       if (
         !(await provenNeverSent({
@@ -1286,7 +1377,7 @@ export class NonceGuardSigner extends AbstractSigner {
       )
         return stop(
           'may-have-been-sent',
-          `Transaction ${sent.hash} (nonce ${sent.nonce}) of ${address} moves value and was refused for its nonce (${describeRefusal(error)}), and nautilus cannot prove it can never be mined: it may have been sent, check the account's latest transactions before retrying.`
+          `Transaction ${sent.hash} (nonce ${sent.nonce}) of ${address} moves value and was refused for its nonce (${describeRefusal(refused)}), and nautilus cannot prove it can never be mined: it may have been sent, check the account's latest transactions before retrying.`
         )
     }
 
@@ -1300,7 +1391,7 @@ export class NonceGuardSigner extends AbstractSigner {
     } catch (readError) {
       return stop(
         'may-have-been-sent',
-        `Transaction ${sent.hash} (nonce ${sent.nonce}) of ${address} was refused for its nonce (${describeRefusal(error)}), and the RPC could not be asked for the account's next nonce (${describeFailure(withoutSignedTransaction(readError))}): nautilus did not send it again. It may have been sent: check the account's latest transactions before retrying.`
+        `Transaction ${sent.hash} (nonce ${sent.nonce}) of ${address} was refused for its nonce (${describeRefusal(refused)}), and the RPC could not be asked for the account's next nonce (${describeFailure(withoutSignedTransaction(readError))}): nautilus did not send it again. It may have been sent: check the account's latest transactions before retrying.`
       )
     }
     const local = this.state.next.get(params.key)?.next ?? 0
@@ -1313,7 +1404,7 @@ export class NonceGuardSigner extends AbstractSigner {
 
     this.log.emit(
       'chain.nonce.resending',
-      `Transaction ${sent.hash} of ${address} was refused for its nonce ${sent.nonce} (${describeRefusal(error)}) and the chain does not have it: sending the same transaction again with nonce ${nonce}.`,
+      `Transaction ${sent.hash} of ${address} was refused for its nonce ${sent.nonce} (${describeRefusal(refused)}) and the chain does not have it: sending the same transaction again with nonce ${nonce}.`,
       {
         address,
         txNonce: sent.nonce,
@@ -1373,17 +1464,18 @@ export class NonceGuardSigner extends AbstractSigner {
     to: string | undefined,
     options: { notSent?: boolean } = {}
   ): unknown {
-    withoutSignedTransaction(error)
+    // `error` itself, redacted, or a sanitised copy where it cannot be.
+    const thrown = withoutSignedTransaction(error)
     const text = sanitize(
-      error instanceof Error ? error.message : String(error),
+      thrown instanceof Error ? thrown.message : String(thrown),
       600,
       'nonce'
     )
     const maySent = !options.notSent && !notBroadcast(error)
     this.sends.failed(
       to,
-      { error: sanitizedSendError(error), text, maySent },
-      error
+      { error: sanitizedSendError(thrown), text, maySent },
+      thrown
     )
 
     if (error instanceof NonceGuardError)
@@ -1406,7 +1498,7 @@ export class NonceGuardSigner extends AbstractSigner {
         }
       )
 
-    return error
+    return thrown
   }
 }
 

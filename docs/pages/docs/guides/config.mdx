@@ -111,11 +111,13 @@ With the default `nonceManagement: 'auto'` and a signer that signs locally (an e
   of one instance, and of several instances with the same key, get consecutive nonces.
 - **The nonce is `max(nautilus's counter, the RPC's pending count)`**: a pending count the
   RPC answers from stale state is masked once nautilus has sent with the key. The counter
-  advances only after a successful broadcast, so a refused send leaves no gap. It falls back
-  to the pending count (`chain.nonce.counter_reset`) only when the last transaction it
-  counted was dropped from the pool: sent more than a minute ago, unknown by hash on two
-  reads, and the account has not mined past its nonce. An RPC that merely lags right after
-  a broadcast does not reset it.
+  advances only after a successful broadcast, so a refused send leaves no gap. A send takes
+  the pending count instead (`chain.nonce.counter_reset`) only when the earliest of
+  nautilus's transactions that the pending count does not cover was dropped from the pool:
+  sent more than a minute ago, unknown by hash on two reads, and the account has not mined
+  past its nonce. That fills the gap a dropped transaction leaves before the ones still
+  waiting behind it; the send after it skips those. An RPC that merely lags right after a
+  broadcast does not trigger it.
 - **Recovery from nonce refusals only** (`NONCE_EXPIRED` / "nonce too low",
   `REPLACEMENT_UNDERPRICED`, "already known"), and only for a refused transaction that is
   provably this send's (same sender, recipient and data):
@@ -128,11 +130,15 @@ With the default `nonceManagement: 'auto'` and a signer that signs locally (an e
     value) is sent again only with proof from **two RPCs** that the first one can never be
     mined: the account's mined count past its nonce on both, its hash unknown on both, and,
     in the blocks since the send **on each RPC**, another transaction of the account
-    holding that nonce. One RPC's blocks are not enough (it may be on another fork); a
-    block either RPC does not return, a read that fails, or the transaction itself in a
-    block, is no proof. Nor is a slot holder that makes **the same call** (same contract,
-    same function): it may be this order sped up in a wallet or retried by another
-    process, so sending it again could pay twice.
+    holding that nonce in a **finalized** block. One RPC's blocks are not enough (it may be
+    on another fork); a holder only in the unfinalized tip is not either (a reorganisation
+    can drop it and mine the order in its slot); a block either RPC does not return, an RPC
+    without a `finalized` block, a read that fails, or the transaction itself in a block,
+    is no proof. Nor is a slot holder that makes **the same call** (same contract, same
+    function): it may be this order sped up in a wallet or retried by another process, so
+    sending it again could pay twice. nautilus does not wait for finality: on a chain that
+    finalizes in minutes (an OP Stack chain), a collision of a moment ago stops with "may
+    have been sent" too.
     Without a [`verificationProvider`](/docs/api/nautilus/create#verificationprovider) it
     is never sent again. Otherwise nautilus stops with a `NonceGuardError` whose `reason`
     is `'may-have-been-sent'`: check the account's transactions before retrying. A nonce
@@ -152,7 +158,10 @@ With the default `nonceManagement: 'auto'` and a signer that signs locally (an e
   `code`, `shortMessage` and its message, redacted). The error a send throws is redacted
   too: no signed transaction (an unmined one can be broadcast by anyone who reads it), no
   RPC URL path or query (it may hold the RPC's API key), no HTTP request or response body.
-  The raw values go to the debug channel (topic `nonce`).
+  It is redacted in place; an error that does not let its fields be changed (a frozen
+  error, a read-only field) is thrown as a sanitised copy instead, with its `name`, `code`,
+  `reason`, the transaction hashes and its messages, redacted. The raw values go to the
+  debug channel (topic `nonce`).
 
 ```ts twoslash
 import { JsonRpcProvider, Wallet } from 'ethers'

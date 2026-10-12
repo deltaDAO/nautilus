@@ -464,7 +464,8 @@ reportEnvironment()
  *
  * A line ocean.js logs during a nautilus operation still carries that operation's `opId` and
  * name: `emit` reads the current operation (`AsyncLocalStorage`, where there is one), also
- * when the operation runs on an instance's own logger. Its level and sink stay the
+ * when the operation runs on an instance's own logger or in another copy of nautilus (the
+ * copies share the storage, see `context.ts`). Its level and sink stay the
  * process-wide ones: `LoggerInstance` cannot tell which instance called ocean.js.
  */
 function oceanJsLogger(): Logger {

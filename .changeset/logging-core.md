@@ -48,9 +48,10 @@ nautilus has its own logger, and its warnings are now visible by default.
 - **The same keys in text.** Messages, error messages (node answers, ethers errors and their
   `cause`s, e.g. an RPC response body) and other text have the value of every such key
   redacted when it is written as `key=value`, `key: value`, `'key': 'value'`, a JSON field or
-  a JSON field inside a JSON string; `Bearer` and `Basic` credentials, JWTs and 65-byte hex
-  signatures are redacted anywhere, URLs reduced to their origin. Before, only a short list
-  of keys was redacted in text. Error messages thrown by nautilus change accordingly (e.g. a
+  a JSON field inside a JSON string (at any depth), JSON escapes in a key or a URL decoded
+  first (`"session\u0049d"`, `https:\/\/host\/path`); `Bearer` and `Basic` credentials,
+  JWTs and 65-byte hex signatures are redacted anywhere, URLs reduced to their origin.
+  Before, only a short list of keys was redacted in text. Error messages thrown by nautilus change accordingly (e.g. a
   node's `nonce: 1 is not a valid nonce` now reads `nonce: <redacted> …`). Text is matched by
   pattern: a credential without a key in front of it is not recognised.
 - **Bounded and robust.** Messages, fields and errors are bounded in size; a sink that throws

@@ -44,7 +44,9 @@ lines: not the level, not the sink, not the redaction.
 - Several copies of nautilus in one process share the capture: a copy loaded later keeps the
   mode in force, whichever copy set it, and the lines go to the copy that last set `oceanjs`
   (else to the first one loaded). The copy that received them until then warns
-  (`oceanjs.capture.moved`), e.g. when a bundled copy sets `'passthrough'`.
+  (`oceanjs.capture.moved`), e.g. when a bundled copy sets `'passthrough'`. They share the
+  operation context too, so a captured line carries the `opId` of the call that caused it,
+  whichever copy ran the call and whichever receives the line.
 - A line ocean.js logs while nautilus captures one (a `sink` or debug sink that logs through
   `LoggerInstance`) is dropped, with one `oceanjs.capture.nested_dropped` warning; it never
   prints unredacted. A frozen or sealed `LoggerInstance`, or one whose logging methods are read-only, is left

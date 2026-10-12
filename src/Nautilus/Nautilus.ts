@@ -1897,14 +1897,14 @@ export class Nautilus {
     serviceId: string,
     newPrice: string
   ): Promise<TransactionReceipt> {
-    if (
-      typeof newPrice !== 'string' ||
-      Number.isNaN(Number.parseFloat(newPrice))
-    )
-      throw new Error('newPrice must be a numeric string, e.g. "2.5".')
+    return this.operation('setServicePrice', async (log) => {
+      if (
+        typeof newPrice !== 'string' ||
+        Number.isNaN(Number.parseFloat(newPrice))
+      )
+        throw new Error('newPrice must be a numeric string, e.g. "2.5".')
 
-    return this.operation('setServicePrice', (log) =>
-      editPrice({
+      return editPrice({
         asset,
         serviceId,
         newPrice,
@@ -1912,7 +1912,7 @@ export class Nautilus {
         signer: this.signer,
         logger: log
       })
-    )
+    })
   }
 
   /** Changes the asset's lifecycle state on its NFT. */
@@ -2136,6 +2136,15 @@ export class Nautilus {
   async streamComputeResult(
     config: ComputeResultConfig
   ): Promise<ComputeResultStream> {
+    return this.operation('streamComputeResult', () =>
+      this.runStreamComputeResult(config)
+    )
+  }
+
+  /** `streamComputeResult()`, within its operation. */
+  private async runStreamComputeResult(
+    config: ComputeResultConfig
+  ): Promise<ComputeResultStream> {
     const node = this.nodeFor(config.nodeUri)
     const result = await this.findResult(node, config)
 
@@ -2157,6 +2166,15 @@ export class Nautilus {
    * logs.
    */
   async getComputeLogs(
+    config: ComputeLogsConfig
+  ): Promise<ComputeResultStream> {
+    return this.operation('getComputeLogs', () =>
+      this.runGetComputeLogs(config)
+    )
+  }
+
+  /** `getComputeLogs()`, within its operation. */
+  private async runGetComputeLogs(
     config: ComputeLogsConfig
   ): Promise<ComputeResultStream> {
     const node = this.nodeFor(config.nodeUri)

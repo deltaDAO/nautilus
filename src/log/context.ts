@@ -3,7 +3,9 @@
  *
  * Each call gets a short random `opId`. In Node it travels through the call's whole async
  * tree in an `AsyncLocalStorage`, so every event the call causes carries it: the node
- * client's, the process-wide logger's, the sensitive debug channel's. Without one (a
+ * client's, the process-wide logger's, the sensitive debug channel's. Every copy of
+ * nautilus in the process shares that one storage (on `globalThis`, under a registered
+ * symbol), so a line one copy logs for another's operation carries it too. Without one (a
  * browser bundle), the call hands it down as a parameter instead: a logger bound to the
  * context, which the call passes to the functions it calls. Events of code that is not
  * handed that logger (the node client, the policy-session resolver, the process-wide
@@ -32,6 +34,8 @@ export type OperationName =
   | 'freeCompute'
   | 'getComputeStatus'
   | 'getComputeResult'
+  | 'streamComputeResult'
+  | 'getComputeLogs'
   | 'stopCompute'
   | 'waitForIndexer'
 
@@ -70,7 +74,45 @@ function asyncStorage(): ContextStorage | undefined {
   }
 }
 
-const nodeStorage = asyncStorage()
+/**
+ * Where every copy of nautilus in the process (a bundled copy, a test runner's reload)
+ * finds the one storage, so a line one copy logs (a captured ocean.js line, which goes to
+ * the copy that receives them) carries the operation another copy runs. Versioned: a copy
+ * whose context differs uses a key of its own.
+ */
+const SHARED_STORAGE = Symbol.for('@deltadao/nautilus/operation-context/v1')
+
+function isStorage(value: unknown): value is ContextStorage {
+  const found = value as ContextStorage | undefined
+  return (
+    typeof found === 'object' &&
+    found !== null &&
+    typeof found.getStore === 'function' &&
+    typeof found.run === 'function'
+  )
+}
+
+/** The storage an earlier copy left on `globalThis`, else a new one, left there. */
+function sharedStorage(): ContextStorage | undefined {
+  const global = globalThis as Record<symbol, unknown>
+  try {
+    const found = global[SHARED_STORAGE]
+    if (isStorage(found)) return found
+  } catch {
+    // A getter that throws: this copy keeps a storage of its own.
+  }
+  const created = asyncStorage()
+  if (!created) return undefined
+  try {
+    // Not enumerable, not writable: kept out of listings, and no later copy replaces it.
+    Object.defineProperty(global, SHARED_STORAGE, { value: created })
+  } catch {
+    // Frozen, or the key is taken by something else: this copy keeps its own.
+  }
+  return created
+}
+
+const nodeStorage = sharedStorage()
 let storage = nodeStorage
 
 /**
@@ -86,7 +128,15 @@ export function useAsyncContext(on: boolean): boolean {
 /** The operation the current async call tree belongs to, where `AsyncLocalStorage` tells. */
 export function currentOperation(): OperationContext | undefined {
   try {
-    return storage?.getStore()
+    const found = storage?.getStore()
+    // The storage is shared with other copies: take only a context shaped as this one's.
+    return typeof found === 'object' &&
+      found !== null &&
+      typeof found.opId === 'string' &&
+      typeof found.operation === 'string' &&
+      typeof found.startedAt === 'number'
+      ? found
+      : undefined
   } catch {
     return undefined
   }
@@ -135,7 +185,10 @@ const COMPUTE: OperationEvents = {
   finished: 'compute.operation.finished',
   failed: 'compute.operation.failed'
 }
-/** Reads of a job, which apps poll: their events are all `debug`. */
+/**
+ * Reads of a job, which apps poll: their events are all `debug`. `streamComputeResult` and
+ * `getComputeLogs` finish once the stream is open; reading it is the caller's.
+ */
 const COMPUTE_QUERY: OperationEvents = {
   started: 'compute.query.started',
   finished: 'compute.query.finished',
@@ -162,6 +215,8 @@ const EVENTS: Record<OperationName, OperationEvents> = {
   stopCompute: COMPUTE,
   getComputeStatus: COMPUTE_QUERY,
   getComputeResult: COMPUTE_QUERY,
+  streamComputeResult: COMPUTE_QUERY,
+  getComputeLogs: COMPUTE_QUERY,
   waitForIndexer: {
     started: 'node.operation.started',
     finished: 'node.operation.finished',

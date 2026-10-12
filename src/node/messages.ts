@@ -49,14 +49,67 @@ const SHORT_FIELD_LENGTH = 100
 const URL_PATTERN =
   /[a-z][a-z0-9+.-]{0,31}:(?:\\*\/){2}(?:[^\s"'<>\\]|\ufeff|\\+(?!["'\s<>\\]))*/gi
 
+/**
+ * A JSON escape for `/` or a `\uXXXX` character, after any number of backslashes: JSON
+ * nested in JSON strings doubles them at each level (`\/`, `\\/`, `\\\u0049`). Read
+ * from the start of a backslash run only, so a long run is scanned in linear time.
+ */
+const JSON_ESCAPE = /(?<!\\)\\+(?:\/|u([0-9a-fA-F]{4}))/g
+/**
+ * What a `\uXXXX` escape may be decoded to: characters that are part of a key or a URL and
+ * that end no value in any form. A quote, a backslash or a delimiter stays escaped, so it
+ * cannot cut a value short.
+ */
+const DECODABLE = /^[A-Za-z0-9_\-.:/@~+]$/
+
 /** A `Bearer` or `Basic` credential, wherever it stands. */
 const BEARER = /((?:Bearer|Basic)\s+)[\w.~+/=-]+/gi
 /**
- * A JWT (`eyJ…` header, payload and signature, base64url). Also right after a letter when
- * its payload is a JSON object too (`eyJ…`), as one is when `stripControlCharacters`
- * deletes an escape that ended in a letter in front of it (`Evil\u001b[2JeyJ…`).
+ * A run of base64url words joined by dots (`a.b.c`), whole: where `redactJwts` looks for
+ * JWTs. It starts only where no such character stands before it, so each run is read once
+ * and hostile text costs linear time; a rule for the JWT itself without a word boundary in
+ * front would rescan the run from each `eyJ`.
  */
-const JWT = /\beyJ[\w-]*\.[\w-]+\.[\w-]*|eyJ[\w-]*\.eyJ[\w-]*\.[\w-]*/g
+const DOTTED_RUN = /(?<![\w.-])[\w-]*\.[\w.-]*/g
+/** A JSON object's start in base64url, at least 10 characters: `{"`, `{ ` or `{\n`. */
+const JSON_OBJECT = /e[wy][\w-]{8}/
+
+/**
+ * A dotted run (`DOTTED_RUN`) with each JWT in it (header, payload and signature,
+ * base64url) replaced by `<redacted>`. A JWT's header is a JSON object: `eyJ…` (`{"`), or
+ * `ew…`/`eyA…` when its JSON has whitespace, which counts only when the payload does too.
+ *
+ * It is found also right after a letter, as one is when `stripControlCharacters` deletes
+ * an escape that ended in a letter in front of it (`Evil\u001b[2JeyJ…`): from the first
+ * header start in its word, so what stood before it in that word may go with it.
+ */
+function redactJwts(run: string): string {
+  const parts = run.split('.')
+  const kept: string[] = []
+  let index = 0
+  while (index < parts.length) {
+    const start =
+      index + 2 < parts.length
+        ? headerStart(parts[index], parts[index + 1])
+        : -1
+    if (start < 0) {
+      kept.push(parts[index])
+      index += 1
+    } else {
+      kept.push(`${parts[index].slice(0, start)}<redacted>`)
+      index += 3
+    }
+  }
+  return kept.join('.')
+}
+
+/** Where a JWT's header starts in `word`, with `payload` after it, or `-1`. */
+function headerStart(word: string, payload: string): number {
+  if (payload === '') return -1
+  const compact = word.indexOf('eyJ')
+  if (compact >= 0) return compact
+  return payload.search(JSON_OBJECT) === 0 ? word.search(JSON_OBJECT) : -1
+}
 /**
  * A 65-byte ECDSA signature in hex, wherever it stands: also right after a letter, as
  * one is when an escape before it is deleted (`Evil\u001b[2J0x…`).
@@ -64,14 +117,35 @@ const JWT = /\beyJ[\w-]*\.[\w-]+\.[\w-]*|eyJ[\w-]*\.eyJ[\w-]*\.[\w-]*/g
 const HEX_SIGNATURE = /0x[0-9a-f]{130}\b/gi
 /**
  * A raw signed transaction (ethers quotes it in `transaction="0x02f8…"` of a failed
- * `eth_sendRawTransaction`): an RLP list, typed (`0x01`-`0x04`) or legacy, of 100 bytes or
- * more. Whoever holds one that was never mined can still send it. Ended by a lookahead, not
- * `\b`, so one followed by `_` or a letter is caught too, and without one in front, so one
- * after a letter (an escape before it deleted) is caught too. False positives: about 1 in 85
- * other hex blobs of 100 bytes or more (calldata, ECIES ciphertext) starts like an RLP list
- * and is redacted too; the raw value is in the debug channel, so nothing is lost.
+ * `eth_sendRawTransaction`): an RLP list, typed (`0x01`-`0x04`) or legacy, in long form
+ * (`f8`-`fa` and the payload length: a signature alone is 65 bytes). Whoever holds one that
+ * was never mined can still send it. Ended by a lookahead, not `\b`, so one followed by `_`
+ * or a letter is caught too, and without one in front, so one after a letter (an escape
+ * before it deleted) is caught too. `isSignedTransaction` decides which matches are
+ * redacted.
  */
-const SIGNED_TRANSACTION = /0x(?:0[1-4])?f[89a][0-9a-f]{196,}(?![0-9a-f])/gi
+const SIGNED_TRANSACTION = /0x(?:0[1-4])?f[89a][0-9a-f]*(?![0-9a-f])/gi
+/**
+ * From this many bytes, every match is redacted. False positives: about 1 in 85 other hex
+ * blobs of that size (calldata, ECIES ciphertext) starts like an RLP list and is redacted
+ * too; the raw value is in the debug channel, so nothing is lost.
+ */
+const SIGNED_TRANSACTION_BYTES = 100
+
+/**
+ * Whether `hex` (a `SIGNED_TRANSACTION` match) is redacted: 100 bytes or more, or a shorter
+ * one-byte-length list (`f8`, 56 to 255 bytes of payload) whose length matches what follows
+ * exactly, as a minimal legacy transfer's (97 bytes) or a contract creation's does.
+ */
+function isSignedTransaction(hex: string): boolean {
+  const body = hex.slice(2)
+  if (body.length >= 2 * SIGNED_TRANSACTION_BYTES) return true
+  const list = /^(?:0[1-4])?f8([0-9a-f]{2})/i.exec(body)
+  if (!list) return false
+  const payload = Number.parseInt(list[1], 16)
+  return payload >= 56 && body.length - list[0].length === 2 * payload
+}
+
 /**
  * A policy-server session id: two SHA-256 hashes in hex joined by `-` (the policy server's
  * `generateSessionId`). walt.id quotes it bare (`Id parameter <id> doesn't refer to an
@@ -96,7 +170,8 @@ const ANSI_ESCAPE =
  * - the value of every key the log-field redaction treats as secret (`redactsValue`,
  *   `log/keys.ts`: signatures, tokens, nonces, session ids, passwords, API keys, S3 and
  *   OAuth secrets, private keys, cookies, presentations, signed transactions, …), given as
- *   `key=value`, as a JSON field (also inside a JSON string, `\"key\":\"value\"`), or as
+ *   `key=value`, as a JSON field (also inside a JSON string, `\"key\":\"value\"`, at any
+ *   depth, JSON escapes in keys and URLs decoded first: `decodeJsonEscapes`), or as
  *   `key: value` or `'key': 'value'`, also under deeper JSON escaping (`\u0022` and `\'`
  *   escapes included) and percent-encoding (`apiToken%3D…`): up to `MAX_UNESCAPE_LEVELS`
  *   levels are undone, and escaping deeper than that is flattened (`withEscapesUndone`).
@@ -122,13 +197,17 @@ export function redactSecrets(text: string): string {
 /** `redactSecrets` of the text as it is, without undoing escapes. */
 function redactShallow(text: string): string {
   return redactKeyValues(
-    text.replace(URL_PATTERN, originOnly).replace(SCHEMELESS_URL, hostOnly),
+    decodeJsonEscapes(text)
+      .replace(URL_PATTERN, originOnly)
+      .replace(SCHEMELESS_URL, hostOnly),
     SECRET_KEYS
   )
     .replace(BEARER, '$1<redacted>')
-    .replace(JWT, '<redacted>')
+    .replace(DOTTED_RUN, redactJwts)
     .replace(HEX_SIGNATURE, '<redacted>')
-    .replace(SIGNED_TRANSACTION, '<redacted>')
+    .replace(SIGNED_TRANSACTION, (hex) =>
+      isSignedTransaction(hex) ? '<redacted>' : hex
+    )
     .replace(POLICY_SESSION_ID, redactSessionId)
 }
 
@@ -137,18 +216,42 @@ function redactSessionId(match: string): string {
   return /^0x/i.test(match) ? match : '<redacted>'
 }
 
+/**
+ * `text` with the JSON escapes a key or a URL may hide behind decoded, at any level of
+ * nesting: `session\u0049d` is `sessionId`, `https:\/\/host\/path` a URL, as a JSON parser
+ * reads them. An invisible character is dropped, as `stripControlCharacters` does. Only
+ * characters that end no value are decoded (`DECODABLE`), so the structure stays as it was.
+ */
+function decodeJsonEscapes(text: string): string {
+  return text.replace(JSON_ESCAPE, (sequence, hex: string | undefined) => {
+    if (hex === undefined) return '/'
+    const char = String.fromCharCode(Number.parseInt(hex, 16))
+    INVISIBLE_CHARACTERS.lastIndex = 0
+    if (INVISIBLE_CHARACTERS.test(char)) return ''
+    return DECODABLE.test(char) ? char : sequence
+  })
+}
+
 /** Whether `value` reads as an error code: see `log/keys.ts`. */
 export { isErrorCode }
 
-/** A URL as `scheme://host[:port]`, with the punctuation that ended its sentence kept. */
+/**
+ * A URL as `scheme://host[:port]`, with the punctuation that ended its sentence kept. An
+ * authority that is no host and port reads `<redacted>`.
+ */
 function originOnly(url: string): string {
   const trailing = trailingPunctuation(url)
   const core = url.slice(0, url.length - trailing.length).replace(/\\+\//g, '/')
   // A backslash ends the authority, as a URL parser reads `https://host\path`.
   const [, scheme, authority = ''] = /^([^:]+):\/\/([^/?#\\]*)/.exec(core) ?? []
   const host = authority.replace(/^.*@/, '')
+  // `host`, `host:port` or `[ipv6]:port`. Anything else is user info whose `@` the URL
+  // never reached (a quote or a space in the password ended it, `https://user:se'cret@…`).
+  const origin = /^(?:\[[^\]]*\]|[^:[\]]*)(?::\d*)?$/.test(host)
+    ? host
+    : '<redacted>'
 
-  return `${scheme}://${host}${trailing}`
+  return `${scheme}://${origin}${trailing}`
 }
 
 /** A `SCHEMELESS_URL` as its host and port, with the punctuation that ended its sentence. */
@@ -189,7 +292,10 @@ export function sanitize(
   topic: DebugTopic | null = 'node'
 ): string {
   const limit = readLimit(maxLength)
-  const read = text.length > limit ? beforeLastWord(text.slice(0, limit)) : text
+  const read =
+    text.length > limit
+      ? beforeLastWord(beforeOpenUrl(text.slice(0, limit)))
+      : text
   const redacted = redactSecrets(stripControlCharacters(redactSecrets(read)))
   const clean =
     read !== text && redacted.length <= maxLength
@@ -275,6 +381,22 @@ function readLimit(maxLength: number): number {
  */
 export function startOf(text: string, limit: number): string {
   return text.length > limit ? `${beforeLastWord(text.slice(0, limit))}…` : text
+}
+
+/**
+ * `text` without the URL it ends in, for a text `sanitize` cut: `,`, `;`, a bracket or a
+ * quote ends a word but may stand in a URL's user info (`https://user:secret,…@host`), so
+ * dropping the last word alone could leave `https://user:secret` and the redaction read
+ * the credential as the host. A URL that runs up to the cut, with a scheme or without
+ * (`URL_PATTERN`, `SCHEMELESS_URL`), is dropped whole. Both are scanned in linear time.
+ */
+function beforeOpenUrl(text: string): string {
+  let end = text.length
+  for (const pattern of [URL_PATTERN, SCHEMELESS_URL])
+    for (const match of text.matchAll(pattern))
+      if (match.index + match[0].length === text.length)
+        end = Math.min(end, match.index)
+  return text.slice(0, end)
 }
 
 /** What ends a word for `beforeLastWord`: whitespace, quotes, brackets, `,` and `;`. */

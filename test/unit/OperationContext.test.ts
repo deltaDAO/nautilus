@@ -600,6 +600,130 @@ describe('without AsyncLocalStorage (a browser)', () => {
   })
 })
 
+describe('several copies of nautilus in one process', () => {
+  const KEY = Symbol.for('@deltadao/nautilus/operation-context/v1')
+
+  afterEach(() => {
+    vi.resetModules()
+  })
+
+  /** A second copy's operation context, as a bundled copy or a reload gives. */
+  async function anotherCopy() {
+    vi.resetModules()
+    return import('../../src/log/context.js')
+  }
+
+  it("share one storage: each copy sees the other's operation, and joins only its own", async () => {
+    const copy = await anotherCopy()
+    const silent = createLogger({ level: 'silent' })
+
+    let seenByFirst: string | undefined
+    let ownInSecond: string | undefined
+    await copy.runOperation(silent, 'compute', async () => {
+      ownInSecond = copy.currentOperation()?.opId
+      seenByFirst = currentOperation()?.opId
+    })
+    let outer: string | undefined
+    let inner: string | undefined
+    await runOperation(silent, 'access', async () => {
+      outer = currentOperation()?.opId
+      await copy.runOperation(silent, 'compute', async () => {
+        inner = currentOperation()?.opId
+      })
+    })
+
+    expect(seenByFirst).to.be.a('string').and.equal(ownInSecond)
+    // The other copy's operation is not joined: it is one of its own, inside.
+    expect(inner).to.be.a('string').and.not.equal(outer)
+    expect(Object.getOwnPropertySymbols(globalThis)).to.include(KEY)
+    expect(Object.keys(globalThis)).not.to.include(KEY.toString())
+  })
+
+  it('takes only a context shaped as its own from the shared storage', () => {
+    const shared = (globalThis as Record<symbol, unknown>)[KEY] as {
+      run<R>(store: unknown, callback: () => R): R
+    }
+
+    for (const store of [
+      'not a context',
+      { opId: 12, operation: 'compute', startedAt: 0 },
+      { opId: 'ab'.repeat(6), operation: 'compute' }
+    ])
+      expect(shared.run(store, () => currentOperation())).to.equal(undefined)
+  })
+})
+
+describe('a call that fails before it does anything (PR #219 review)', () => {
+  it("setServicePrice's price check fails inside its operation", async () => {
+    const nautilus = await createNautilus()
+    const captured = captureLog({ level: 'trace' })
+
+    const thrown = await nautilus
+      .setServicePrice(getAssetFixture(), 'any-service', 'invalid')
+      .catch((error) => error)
+
+    expect(thrown.message).to.contain('newPrice must be a numeric string')
+    const [failed] = captured.named('edit.operation.failed')
+    expect(failed?.operation).to.equal('setServicePrice')
+    expect(thrown.opId).to.match(OP_ID).and.equal(failed.opId)
+  })
+
+  it('streamComputeResult and getComputeLogs open an operation of their own', async () => {
+    const nautilus = await createNautilus()
+    const captured = captureLog({ level: 'trace' })
+
+    const calls = [
+      [
+        'streamComputeResult',
+        () => nautilus.streamComputeResult({ jobId: 'not-qualified' })
+      ],
+      [
+        'getComputeLogs',
+        () => nautilus.getComputeLogs({ jobId: 'not-qualified' })
+      ]
+    ] as const
+    for (const [operation, call] of calls) {
+      const thrown = await call().catch((error) => error)
+
+      const started = captured
+        .named('compute.query.started')
+        .filter((event) => event.operation === operation)
+      const failed = captured
+        .named('compute.query.failed')
+        .filter((event) => event.operation === operation)
+      expect(started, operation).to.have.length(1)
+      expect(failed, operation).to.have.length(1)
+      expect(failed[0].durationMs, operation).to.be.a('number')
+      expect(thrown.opId, operation).to.match(OP_ID).and.equal(failed[0].opId)
+      expect(started[0].opId, operation).to.equal(failed[0].opId)
+    }
+  })
+
+  it('streamComputeResult tags the reason it throws for a job that has not finished', async () => {
+    const nautilus = await createNautilus()
+    vi.spyOn(ProviderInstance, 'computeStatus').mockResolvedValue([
+      {
+        jobId: JOB_ID.split('-')[1],
+        environment: `${JOB_ID.split('-')[0]}-0x1`,
+        dateFinished: null,
+        status: 40,
+        statusText: 'Running algorithm',
+        results: []
+      } as unknown as NodeComputeJob
+    ])
+    const captured = captureLog({ level: 'trace' })
+
+    const thrown = await nautilus
+      .streamComputeResult({ jobId: JOB_ID })
+      .catch((error) => error)
+
+    expect(thrown.message).to.match(/^\[compute\] /)
+    const [failed] = captured.named('compute.query.failed')
+    expect(failed?.operation).to.equal('streamComputeResult')
+    expect(thrown.opId).to.equal(failed.opId)
+  })
+})
+
 describe('the catalogue', () => {
   it('has the three events of every kind of operation', () => {
     for (const kind of [

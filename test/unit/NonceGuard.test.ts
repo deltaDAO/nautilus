@@ -69,7 +69,8 @@ type MinedTx = {
 /**
  * A chain with `latest` mined transactions of the wallet, a pending count that may lag
  * (`stale`), and known transactions by hash. `broadcast` decides each send. Blocks from
- * `head` on list the transactions `blocks` puts in them; a broadcast adds none.
+ * `head` on list the transactions `blocks` puts in them; a broadcast adds none. The
+ * `finalized` block is the head unless `finalize()` holds it back.
  */
 function fakeChain(options: {
   latest?: number
@@ -82,17 +83,19 @@ function fakeChain(options: {
   const broadcasts: Transaction[] = []
   let latest = options.latest ?? 10
   let head = options.head ?? 100
+  let finalized: number | undefined
   const blocks = new Map<number, MinedTx[]>()
   const reads: string[] = []
 
   const provider = {
     getNetwork: async () => ({ chainId: BigInt(CHAIN_ID) }),
     getBlockNumber: vi.fn(async () => head),
-    getBlock: vi.fn(async (number: number) =>
-      number > head
+    getBlock: vi.fn(async (tag: number | string) => {
+      const number = tag === 'finalized' ? (finalized ?? head) : Number(tag)
+      return number > head
         ? null
         : { number, prefetchedTransactions: blocks.get(number) ?? [] }
-    ),
+    }),
     getFeeData: async () => ({
       gasPrice: 1n,
       maxFeePerGas: 2n,
@@ -134,6 +137,10 @@ function fakeChain(options: {
     mineBlock: (...txs: MinedTx[]) => {
       head += 1
       blocks.set(head, txs)
+    },
+    /** Holds the finalized block at `number` (`undefined`: the head again). */
+    finalize: (number?: number) => {
+      finalized = number
     }
   }
 }
@@ -161,9 +168,9 @@ function secondRpc(
       if (!blocksOf) throw new Error('not asked in these tests')
       return blocksOf.getBlockNumber()
     },
-    getBlock: vi.fn(async (number: number) => {
+    getBlock: vi.fn(async (tag: number | string) => {
       if (!blocksOf) throw new Error('not asked in these tests')
-      return blocksOf.getBlock(number)
+      return blocksOf.getBlock(tag)
     })
   }
 }
@@ -363,6 +370,44 @@ describe('NonceGuardSigner: prevention', () => {
     await signer.sendTransaction(request())
 
     expect(chain.broadcasts.map((tx) => tx.nonce)).to.deep.equal([10, 10])
+  })
+
+  it('falls back to the earliest dropped nonce while a later transaction waits behind it (PR #217 review, 4249882132)', async () => {
+    // Nonce 10 was dropped, 11 waits in the pool behind the gap. Checking only the last
+    // transaction (11, known, and sent recently) kept the counter at 12 for ever.
+    let now = 0
+    const chain = fakeChain({ latest: 10 })
+    const signer = guard(chain, { now: () => now })
+    const first = await signer.sendTransaction(request())
+    now = 59_000
+    await signer.sendTransaction(request())
+
+    now = 61_000
+    chain.known.delete(first.hash)
+    chain.setLatest(10)
+    await signer.sendTransaction(request())
+    // The send after the one that filled the gap skips 11, still waiting in the pool.
+    now = 62_000
+    await signer.sendTransaction(request())
+
+    expect(chain.broadcasts.map((tx) => tx.nonce)).to.deep.equal([
+      10, 11, 10, 12
+    ])
+  })
+
+  it('keeps the counter while the earliest transaction is still known, though the RPC does not count it (control)', async () => {
+    let now = 0
+    const chain = fakeChain({ latest: 10 })
+    const signer = guard(chain, { now: () => now })
+    await signer.sendTransaction(request())
+    now = 59_000
+    await signer.sendTransaction(request())
+
+    now = 61_000
+    chain.setLatest(10)
+    await signer.sendTransaction(request())
+
+    expect(chain.broadcasts.map((tx) => tx.nonce)).to.deep.equal([10, 11, 12])
   })
 
   it('keeps the counter while an RPC that lags right after the broadcast forgets the transaction', async () => {
@@ -969,9 +1014,13 @@ describe('NonceGuardSigner: money sends', () => {
   async function slotProof(holders: {
     primary: MinedTx | 'ours'
     verifier: MinedTx | 'ours' | null
+    /** The finalized block of each RPC; by default its head, the holder's block. */
+    finalized?: { primary?: number; verifier?: number }
   }) {
     const chain = fakeChain({ latest: 10, head: 100 })
     const second = fakeChain({ latest: 10, head: 100 })
+    chain.finalize(holders.finalized?.primary)
+    second.finalize(holders.finalized?.verifier)
     chain.provider.broadcastTransaction.mockImplementationOnce(
       async (raw: string) => {
         const tx = Transaction.from(raw)
@@ -1074,6 +1123,66 @@ describe('NonceGuardSigner: money sends', () => {
     })
 
     expect(outcome?.reason).to.equal('may-have-been-sent')
+    expect(chain.broadcasts).to.have.length(1)
+  })
+
+  it('does not resend an order whose slot holder is not finalized on either RPC (PR #217 review, 4249882126)', async () => {
+    // Both RPCs show another call at nonce 10, but only in their unfinalized tip (block
+    // 101, finalized 100). Should that tip be reorganised and the order take nonce 10, a
+    // resend at nonce 11 would charge the user twice.
+    const other = await otherTx(10)
+    const { chain, outcome } = await slotProof({
+      primary: other,
+      verifier: other,
+      finalized: { primary: 100, verifier: 100 }
+    })
+
+    expect(outcome?.reason).to.equal('may-have-been-sent')
+    expect(chain.broadcasts).to.have.length(1)
+  })
+
+  it('does not resend an order whose slot holder is finalized on the primary only (PR #217 review, 4249882126)', async () => {
+    const other = await otherTx(10)
+    const { chain, outcome } = await slotProof({
+      primary: other,
+      verifier: other,
+      finalized: { verifier: 100 }
+    })
+
+    expect(outcome?.reason).to.equal('may-have-been-sent')
+    expect(chain.broadcasts).to.have.length(1)
+  })
+
+  it('does not resend an order when an RPC has no finalized block (PR #217 review, 4249882126)', async () => {
+    const other = await otherTx(10)
+    const chain = fakeChain({ latest: 10, head: 100 })
+    const second = fakeChain({ latest: 10, head: 100 })
+    const blocks = second.provider.getBlock.getMockImplementation()
+    second.provider.getBlock.mockImplementation(
+      async (tag: number | string) => {
+        if (tag === 'finalized')
+          throw new Error("unknown block tag 'finalized'")
+        return (await blocks?.(tag)) ?? null
+      }
+    )
+    chain.provider.broadcastTransaction.mockImplementationOnce(
+      async (raw: string) => {
+        chain.broadcasts.push(Transaction.from(raw))
+        chain.mineBlock(other)
+        second.mineBlock(other)
+        chain.setLatest(11)
+        second.setLatest(11)
+        throw refusal('NONCE_EXPIRED', 'nonce too low', raw)
+      }
+    )
+
+    const error = (await failure(
+      guard(chain, {
+        verificationProvider: second.provider as never
+      }).sendTransaction(request(ORDER_CALL))
+    )) as NonceGuardError
+
+    expect(error.reason).to.equal('may-have-been-sent')
     expect(chain.broadcasts).to.have.length(1)
   })
 
@@ -1238,6 +1347,79 @@ describe('reporting', () => {
     expect(error.message).to.match(
       /^startOrder failed: request timeout.*It may have been sent: check the account's latest transactions before retrying\.$/
     )
+  })
+
+  for (const [shape, lock] of [
+    ['frozen', <T extends object>(error: T) => Object.freeze(error)],
+    [
+      'read-only',
+      <T extends object>(error: T) => {
+        for (const key of Reflect.ownKeys(error)) {
+          const field = Object.getOwnPropertyDescriptor(error, key)
+          if (field && 'value' in field)
+            Object.defineProperty(error, key, { writable: false })
+        }
+        return error
+      }
+    ]
+  ] as const)
+    it(`throws a sanitised copy of a ${shape} error: no signed transaction, no URL path (PR #217 review, 4249882135)`, async () => {
+      const chain = fakeChain({ latest: 10 })
+      chain.provider.broadcastTransaction.mockImplementation(
+        async (raw: string) => {
+          throw lock(
+            makeError(
+              'request timeout at https://rpc.example.org/v3/k3y',
+              'TIMEOUT',
+              {
+                transaction: raw,
+                info: { requestUrl: 'https://rpc.example.org/v3/k3y' }
+              } as never
+            )
+          )
+        }
+      )
+      const signer = guard(chain)
+
+      const thrown = await failure(signer.sendTransaction(request(ORDER_CALL)))
+      const confirmed = await failure(
+        confirmTransaction('startOrder', null, signer, TO)
+      )
+
+      expect((thrown as { code?: string }).code).to.equal('TIMEOUT')
+      expect(thrown.message).to.match(/request timeout/)
+      expect(confirmed.message).to.match(/may have been sent/)
+      for (const text of [
+        inspect(thrown, { depth: 12 }),
+        inspect(confirmed, { depth: 12 }),
+        JSON.stringify(confirmed.cause),
+        JSON.stringify(thrown)
+      ]) {
+        expect(text).not.to.match(/k3y/)
+        expect(text).not.to.match(LONG_HEX)
+      }
+    })
+
+  it('returns one sanitised copy of a frozen error, however often it is asked (PR #217 review, 4249882135)', async () => {
+    const raw = await new Wallet(PRIVATE_KEY).signTransaction({
+      ...request(),
+      nonce: 1,
+      chainId: CHAIN_ID
+    })
+    const error = Object.freeze(
+      makeError('request timeout', 'TIMEOUT', {
+        transaction: raw,
+        info: { requestUrl: 'https://rpc.example.org/v3/k3y' }
+      } as never)
+    )
+
+    const copy = withoutSignedTransaction(error) as Error & { code?: string }
+
+    expect(copy).not.to.equal(error)
+    expect(withoutSignedTransaction(error)).to.equal(copy)
+    expect(withoutSignedTransaction(copy)).to.equal(copy)
+    expect(copy.code).to.equal('TIMEOUT')
+    expect(inspect(copy, { depth: 12 })).not.to.match(/k3y|0x[0-9a-f]{130,}/i)
   })
 
   it("finds a failure sent through ocean.js's confidential-chain wrapper (code review m2)", async () => {
