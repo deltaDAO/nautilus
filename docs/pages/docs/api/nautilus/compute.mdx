@@ -87,7 +87,8 @@ What happens in order:
    [`OrderCheckError`](/docs/api/nautilus/access#ordercheckerror). In practice nothing is
    reused: ocean-node reports a valid order only for a `transferTxId` it is sent, and
    `compute()` sends none, so **every input that costs anything is bought again on every
-   job** (see [the pricing guide](/docs/guides/pricing#downloads-the-order-on-chain)).
+   job** (see [the pricing guide](/docs/guides/pricing#downloads-the-order-on-chain) and
+   [known limitations](/docs/known-limitations#every-compute-buys-its-paid-inputs-again)).
 7. The job starts. The node locks the job's payment in escrow when it accepts the job.
 
 Steps 5 to 7, with the escrow reads they depend on, run one job at a time per chain, payer,

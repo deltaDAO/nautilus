@@ -10,6 +10,7 @@ needs a change outside nautilus.
 | [One download URL at a time per consumer and node](#one-download-url-at-a-time-per-consumer-and-node) | No | Use each URL before you request the next |
 | [Buying the same service in parallel from one key](#buying-the-same-service-in-parallel-from-one-key) | No, gas only | Don't buy the same service concurrently from one key |
 | [A second `access()` right after buying can buy again](#a-second-access-right-after-buying-can-buy-again) | Yes, one extra purchase | Wait until at least 2 more blocks are mined after the purchase; use a reliable RPC |
+| [Every `compute()` buys its paid inputs again](#every-compute-buys-its-paid-inputs-again) | Yes, one purchase per input per job | Price compute services as free, or expect one purchase per job |
 | [Orders older than about 55 hours are not found](#orders-older-than-about-55-hours-are-not-found) | Yes, with the opt-in | Paid services with a timeout of at most 48 hours; opt in only for a first purchase |
 | [A stuck fee approval gives an unclear error](#a-stuck-fee-approval-gives-an-unclear-error) | No | None needed |
 | [`getAssets` returns nothing on ocean-node 4.2](#getassets-returns-nothing-on-ocean-node-42) | No | Use `getAsset(did)` per asset |
@@ -92,6 +93,20 @@ block; allow more if your RPC lags). Use a reliable RPC, and set
 
 **Fixed by:** the next beta (an order this process just placed is remembered, and a very new
 order is never bought again).
+
+## Every compute() buys its paid inputs again
+
+Each [`compute()`](/docs/api/nautilus/compute) call orders, and pays for, every paid dataset
+and every paid algorithm of the job again, even while an order you placed for an earlier job
+is still valid. Unlike [`access()`](/docs/api/nautilus/access), `compute()` does not look
+for an order you already hold, and the node does not report one either. Two jobs on the same
+paid dataset pay for it twice.
+
+**Workaround:** price the compute services of your datasets and algorithms as free, or
+expect one purchase per paid input on every job and budget for it.
+
+**Fixed by:** a later release (`compute()` reuses an order you already hold, as `access()`
+does).
 
 ## Orders older than about 55 hours are not found
 
