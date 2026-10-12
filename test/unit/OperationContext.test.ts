@@ -600,6 +600,22 @@ describe('without AsyncLocalStorage (a browser)', () => {
   })
 })
 
+describe('a call that fails before it does anything (PR #219 review)', () => {
+  it("setServicePrice's price check fails inside its operation", async () => {
+    const nautilus = await createNautilus()
+    const captured = captureLog({ level: 'trace' })
+
+    const thrown = await nautilus
+      .setServicePrice(getAssetFixture(), 'any-service', 'invalid')
+      .catch((error) => error)
+
+    expect(thrown.message).to.contain('newPrice must be a numeric string')
+    const [failed] = captured.named('edit.operation.failed')
+    expect(failed?.operation).to.equal('setServicePrice')
+    expect(thrown.opId).to.match(OP_ID).and.equal(failed.opId)
+  })
+})
+
 describe('the catalogue', () => {
   it('has the three events of every kind of operation', () => {
     for (const kind of [

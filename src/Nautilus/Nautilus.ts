@@ -1892,14 +1892,14 @@ export class Nautilus {
     serviceId: string,
     newPrice: string
   ): Promise<TransactionReceipt> {
-    if (
-      typeof newPrice !== 'string' ||
-      Number.isNaN(Number.parseFloat(newPrice))
-    )
-      throw new Error('newPrice must be a numeric string, e.g. "2.5".')
+    return this.operation('setServicePrice', async (log) => {
+      if (
+        typeof newPrice !== 'string' ||
+        Number.isNaN(Number.parseFloat(newPrice))
+      )
+        throw new Error('newPrice must be a numeric string, e.g. "2.5".')
 
-    return this.operation('setServicePrice', (log) =>
-      editPrice({
+      return editPrice({
         asset,
         serviceId,
         newPrice,
@@ -1907,7 +1907,7 @@ export class Nautilus {
         signer: this.signer,
         logger: log
       })
-    )
+    })
   }
 
   /** Changes the asset's lifecycle state on its NFT. */
