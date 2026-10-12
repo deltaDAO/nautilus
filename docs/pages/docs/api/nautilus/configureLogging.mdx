@@ -188,8 +188,10 @@ A captured line is one of four events, by ocean.js's method: `oceanjs.logger.err
 `bypass`) and `oceanjs.logger.debug` (`debug`). Its message is ocean.js's text; the objects
 ocean.js logged after it are in `fields.args` (a JSON string holding an object is read as
 the object, up to 64 KB; a longer one stays text there), with `fields.method` naming the
-method. Each argument is redacted as an event's own fields are, nested objects as deep. For
-example, a compute start the node refuses:
+method. Each argument is redacted as an event's own fields are, nested objects as deep. The
+arguments of one line hold at most 2,000 values in all, so a node's large answer body can't
+make a line huge or slow: where they stop, an object ends with `"…": "N more"` and a list with
+`"… N more"`. For example, a compute start the node refuses:
 
 ```
 [nautilus] [oceanjs] error: Compute start failed: 400 Bad Request (oceanjs.logger.error method=error args=[{"error":"Algorithm did:ope:… not allowed to run on the dataset: did:ope:…"}])
@@ -201,7 +203,7 @@ its warnings, log and debug lines too, raise it with `LoggerInstance.setLevel` f
 `@oceanprotocol/lib` (or [`setLogLevel`](/docs/api/nautilus/setLogLevel)), and set
 nautilus's `level` to match. The raw lines, unredacted, reach only the debug channel (topic
 `node`), and only when the event prints: its `sensitive` tier, or its `secrets` tier for a
-credential (an RPC key, a Bearer token, a signed transaction); see
+credential (an RPC key, a Bearer token); see
 [`setDebug`](/docs/api/nautilus/setDebug).
 
 :::warning[`'passthrough'` prints ocean.js's payload dump unredacted]
@@ -226,17 +228,22 @@ Notes:
 - Captured lines go to the process-wide configuration set here, not to an instance's own
   [`logger`](/docs/api/nautilus/create#logger).
 - Several copies of nautilus in one process (e.g. one bundled into a plugin) share one mode,
-  as they share ocean.js's logger: a copy loaded later keeps the mode in force, and
-  `getLoggingConfig().oceanjs` returns it whichever copy set it. The lines go to the logger
-  of the copy that last passed `oceanjs` to `configureLogging`, else to the first copy loaded.
+  as they share ocean.js's logger: a copy loaded later keeps the mode in force, whichever copy
+  set it. The lines go to the logger of the copy that last passed `oceanjs` to
+  `configureLogging`, else to the first copy loaded. When another copy does that, e.g. a
+  plugin that sets `'passthrough'` for itself, which makes ocean.js print unredacted for the
+  whole process, the copy that received the lines until then logs an
+  `oceanjs.capture.moved` warning with the new `mode`.
 - A line ocean.js logs while nautilus captures another, e.g. from a `sink` or a debug sink
   that logs through `LoggerInstance`, is dropped, never printed: through ocean.js it would
   print unredacted. One `oceanjs.capture.nested_dropped` warning says so. Hand a sink's
   output to a logger other than ocean.js's.
-- If `LoggerInstance` is frozen (or not extensible) when nautilus is imported, nautilus can't
-  replace its methods: ocean.js prints its lines itself, unredacted, whatever the mode, and
-  an `oceanjs.capture.unavailable` warning says so once. To silence ocean.js then, call
-  `LoggerInstance.setLevel(LogLevel.None)`.
+- If `LoggerInstance` is frozen, sealed or not extensible (or one of its methods is read-only)
+  when nautilus is imported, nautilus can't replace its methods: ocean.js prints its lines
+  itself, unredacted, whatever the mode, and an `oceanjs.capture.unavailable` warning says so
+  once. To silence ocean.js then, call `LoggerInstance.setLevel(LogLevel.None)`. A frozen
+  `LoggerInstance`'s level can't change either (`setLevel` and `setLogLevel` throw): call
+  `setLevel` before freezing it, or don't freeze it.
 - A few ocean.js functions write to `console` directly, not through `LoggerInstance`, and
   print as before whatever the mode (e.g. the legacy-signing note on chain 8996, or errors of
   ocean.js's own NFT and access-list helpers, which nautilus does not call).

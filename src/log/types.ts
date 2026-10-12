@@ -76,8 +76,7 @@ export interface LoggingOptions {
  * - `'capture'` (the default): route it through nautilus's process-wide logger as
  *   `oceanjs.logger.*` events (component `oceanjs`), redacted like every other event, at
  *   nautilus's level and to its sink; the raw lines reach only the debug channel: its
- *   `sensitive` tier, or `secrets` for a credential (an RPC key, a Bearer token, a signed
- *   transaction);
+ *   `sensitive` tier, or `secrets` for a credential (an RPC key, a Bearer token);
  * - `'passthrough'`: leave it as ocean.js prints it, to the console, **unredacted**: its
  *   payload dump after a refused compute start holds the request's nonce and the
  *   policy-server session ids;
