@@ -879,3 +879,103 @@ describe('order() and reuseOrder() pay only an allowed provider fee', () => {
     expect(datatoken.reuseOrder).toHaveBeenCalledOnce()
   })
 })
+
+describe('order() from one payer, concurrently', () => {
+  /**
+   * The base token's allowance to the datatoken, as the chain keeps it: `approve` sets it
+   * (ocean.js skips it when the allowance already covers the amount), and the purchase
+   * spends it, or reverts (ocean.js returns `null`) when it falls short. Each call yields
+   * first, so concurrent orders interleave as they do against an RPC.
+   */
+  function allowanceChain() {
+    const state = { allowance: 0, bought: 0, reverted: 0 }
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 1))
+
+    vi.mocked(approve).mockImplementation((async (...args: unknown[]) => {
+      const amount = Number(args[5])
+      await tick()
+      if (state.allowance >= amount) return amount
+      await tick()
+      state.allowance = amount
+      return transaction('0xapprove')
+    }) as never)
+
+    const datatoken = {
+      buyFromFreAndOrder: vi.fn(async () => {
+        await tick()
+        if (state.allowance < 10.5) {
+          state.reverted++
+          return null
+        }
+        state.allowance -= 10.5
+        state.bought++
+        return transaction('0xatomic')
+      })
+    }
+    constructs(vi.mocked(Datatoken), datatoken)
+
+    return state
+  }
+
+  const free = signedProviderFee({ providerFeeAmount: '0' })
+
+  it('buys three times for three concurrent orders of one asset, none reverting', async () => {
+    // Each order approved the price, which set the allowance to one price: the first
+    // purchase spent it, and the other two reverted (N17).
+    const state = allowanceChain()
+
+    const results = await Promise.allSettled(
+      [1, 2, 3].map(() => placeOrder(fixed(2, NO_PUBLISH_FEE), free))
+    )
+
+    expect(results.map((result) => result.status)).to.deep.equal([
+      'fulfilled',
+      'fulfilled',
+      'fulfilled'
+    ])
+    expect(state).to.deep.equal({ allowance: 0, bought: 3, reverted: 0 })
+    expect(vi.mocked(approve)).toHaveBeenCalledTimes(3)
+  })
+
+  it('lets the next order run after one that failed', async () => {
+    const state = allowanceChain()
+    vi.mocked(approve).mockRejectedValueOnce(new Error('user rejected'))
+
+    const results = await Promise.allSettled(
+      [1, 2].map(() => placeOrder(fixed(2, NO_PUBLISH_FEE), free))
+    )
+
+    expect(results.map((result) => result.status)).to.deep.equal([
+      'rejected',
+      'fulfilled'
+    ])
+    expect(state.bought).to.equal(1)
+  })
+
+  it('does not hold up an order of another datatoken', async () => {
+    const steps: string[] = []
+    vi.mocked(approve).mockImplementation((async (...args: unknown[]) => {
+      steps.push(`approve ${args[4]}`)
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      return transaction('0xapprove')
+    }) as never)
+    constructs(vi.mocked(Datatoken), {
+      buyFromFreAndOrder: vi.fn(async (address: string) => {
+        steps.push(`buy ${address}`)
+        return transaction('0xatomic')
+      })
+    })
+    const other = '0x6666666666666666666666666666666666666666'
+
+    await Promise.all([
+      placeOrder(fixed(2, NO_PUBLISH_FEE), free),
+      placeOrder({ ...fixed(2, NO_PUBLISH_FEE), datatokenAddress: other }, free)
+    ])
+
+    // Both approvals were sent before either purchase: the pairs differ.
+    expect(steps.slice(0, 2)).to.deep.equal([
+      `approve ${DATATOKEN}`,
+      `approve ${other}`
+    ])
+  })
+})

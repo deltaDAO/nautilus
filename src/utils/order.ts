@@ -30,6 +30,7 @@ import {
   type TransactionResponse
 } from 'ethers'
 import { type Logger, log } from '../log/logger.js'
+import { createKeyedLock } from './keyedLock.js'
 import { failureText, guardOf, withSendFailure } from './nonceGuard.js'
 import {
   assertProviderFeesAllowed,
@@ -61,6 +62,42 @@ const NO_CONSUME_MARKET_FEE = {
   consumeMarketFeeAddress: ZERO_ADDRESS,
   consumeMarketFeeToken: ZERO_ADDRESS,
   consumeMarketFeeAmount: '0'
+}
+
+/**
+ * One allowance at a time per (chain, payer, token, spender), process-wide: an approval
+ * *sets* the allowance, so concurrent orders that each approve their own amount leave one
+ * amount, the first order spends it, and the others revert (two of three
+ * `buyFromFreAndOrder`s from one key for one asset). An order holds the lock of every pair
+ * it approves from its first approval until it is confirmed, so the next one reads the
+ * allowance the first left. Other processes and other tools are not covered.
+ */
+const allowanceLock = createKeyedLock()
+
+/**
+ * Runs `task` holding the allowance lock of every (token, spender) pair, taken in one
+ * order (sorted), so two calls that share pairs cannot wait for each other.
+ */
+async function withAllowances<T>(
+  chainId: number | undefined,
+  payer: string,
+  pairs: { token: string; spender: string }[],
+  task: () => Promise<T>
+): Promise<T> {
+  const keys = [
+    ...new Set(
+      pairs.map((pair) =>
+        `${chainId} ${payer} ${pair.token} ${pair.spender}`.toLowerCase()
+      )
+    )
+  ].sort()
+
+  const holding = (index: number): Promise<T> =>
+    index === keys.length
+      ? task()
+      : allowanceLock(keys[index], () => holding(index + 1))
+
+  return holding(0)
 }
 
 /**
@@ -130,37 +167,47 @@ export async function reuseOrder(
   // `_checkProviderFee` pulls the fee with `transferFrom`, and ocean.js's `reuseOrder`
   // approves nothing, so without this any non-zero provider fee reverts.
   const providerFee = chargedProviderFee(params.providerFees)
+  const pairs = providerFee
+    ? [{ token: providerFee.token, spender: params.datatokenAddress }]
+    : []
 
-  if (providerFee)
-    await approveFeeWei({
-      signer: params.signer,
-      config: params.config,
-      token: providerFee.token,
-      spender: params.datatokenAddress,
-      amount: providerFee.amount.toString(),
-      what: 'provider fee'
-    })
-
-  const datatoken = new Datatoken(
-    params.signer,
+  return withAllowances(
     params.config.chainId,
-    params.config
-  )
+    await params.signer.getAddress(),
+    pairs,
+    async () => {
+      if (providerFee)
+        await approveFeeWei({
+          signer: params.signer,
+          config: params.config,
+          token: providerFee.token,
+          spender: params.datatokenAddress,
+          amount: providerFee.amount.toString(),
+          what: 'provider fee'
+        })
 
-  const response = await datatoken.reuseOrder(
-    params.datatokenAddress,
-    params.validOrderTx,
-    params.providerFees
-  )
+      const datatoken = new Datatoken(
+        params.signer,
+        params.config.chainId,
+        params.config
+      )
 
-  const receipt = await confirm(
-    'reuseOrder',
-    response,
-    params.signer,
-    params.datatokenAddress
-  )
+      const response = await datatoken.reuseOrder(
+        params.datatokenAddress,
+        params.validOrderTx,
+        params.providerFees
+      )
 
-  return { transferTxId: receipt.hash, reused: true }
+      const receipt = await confirm(
+        'reuseOrder',
+        response,
+        params.signer,
+        params.datatokenAddress
+      )
+
+      return { transferTxId: receipt.hash, reused: true }
+    }
+  )
 }
 
 /**
@@ -204,14 +251,26 @@ export async function order(request: OrderRequest): Promise<OrderResult> {
     })
   )
 
-  // 2. One approval per (token, spender), covering every amount it pulls.
-  for (const allowance of allowances)
-    await approveAllowance({ signer, config, payer, pricing, price, allowance })
+  // 2 and 3 hold the lock of every allowance they set until the order is confirmed: a
+  //    concurrent order of the same payer would otherwise overwrite it (see
+  //    `allowanceLock`).
+  return withAllowances(config.chainId, payer, allowances, async () => {
+    // 2. One approval per (token, spender), covering every amount it pulls.
+    for (const allowance of allowances)
+      await approveAllowance({
+        signer,
+        config,
+        payer,
+        pricing,
+        price,
+        allowance
+      })
 
-  // 3. The purchase and the order.
-  return route.schema === 'fixed'
-    ? orderFixed({ ...request, route, datatoken, orderParams })
-    : orderFree({ ...request, route, payer, datatoken, orderParams })
+    // 3. The purchase and the order.
+    return route.schema === 'fixed'
+      ? orderFixed({ ...request, route, datatoken, orderParams })
+      : orderFree({ ...request, route, payer, datatoken, orderParams })
+  })
 }
 
 /**
