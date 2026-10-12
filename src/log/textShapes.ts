@@ -42,7 +42,7 @@ export function trailingPunctuation(url: string): string {
 
 /**
  * How many levels of escaping `undoEscapes` undoes. Escaping deeper than that is still
- * read, flattened in one pass (`withEscapesUndone`).
+ * read, flattened (`flattenEscapes`, `withEscapesUndone`).
  */
 export const MAX_UNESCAPE_LEVELS = 8
 
@@ -61,12 +61,18 @@ const HAS_ESCAPE =
   /\\(?:["'\\/]|u00(?:[2-6][0-9a-fA-F]|7[0-9a-eA-E]))|%(?:[2-6][0-9a-fA-F]|7[0-9a-eA-E])/
 
 /**
- * Any escaping at all, for `flattenEscapes`: a run of backslashes with the quote, slash or
- * `u00XX` it escapes, or a percent-encoded printable character. The run is matched
- * whatever follows it, so a long run costs linear time.
+ * Percent-encoding of any depth, for `flattenEscapes`: a printable character behind a chain
+ * of encoded percent signs (`%3D`, `%253D`, `%25253D`). The chain is matched to its end and
+ * gives back at most one `25`, so a long chain costs linear time.
  */
-const ESCAPE_RUN =
-  /\\+(?:u00([2-6][0-9a-fA-F]|7[0-9a-eA-E])|(["'/]))?|%([2-6][0-9a-fA-F]|7[0-9a-eA-E])/g
+const PERCENT_RUN = /%(?:25)*([2-6][0-9a-fA-F]|7[0-9a-eA-E])/g
+
+/**
+ * JSON escaping of any depth, for `flattenEscapes`: a run of backslashes with the quote,
+ * slash or `u00XX` it escapes. The run is matched whatever follows it, so a long run costs
+ * linear time.
+ */
+const BACKSLASH_RUN = /\\+(?:u00([2-6][0-9a-fA-F]|7[0-9a-eA-E])|(["'/]))?/g
 
 /** A printable ASCII character by its hex code. */
 function fromHex(code: string): string {
@@ -97,25 +103,26 @@ export function undoEscapes(text: string): string {
   return current
 }
 
+/** `text` with every percent chain (`PERCENT_RUN`) read as the character it encodes. */
+function flattenPercent(text: string): string {
+  return text.replace(PERCENT_RUN, (_match, code: string) => fromHex(code))
+}
+
 /**
- * `text` with escaping of any depth flattened in one pass: a run of backslashes before a
- * quote, a slash or `u00XX` becomes what it escapes, any other run one backslash, and a
- * percent-encoded printable character that character. Coarser than `undoEscapes` (it
- * cannot tell the levels apart), so it is used only past `MAX_UNESCAPE_LEVELS`.
+ * `text` with escaping of any depth flattened: a percent chain becomes the character it
+ * encodes, then a run of backslashes before a quote, a slash or `u00XX` what it escapes and
+ * any other run one backslash, then percent chains again (a `\u0025` the backslash pass
+ * made). Percent first, so the backslashes a percent chain encodes (`%255C`) are flattened
+ * too. Coarser than `undoEscapes` (it cannot tell the levels apart), so it is used only
+ * past `MAX_UNESCAPE_LEVELS`. Three linear replacements.
  */
 function flattenEscapes(text: string): string {
-  return text.replace(
-    ESCAPE_RUN,
-    (
-      _match,
-      json: string | undefined,
-      char: string | undefined,
-      percent: string | undefined
-    ) => {
-      if (json ?? percent) return fromHex(json ?? percent ?? '')
-      return char ?? '\\'
-    }
+  const backslashes = flattenPercent(text).replace(
+    BACKSLASH_RUN,
+    (_match, json: string | undefined, char: string | undefined) =>
+      json ? fromHex(json) : (char ?? '\\')
   )
+  return flattenPercent(backslashes)
 }
 
 /**
@@ -126,7 +133,7 @@ function flattenEscapes(text: string): string {
  * them all flattened (`flattenEscapes`), so a credential deeper than the limit is still
  * redacted rather than shown. The first pass's output, with its escapes kept, is returned
  * unless a later pass redacts more; then that pass's output, with its escapes undone, is.
- * Linear: at most three passes and `MAX_UNESCAPE_LEVELS` + 1 replacements.
+ * Linear: at most three passes and `MAX_UNESCAPE_LEVELS` + 3 replacements.
  */
 export function withEscapesUndone(
   text: string,
