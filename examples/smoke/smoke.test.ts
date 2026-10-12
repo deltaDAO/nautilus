@@ -34,6 +34,7 @@ import {
 } from 'vitest'
 import { Nautilus } from '../../src/index.js'
 import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
+import { setMetadataState } from '../../src/utils/contracts.js'
 import {
   ASSET_DID,
   CHAIN_ID,
@@ -48,6 +49,10 @@ import { publishSession } from '../publish.js'
 
 /** The NFT as the chain stubs answer for it. */
 const chain = vi.hoisted(() => ({ state: 0, owner: '' }))
+/** The NFT a forged DDO names: another NFT the publisher controls. */
+const OTHER_NFT = '0x3c3D0e4b5A6f7a8B9c0D1e2F3a4B5c6D7E8f9A0b'
+/** What the node mock serves for `ASSET_DID`; a test may replace it. */
+let served: () => ReturnType<typeof getAssetFixture> = () => getAssetFixture()
 
 vi.mock('@oceanprotocol/lib', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>()
@@ -113,10 +118,12 @@ vi.mock('../../src/utils/contracts.js', async (importOriginal) => {
   return {
     ...actual,
     getNftDatatokens: vi.fn(async () => [DATATOKEN_ADDRESS]),
-    setMetadataState: vi.fn(async ({ state }: { state: number }) => {
-      chain.state = state
-      return { hash: '0xstate', status: 1 }
-    }),
+    setMetadataState: vi.fn(
+      async ({ state, nftAddress }: { state: number; nftAddress: string }) => {
+        chain.state = state
+        return { hash: '0xstate', status: 1, to: nftAddress }
+      }
+    ),
     getMetadataEventsInBlock: vi.fn(async () => [
       { transactionHash: '0xsetmetadata', index: 0 }
     ])
@@ -295,7 +302,7 @@ function startServer(): Promise<string> {
 /** The node mock, with the answers the access and compute commands need. */
 function nodeClient(): OceanNodeClient {
   const { client } = createNodeMock({
-    assets: { [ASSET_DID]: getAssetFixture() },
+    assets: { [ASSET_DID]: served() },
     policyServer: false
   })
 
@@ -372,6 +379,8 @@ afterAll(() => {
 
 beforeEach(() => {
   received.length = 0
+  served = () => getAssetFixture()
+  vi.mocked(setMetadataState).mockClear()
   chain.state = 0
   chain.owner = new Wallet(PUBLISHER_KEY).address
 
@@ -469,6 +478,22 @@ describe('example commands', () => {
     expect(out).toContain(`Revoked ${ASSET_DID}`)
     expect(out).toContain(`NFT: ${NFT_ADDRESS}`)
     expect(out).toContain('state on chain: 3')
+  })
+
+  it("asset:revoke refuses a DID whose served DDO names another of the signer's NFTs", async () => {
+    // The right id, but the NFT of another asset the same signer controls.
+    served = () => {
+      const forged = getAssetFixture()
+      ;(
+        forged as unknown as { credentialSubject: { nftAddress: string } }
+      ).credentialSubject.nftAddress = OTHER_NFT
+      return forged
+    }
+
+    await expect(run('asset:revoke', ASSET_DID)).rejects.toThrow(
+      /is not the DID of its NFT 0x3c3D.*Nothing was sent\./
+    )
+    expect(vi.mocked(setMetadataState)).not.toHaveBeenCalled()
   })
 
   it('asset:unlist takes the NFT address, without the node', async () => {

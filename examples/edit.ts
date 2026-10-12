@@ -55,8 +55,9 @@ import { publishedResult, publishSession } from './publish'
  *   - **DEPRECATED and REVOKED are final.** `edit()` refuses an asset in either state before
  *     sending anything. What the node serves afterwards depends on the node's version and
  *     database: ocean-node 4.2.x with Elasticsearch drops the DDO (`getAsset` answers 404);
- *     with Typesense it keeps a short document holding only the NFT state. Either way, read
- *     the state from the chain.
+ *     with Typesense it keeps a short document holding only the NFT state. Only for a move
+ *     from ACTIVE: an asset unlisted first stays served, with `nft.state` 3. Either way,
+ *     read the state from the chain.
  *   - **`waitForIndexer` throws** on failure or timeout instead of returning `undefined`.
  *
  * And in the next beta:
@@ -501,15 +502,13 @@ export async function removeService(
 }
 
 /**
- * The NFT address to change the state of: `target` itself when it is one, else the NFT of
- * the DID the node serves. Once the node no longer serves an asset (ocean-node 4.2.x with
- * Elasticsearch drops a DEPRECATED or REVOKED one), only the NFT address works; it is in
- * PUBLISH_LOG and in the publish result.
+ * The NFT a lifecycle transaction was sent to: the receipt's `to`. Only shown and waited
+ * on. `setAssetLifecycleState` takes the DID or the NFT address itself, so nautilus binds
+ * a DID to its NFT (the NFT the node names must derive that DID) before sending; an NFT
+ * address looked up here from a node-served DDO would skip that check.
  */
-async function lifecycleNft(nautilus: Nautilus, target: string) {
-  if (/^0x/i.test(target.trim())) return target.trim()
-
-  return getNftAddress(await nautilus.getAsset(target))
+function lifecycleNft(receipt: { to: string | null }, target: string) {
+  return receipt.to ?? target.trim()
 }
 
 /**
@@ -524,13 +523,13 @@ async function lifecycleNft(nautilus: Nautilus, target: string) {
  * `completePublish`. What the node serves afterwards depends on the node's version and
  * database: ocean-node 4.2.x with Elasticsearch drops the DDO, so `getAsset` answers 404 from
  * then on (with a hint saying why); with Typesense it keeps a short document holding only the
- * NFT state. That is why this works on the NFT address and reads the state from the chain.
+ * NFT state. It does so only for a move from ACTIVE: an asset unlisted first stays served,
+ * with `nft.state` 3. That is why the wait reads the state from the chain, and why the NFT
+ * address is the target to keep.
  */
 export async function revokeAsset(nautilus: Nautilus, target: string) {
-  const nftAddress = await lifecycleNft(nautilus, target)
-
   const receipt = await nautilus.setAssetLifecycleState(
-    nftAddress,
+    target,
     LifecycleStates.REVOKED_BY_PUBLISHER
   )
 
@@ -538,6 +537,8 @@ export async function revokeAsset(nautilus: Nautilus, target: string) {
     console.log('Asset is already revoked; nothing to do.')
     return
   }
+
+  const nftAddress = lifecycleNft(receipt, target)
 
   console.log(`Revoked ${target}`)
   console.log(`  NFT: ${nftAddress}`)
@@ -549,7 +550,7 @@ export async function revokeAsset(nautilus: Nautilus, target: string) {
     LifecycleStates.REVOKED_BY_PUBLISHER
   )
   console.log(
-    '  the node may no longer serve this DDO: ocean-node 4.2.x with Elasticsearch drops it on revoke'
+    '  the node may no longer serve this DDO: ocean-node 4.2.x with Elasticsearch drops it on a revoke from ACTIVE (an unlisted asset stays served, nft.state 3)'
   )
 }
 
@@ -602,10 +603,8 @@ async function waitForLifecycleState(
  * to filter on that state. The wait below confirms the state on chain, not on the node.
  */
 export async function unlistAsset(nautilus: Nautilus, target: string) {
-  const nftAddress = await lifecycleNft(nautilus, target)
-
   const receipt = await nautilus.setAssetLifecycleState(
-    nftAddress,
+    target,
     LifecycleStates.ASSET_UNLISTED
   )
 
@@ -613,6 +612,8 @@ export async function unlistAsset(nautilus: Nautilus, target: string) {
     console.log('Asset is already unlisted.')
     return
   }
+
+  const nftAddress = lifecycleNft(receipt, target)
 
   console.log(`Unlisted ${target}`)
   console.log(`  NFT: ${nftAddress}`)

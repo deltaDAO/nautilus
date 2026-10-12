@@ -371,7 +371,7 @@ export const COMMANDS: Record<string, Command> = {
   },
   'asset:revoke': {
     summary:
-      'Revoke an asset by DID or NFT address (one-way; ocean-node 4.2.x with Elasticsearch then drops the DDO)',
+      'Revoke an asset by DID or NFT address (one-way; ocean-node 4.2.x with Elasticsearch then drops the DDO, unless the asset was unlisted first)',
     args: ['didOrNftAddress'],
     run: (ctx, target) => revokeAsset(ctx.nautilus, target)
   },
