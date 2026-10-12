@@ -462,10 +462,10 @@ reportEnvironment()
  * The logger a captured ocean.js line goes to: the process-wide one, because ocean.js's
  * `LoggerInstance` is process-wide too.
  *
- * HOOK (10c, operation context): a line ocean.js logs during a nautilus operation belongs to
- * that operation. Once the operation context exists, take its logger here (the instance's
- * own, from `Nautilus.create({ logger })`) so the line follows that instance's level and
- * sink; the context's `opId` reaches the event through `build`, like any other event's.
+ * A line ocean.js logs during a nautilus operation still carries that operation's `opId` and
+ * name: `emit` reads the current operation (`AsyncLocalStorage`, where there is one), also
+ * when the operation runs on an instance's own logger. Its level and sink stay the
+ * process-wide ones: `LoggerInstance` cannot tell which instance called ocean.js.
  */
 function oceanJsLogger(): Logger {
   return log
