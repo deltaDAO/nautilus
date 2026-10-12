@@ -17,8 +17,9 @@ import {
 } from '@oceanprotocol/lib'
 import { Decimal } from 'decimal.js'
 import type { Signer } from 'ethers'
+import { debugRaw } from '../log/debug.js'
 import { getChainId } from './index.js'
-import { codeOf, errorChain, rateLimitOf } from './rpcErrors.js'
+import { codeOf, errorChain, rateLimitOf, redactedError } from './rpcErrors.js'
 
 export type PricingSchema = 'fixed' | 'free' | 'none'
 
@@ -256,7 +257,8 @@ async function findActiveExchange(
     // throws rather than answering. An RPC that rate-limits the read or does not answer
     // says nothing about the row, and skipping it could make a paid datatoken look free.
     const exchange = await contract.getExchange(exchangeId).catch((error) => {
-      if (rateLimitOf(error) || isTransportFailure(error)) throw error
+      if (rateLimitOf(error) || isTransportFailure(error))
+        throw exchangeReadError(exchangeId, error)
       return undefined
     })
 
@@ -264,6 +266,29 @@ async function findActiveExchange(
   }
 
   return undefined
+}
+
+/**
+ * A failed exchange read, safe to show: ethers' error names the RPC URL, which can hold an
+ * API key, so it is kept only redacted (`cause`), and in full on the debug channel (`rpc`
+ * topic).
+ */
+function exchangeReadError(exchangeId: string, error: unknown): Error {
+  debugRaw('rpc', 'fixed-rate exchange read error before redaction', error)
+
+  const id = /^0x[0-9a-f]{8,}$/i.test(exchangeId)
+    ? `${exchangeId.slice(0, 10)}…`
+    : 'of the datatoken'
+  const failed = new Error(
+    `Could not read the pricing: the fixed-rate exchange ${id} could not be read, because the RPC ${
+      rateLimitOf(error)
+        ? 'rate-limited the read'
+        : 'did not answer or answered with a server error'
+    }. Nothing was ordered or paid. Retry in a minute or use another RPC.`,
+    { cause: redactedError(error) }
+  )
+  failed.name = 'PricingReadError'
+  return failed
 }
 
 /** ethers' codes for a request the RPC did not answer, or answered with a server error. */

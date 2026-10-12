@@ -13,6 +13,8 @@
  *     any non-zero fee reverted the order.
  *   - `|| 18` turned a legitimate 0-decimal base token back into 18 decimals.
  */
+
+import { inspect } from 'node:util'
 import {
   allowanceWei,
   approve,
@@ -23,8 +25,15 @@ import {
   unitsToAmount,
   ZERO_ADDRESS
 } from '@oceanprotocol/lib'
-import { formatUnits, type Signer } from 'ethers'
+import {
+  FetchRequest,
+  FetchResponse,
+  formatUnits,
+  makeError,
+  type Signer
+} from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { setDebug } from '../../src/log/debug.js'
 import { order } from '../../src/utils/order.js'
 import {
   getOrderPrice,
@@ -37,6 +46,7 @@ import {
   signedProviderFee
 } from '../fixtures/ProviderFee.js'
 import { expectThrowsAsync } from '../helpers.js'
+import { FAKE } from '../secretScan.js'
 
 vi.mock('@oceanprotocol/lib', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@oceanprotocol/lib')>()
@@ -167,10 +177,64 @@ describe('getPricingInfo exchange selection', () => {
       })
       getExchange.mockRejectedValueOnce(failure)
 
-      await expect(getPricingInfo(signer, DATATOKEN, chainConfig)).rejects.toBe(
-        failure
+      const thrown = await getPricingInfo(signer, DATATOKEN, chainConfig).catch(
+        (caught) => caught
+      )
+      expect(thrown).to.have.property('name', 'PricingReadError')
+      expect(thrown.message).to.match(
+        /^Could not read the pricing: the fixed-rate exchange of the datatoken could not be read, because the RPC (rate-limited the read|did not answer or answered with a server error)\./
       )
     }
+  })
+
+  it('throws a failed exchange read without the RPC URL ethers puts in its error', async () => {
+    // ethers' `assertOk` puts the request URL, with its API key, in the message; the
+    // error went out of `getPricingInfo()`, `settleOrder()`, `access()` and `compute()`.
+    const limited = (() => {
+      const request = new FetchRequest(FAKE.rpcUrl)
+      try {
+        new FetchResponse(
+          429,
+          'Too Many Requests',
+          {},
+          null,
+          request
+        ).assertOk()
+      } catch (error) {
+        return error
+      }
+    })()
+    const debugged: unknown[] = []
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    setDebug({
+      level: 'sensitive',
+      topics: ['rpc'],
+      sink: (event) => debugged.push(event)
+    })
+
+    for (const failure of [
+      limited,
+      makeError(`server error (requestUrl="${FAKE.rpcUrl}")`, 'SERVER_ERROR')
+    ]) {
+      const getExchange = mockChain({
+        fixedRates: [`0x${'ab'.repeat(32)}`],
+        dispensers: [],
+        exchanges: {}
+      })
+      getExchange.mockRejectedValueOnce(failure)
+
+      const thrown = await getPricingInfo(signer, DATATOKEN, chainConfig).catch(
+        (caught) => caught
+      )
+      const all = `${thrown.message}\n${inspect(thrown, { depth: 8 })}\n${JSON.stringify(thrown)}`
+      for (const marker of [FAKE.rpcUrl, FAKE.rpcPathToken, FAKE.rpcQueryToken])
+        expect(all).not.to.contain(marker)
+      expect(thrown.message).to.contain('the fixed-rate exchange 0xabababab…')
+      expect(thrown.cause).to.be.instanceOf(Error)
+    }
+
+    // The raw error, on the debug channel only.
+    expect(debugged).to.have.length(2)
   })
 
   it('falls through to the dispenser when no exchange is active', async () => {

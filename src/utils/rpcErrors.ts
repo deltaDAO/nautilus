@@ -2,9 +2,29 @@
  * Reading an RPC's error: what ethers wraps, at which depth, and whether it is a rate limit.
  *
  * Shared by the previous-order scan, which must not take a rate limit for a range refusal
- * (that halves the range until the reads run out, and ends in "not found"), and by the
- * classification of a failed lookup in `OrderCheckError`. Not exported from the package.
+ * (that halves the range until the reads run out, and ends in "not found"), by the
+ * classification of a failed lookup in `OrderCheckError`, and by the pricing reads; and
+ * `redactedError`, which makes an RPC's error safe to keep as a `cause`. Not exported from
+ * the package.
  */
+import {
+  isErrorCode,
+  sanitize,
+  stripControlCharacters
+} from '../node/messages.js'
+
+/** How much of the RPC's error text goes into a message. */
+const MAX_DETAIL_LENGTH = 200
+
+/**
+ * A URL: `scheme://…`, also with its slashes JSON-escaped (`https:\/\/host\/path`). Applied
+ * only to `sanitize`'s output, where a URL is down to its origin already: this drops the
+ * origin too.
+ */
+const URL_TEXT = /[a-z][a-z0-9+.-]{0,31}:(?:\\*\/){2}(?:[^\s"'<>\\]|\\+\/)*/gi
+/** A URL without its scheme: `host.tld[:port]/path…`. */
+const HOST_PATH =
+  /\b(?:[a-z0-9-]{1,63}\.)+[a-z]{2,24}(?::\d{1,5})?\\*\/(?:[^\s"'<>\\]|\\+\/)*/gi
 
 /** A `-32005` that refuses the range or the number of results, not the request rate. */
 const RANGE_REFUSAL = /range|more than|too (?:large|wide|big)|results/i
@@ -189,4 +209,40 @@ export function answeredWithError(chain: object[]): boolean {
       (typeof code === 'string' && /^-?\d+$/.test(code))
     )
   })
+}
+
+/**
+ * The error's most specific text, made safe to show: the RPC's own JSON-RPC message when
+ * there is one, else ethers' short message, else the message; first line only, through
+ * `sanitize` (credentials redacted before and after invisible characters are stripped, at
+ * most 200 characters, a word split by the cut dropped), then with every URL removed, also
+ * one without a scheme (`sanitize` keeps a URL's origin), and long hex shortened. Keeps the
+ * name, and an error code such as `SERVER_ERROR` or `-32000`.
+ */
+export function redactedError(error: unknown): Error {
+  const chain = errorChain(error)
+  // ethers keeps the RPC's JSON-RPC error in `error` or `info.error`: the deepest message is
+  // the RPC's own words, without ethers' request and payload dump.
+  const texts = chain.map(messageOf).filter((text) => text !== undefined)
+  const raw = texts.length ? texts[texts.length - 1] : String(error)
+
+  // Redaction first, on the RPC's whole first line: the URL removal below cannot cut a URL
+  // short of a token in it (`https://host/x\y/v3/<token>`) before `sanitize` sees it. The
+  // raw error is in the debug channel already (`classifyLookupFailure`).
+  const text = sanitize(raw.split(/\r?\n/)[0] ?? '', MAX_DETAIL_LENGTH, null)
+    .replace(URL_TEXT, '<url>')
+    .replace(HOST_PATH, '<url>')
+    .replace(
+      /\b0x[0-9a-f]{16,}\b/gi,
+      (hex) => `${hex.slice(0, 6)}…${hex.slice(-4)}`
+    )
+
+  const safe = new Error(text || 'unknown error')
+  const first = chain[0]
+  if (first instanceof Error)
+    safe.name = stripControlCharacters(String(first.name)).slice(0, 40)
+  const code = chain.map(codeOf).find((value) => value && isErrorCode(value))
+  if (code) Object.assign(safe, { code })
+
+  return safe
 }
