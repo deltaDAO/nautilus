@@ -555,8 +555,9 @@ describe('Nautilus compute jobs', () => {
       await nautilus.getComputeLogs({ jobId: JOB_ID }).catch(() => undefined)
     })
 
-    // About 30 ms; 150 ms when the cut word was found by a regular expression.
-    expect(elapsed).to.be.below(100)
+    // About 30 ms; 150 ms when the cut word was found by a regular expression. CI runners
+    // are about four times slower (110-140 ms seen for the good case there).
+    expect(elapsed).to.be.below(process.env.CI ? 400 : 100)
     expect(streamed.message).to.match(
       /Results: \[.*… \(2 results; getComputeStatus\(\) lists them all\)$/
     )
