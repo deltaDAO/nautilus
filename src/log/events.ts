@@ -109,7 +109,7 @@ export const LOG_EVENTS = {
     level: 'warn',
     component: 'chain',
     description:
-      "The nonce guard's counter was ahead of the RPC's pending count, and the last transaction it counted is dropped: sent more than a minute ago, unknown by hash on two reads, and the account has not mined past its nonce. The counter falls back to the pending count.",
+      "The nonce guard's counter was ahead of the RPC's pending count, and the earliest transaction it sent that the pending count does not cover (else the last one it counted) is dropped: sent more than a minute ago, unknown by hash on two reads, and the account has not mined past its nonce. The next transaction takes the pending count, filling the gap.",
     fields: ['address', 'txNonce', 'pending']
   },
   'chain.send.failed': {

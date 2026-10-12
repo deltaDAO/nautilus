@@ -273,14 +273,14 @@ Fields, so a program need not parse the text:
 | `price` | `{ amount: string; symbol: string } \| undefined` | The main cost of a new order, in whole tokens: the datatoken's price (exchange fees included), or for a free datatoken the first fee due. `symbol` is `tokens of 0x…` when the token's symbol cannot be read. `undefined` when the pricing could not be read either. |
 | `costs` | `{ amount: string; symbol: string }[]` | Every part a new order would pay, each in its own token: the price, the publish-market fee and the provider fee, those that are not zero. The message names them all (`1.002 devEURAU + 0.1 OCEAN`). Empty when the pricing could not be read. |
 | `checkedHours`, `windowHours` | `number` | For `incomplete` only: how far back the check read (`NaN` when unknown), and the order window, the service's `timeout` (`Infinity` when its orders never expire). |
-| `cause` | `Error` | The RPC's error, redacted: first line only, no URL, long hex shortened, at most 200 characters. |
+| `cause` | `Error` | The RPC's error, redacted: first line only, `\u00XX` escapes undone (so a key spelt with them, `"api\u004bey"`, is redacted too), no URL, long hex shortened, at most 200 characters. |
 
 | `reason` | The cause in the message |
 | --- | --- |
 | `rate-limited` | the RPC rate-limited the check (HTTP 429): an HTTP 429, a `Retry-After` header on an answer that is not a server error, JSON-RPC code `-32005` that does not refuse the block range, or "rate limit" / "too many requests" in the answer |
 | `unreachable` | the RPC did not answer: a network error or a timeout (not an RPC that answered with an error that mentions a timeout) |
 | `incomplete` | the check covered only the last 16 of the 24 hours an order stays valid: the lookup stopped before it covered the order window (below) |
-| `rpc-error` | the RPC returned an error: … (the RPC's own words, redacted); or the RPC's answer lacked data the check needs (…): no newest block, no receipt for an order transaction its own logs list, or a receipt without that order's event, as a load-balanced RPC whose backends lag each other can answer |
+| `rpc-error` | the RPC returned an error: … (the RPC's own words, redacted); or the RPC's answer lacked data the check needs (…): no newest block, no receipt for an order transaction its own logs list, or a receipt without one of the order events those logs list, as a load-balanced RPC whose backends lag each other can answer |
 
 The lookup reads at most 100 000 blocks back, in at most 100 rounds of reads, and checks
 at most 50 candidate orders. When one of those bounds ends it before the service's

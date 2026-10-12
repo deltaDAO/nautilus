@@ -106,6 +106,16 @@ const NETWORK =
  * origin too.
  */
 const URL_TEXT = /[a-z][a-z0-9+.-]{0,31}:(?:\\*\/){2}(?:[^\s"'<>\\]|\\+\/)*/gi
+/**
+ * A JSON `\u00XX` escape of a printable ASCII character, behind any run of backslashes
+ * (escaped again in JSON inside a JSON string): it spells a key the redaction would
+ * otherwise not read (`"api\u004bey"` and `\"api\\u004bey\"` are `apiKey`). A run is
+ * matched whatever follows it, and kept when no such escape does, so a long run costs
+ * linear time.
+ */
+const JSON_UNICODE_ESCAPE = /\\+(?:u00([2-6][0-9a-f]|7[0-9a-e]))?/gi
+/** How many levels of `\u00XX` escaping are undone (`\u005cu004b`, escaped twice). */
+const MAX_UNESCAPE_LEVELS = 4
 /** A URL without its scheme: `host.tld[:port]/path…`. */
 const HOST_PATH =
   /\b(?:[a-z0-9-]{1,63}\.)+[a-z]{2,24}(?::\d{1,5})?\\*\/(?:[^\s"'<>\\]|\\+\/)*/gi
@@ -142,7 +152,10 @@ export class OrderCheckError extends Error {
   readonly checkedHours?: number
   /** For `incomplete`: hours back from now an order would still be in force. */
   readonly windowHours?: number
-  /** The lookup's error, redacted: no URL, first line only, at most 200 characters. */
+  /**
+   * The lookup's error, redacted: first line only, `\u00XX` escapes undone, no URL, at most
+   * 200 characters.
+   */
   declare readonly cause: Error
 
   /**
@@ -366,11 +379,12 @@ function hours(value: number, round: 'down' | 'nearest'): string {
 
 /**
  * The error's most specific text, made safe to show: the RPC's own JSON-RPC message when
- * there is one, else ethers' short message, else the message; first line only, through
- * `sanitize` (credentials redacted before and after invisible characters are stripped, at
- * most 200 characters, a word split by the cut dropped), then with every URL removed, also
- * one without a scheme (`sanitize` keeps a URL's origin), and long hex shortened. Keeps the
- * name, and an error code such as `SERVER_ERROR` or `-32000`.
+ * there is one, else ethers' short message, else the message; first line only, its
+ * `\u00XX` escapes undone (`undoUnicodeEscapes`), through `sanitize` (credentials redacted
+ * before and after invisible characters are stripped, at most 200 characters, a word split
+ * by the cut dropped), then with every URL removed, also one without a scheme (`sanitize`
+ * keeps a URL's origin), and long hex shortened. Keeps the name, and an error code such as
+ * `SERVER_ERROR` or `-32000`.
  */
 function redactedError(error: unknown): Error {
   const chain = errorChain(error)
@@ -380,9 +394,11 @@ function redactedError(error: unknown): Error {
   const raw = texts.length ? texts[texts.length - 1] : String(error)
 
   // Redaction first, on the RPC's whole first line: the URL removal below cannot cut a URL
-  // short of a token in it (`https://host/x\y/v3/<token>`) before `sanitize` sees it. The
+  // short of a token in it (`https://host/x\y/v3/<token>`) before `sanitize` sees it. Its
+  // `\u00XX` escapes are undone before, so a key spelt with them is read as the key. The
   // raw error is in the debug channel already (`classifyLookupFailure`).
-  const text = sanitize(raw.split(/\r?\n/)[0] ?? '', MAX_DETAIL_LENGTH, null)
+  const line = undoUnicodeEscapes(raw.split(/\r?\n/)[0] ?? '')
+  const text = sanitize(line, MAX_DETAIL_LENGTH, null)
     .replace(URL_TEXT, '<url>')
     .replace(HOST_PATH, '<url>')
     .replace(
@@ -397,4 +413,22 @@ function redactedError(error: unknown): Error {
   if (code) Object.assign(safe, { code })
 
   return safe
+}
+
+/**
+ * `text` with up to `MAX_UNESCAPE_LEVELS` levels of `\u00XX` escapes of printable ASCII
+ * undone (`JSON_UNICODE_ESCAPE`). Linear in the length of `text` per level.
+ */
+function undoUnicodeEscapes(text: string): string {
+  let current = text
+  for (let level = 0; level < MAX_UNESCAPE_LEVELS; level++) {
+    const next = current.replace(
+      JSON_UNICODE_ESCAPE,
+      (run, code: string | undefined) =>
+        code ? String.fromCharCode(Number.parseInt(code, 16)) : run
+    )
+    if (next === current) break
+    current = next
+  }
+  return current
 }

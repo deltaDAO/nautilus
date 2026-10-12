@@ -615,6 +615,46 @@ describe('Nautilus compute jobs', () => {
     expect(JSON.stringify(debug)).not.to.contain(FAKE.rpcPathToken)
   })
 
+  it('shows no user info of a URL the bound cuts, in the warning, the errors or the sensitive debug channel (security regression)', async () => {
+    const secret = 'userinfo-secret-7Hq2Lm9Z'
+    const url = `https://user:${secret},${'x'.repeat(17_000)}@rpc.example.org/path`
+    const job = statusJob({
+      status: 41,
+      statusText: `Failed at ${url}`,
+      results: [
+        { filename: url, filesize: 10, type: 'imageLog', index: 0 }
+      ] as never
+    })
+    const nautilus = await createNautilus()
+    statusAnswers([job], [job], [job])
+    const log = captureLog()
+    const stderr = vi
+      .spyOn(process.stderr, 'write')
+      .mockImplementation(() => true)
+    const debug: DebugEvent[] = []
+    setDebug({
+      level: 'sensitive',
+      topics: ['compute'],
+      sink: (event) => debug.push(event)
+    })
+
+    await nautilus.getComputeResult({ jobId: JOB_ID })
+    const streamed = (await nautilus
+      .streamComputeResult({ jobId: JOB_ID })
+      .catch((error) => error)) as Error
+
+    const [warning] = log.named('compute.result.unavailable')
+    expect(warning).toBeDefined()
+    for (const text of [
+      JSON.stringify(log.events),
+      streamed.message,
+      JSON.stringify(stderr.mock.calls),
+      JSON.stringify(debug)
+    ])
+      expect(text).not.to.contain(secret)
+    expect(debug.length).to.be.greaterThan(0)
+  })
+
   it('getComputeResult reads an explicit result of a failed job', async () => {
     const nautilus = await createNautilus()
     statusAnswers([statusJob({ status: 11, results: RESULTS.slice(0, 1) })])

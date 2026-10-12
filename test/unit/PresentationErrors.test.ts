@@ -818,6 +818,65 @@ describe("a policy-server session id in the wallet's text (D10)", () => {
       }
   })
 
+  it("leaves no start of it where the wallet's 500-character cut split it (PR #216 review)", async () => {
+    // `WaltIdHttpWallet` bounds the wallet's message before the provider can remove the id;
+    // a cut inside an id that `redactSecrets` does not know (a policy server's own format)
+    // kept its first characters, in the message and in `details`.
+    for (const sessionId of [
+      'custom-policy-session-0123456789abcdef',
+      SID,
+      `${'Kontext'.repeat(5)}-${'Zufall'.repeat(6)}`
+    ]) {
+      const { node } = policyNode(HOLDER_BINDING_NPE)
+      const head = 'Id parameter '
+      for (let cut = 0; cut <= sessionId.length; cut++) {
+        const errorMessage = `${'x '.repeat(250 - Math.ceil((head.length + cut) / 2))}${
+          (head.length + cut) % 2 ? 'x' : ''
+        }${head}${sessionId} expired`
+        const wallet = walletPresentingThrough(
+          httpWallet(400, JSON.stringify({ redirectUri: '', errorMessage }))
+        )
+        const presented = await waltIdProvider(node, wallet)
+          .present(challengeFor(node, sessionId))
+          .catch((error) => error)
+
+        expect(presented.reason).to.equal('verifier-rejected')
+        for (const text of [
+          presented.message,
+          presented.details.errorMessage
+        ]) {
+          const after = text.slice(text.lastIndexOf(head) + head.length)
+          expect(
+            // The provider's own bound may cut its `<redacted>`, never the id.
+            after.replace(/<redacted>|<[a-z]*…$|[-…]| expired$/g, ''),
+            `${sessionId} cut after ${cut}: ${after}`
+          ).to.equal('')
+        }
+      }
+    }
+  })
+
+  it('finds a cut start of a huge session id in linear time (security regression)', async () => {
+    const { node } = policyNode(HOLDER_BINDING_NPE)
+    const base = walletPresentingThrough(httpWallet(400, VERIFIER_400))
+    const sessionId = `${'d'.repeat(50_000)}e`
+    const errorMessage = `session ${'d'.repeat(40_000)}…`
+    let presented: CredentialPresentationError | undefined
+    const elapsed = await cpuTime(async () => {
+      presented = await waltIdProvider(node, {
+        ...base,
+        usePresentationRequest: async () => ({ errorMessage })
+      })
+        .present(challengeFor(node, sessionId))
+        .catch((error) => error)
+    })
+
+    expect(elapsed).to.be.below(cpuBudget(50))
+    expect(presented?.message).to.equal(
+      'The verifier rejected the presentation: session <redacted>…'
+    )
+  })
+
   it("is redacted by the provider, in any shape, from a custom wallet's message", async () => {
     const { node } = policyNode(HOLDER_BINDING_NPE)
     const base = walletPresentingThrough(httpWallet(400, VERIFIER_400))

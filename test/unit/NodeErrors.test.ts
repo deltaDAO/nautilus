@@ -24,7 +24,9 @@ import {
   Wallet
 } from 'ethers'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { redactMessage } from '../../src/log/redact.js'
+import { SECRET_KEYS } from '../../src/log/keys.js'
+import { redactKeyValues } from '../../src/log/keyValues.js'
+import { redactError, redactMessage } from '../../src/log/redact.js'
 import type { NodeAuth } from '../../src/node/auth.js'
 import { nodeText, redactSecrets, sanitize } from '../../src/node/messages.js'
 import {
@@ -1046,6 +1048,62 @@ describe("the node's text in a message", () => {
     }
   })
 
+  it('decodes JSON escapes in keys and URLs, nested JSON strings included (PR #213 review)', () => {
+    const sessionId = 'val-sid-u0049-x9'
+    const pathToken = 'rpc-path-escaped-x9'
+    const raw = [
+      // `I` is `I`: the key is `sessionId`, as a JSON parser reads it.
+      `{"session\\u0049d":"${sessionId}"}`,
+      `{"session\\u0000Id":"${sessionId}"}`,
+      // JSON may escape `/`: the URL is a URL all the same.
+      `{"requestUrl":"https:\\/\\/rpc.example.org\\/v3\\/${pathToken}"}`,
+      `{"note":"see https:\\u002f\\u002frpc.example.org\\u002fv3\\u002f${pathToken}"}`
+    ]
+    for (const body of raw) {
+      // As it is, inside a JSON string (ethers' `responseBody`), and two levels deep.
+      const once = JSON.stringify(body)
+      const twice = JSON.stringify(JSON.stringify({ body }))
+      for (const text of [
+        body,
+        `body=${once}`,
+        `info={ "responseBody": ${once} }`,
+        twice
+      ]) {
+        const out = redactSecrets(text)
+        expect(out, text).not.to.contain(sessionId)
+        expect(out, text).not.to.contain(pathToken)
+        expect(nodeText(text), text).not.to.match(/val-sid|rpc-path/)
+      }
+    }
+    expect(redactSecrets(raw[0])).to.equal('{"sessionId":"<redacted>"}')
+    expect(redactSecrets(raw[2])).to.equal(
+      '{"requestUrl":"https://rpc.example.org"}'
+    )
+    expect(
+      redactSecrets(JSON.stringify(JSON.stringify({ body: raw[0] })))
+    ).to.equal(
+      JSON.stringify(JSON.stringify({ body: '{"sessionId":"<redacted>"}' }))
+    )
+  })
+
+  it('keeps an escaped quote or delimiter inside a secret value from cutting it short', () => {
+    for (const text of [
+      '{"sessionId":"head\\u0022tail-x9"}',
+      'sessionId=head\\u0027tail-x9',
+      'sessionId=head\\u0026tail-x9',
+      'password: head\\u002ctail-x9',
+      JSON.stringify(JSON.stringify({ sessionId: 'head"tail-x9' })),
+      JSON.stringify(JSON.stringify({ sessionId: 'head\\"tail-x9' })),
+      JSON.stringify(
+        JSON.stringify(JSON.stringify({ sessionId: 'head"\\tail-x9' }))
+      )
+    ]) {
+      const out = redactSecrets(text)
+      expect(out, text).not.to.contain('tail-x9')
+      expect(out, text).to.contain('<redacted>')
+    }
+  })
+
   it('catches a key split by a control character, an escape or a line break', () => {
     for (const text of [
       'session\u0000Id=val-sid-x9',
@@ -1093,6 +1151,53 @@ describe("the node's text in a message", () => {
     ).to.equal('{"method":"eth_sendRawTransaction","params":["<redacted>"]}')
     // A transaction hash stays.
     expect(redactSecrets(`tx ${hash} reverted`)).to.equal(`tx ${hash} reverted`)
+  })
+
+  it('redacts a short signed transaction: a minimal legacy transfer, a contract creation', async () => {
+    // Real signatures by a fake key. A legacy transfer at chain 1 with nonce, gas price
+    // and value 1 is 97 bytes; a contract creation without data, 77. Both can be sent.
+    const wallet = new Wallet(`0x${'11'.repeat(32)}`)
+    const transfer = await wallet.signTransaction({
+      type: 0,
+      chainId: 1,
+      nonce: 0,
+      gasPrice: 1,
+      gasLimit: 21_000,
+      to: `0x${'22'.repeat(20)}`,
+      value: 1
+    })
+    const creation = await wallet.signTransaction({
+      type: 0,
+      chainId: 1,
+      nonce: 0,
+      gasPrice: 1,
+      gasLimit: 53_000
+    })
+    expect((transfer.length - 2) / 2).to.equal(97)
+
+    for (const raw of [transfer, creation]) {
+      const message = `replacement fee too low (transaction="${raw}", code=REPLACEMENT_UNDERPRICED)`
+      const error = Object.assign(new Error(message), {
+        code: 'REPLACEMENT_UNDERPRICED'
+      })
+      expect(redactSecrets(message), raw).to.equal(
+        'replacement fee too low (transaction="<redacted>", code=REPLACEMENT_UNDERPRICED)'
+      )
+      expect(sanitize(message, 2_000, null), raw).not.to.contain(raw.slice(2))
+      expect(redactError(error), raw).not.to.contain(raw.slice(2))
+      expect(redactSecrets(raw.toUpperCase().replace('0X', '0x'))).to.equal(
+        '<redacted>'
+      )
+    }
+  })
+
+  it('keeps short hex that is not a whole RLP list', () => {
+    // An RLP list prefix whose length byte does not match what follows: a 32-byte hash
+    // and other short blobs that merely start with `f8` stay readable.
+    const hash = `0xf8${'ab'.repeat(31)}`
+    const blob = `0xf860${'cd'.repeat(60)}`
+    expect(redactSecrets(`tx ${hash} reverted`)).to.equal(`tx ${hash} reverted`)
+    expect(redactSecrets(`data ${blob}`)).to.equal(`data ${blob}`)
   })
 
   it("keeps a URL's origin only", () => {
@@ -1228,6 +1333,29 @@ describe("the node's text in a message", () => {
     }
   })
 
+  it('reads a long backslash run in linear time, at every tier (security regression)', async () => {
+    // A run of backslashes followed by neither an escape nor a quote: the JSON-escape decoder
+    // and the escaped-key form were retried from each backslash (about 650 ms at 40,000), at
+    // the log window and in the sensitive tier's unbounded mask.
+    const marker = 'api-key-marker-7c41'
+    const runs = [
+      `api\\u004bey=${marker} ${'\\'.repeat(40_000)}x`,
+      `${'\\'.repeat(40_000)}"apiKey"`
+    ]
+    for (const text of runs) {
+      let clean = ''
+      const elapsed = await cpuTime(() => {
+        clean = redactKeyValues(redactSecrets(text), SECRET_KEYS)
+      })
+      expect(elapsed).to.be.below(cpuBudget(50))
+      expect(clean).not.to.contain(marker)
+    }
+    // Still decoded and redacted at any depth.
+    expect(
+      redactSecrets('\\\\\\"api\\u004bey\\\\\\": \\\\\\"v4lue\\\\\\"')
+    ).to.equal('\\\\\\"apiKey\\\\\\": \\\\\\"<redacted>\\\\\\"')
+  })
+
   it('redacts a megabyte of hostile text in no time (security regression)', async () => {
     // Text built to be slow to redact: dotted words (the URL scheme pattern used to rescan
     // from each one) and `0x` runs (the hex patterns). Only the start is read.
@@ -1317,5 +1445,46 @@ describe("the node's text in a message", () => {
         null
       )
     ).to.equal('https://h.example <redacted> and more')
+  })
+
+  it('drops a URL the read limit cuts whole, so no user info is read as its host (security regression)', () => {
+    // `,`, `;` and brackets end a word but not a URL: cut at the one before the unseen `@`,
+    // what was left of the URL read `user:secret` as its host and kept it.
+    const secret = 'userinfo-secret-7Hq2Lm9Z'
+    const filler = 'x'.repeat(17_000)
+    for (const punctuation of [',', ';', '(', ')', '[', ']', '{', '}', "'"])
+      for (const url of [
+        `https://user:${secret}${punctuation}${filler}@rpc.example.org/path`,
+        `https:\\/\\/user:${secret}${punctuation}${filler}@rpc.example.org/path`
+      ]) {
+        for (const text of [url, `failed at ${url}`, `{"error":"${url}"}`]) {
+          const clean = sanitize(text, 200, null)
+          expect(clean, `${punctuation} ${text.slice(0, 40)}`).not.to.contain(
+            secret
+          )
+          expect(redactMessage(text)).not.to.contain(secret)
+          expect(nodeText(text)).not.to.contain(secret)
+        }
+      }
+    expect(
+      sanitize(`failed at https://user:${secret},${filler}@h/p`, 200, null)
+    ).to.equal('failed at…')
+    // A quote or a space ends a URL, also in its user info, cut or not: what is left is no
+    // host and port, and is not shown either.
+    for (const end of ["'", '"', ' '])
+      expect(
+        sanitize(`at https://user:${secret}${end}x@rpc.example.org/path`)
+      ).to.equal(`at https://<redacted>${end}x@rpc.example.org/path`)
+    for (const url of [
+      'https://h.example',
+      'https://h.example:8545',
+      'http://[::1]:8545',
+      'http://127.0.0.1:'
+    ])
+      expect(sanitize(`at ${url}/path`)).to.equal(`at ${url}`)
+    // A URL that ends before the cut keeps its origin, as in a text read whole.
+    expect(
+      sanitize(`failed at https://h.example/p, then ${'y '.repeat(9_000)}`)
+    ).to.match(/^failed at https:\/\/h\.example, then y y .*…$/)
   })
 })
