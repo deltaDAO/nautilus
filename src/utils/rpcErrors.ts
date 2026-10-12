@@ -8,7 +8,11 @@
 
 /** A `-32005` that refuses the range or the number of results, not the request rate. */
 const RANGE_REFUSAL = /range|more than|too (?:large|wide|big)|results/i
-const RATE_LIMITED = /rate[\s-]?limit|too many requests/i
+/** Rate-limit wording: also QuickNode's "15/second request limit reached" and "capacity exceeded". */
+const RATE_LIMITED =
+  /rate[\s-]?limit|too many requests|request limit reached|capacity exceeded/i
+/** QuickNode's JSON-RPC code for a request rate over the plan's limit. */
+const RATE_LIMIT_CODES = ['429', '-32007']
 
 /** How a rate limit showed, for the message. */
 export interface RateLimit {
@@ -49,13 +53,17 @@ export function errorChain(error: unknown): object[] {
 /**
  * Whether the RPC refused the request as too many: an HTTP 429 (also ethers' escalated
  * 599 that keeps it), a `Retry-After` header on an answer that is not a server error, a
- * JSON-RPC `-32005` that does not refuse a range, or "rate limit" / "too many requests" in
- * its text. `undefined` when it did not.
+ * JSON-RPC `-32005` that does not refuse a range, QuickNode's `-32007`, or rate-limit
+ * wording in its text ("rate limit", "too many requests", "request limit reached",
+ * "capacity exceeded"), also as a thrown string. `undefined` when it did not.
  */
 export function rateLimitOf(error: unknown): RateLimit | undefined {
   const chain = errorChain(error)
   const codes = chain.map(codeOf)
   const texts = chain.map(messageOf).filter((text) => text !== undefined)
+
+  // A provider or a wrapper that throws a bare string ("Too Many Requests").
+  if (typeof error === 'string') texts.push(error)
 
   const http429 = chain.some(
     (entry) => httpStatus(entry) === 429 || escalated429(entry)
@@ -71,7 +79,7 @@ export function rateLimitOf(error: unknown): RateLimit | undefined {
   return http429 ||
     code32005 ||
     retryAfter ||
-    codes.includes('429') ||
+    RATE_LIMIT_CODES.some((code) => codes.includes(code)) ||
     texts.some((text) => RATE_LIMITED.test(text))
     ? { http429, code32005 }
     : undefined
@@ -119,15 +127,39 @@ function escalated429(entry: object): boolean {
 }
 
 function hasRetryAfter(entry: object): boolean {
+  return Boolean(retryAfterHeader(entry))
+}
+
+/** An entry's `Retry-After` header, as the answer gave it. */
+function retryAfterHeader(entry: object): unknown {
   const headers = (entry as { response?: { headers?: unknown } }).response
     ?.headers as
     | { get?: (name: string) => unknown; [name: string]: unknown }
     | undefined
 
-  if (!headers || typeof headers !== 'object') return false
-  if (typeof headers.get === 'function')
-    return Boolean(headers.get('retry-after'))
-  return Object.keys(headers).some((key) => key.toLowerCase() === 'retry-after')
+  if (!headers || typeof headers !== 'object') return undefined
+  if (typeof headers.get === 'function') return headers.get('retry-after')
+
+  const key = Object.keys(headers).find(
+    (name) => name.toLowerCase() === 'retry-after'
+  )
+  return key === undefined ? undefined : headers[key]
+}
+
+/**
+ * The seconds a rate-limited answer asks to wait (`Retry-After`, in seconds), or
+ * `undefined` when it names none. A date form is not read: the caller's own back-off
+ * applies then.
+ */
+export function retryAfterSeconds(error: unknown): number | undefined {
+  for (const entry of errorChain(error)) {
+    const value = Number(
+      String(retryAfterHeader(entry) ?? '').trim() || Number.NaN
+    )
+    if (Number.isFinite(value) && value >= 0) return value
+  }
+
+  return undefined
 }
 
 /** An entry's `code`, as a string: `SERVER_ERROR`, `ECONNREFUSED`, `-32005`. */

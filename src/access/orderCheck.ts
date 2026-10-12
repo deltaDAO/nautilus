@@ -19,7 +19,8 @@ import {
 import {
   type IncompleteLookupLimit,
   IncompleteOrderLookupError,
-  InconsistentRpcAnswerError
+  InconsistentRpcAnswerError,
+  StaleRpcHeadError
 } from '../utils/previousOrder.js'
 import {
   answeredWithError,
@@ -35,11 +36,15 @@ export type OrderCheckFailure =
   | 'rate-limited'
   /** The RPC did not answer: a network error or a timeout. */
   | 'unreachable'
-  /** The lookup stopped before it covered the whole order window. */
+  /**
+   * The lookup stopped before it covered the whole order window, or found an order of the
+   * account too new to have confirmations.
+   */
   | 'incomplete'
   /**
-   * The RPC answered with another error, or without data its own answers promise (no
-   * receipt for a transaction its logs list, no newest block).
+   * The RPC answered with another error, without data its own answers promise (no receipt
+   * for a transaction its logs list, no newest block), or with a newest block older than
+   * the order window.
    */
   | 'rpc-error'
 
@@ -142,6 +147,13 @@ export class OrderCheckError extends Error {
   readonly checkedHours?: number
   /** For `incomplete`: hours back from now an order would still be in force. */
   readonly windowHours?: number
+  /**
+   * For `incomplete`: what stopped the lookup. `reads` (the RPC served too little; another
+   * RPC may do) and `unconfirmed` (an order of the account in the newest blocks; retry in a
+   * few seconds) can end differently on a retry; `depth` (the window reaches further back
+   * than the lookup reads) and `candidates` (too many orders to check) end the same way.
+   */
+  readonly limit?: IncompleteLookupLimit
   /** The lookup's error, redacted: no URL, first line only, at most 200 characters. */
   declare readonly cause: Error
 
@@ -172,6 +184,7 @@ export class OrderCheckError extends Error {
     if (failure.reason === 'incomplete') {
       this.checkedHours = failure.checkedHours
       this.windowHours = failure.windowHours
+      this.limit = failure.limit
     }
   }
 }
@@ -185,6 +198,8 @@ function nextStep(failure: LookupFailure): string {
   if (failure.reason !== 'incomplete')
     return 'Retry in a minute or use another RPC.'
   if (failure.limit === 'reads') return 'Use another RPC, or retry.'
+  if (failure.limit === 'unconfirmed')
+    return 'Retry in a few seconds, once the chain has mined two more blocks.'
 
   const window = failure.windowHours ?? Number.NaN
   return `A retry ends the same way. If this account ${
@@ -238,7 +253,10 @@ function classify(error: unknown): LookupFailure {
   if (incomplete)
     return {
       reason: 'incomplete',
-      phrase: incompletePhrase(incomplete.checkedHours, incomplete.windowHours),
+      phrase:
+        incomplete.limit === 'unconfirmed'
+          ? 'this account has an order in the newest blocks that has no confirmations yet'
+          : incompletePhrase(incomplete.checkedHours, incomplete.windowHours),
       cause: redactedError(incomplete),
       checkedHours: incomplete.checkedHours,
       windowHours: incomplete.windowHours,
@@ -254,6 +272,16 @@ function classify(error: unknown): LookupFailure {
       reason: 'rpc-error',
       phrase: `the RPC's answer lacked data the check needs (${inconsistent.missing})`,
       cause: redactedError(inconsistent)
+    }
+
+  const stale = chain.find(
+    (entry): entry is StaleRpcHeadError => entry instanceof StaleRpcHeadError
+  )
+  if (stale)
+    return {
+      reason: 'rpc-error',
+      phrase: `the RPC's newest block is ${hours(stale.ageHours, 'down')} hours old, older than the order window, so the RPC lags or this computer's clock is off`,
+      cause: redactedError(stale)
     }
 
   const rateLimit = rateLimitOf(error)

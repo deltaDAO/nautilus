@@ -245,6 +245,8 @@ async function reusableOrder(
     serviceIndex: params.serviceIndex,
     serviceId: service.id,
     timeout: service.timeout,
+    chainId: params.chainConfig.chainId,
+    nftFactoryAddress: params.chainConfig.nftFactoryAddress,
     providerFeeAddress:
       providerFee?.providerFeeAddress === undefined
         ? undefined

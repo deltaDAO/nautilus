@@ -30,7 +30,8 @@ import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
 import { order, reuseOrder } from '../../src/utils/order.js'
 import {
   findPreviousOrder,
-  IncompleteOrderLookupError
+  IncompleteOrderLookupError,
+  StaleRpcHeadError
 } from '../../src/utils/previousOrder.js'
 import { getOrderPrice } from '../../src/utils/pricing.js'
 import {
@@ -412,6 +413,55 @@ describe('access() on a paid service whose previous order cannot be checked', ()
     )
   })
 
+  it('names what stopped an incomplete scan as a field, so a program need not parse the text', async () => {
+    for (const limit of [
+      'reads',
+      'depth',
+      'candidates',
+      'unconfirmed'
+    ] as const) {
+      vi.mocked(findPreviousOrder).mockRejectedValue(
+        new IncompleteOrderLookupError(16.4, 23.8, limit)
+      )
+
+      const thrown = await download().running.catch((caught) => caught)
+
+      expect(thrown).to.be.instanceOf(OrderCheckError)
+      expect(thrown).to.include({ reason: 'incomplete', limit })
+    }
+
+    vi.mocked(findPreviousOrder).mockRejectedValue(
+      await FAILURES['another RPC error'].error()
+    )
+    const other = await download().running.catch((caught) => caught)
+    expect(other.limit).to.equal(undefined)
+  })
+
+  it('says an order without confirmations stopped it, and when to retry', async () => {
+    vi.mocked(findPreviousOrder).mockRejectedValue(
+      new IncompleteOrderLookupError(Number.NaN, 24, 'unconfirmed')
+    )
+
+    const thrown = await download().running.catch((caught) => caught)
+
+    expect(thrown.message).to.contain(
+      'Cause: this account has an order in the newest blocks that has no confirmations yet. Retry in a few seconds, once the chain has mined two more blocks. To buy anyway, pass `orderOnLookupFailure: true`.'
+    )
+    expectNothingRaw(thrown.message)
+  })
+
+  it('refuses when the RPC’s newest block is older than the order window, naming it', async () => {
+    vi.mocked(findPreviousOrder).mockRejectedValue(new StaleRpcHeadError(27.7))
+
+    const thrown = await download().running.catch((caught) => caught)
+
+    expect(thrown).to.include({ reason: 'rpc-error' })
+    expect(thrown.message).to.contain(
+      "Cause: the RPC's newest block is 27 hours old, older than the order window, so the RPC lags or this computer's clock is off. Retry in a minute or use another RPC."
+    )
+    expect(vi.mocked(order)).not.toHaveBeenCalled()
+  })
+
   it('leaves the hours out for the other reasons', async () => {
     vi.mocked(findPreviousOrder).mockRejectedValue(
       await FAILURES['another RPC error'].error()
@@ -752,6 +802,24 @@ describe('the cause of a failed lookup', () => {
     expect(thrown.message).to.contain(
       'Cause: the RPC returned an error: query timeout exceeded.'
     )
+  })
+
+  it('calls a thrown "Too Many Requests" string a rate limit', async () => {
+    const thrown = await causeOf('Too Many Requests')
+
+    expect(thrown.reason).to.equal('rate-limited')
+    expect(thrown.message).to.contain('Cause: the RPC rate-limited the check.')
+  })
+
+  it('calls QuickNode’s -32007 and "capacity exceeded" rate limits', async () => {
+    for (const answer of [
+      { code: -32007, message: '15/second request limit reached' },
+      { code: -32000, message: 'Monthly capacity exceeded' }
+    ]) {
+      const thrown = await causeOf(await rpcFailure(rpcAnswer(answer)))
+
+      expect(thrown.reason).to.equal('rate-limited')
+    }
   })
 
   it('does not call a 503 with Retry-After a rate limit', async () => {

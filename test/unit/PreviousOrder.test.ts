@@ -32,7 +32,9 @@ import {
   findPreviousOrder,
   IncompleteOrderLookupError,
   InconsistentRpcAnswerError,
-  type PreviousOrderQuery
+  type PreviousOrderQuery,
+  StaleRpcHeadError,
+  scanTiming
 } from '../../src/utils/previousOrder.js'
 import {
   ASSET_DID,
@@ -74,17 +76,25 @@ const CONSUMER = '0x0000000000000000000000000000000000c05e5a'
 const OTHER = '0x0000000000000000000000000000000000000bad'
 const NOW = 1_800_000_000
 const DAY = 86_400
-const LATEST = 500_000
+const LATEST = 3_000_000
 /** Seconds per block on the in-memory chain. */
 const BLOCK_TIME = 2
 /** The lookup's first chunk, in blocks, and the time an order must have left. */
-const CHUNK = 2_000
+const CHUNK = 10_000
 const MARGIN = 600
+/** Blocks the lookup reads back at most, below the newest confirmed one. */
+const DEPTH = 1_000_000
 
 const EVENTS = new Interface([
   'event OrderStarted(address indexed consumer, address payer, uint256 amount, uint256 serviceIndex, uint256 timestamp, address indexed publishMarketAddress, uint256 blockNumber)',
   'event OrderReused(bytes32 orderTxId, address caller, uint256 timestamp, uint256 number)',
   'event ProviderFee(address indexed providerFeeAddress, address indexed providerFeeToken, uint256 providerFeeAmount, bytes providerData, uint8 v, bytes32 r, bytes32 s, uint256 validUntil)'
+])
+
+/** The NFT factory, whose `TokenCreated` proves a datatoken's creation block. */
+const FACTORY = '0x00000000000000000000000000000000000000f7'
+const CREATION = new Interface([
+  'event TokenCreated(address indexed newTokenAddress, address indexed templateAddress, string name, string symbol, uint256 cap, address creator)'
 ])
 
 const tx = (n: number) => `0x${n.toString(16).padStart(64, '0')}`
@@ -134,6 +144,34 @@ class Chain {
   getTransactionReceipt = vi.fn(
     async (txId: string) => this.receipts.get(txId.toLowerCase()) ?? null
   )
+  /** The block the datatoken was created in: before every block, unless `created()`. */
+  createdAt = -1
+  getCode = vi.fn(async (_address: string, block: number) =>
+    block >= this.createdAt ? '0x6080' : '0x'
+  )
+
+  /** The datatoken, created in `block` (`log`: with the factory's `TokenCreated`). */
+  created(block: number, log = true) {
+    this.createdAt = block
+    if (!log) return
+
+    const { data, topics } = CREATION.encodeEventLog('TokenCreated', [
+      DATATOKEN_ADDRESS,
+      OTHER,
+      'Datatoken',
+      'DT',
+      1n,
+      OTHER
+    ])
+    this.logs.push({
+      address: FACTORY,
+      data,
+      topics,
+      blockNumber: block,
+      index: this.logs.length,
+      transactionHash: tx(999_999)
+    } as unknown as Log)
+  }
 
   /**
    * A transaction mined `secondsAgo`, sent to `to` (the datatoken, unless another contract
@@ -260,6 +298,7 @@ function query(
     serviceId: SERVICE_ID,
     timeout: DAY,
     providerFeeAddress: PROVIDER_FEE_WALLET.address,
+    nftFactoryAddress: FACTORY,
     ...overrides
   }
 }
@@ -306,6 +345,8 @@ const failure = (overrides: Partial<PreviousOrderQuery> = {}) =>
 beforeEach(() => {
   vi.clearAllMocks()
   chain = new Chain()
+  // No real waits between rate-limited reads.
+  vi.spyOn(scanTiming, 'sleep').mockResolvedValue()
 })
 
 describe('findPreviousOrder', () => {
@@ -374,11 +415,19 @@ describe('findPreviousOrder', () => {
     expect(await find()).to.deep.equal({ orderTxId: tx(1) })
   })
 
-  it('never reuses an order of a service whose timeout is within the margin', async () => {
+  it('reuses an order of a service whose timeout is within the margin while half of it is left', async () => {
+    // A fast retry used to buy again: every order of such a service counted as too old.
     chain.started(tx(1), 10)
 
+    expect(await find({ timeout: MARGIN })).to.deep.equal({
+      orderTxId: tx(1),
+      usableTxId: tx(1)
+    })
+
+    chain = new Chain()
+    chain.started(tx(1), MARGIN / 2 + 10)
+
     expect(await find({ timeout: MARGIN })).to.equal(undefined)
-    expect(chain.getLogs).not.toHaveBeenCalled()
   })
 
   it('treats a missing timeout as never expiring, as the node does', async () => {
@@ -391,11 +440,36 @@ describe('findPreviousOrder', () => {
       })
   })
 
-  it('ignores an order without confirmations, which a reorg may drop', async () => {
+  it('refuses rather than reuses or ignores an order without confirmations', async () => {
+    // A reorg may drop it, so it is not reused; read as "no order", a retry right after a
+    // purchase bought again.
     chain.started(tx(1), 2)
 
+    const thrown = await failure()
+
+    expect(thrown).to.be.instanceOf(IncompleteOrderLookupError)
+    expect(thrown).to.include({ limit: 'unconfirmed', windowHours: 24 })
+    expect(ranges()[0][1]).to.equal(LATEST)
+    expect(chain.getTransactionReceipt).not.toHaveBeenCalled()
+  })
+
+  it('refuses an unconfirmed reuse of the account too, but not another service’s order', async () => {
+    chain.started(tx(1), 3_600, { fee: { address: OTHER } })
+    chain.reused(tx(2), tx(1), 2)
+
+    expect(await failure()).to.include({ limit: 'unconfirmed' })
+
+    chain = new Chain()
+    chain.started(tx(1), 2, { serviceIndex: 1 })
+
     expect(await find()).to.equal(undefined)
-    expect(ranges()[0][1]).to.equal(LATEST - 2)
+  })
+
+  it('uses a confirmed order as it stands despite an unconfirmed one', async () => {
+    chain.started(tx(1), 3_600)
+    chain.started(tx(2), 2)
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(1) })
   })
 
   it('refuses another account’s order', async () => {
@@ -494,7 +568,9 @@ describe('findPreviousOrder', () => {
 
     // The window's first block is found from two block reads, not one per chunk.
     expect(chain.getBlock).toHaveBeenCalledTimes(3)
-    for (const [from, to] of ranges()) expect(to - from).to.be.below(CHUNK)
+    // The first chunk also reads the two unconfirmed blocks above it.
+    for (const [from, to] of ranges())
+      expect(to - from).to.be.below(to === LATEST ? CHUNK + 2 : CHUNK)
 
     const oldest = Math.min(...ranges().map(([from]) => from))
     const windowStart = blockAt(DAY - MARGIN)
@@ -509,15 +585,16 @@ describe('findPreviousOrder', () => {
       const number = tag === 'latest' ? LATEST : tag
       return {
         number,
-        timestamp: number === LATEST - 100_000 + 1 - 2 ? 0 : NOW
+        timestamp: number === LATEST - DEPTH + 1 ? 0 : NOW
       }
     })
     chain.started(tx(1), DAY + 10)
     chain.started(tx(2), 3_600, { fee: { address: OTHER } })
 
     expect(await find()).to.deep.equal({ orderTxId: tx(2) })
+    // Read ahead: at most the chunks already asked for when it was found.
     expect(Math.min(...ranges().map(([from]) => from))).to.be.above(
-      blockAt(DAY + 10) - CHUNK
+      blockAt(DAY + 10) - 4 * CHUNK
     )
   })
 
@@ -533,8 +610,10 @@ describe('findPreviousOrder', () => {
     chain.started(tx(1), 3_600)
 
     expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(1) })
-    for (const [from, to] of ranges().slice(2))
-      expect(to - from).to.be.below(500)
+    const accepted = chain.getLogs.mock.calls
+      .map(([filter]) => filter.toBlock - filter.fromBlock)
+      .filter((width) => width < 500)
+    expect(accepted.length).to.be.above(0)
   })
 
   it('throws an error that is not about the range', async () => {
@@ -555,7 +634,7 @@ describe('findPreviousOrder', () => {
   })
 
   it('reports an incomplete lookup at the read depth for timeout 0, not "not found"', async () => {
-    chain.started(tx(1), 2 * 100_000 + 10, { fee: { validUntil: 0 } })
+    chain.started(tx(1), 2 * DEPTH + 10, { fee: { validUntil: 0 } })
 
     const thrown = await failure({ timeout: 0 })
 
@@ -566,18 +645,25 @@ describe('findPreviousOrder', () => {
       limit: 'depth'
     })
     expect(thrown.checkedHours).to.be.closeTo(
-      ((100_000 + 2) * BLOCK_TIME) / 3_600,
+      ((DEPTH - 1) * BLOCK_TIME) / 3_600,
       0.01
     )
-    expect(ranges()).to.have.length(100_000 / CHUNK)
+    expect(ranges()).to.have.length(DEPTH / CHUNK)
   })
 
   it('reports an incomplete lookup when the timeout reaches past the read depth', async () => {
-    const thrown = await failure({ timeout: 7 * DAY })
+    const thrown = await failure({ timeout: 30 * DAY })
 
     expect(thrown).to.be.instanceOf(IncompleteOrderLookupError)
-    expect(thrown).to.include({ windowHours: 7 * 24, limit: 'depth' })
-    expect(thrown.checkedHours).to.be.closeTo(55.6, 0.1)
+    expect(thrown).to.include({ windowHours: 30 * 24, limit: 'depth' })
+    expect(thrown.checkedHours).to.be.closeTo(555.6, 0.1)
+  })
+
+  it('covers a 7-day timeout, which ran past the old 100,000-block depth', async () => {
+    chain.started(tx(1), 6 * DAY, { fee: { address: OTHER } })
+
+    expect(await find({ timeout: 7 * DAY })).to.deep.equal({ orderTxId: tx(1) })
+    expect(await find({ timeout: 7 * DAY, account: OTHER })).to.equal(undefined)
   })
 
   it('finds nothing on a chain shorter than the read depth, for timeout 0', async () => {
@@ -590,15 +676,47 @@ describe('findPreviousOrder', () => {
     expect(Math.min(...ranges().map(([from]) => from))).to.equal(0)
   })
 
-  it('throws a rate limit instead of reading the range again in halves', async () => {
+  it('waits out a rate limit and reads the same range again, never in halves', async () => {
     chain.getLogs.mockRejectedValueOnce(rateLimited())
     chain.started(tx(1), 3_600)
 
-    const thrown = await failure()
-
+    expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(1) })
     // Halving on a 429 ran the reads out and ended in "not found" (then a paid re-order).
-    expect(thrown).to.have.property('code', 'SERVER_ERROR')
-    expect(ranges()).to.have.length(1)
+    const widths = chain.getLogs.mock.calls.map(
+      ([filter]) => filter.toBlock - filter.fromBlock
+    )
+    expect(new Set(widths)).to.deep.equal(new Set([CHUNK - 1]))
+    expect(scanTiming.sleep).toHaveBeenCalledOnce()
+    expect(scanTiming.sleep).toHaveBeenCalledWith(1_000)
+  })
+
+  it('throws a rate limit that lasts, after three waits that double', async () => {
+    chain.getLogs.mockRejectedValue(rateLimited())
+    chain.started(tx(1), 3_600)
+
+    expect(await failure()).to.have.property('code', 'SERVER_ERROR')
+    // Each of the two reads of the first chunk: four tries.
+    expect(chain.getLogs).toHaveBeenCalledTimes(8)
+    expect(
+      vi.mocked(scanTiming.sleep).mock.calls.map(([ms]) => ms)
+    ).to.deep.equal([1_000, 1_000, 2_000, 2_000, 4_000, 4_000])
+  })
+
+  it('waits as long as Retry-After asks, at most 8 seconds', async () => {
+    const limited = (seconds: string) =>
+      Object.assign(new Error('Too Many Requests'), {
+        status: 429,
+        response: { headers: { 'Retry-After': seconds } }
+      })
+    chain.getLogs
+      .mockRejectedValueOnce(limited('3'))
+      .mockRejectedValueOnce(limited('60'))
+    chain.started(tx(1), 3_600)
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(1) })
+    expect(
+      vi.mocked(scanTiming.sleep).mock.calls.map(([ms]) => ms)
+    ).to.deep.equal([3_000, 8_000])
   })
 
   it('throws a JSON-RPC -32005 rate limit, and halves a -32005 range refusal', async () => {
@@ -606,7 +724,9 @@ describe('findPreviousOrder', () => {
       rpcError(-32005, 'daily request count exceeded, request rate limited')
     )
     expect(await failure()).to.have.property('code', 'UNKNOWN_ERROR')
-    expect(ranges()).to.have.length(1)
+    expect(
+      new Set(chain.getLogs.mock.calls.map(([filter]) => filter.fromBlock))
+    ).to.have.property('size', 1)
 
     chain = new Chain()
     const read = chain.getLogs.getMockImplementation()
@@ -768,10 +888,303 @@ describe('findPreviousOrder', () => {
   })
 })
 
+describe('findPreviousOrder reads fast and keeps reading', () => {
+  /** A read that answers after `ms`, counting the reads in flight. */
+  function timed(ms: (filter: LogFilter) => number = () => 1) {
+    const read = chain.getLogs.getMockImplementation()
+    const flight = { now: 0, max: 0, starts: [] as number[] }
+
+    chain.getLogs.mockImplementation(async (filter: LogFilter) => {
+      flight.starts.push(flight.now)
+      flight.max = Math.max(flight.max, ++flight.now)
+      await new Promise((resolve) => setTimeout(resolve, ms(filter)))
+      flight.now--
+      return read?.(filter) ?? []
+    })
+
+    return flight
+  }
+
+  it('reads the first chunk alone, then at most four chunks at a time', async () => {
+    const flight = timed()
+
+    expect(await find()).to.equal(undefined)
+    // Two reads per chunk: one for the account's orders, one for the reuses.
+    expect(flight.starts.slice(0, 2)).to.deep.equal([0, 1])
+    expect(flight.starts[2]).to.equal(0)
+    expect(flight.max).to.equal(4 * 2)
+    // A day of 2 s blocks: 5 chunks, in two rounds instead of five.
+    expect(ranges()).to.have.length(5)
+  })
+
+  it('returns the newest order of a wave, whichever chunk answers first', async () => {
+    chain.started(tx(1), 2 * CHUNK * BLOCK_TIME + 100)
+    chain.started(tx(2), 4 * CHUNK * BLOCK_TIME + 100)
+    // Older chunks answer sooner.
+    timed((filter) => Math.max(1, (filter.toBlock - LATEST + 50_000) / 2_000))
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(1) })
+  })
+
+  it('reads a chunk of a wave again after a rate limit, and still returns the newest order', async () => {
+    chain.started(tx(1), 2 * CHUNK * BLOCK_TIME + 100)
+    chain.started(tx(2), 3 * CHUNK * BLOCK_TIME + 100)
+    const newer = blockAt(2 * CHUNK * BLOCK_TIME + 100)
+    const read = chain.getLogs.getMockImplementation()
+    let limited = false
+    chain.getLogs.mockImplementation(async (filter: LogFilter) => {
+      if (!limited && filter.fromBlock <= newer && filter.toBlock >= newer) {
+        limited = true
+        throw rateLimited()
+      }
+      return read?.(filter) ?? []
+    })
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(1) })
+    expect(limited).to.equal(true)
+    expect(scanTiming.sleep).toHaveBeenCalledOnce()
+  })
+
+  it('does not shrink the chunk for a rate limit, in this lookup or the next', async () => {
+    chain.getLogs.mockRejectedValueOnce(rateLimited())
+    await find()
+    chain.getLogs.mockClear()
+
+    await find()
+
+    expect(ranges()[0]).to.deep.equal([LATEST - CHUNK + 1, LATEST])
+  })
+
+  it('remembers the chunk the RPC accepted for the next lookup on the same provider', async () => {
+    const read = chain.getLogs.getMockImplementation()
+    chain.getLogs.mockImplementation(async (filter: LogFilter) => {
+      if (filter.toBlock - filter.fromBlock >= 2_000)
+        throw rpcError(-32005, 'query returned more than 10000 results')
+      return read?.(filter) ?? []
+    })
+
+    await find()
+    chain.getLogs.mockClear()
+    await find()
+
+    // 10,000 halved to 1,250, the largest accepted, and remembered.
+    const [from, to] = ranges()[0]
+    expect(to - from + 1).to.equal(1_250)
+
+    // Another provider instance starts afresh.
+    const other = new Chain()
+    await findPreviousOrder(query({ provider: other as unknown as Provider }), {
+      now: NOW
+    })
+    const [[first]] = other.getLogs.mock.calls
+    expect(first.toBlock - first.fromBlock + 1).to.equal(CHUNK)
+  })
+
+  it('remembers no less than 500 blocks', async () => {
+    const read = chain.getLogs.getMockImplementation()
+    chain.getLogs.mockImplementation(async (filter: LogFilter) => {
+      if (filter.toBlock - filter.fromBlock >= 200)
+        throw rpcError(-32600, 'block range too large')
+      return read?.(filter) ?? []
+    })
+
+    await find({ timeout: 2 * 3_600 })
+    chain.getLogs.mockClear()
+    await find({ timeout: 2 * 3_600 })
+
+    const [[first]] = chain.getLogs.mock.calls
+    expect(first.toBlock - first.fromBlock + 1).to.equal(500)
+  })
+
+  it('grows the chunk back after reads the RPC accepts', async () => {
+    // A flood of events in the newest 100 blocks only.
+    const read = chain.getLogs.getMockImplementation()
+    chain.getLogs.mockImplementation(async (filter: LogFilter) => {
+      if (
+        filter.toBlock > LATEST - 100 &&
+        filter.toBlock - filter.fromBlock >= 600
+      )
+        throw rpcError(-32005, 'query returned more than 10000 results')
+      return read?.(filter) ?? []
+    })
+
+    expect(await find()).to.equal(undefined)
+
+    // The last range is cut at the window's start.
+    const widths = ranges()
+      .slice(0, -1)
+      .map(([from, to]) => to - from + 1)
+    expect(Math.min(...widths)).to.be.below(600)
+    const smallest = widths.indexOf(Math.min(...widths))
+    expect(Math.max(...widths.slice(smallest))).to.equal(CHUNK)
+    // Halving for good would take ~80 reads for a day; growing back takes ~15.
+    expect(widths.length).to.be.below(20)
+  })
+
+  it('reads the account’s OrderStarted alone where a flood of reuses is refused', async () => {
+    // Anyone can call `reuseOrder` for gas; `OrderReused` is not indexed, so a flood fills
+    // the RPC's results cap in every range, and halving ran the reads out ("incomplete" for
+    // every consumer).
+    chain.started(tx(1), 20 * 3_600)
+    const read = chain.getLogs.getMockImplementation()
+    chain.getLogs.mockImplementation(async (filter: LogFilter) => {
+      if (filter.topics[0] === EVENTS.getEvent('OrderReused')?.topicHash)
+        throw rpcError(-32005, 'query returned more than 10000 results')
+      return read?.(filter) ?? []
+    })
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(1) })
+    // Never halved: only the last range, cut at the window's start, is shorter.
+    for (const [from, to] of ranges().slice(0, -1))
+      expect(to - from + 1).to.equal(CHUNK)
+  })
+
+  it('still halves when the account’s own OrderStarted read is refused', async () => {
+    chain.started(tx(1), 3_600)
+    const read = chain.getLogs.getMockImplementation()
+    chain.getLogs.mockImplementation(async (filter: LogFilter) => {
+      if (filter.toBlock - filter.fromBlock >= 5_000)
+        throw rpcError(-32005, 'query returned more than 10000 results')
+      return read?.(filter) ?? []
+    })
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(1) })
+  })
+
+  it('reads the latest block once, and the window start alongside the first chunk', async () => {
+    const order: string[] = []
+    const block = chain.getBlock.getMockImplementation()
+    chain.getBlock.mockImplementation(async (tag: number | 'latest') => {
+      order.push(`block ${tag === 'latest' ? tag : 'n'}`)
+      return block?.(tag) as never
+    })
+    const read = chain.getLogs.getMockImplementation()
+    chain.getLogs.mockImplementation(async (filter: LogFilter) => {
+      order.push('logs')
+      return read?.(filter) ?? []
+    })
+
+    await find()
+
+    expect(order.slice(0, 4)).to.deep.equal([
+      'block latest',
+      'block n',
+      'logs',
+      'logs'
+    ])
+  })
+})
+
+describe('findPreviousOrder for a service whose orders never expire', () => {
+  const created = LATEST - 400_000
+
+  it('reads back to the datatoken’s creation, proven, instead of stopping at the read depth', async () => {
+    chain.created(created)
+
+    expect(await find({ timeout: 0 })).to.equal(undefined)
+    expect(Math.min(...ranges().map(([from]) => from))).to.equal(created)
+  })
+
+  it('finds an order older than the read depth would allow when the datatoken is younger', async () => {
+    chain.created(created)
+    chain.started(tx(1), (LATEST - created - 5) * BLOCK_TIME, {
+      fee: { validUntil: 0 }
+    })
+
+    expect(await find({ timeout: 0 })).to.deep.equal({
+      orderTxId: tx(1),
+      usableTxId: tx(1)
+    })
+  })
+
+  it('remembers the creation block for the provider', async () => {
+    chain.created(created)
+    await find({ timeout: 0 })
+    chain.getCode.mockClear()
+
+    await find({ timeout: 0 })
+
+    expect(chain.getCode).not.toHaveBeenCalled()
+  })
+
+  it('stops at the read depth when the creation is not proven by the factory’s event', async () => {
+    chain.created(created, false)
+
+    expect(await failure({ timeout: 0 })).to.include({ limit: 'depth' })
+  })
+
+  it('takes no TokenCreated from another contract as proof, nor proves without the factory', async () => {
+    chain.created(created)
+    chain.logs = chain.logs.map((log) => ({ ...log, address: OTHER }) as Log)
+
+    expect(await failure({ timeout: 0 })).to.include({ limit: 'depth' })
+
+    chain = new Chain()
+    chain.created(created)
+    expect(
+      await failure({ timeout: 0, nftFactoryAddress: undefined })
+    ).to.include({ limit: 'depth' })
+    expect(chain.getCode).not.toHaveBeenCalled()
+  })
+
+  it('stops at the read depth when the RPC has pruned old state and answers "no code"', async () => {
+    // A pruned RPC that answers "no code" for old blocks would place the creation late.
+    chain.created(created)
+    chain.getCode.mockImplementation(async (_address: string, block: number) =>
+      block >= LATEST - 128 ? '0x6080' : '0x'
+    )
+
+    expect(await failure({ timeout: 0 })).to.include({ limit: 'depth' })
+  })
+
+  it('stops at the read depth when the RPC cannot read old state', async () => {
+    chain.created(created)
+    chain.getCode.mockRejectedValue(rpcError(-32000, 'missing trie node'))
+
+    expect(await failure({ timeout: 0 })).to.include({ limit: 'depth' })
+  })
+
+  it('stops at the read depth for a datatoken older than it', async () => {
+    chain.created(LATEST - DEPTH - 10)
+
+    expect(await failure({ timeout: 0 })).to.include({ limit: 'depth' })
+    expect(chain.getCode).toHaveBeenCalledOnce()
+  })
+
+  it('throws a rate limit of the creation search', async () => {
+    chain.created(created)
+    chain.getCode.mockRejectedValue(rateLimited())
+
+    expect(await failure({ timeout: 0 })).to.have.property(
+      'code',
+      'SERVER_ERROR'
+    )
+  })
+})
+
+describe('findPreviousOrder and a lagging RPC', () => {
+  it('throws when the RPC’s newest block is older than the order window', async () => {
+    // A head 27.7 h old for a 24 h service: no order in force can show, so "not found"
+    // would buy again.
+    chain.started(tx(1), 3_600)
+    chain.getBlock.mockImplementation(async (tag: number | 'latest') => {
+      const number = tag === 'latest' ? LATEST : tag
+      return { number, timestamp: timeOf(number) - 99_720 }
+    })
+
+    const thrown = await failure()
+
+    expect(thrown).to.be.instanceOf(StaleRpcHeadError)
+    expect(thrown).to.have.property('ageHours').closeTo(27.7, 0.01)
+    expect(chain.getLogs).not.toHaveBeenCalled()
+  })
+})
+
 describe('settleOrder with an order on chain', () => {
   const chainConfig = {
     chainId: 32456,
-    dispenserAddress: '0x0000000000000000000000000000000000d15e45'
+    dispenserAddress: '0x0000000000000000000000000000000000d15e45',
+    nftFactoryAddress: FACTORY
   } as unknown as Config
 
   const providerData = hexlify(
@@ -986,12 +1399,62 @@ describe('settleOrder with an order on chain', () => {
       windowHours: Number.POSITIVE_INFINITY
     })
     expect(thrown.message).to.contain(
-      'Cause: the check covered only the last 55 hours, and orders of this service never expire.'
+      'Cause: the check covered only the last 555 hours, and orders of this service never expire.'
     )
     expect(thrown.message).to.contain(
       'A retry ends the same way. If this account never bought this service, buying is safe.'
     )
     expect(vi.mocked(order)).not.toHaveBeenCalled()
+  })
+
+  it('does not buy again right after a purchase whose order has no confirmations yet', async () => {
+    // A fast retry (a download error a few seconds after paying) used to pay twice.
+    chain.started(tx(1), 2)
+
+    const thrown = await settle({
+      providerFee: signedProviderFee({ providerData, providerFeeAmount: '30' })
+    }).catch((caught) => caught)
+
+    expect(thrown).to.be.instanceOf(OrderCheckError)
+    expect(thrown).to.include({ reason: 'incomplete', limit: 'unconfirmed' })
+    expect(vi.mocked(order)).not.toHaveBeenCalled()
+    expect(vi.mocked(reuseOrder)).not.toHaveBeenCalled()
+  })
+
+  it('does not buy again through an RPC whose newest block is older than the order window', async () => {
+    chain.started(tx(1), 3_600)
+    chain.getBlock.mockImplementation(async (tag: number | 'latest') => {
+      const number = tag === 'latest' ? LATEST : tag
+      return { number, timestamp: timeOf(number) - 2 * DAY }
+    })
+
+    const thrown = await settle({
+      providerFee: signedProviderFee({ providerData, providerFeeAmount: '30' })
+    }).catch((caught) => caught)
+
+    expect(thrown).to.be.instanceOf(OrderCheckError)
+    expect(thrown.reason).to.equal('rpc-error')
+    expect(thrown.message).to.contain(
+      "Cause: the RPC's newest block is 48 hours old"
+    )
+    expect(vi.mocked(order)).not.toHaveBeenCalled()
+  })
+
+  it('buys a never-expiring service on a long chain without the opt-in once its creation is proven', async () => {
+    chain.created(LATEST - 400_000)
+
+    const result = await settle(
+      {
+        providerFee: signedProviderFee({
+          providerData,
+          providerFeeAmount: '30'
+        })
+      },
+      { id: SERVICE_ID, timeout: 0 }
+    )
+
+    expect(result).to.deep.equal({ transferTxId: '0xfresh', reused: false })
+    expect(vi.mocked(order)).toHaveBeenCalledOnce()
   })
 
   it('follows the node’s validOrder without reading the chain', async () => {
