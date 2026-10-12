@@ -887,6 +887,36 @@ describe('regressions (V f)', () => {
     })
   })
 
+  it('redacts JSON-escaped keys and URLs of an RPC body at the default level (PR #213 review)', () => {
+    const pathToken = 'rpc-escaped-path-7c1e'
+    const rpc = makeError(
+      'server response 500 Internal Server Error',
+      'SERVER_ERROR',
+      {
+        request: FAKE.rpcUrl,
+        info: {
+          requestUrl: FAKE.rpcUrl,
+          responseBody: `{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"session\\u0049d":"${FAKE.sessionId}","requestUrl":"https:\\/\\/rpc.example.org\\/v3\\/${pathToken}"}}`,
+          responseStatus: '500 Internal Server Error'
+        }
+      }
+    )
+    // The raw message carries both: the test would prove nothing otherwise.
+    expect(rpc.message).to.contain(FAKE.sessionId)
+    expect(rpc.message).to.contain(pathToken)
+
+    for (const error of [rpc, new Error('lookup', { cause: rpc })]) {
+      const log = captureLog()
+      createLogger().emit('access.order.lookup_failed', 'm', { error })
+      expect(log.events).to.have.length(1)
+      const output = JSON.stringify(log.events[0])
+      expect(output).not.to.contain(FAKE.sessionId)
+      expect(output).not.to.contain(pathToken)
+      expect(output).to.contain('SERVER_ERROR')
+      expect(output).to.contain('<redacted>')
+    }
+  })
+
   describe('errors (fix round)', () => {
     function error(value: unknown) {
       const log = captureLog({ level: 'trace' })
@@ -957,6 +987,41 @@ describe('regressions (V f)', () => {
           'x<redacted>'
         )
       }
+    })
+
+    it('redacts a JWT whose JSON has whitespace, also glued to the word before it (PR #219 review)', () => {
+      // `{\n"sub":…}` encodes to `ewo…`, `{ "sub": …}` to `eyA…`: not `eyJ`. A deleted
+      // escape glues the token to `Evil`, where a word boundary in front finds nothing.
+      const part = (json: string) => Buffer.from(json).toString('base64url')
+      const signature = part('fake-signature-of-the-test-jwt')
+      const header = part('{"alg":"HS256","typ":"JWT"}')
+      const formattedHeader = part('{\n  "alg": "HS256"\n}')
+      const tokens = [
+        `${header}.${part('{\n"sub":"test-user"\n}')}.${signature}`,
+        `${header}.${part('{ "sub": "test-user" }')}.${signature}`,
+        `${header}.${part('{}')}.${signature}`,
+        `${formattedHeader}.${part('{\n  "sub": "test-user"\n}')}.${signature}`
+      ]
+      for (const token of tokens) {
+        for (const before of ['', 'refused ', 'see:', 'a.b.'])
+          expect(sanitize(`${before}${token} end`, 500, null), token).to.equal(
+            `${before}<redacted> end`
+          )
+        expect(
+          sanitize(`Evil\u001b[2J${token} end`, 500, null),
+          token
+        ).to.equal('Evil<redacted> end')
+      }
+    })
+
+    it('keeps dotted words that are no JWT', () => {
+      for (const text of [
+        'see node.example.org and v1.2.3',
+        'file survey_results.tar.gz',
+        'heyJoe.foo',
+        'eyJ.'
+      ])
+        expect(sanitize(text, 500, null), text).to.equal(text)
     })
   })
 

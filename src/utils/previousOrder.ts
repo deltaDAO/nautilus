@@ -148,9 +148,9 @@ export class IncompleteOrderLookupError extends Error {
 /**
  * Thrown when an RPC answer lacks what the lookup needs: no newest block, no receipt for a
  * transaction the RPC's own logs list (or for the order a reuse of the account names), or
- * a receipt without the event the logs list. A load-balanced RPC whose backends lag each
- * other answers so for a recent order. Read as "no order", it would buy again; it is a
- * failed lookup instead (see `OrderCheckError`, reason `rpc-error`).
+ * a receipt without one of the events the logs list. A load-balanced RPC whose backends
+ * lag each other answers so for a recent order. Read as "no order", it would buy again; it
+ * is a failed lookup instead (see `OrderCheckError`, reason `rpc-error`).
  */
 export class InconsistentRpcAnswerError extends Error {
   /** What was missing, in plain words: `no receipt for an order its logs list`. */
@@ -358,8 +358,11 @@ interface Candidate {
   txId: string
   /** The block time of the transaction. */
   timestamp: number
-  /** The account's event the logs list for it, from the datatoken. */
-  event: 'OrderStarted' | 'OrderReused'
+  /**
+   * The account's events the logs list for it, from the datatoken: every one, since the
+   * node takes the first, and a receipt that lacks one may still hold another.
+   */
+  logs: Pick<Log, 'index' | 'topics' | 'data'>[]
 }
 
 /** The account's `OrderStarted` and `OrderReused` transactions in the range, newest first. */
@@ -378,18 +381,21 @@ async function readCandidates(
     query.provider.getLogs({ ...range, topics: [ORDER_REUSED] })
   ])
 
-  const seen = new Set<string>()
+  const candidates = new Map<string, Candidate>()
 
-  return [...started, ...reused].sort(newestFirst).flatMap((log) => {
+  for (const log of [...started, ...reused].sort(newestFirst)) {
     const event = decode(log)
     const txId = log.transactionHash.toLowerCase()
 
-    if (!event || event.name === 'ProviderFee' || seen.has(txId)) return []
-    if (event.name === 'OrderReused' && event.caller !== account) return []
+    if (!event || event.name === 'ProviderFee') continue
+    if (event.name === 'OrderReused' && event.caller !== account) continue
 
-    seen.add(txId)
-    return [{ txId, timestamp: event.timestamp, event: event.name }]
-  })
+    const candidate = candidates.get(txId)
+    if (candidate) candidate.logs.push(log)
+    else candidates.set(txId, { txId, timestamp: event.timestamp, logs: [log] })
+  }
+
+  return [...candidates.values()]
 }
 
 /**
@@ -450,9 +456,9 @@ function checker(query: PreviousOrderQuery, now: number, lifetime: number) {
       throw new InconsistentRpcAnswerError(
         'no receipt for an order transaction its logs list'
       )
-    if (!lists(mined, candidate, datatoken, account))
+    if (!lists(mined, candidate, datatoken))
       throw new InconsistentRpcAnswerError(
-        'a receipt without the order event its logs list'
+        'a receipt without an order event its logs list'
       )
 
     // Upstream ocean-node reads the datatoken from here; a `reuseOrder` nautilus sends passes.
@@ -496,22 +502,29 @@ function checker(query: PreviousOrderQuery, now: number, lifetime: number) {
   }
 }
 
-/** Whether the receipt holds the candidate's event: the account's, from the datatoken. */
+/**
+ * Whether the receipt holds every event the logs list for the candidate, each the same
+ * log: same position, topics and data, from the datatoken. Another of the account's events
+ * is no stand-in: when the receipt lacks the first one, the node's choice is unknown.
+ */
 function lists(
   receipt: TransactionReceipt,
   candidate: Candidate,
-  datatoken: string,
-  account: string
+  datatoken: string
 ): boolean {
-  return receipt.logs.some((log) => {
-    if (log.address.toLowerCase() !== datatoken) return false
-    const event = decode(log)
-    if (event?.name === 'OrderStarted')
-      return candidate.event === 'OrderStarted' && event.consumer === account
-    if (event?.name === 'OrderReused')
-      return candidate.event === 'OrderReused' && event.caller === account
-    return false
-  })
+  const same = (a: readonly string[], b: readonly string[]) =>
+    a.length === b.length &&
+    a.every((value, i) => value.toLowerCase() === b[i]?.toLowerCase())
+
+  return candidate.logs.every((listed) =>
+    receipt.logs.some(
+      (log) =>
+        log.address.toLowerCase() === datatoken &&
+        log.index === listed.index &&
+        log.data.toLowerCase() === listed.data.toLowerCase() &&
+        same(log.topics, listed.topics)
+    )
+  )
 }
 
 type Event =

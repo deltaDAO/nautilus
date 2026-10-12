@@ -102,7 +102,7 @@ export const LOG_EVENTS = {
     level: 'warn',
     component: 'chain',
     description:
-      "The nonce guard's counter was ahead of the RPC's pending count, and the last transaction it counted is dropped: sent more than a minute ago, unknown by hash on two reads, and the account has not mined past its nonce. The counter falls back to the pending count.",
+      "The nonce guard's counter was ahead of the RPC's pending count, and the earliest transaction it sent that the pending count does not cover (else the last one it counted) is dropped: sent more than a minute ago, unknown by hash on two reads, and the account has not mined past its nonce. The next transaction takes the pending count, filling the gap.",
     fields: ['address', 'txNonce', 'pending']
   },
   'chain.send.failed': {
@@ -440,19 +440,19 @@ export const LOG_EVENTS = {
     level: 'debug',
     component: 'compute',
     description:
-      "A call of getComputeStatus() or getComputeResult(), which apps poll, started; the event's operation names the call, and its opId is on every event of the call."
+      "A call of getComputeStatus() or getComputeResult(), which apps poll, or of streamComputeResult() or getComputeLogs(), started; the event's operation names the call, and its opId is on every event of the call."
   },
   'compute.query.finished': {
     level: 'debug',
     component: 'compute',
     description:
-      'A call of getComputeStatus() or getComputeResult(), which apps poll, returned after durationMs.'
+      'A call of getComputeStatus() or getComputeResult(), which apps poll, returned after durationMs; streamComputeResult() and getComputeLogs() return once the stream is open.'
   },
   'compute.query.failed': {
     level: 'debug',
     component: 'compute',
     description:
-      'A call of getComputeStatus() or getComputeResult(), which apps poll, threw after durationMs; the error it threw carries the same opId (error.opId).',
+      'A call of getComputeStatus(), getComputeResult(), streamComputeResult() or getComputeLogs() threw after durationMs; the error it threw carries the same opId (error.opId).',
     fields: ['error']
   },
   'node.operation.started': {

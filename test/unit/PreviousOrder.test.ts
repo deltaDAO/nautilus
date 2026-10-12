@@ -468,6 +468,30 @@ describe('findPreviousOrder', () => {
     await expect(find()).rejects.toThrow(InconsistentRpcAnswerError)
   })
 
+  // A receipt that holds another of the account's events of the same transaction but not
+  // the one the logs list: the node takes that missing one first, so "no order" bought again.
+  it('throws when a receipt lacks one of the order events the logs list', async () => {
+    chain.tx(tx(1), 3_600).fee().started().started({ serviceIndex: 1 })
+    const read = chain.getTransactionReceipt.getMockImplementation()
+    const partial = async (txId: string) => {
+      const receipt = (await read?.(txId)) ?? null
+      return (
+        receipt && {
+          ...receipt,
+          logs: receipt.logs.filter(
+            (log) => EVENTS.parseLog(log)?.args.serviceIndex !== 0n
+          )
+        }
+      )
+    }
+
+    // Control: with the whole receipt, the order is found.
+    expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(1) })
+
+    chain.getTransactionReceipt.mockImplementation(partial)
+    await expect(find()).rejects.toThrow(InconsistentRpcAnswerError)
+  })
+
   it('throws when the RPC has no receipt for the order a reuse of the account names', async () => {
     chain.started(tx(1), 3_600, { fee: { address: OTHER } })
     chain.tx(tx(2), 100).reused(tx(9)).reused(tx(1)).fee()

@@ -24,11 +24,11 @@ whole order window.
   now fails the lookup (`reason: 'rate-limited'`).
 - **An RPC answer without the data its own answers promise is a failed lookup, not "no
   order".** No newest block, no receipt for an order transaction the RPC's logs list (or
-  for the order a reuse of the account names), or a receipt without that order's event,
-  as a load-balanced RPC whose backends lag each other answers for a recent order, gave
-  "not found" and a second order. It now fails the lookup (`reason: 'rpc-error'`, "the
-  RPC's answer lacked data the check needs"). Orders of another service, past the timeout
-  or of another account are still skipped.
+  for the order a reuse of the account names), or a receipt without one of the order events
+  those logs list, as a load-balanced RPC whose backends lag each other answers for a
+  recent order, gave "not found" and a second order. It now fails the lookup (`reason:
+  'rpc-error'`, "the RPC's answer lacked data the check needs"). Orders of another
+  service, past the timeout or of another account are still skipped.
 - **A paid service whose orders never expire (`timeout: 0`), or whose timeout is longer
   than 100 000 blocks (about 55 hours on OP Sepolia), throws `OrderCheckError`
   (`'incomplete'`) when no order is found in the blocks read**, since an older order may
@@ -41,8 +41,9 @@ whole order window.
   `did`, `serviceId`, `consumer`, `price` (`{ amount, symbol }`, in whole tokens;
   `undefined` when the pricing could not be read either), `costs` (every part a new order
   pays: price, publish-market fee, provider fee), `checkedHours` and `windowHours` (for
-  `incomplete`; `windowHours` is `Infinity` for orders that never expire), and `cause`, the RPC's error
-  redacted (first line, no URL, long hex shortened, at most 200 characters). The unredacted
+  `incomplete`; `windowHours` is `Infinity` for orders that never expire), and `cause`, the
+  RPC's error redacted (first line, `\u00XX` escapes undone so that an escaped key is
+  redacted too, no URL, long hex shortened, at most 200 characters). The unredacted
   error goes to the debug channel (`NAUTILUS_DEBUG=sensitive`, topic `order`).
 - **`access({ orderOnLookupFailure: true })`** (also on `settleOrder()`) orders anyway, with a
   warning that it may pay twice. Only `true` opts in. When the price cannot be read either,

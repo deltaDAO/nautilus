@@ -653,6 +653,77 @@ describe('several copies of nautilus in one process', () => {
   })
 })
 
+describe('a call that fails before it does anything (PR #219 review)', () => {
+  it("setServicePrice's price check fails inside its operation", async () => {
+    const nautilus = await createNautilus()
+    const captured = captureLog({ level: 'trace' })
+
+    const thrown = await nautilus
+      .setServicePrice(getAssetFixture(), 'any-service', 'invalid')
+      .catch((error) => error)
+
+    expect(thrown.message).to.contain('newPrice must be a numeric string')
+    const [failed] = captured.named('edit.operation.failed')
+    expect(failed?.operation).to.equal('setServicePrice')
+    expect(thrown.opId).to.match(OP_ID).and.equal(failed.opId)
+  })
+
+  it('streamComputeResult and getComputeLogs open an operation of their own', async () => {
+    const nautilus = await createNautilus()
+    const captured = captureLog({ level: 'trace' })
+
+    const calls = [
+      [
+        'streamComputeResult',
+        () => nautilus.streamComputeResult({ jobId: 'not-qualified' })
+      ],
+      [
+        'getComputeLogs',
+        () => nautilus.getComputeLogs({ jobId: 'not-qualified' })
+      ]
+    ] as const
+    for (const [operation, call] of calls) {
+      const thrown = await call().catch((error) => error)
+
+      const started = captured
+        .named('compute.query.started')
+        .filter((event) => event.operation === operation)
+      const failed = captured
+        .named('compute.query.failed')
+        .filter((event) => event.operation === operation)
+      expect(started, operation).to.have.length(1)
+      expect(failed, operation).to.have.length(1)
+      expect(failed[0].durationMs, operation).to.be.a('number')
+      expect(thrown.opId, operation).to.match(OP_ID).and.equal(failed[0].opId)
+      expect(started[0].opId, operation).to.equal(failed[0].opId)
+    }
+  })
+
+  it('streamComputeResult tags the reason it throws for a job that has not finished', async () => {
+    const nautilus = await createNautilus()
+    vi.spyOn(ProviderInstance, 'computeStatus').mockResolvedValue([
+      {
+        jobId: JOB_ID.split('-')[1],
+        environment: `${JOB_ID.split('-')[0]}-0x1`,
+        dateFinished: null,
+        status: 40,
+        statusText: 'Running algorithm',
+        results: []
+      } as unknown as NodeComputeJob
+    ])
+    const captured = captureLog({ level: 'trace' })
+
+    const thrown = await nautilus
+      .streamComputeResult({ jobId: JOB_ID })
+      .catch((error) => error)
+
+    expect(thrown.message).to.match(/^\[compute\] /)
+    const [failed] = captured.named('compute.query.failed')
+    expect(failed?.operation).to.equal('streamComputeResult')
+    expect(thrown.opId).to.equal(failed.opId)
+  })
+})
+
 describe('the catalogue', () => {
   it('has the three events of every kind of operation', () => {
     for (const kind of [

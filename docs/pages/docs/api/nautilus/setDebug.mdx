@@ -70,7 +70,7 @@ topic (`access.operation.failed` to `order`, `publish.operation.failed` to `rpc`
 |-------|--------|
 | `node` | ocean-node answers and errors, and the raw arguments of ocean.js's captured lines (`oceanjs.logger.*`, e.g. the request payload of a refused compute start). |
 | `wallet` | The walt.id wallet: its error answers, the resolved presentation request, the presentation result. |
-| `policy` | Policy-server sessions (the `initiate` reply), the verifier's session record and per-policy results. |
+| `policy` | Policy-server sessions (the `initiate` reply), the verifier's session record and per-policy results, and a `checkSessionId` answer that is not the policy server's envelope (a proxy's 502 page), as it came. |
 | `rpc` | The chain RPC: errors with their request URL and response. |
 | `order` | The raw fields of the access log events, and the errors of the previous-order lookup and of the price read before redaction. Events of their own for orders: not emitted yet (from PRs 7 and 10d). |
 | `nonce` | The raw fields of the publish preflight's nonce warnings; nonce reads, the nonce guard's decisions (nonce chosen, refusal, resync, proof) and the signed transactions of refused sends. |
