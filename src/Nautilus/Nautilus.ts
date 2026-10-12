@@ -2000,7 +2000,13 @@ export class Nautilus {
    * requested before either is fetched carry the same one-time number, so the node serves
    * the first one fetched and answers the other with HTTP 401 `nonce: … is not a valid
    * nonce` (it was replaced by the newer URL). Then call `access()` again and fetch the new
-   * URL at once (it reuses the order held when it finds it).
+   * URL at once.
+   *
+   * A call reuses an order the account holds only once at least 2 more blocks are mined
+   * after the block that holds it, and this one returns as soon as its order is mined. So
+   * for a paid service, wait until at least 2 more blocks are mined after the purchase
+   * before calling it again: sooner, it pays again. An RPC that lags behind extends that
+   * wait. See the known limitations page of the docs.
    */
   async access(config: AccessConfig): Promise<AccessResult> {
     return this.operation('access', (log) =>
