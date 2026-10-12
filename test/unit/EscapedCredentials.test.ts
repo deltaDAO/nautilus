@@ -260,6 +260,14 @@ function percentEncoded(text: string, times: number): string {
   return encoded
 }
 
+/**
+ * `\u005c` and `links` more `u005c` before `end`, as the review's probe built it: undoing one
+ * level turns the first escape into a backslash that starts the next one.
+ */
+function chained(links: number, end: string): string {
+  return `\\u005c${'u005c'.repeat(links)}${end}`
+}
+
 /** A fake private key, for the never-shown keys of the `secrets` tier. */
 const PRIVATE_KEY = `0x${'c0ffee'.repeat(10)}beef`
 
@@ -447,6 +455,91 @@ describe('how deep escaping is undone (security regression)', () => {
         ['maskText', () => maskText(text)]
       ] as const) {
         // Linear takes 0.05-2 s here; quadratic would take hours.
+        const elapsed = await cpuTime(run)
+        if (elapsed >= 10_000)
+          slow.push(`${label}, ${name}: ${elapsed.toFixed(0)} ms`)
+      }
+    }
+    expect(slow).to.deep.equal([])
+  }, 120_000)
+
+  // A `\u005c` (a backslash) that undoing turns into the start of the next escape: each
+  // level undoes one link of the chain, so after the eight levels a longer chain is still
+  // escaped, and so is the delimiter at its end.
+  for (const links of [8, 9, 20, 200])
+    for (const [label, text, secret] of [
+      [
+        '`apiToken\\u003d`',
+        `apiToken${chained(links, 'u003d')}${FAKE.nestedApiToken}`,
+        FAKE.nestedApiToken
+      ],
+      [
+        'a JSON key with `\\u0022` quotes',
+        `{${chained(links, 'u0022')}apiToken${chained(links, 'u0022')}:${chained(links, 'u0022')}${FAKE.nestedApiToken}${chained(links, 'u0022')}}`,
+        FAKE.nestedApiToken
+      ],
+      [
+        '`apiToken%3D` behind `%5C` and `\\u0025` links',
+        `apiToken%5C${'u005c'.repeat(links)}u0025${'25'.repeat(links)}3D${FAKE.nestedApiToken}`,
+        FAKE.nestedApiToken
+      ],
+      [
+        'a URL with `\\u002f` slashes',
+        `see https:${chained(links, 'u002f')}${chained(links, 'u002f')}rpc.example.org${chained(links, 'u002f')}v3${chained(links, 'u002f')}${FAKE.rpcPathToken} now`,
+        FAKE.rpcPathToken
+      ]
+    ] as const)
+      it(`redacts ${label} behind ${links} more \`\\u005c\` links on every path`, () => {
+        for (const [path, shown, masked] of everyPath(text)) {
+          expect(shown, path).not.to.contain(secret)
+          expect(leaks(shown, masked), path).to.deep.equal([])
+        }
+      })
+
+  it('redacts a `\\u005c` chain in a real ethers error on every path', async () => {
+    const shape = `apiToken${chained(8, 'u003d')}${FAKE.nestedApiToken}`
+    for (const status of [200, 500]) {
+      const error = await rpcError(status, shape)
+      // The control: ethers' message holds it.
+      expect(error.message).to.contain(FAKE.nestedApiToken)
+
+      expect(
+        leaks(JSON.stringify(redactFields({ error }))),
+        `field, HTTP ${status}`
+      ).to.deep.equal([])
+      const nodeError = OceanNodeError.from('initialize', error)
+      expect(
+        leaks(`${nodeError.message} ${(nodeError.cause as Error).message}`),
+        `OceanNodeError.from, HTTP ${status}`
+      ).to.deep.equal([])
+      const send = Object.assign(new Error(error.message), {
+        shortMessage: error.message
+      })
+      withoutSignedTransaction(send)
+      expect(
+        leaks(`${send.message} ${send.shortMessage}`),
+        `nonce guard, HTTP ${status}`
+      ).to.deep.equal([])
+      expect(
+        findCredentials(maskText(error.message)),
+        `sensitive tier, HTTP ${status}`
+      ).to.deep.equal([])
+    }
+  })
+
+  it('flattens hostile `\\u005c` chains in linear time', async () => {
+    // 4 MB: one chain, and many short chains past the eight levels that end in no escape.
+    const slow: string[] = []
+    for (const [label, text] of [
+      ['one chain', `apiToken${chained(800_000, 'u003d')}x`],
+      ['many chains', `${chained(9, 'zz')} `.repeat(70_000)]
+    ] as const) {
+      expect(text.length, label).to.be.above(3_700_000)
+      for (const [name, run] of [
+        ['redactSecrets', () => redactSecrets(text)],
+        ['maskText', () => maskText(text)]
+      ] as const) {
+        // Linear takes well under a second here; quadratic would take hours.
         const elapsed = await cpuTime(run)
         if (elapsed >= 10_000)
           slow.push(`${label}, ${name}: ${elapsed.toFixed(0)} ms`)

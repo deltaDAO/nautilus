@@ -150,9 +150,11 @@ field inside a JSON string (`\"key\":\"value\"`, as ethers quotes a response bod
 (`https:\/\/…`). The text is also read with up to eight levels of escaping undone: JSON
 escaping (a body quoted inside JSON several times, `\u0022` and `\'` quotes included) and
 percent-encoding (`apiToken%3D…`, `%22apiToken%22%3A…`, `https%3A%2F%2F…`). Deeper escaping
-is flattened and read once more: a run of backslashes becomes the character it escapes, and a
-chain of encoded percent signs (`%25253D`) the character it encodes. So a credential under
-JSON escaping or percent-encoding of any depth, or both mixed, is still redacted.
+is flattened and read once more: every escape is undone, and so is every escape that undoing
+makes, until none is left (a run of backslashes becomes the character it escapes, a chain of
+encoded percent signs (`%25253D`) the character it encodes, and a chain of escaped backslashes
+(`\u005cu005cu003d`) the character at its end). So a credential under JSON escaping or
+percent-encoding of any depth, or both mixed, is still redacted.
 When this finds a credential that the text as written hid, the message or field shows the text
 with those escapes undone (`"apiToken":"<redacted>"` where the error had
 `\\\"apiToken\\\":…`), so it can read with fewer backslashes or `%` escapes than the raw

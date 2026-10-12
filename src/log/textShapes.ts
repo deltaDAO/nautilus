@@ -60,20 +60,6 @@ const ESCAPE =
 const HAS_ESCAPE =
   /\\(?:["'\\/]|u00(?:[2-6][0-9a-fA-F]|7[0-9a-eA-E]))|%(?:[2-6][0-9a-fA-F]|7[0-9a-eA-E])/
 
-/**
- * Percent-encoding of any depth, for `flattenEscapes`: a printable character behind a chain
- * of encoded percent signs (`%3D`, `%253D`, `%25253D`). The chain is matched to its end and
- * gives back at most one `25`, so a long chain costs linear time.
- */
-const PERCENT_RUN = /%(?:25)*([2-6][0-9a-fA-F]|7[0-9a-eA-E])/g
-
-/**
- * JSON escaping of any depth, for `flattenEscapes`: a run of backslashes with the quote,
- * slash or `u00XX` it escapes. The run is matched whatever follows it, so a long run costs
- * linear time.
- */
-const BACKSLASH_RUN = /\\+(?:u00([2-6][0-9a-fA-F]|7[0-9a-eA-E])|(["'/]))?/g
-
 /** A printable ASCII character by its hex code. */
 function fromHex(code: string): string {
   return String.fromCharCode(Number.parseInt(code, 16))
@@ -103,26 +89,90 @@ export function undoEscapes(text: string): string {
   return current
 }
 
-/** `text` with every percent chain (`PERCENT_RUN`) read as the character it encodes. */
-function flattenPercent(text: string): string {
-  return text.replace(PERCENT_RUN, (_match, code: string) => fromHex(code))
+/** The value of a hex digit's character code, or -1. */
+function hexValue(code: number): number {
+  if (code >= 48 && code <= 57) return code - 48
+  if (code >= 65 && code <= 70) return code - 55
+  if (code >= 97 && code <= 102) return code - 87
+  return -1
 }
 
 /**
- * `text` with escaping of any depth flattened: a percent chain becomes the character it
- * encodes, then a run of backslashes before a quote, a slash or `u00XX` what it escapes and
- * any other run one backslash, then percent chains again (a `\u0025` the backslash pass
- * made). Percent first, so the backslashes a percent chain encodes (`%255C`) are flattened
- * too. Coarser than `undoEscapes` (it cannot tell the levels apart), so it is used only
- * past `MAX_UNESCAPE_LEVELS`. Three linear replacements.
+ * The printable ASCII character (as `ESCAPE` reads one) two hex digits stand for, by their
+ * character codes, or -1.
+ */
+function printableCode(high: number, low: number): number {
+  const code = hexValue(high) * 16 + hexValue(low)
+  return hexValue(high) < 0 || hexValue(low) < 0 || code < 0x20 || code > 0x7e
+    ? -1
+    : code
+}
+
+const BACKSLASH = 92
+const PERCENT = 37
+/** What a backslash escapes as itself: `\"`, `\'`, `\\` and `\/`. */
+const ESCAPED_AS_ITSELF = new Set([34, 39, BACKSLASH, 47])
+
+/**
+ * The character code the escape at the end of `out[0, length)` stands for, or -1 when it
+ * does not end in one (`ESCAPE`, and a backslash escaping another as one). `out` holds
+ * character codes.
+ */
+function escapeAtEnd(out: Uint16Array, length: number): [number, number] {
+  const last = out[length - 1]
+
+  if (
+    length >= 2 &&
+    out[length - 2] === BACKSLASH &&
+    ESCAPED_AS_ITSELF.has(last)
+  )
+    return [last, 2]
+  if (length >= 3 && out[length - 3] === PERCENT) {
+    const code = printableCode(out[length - 2], last)
+    if (code >= 0) return [code, 3]
+  }
+  if (
+    length >= 6 &&
+    out[length - 6] === BACKSLASH &&
+    out[length - 5] === 117 && // u
+    out[length - 4] === 48 && // 0
+    out[length - 3] === 48
+  ) {
+    const code = printableCode(out[length - 2], last)
+    if (code >= 0) return [code, 6]
+  }
+  return [-1, 0]
+}
+
+/**
+ * `text` with escaping of any depth and mix flattened: every escape is undone, and so is
+ * every escape that undoing makes (`\u005cu003d` is `\u003d`, then `=`; `%5Cu0022` is
+ * `"`; `\u0025` and `3D` make `%3D`, then `=`), until none is left. A run of backslashes
+ * is read as one. The characters are pushed one by one, and whenever the text pushed so far
+ * ends in an escape, the escape is replaced by its character, which may end another one.
+ * Each replacement shortens the text, so the work is linear in the length of `text`,
+ * however deep the chains. Coarser than `undoEscapes` (it cannot tell the levels apart), so
+ * it is used only past `MAX_UNESCAPE_LEVELS`.
  */
 function flattenEscapes(text: string): string {
-  const backslashes = flattenPercent(text).replace(
-    BACKSLASH_RUN,
-    (_match, json: string | undefined, char: string | undefined) =>
-      json ? fromHex(json) : (char ?? '\\')
-  )
-  return flattenPercent(backslashes)
+  const out = new Uint16Array(text.length)
+  let length = 0
+
+  for (let index = 0; index < text.length; index++) {
+    out[length++] = text.charCodeAt(index)
+    for (let [code, size] = escapeAtEnd(out, length); code >= 0; ) {
+      length -= size
+      out[length++] = code
+      ;[code, size] = escapeAtEnd(out, length)
+    }
+  }
+
+  let flat = ''
+  for (let index = 0; index < length; index += 8_192)
+    flat += String.fromCharCode(
+      ...out.subarray(index, Math.min(length, index + 8_192))
+    )
+  return flat
 }
 
 /**
@@ -133,7 +183,7 @@ function flattenEscapes(text: string): string {
  * them all flattened (`flattenEscapes`), so a credential deeper than the limit is still
  * redacted rather than shown. The first pass's output, with its escapes kept, is returned
  * unless a later pass redacts more; then that pass's output, with its escapes undone, is.
- * Linear: at most three passes and `MAX_UNESCAPE_LEVELS` + 3 replacements.
+ * Linear: at most three passes, `MAX_UNESCAPE_LEVELS` replacements and one flatten.
  */
 export function withEscapesUndone(
   text: string,
