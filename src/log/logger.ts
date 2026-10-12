@@ -308,12 +308,12 @@ export function loggerFor(options?: LoggingOptions | Logger): Logger {
   return options ? new Logger(options) : log
 }
 
-/** `build`, else the event with its fields replaced by `fieldsError`, else nothing. */
 /** The key a `once` event is remembered by: the event's name and its key, bounded. */
 function onceKeyOf(name: LogEventName, key: string): string {
   return `${name}\u0000${key.length > MAX_ONCE_KEY_LENGTH ? id(key) : key}`
 }
 
+/** `build`, else the event with its fields replaced by `fieldsError`, else nothing. */
 function safeBuild(
   name: LogEventName,
   msg: string | (() => string),

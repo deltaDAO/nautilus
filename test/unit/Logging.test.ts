@@ -5,6 +5,7 @@ import { makeError } from 'ethers'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PolicySessionResolver } from '../../src/identity/PolicySessionResolver.js'
 import { MemorySessionStore } from '../../src/identity/session.js'
+import { currentOperation, runOperation } from '../../src/log/context.js'
 import { processEnv, readLoggingEnv } from '../../src/log/env.js'
 import { isLogEventName, LOG_COMPONENTS } from '../../src/log/events.js'
 import {
@@ -961,7 +962,7 @@ describe('regressions (V f)', () => {
   })
 
   describe('emit never throws (fix round)', () => {
-    it('turns fields that cannot be read into fieldsError', () => {
+    it('turns fields that cannot be read into fieldsError', async () => {
       const received: LogEvent[] = []
       configureLogging({ sink: (event) => received.push(event) })
       const fields = {
@@ -976,6 +977,22 @@ describe('regressions (V f)', () => {
       expect(received).to.have.length(1)
       expect(received[0].msg).to.equal('still logged')
       expect(received[0].fields).to.deep.equal({
+        fieldsError: 'getter failed at https://rpc.example.org'
+      })
+
+      // Inside an operation, the fallback event keeps the operation's opId and name.
+      let opId: string | undefined
+      await runOperation(log, 'access', async () => {
+        opId = currentOperation()?.opId
+        log.emit('publish.preflight.denies_all', 'still logged', fields)
+      })
+      const [fallback] = received.filter(
+        (event) => event.event === 'publish.preflight.denies_all' && event.opId
+      )
+      expect(opId).to.be.a('string')
+      expect(fallback.opId).to.equal(opId)
+      expect(fallback.operation).to.equal('access')
+      expect(fallback.fields).to.deep.equal({
         fieldsError: 'getter failed at https://rpc.example.org'
       })
     })
