@@ -226,7 +226,12 @@ Notes:
   your own logger, use `'passthrough'`, or (redacted) a `sink`. A replacement made after
   nautilus is imported replaces nautilus's too, whatever the mode.
 - Captured lines go to the process-wide configuration set here, not to an instance's own
-  [`logger`](/docs/api/nautilus/create#logger).
+  [`logger`](/docs/api/nautilus/create#logger): its level, format and sink, for every
+  instance. A line ocean.js logs during a nautilus call still carries that call's
+  [`opId`](#telling-operations-apart) and `operation`, also when the call runs on an
+  instance's own logger, so you can match it to the call's other events. Where the operation
+  can't follow the call (a browser, Node before 22.3), captured lines have no `opId`, never a
+  wrong one.
 - Several copies of nautilus in one process (e.g. one bundled into a plugin) share one mode,
   as they share ocean.js's logger: a copy loaded later keeps the mode in force, whichever copy
   set it. The lines go to the logger of the copy that last passed `oceanjs` to
@@ -272,8 +277,8 @@ NAUTILUS_LOG_LEVEL=debug NAUTILUS_LOG_FORMAT=json node publish.js 2> nautilus.lo
 Pass [`logger`](/docs/api/nautilus/create#logger) to `Nautilus.create` to give one instance
 its own level, components or sink, e.g. one sink per tenant in a multi-tenant server. Pass
 options, or a logger made with `createLogger(options)` to share one between instances.
-Warnings of an [`S3RemoteStore`](/docs/api/remote/S3RemoteStore) always go to the
-process-wide configuration set here.
+Warnings of an [`S3RemoteStore`](/docs/api/remote/S3RemoteStore) and ocean.js's
+[captured lines](#oceanjs) always go to the process-wide configuration set here.
 
 ## Telling operations apart
 
@@ -336,7 +341,8 @@ client's events, an instance logger's, the process-wide logger's and the
 hands its logger, bound to the operation, to the steps it runs (orders, escrow, the NFT
 mint, price changes, compute start, publish's and edit's checks and metadata transaction),
 and their events carry the `opId`. Events of code that is not handed that logger (the node
-client, the policy-session resolver, the signer's nonce guard, an `S3RemoteStore`) and the
+client, the policy-session resolver, the signer's nonce guard, an `S3RemoteStore`, ocean.js's
+captured lines) and the
 debug channel's have none, never a wrong one. `error.opId` is set everywhere. The `opId`s
 are 12 random hex characters: among millions of calls two can share one, so when you
 correlate over a long time, go by the `opId` and the time.

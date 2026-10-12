@@ -11,11 +11,18 @@
 import { format } from 'node:util'
 import { LoggerInstance, LogLevel, ProviderInstance } from '@oceanprotocol/lib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  currentOperation,
+  runOperation,
+  useAsyncContext
+} from '../../src/log/context.js'
 import type { DebugEvent } from '../../src/log/debug.js'
 import { resetDebug, setDebug } from '../../src/log/debug.js'
 import {
   configureLogging,
+  createLogger,
   getLoggingConfig,
+  log as processLog,
   resetLogging
 } from '../../src/log/logger.js'
 import type { LogEvent } from '../../src/log/types.js'
@@ -143,6 +150,7 @@ function expectNoJ1Secret(text: string) {
 }
 
 afterEach(() => {
+  useAsyncContext(true)
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
   LoggerInstance.setLevel(LogLevel.Error)
@@ -887,6 +895,95 @@ describe('reading a captured line', () => {
     expect(
       parse.mock.calls.filter(([argument]) => argument === text)
     ).to.have.length(1)
+  })
+})
+
+describe('inside a nautilus operation (10c)', () => {
+  /**
+   * The case 16 refusal inside a `compute` operation on `logger`, which fails with
+   * ocean.js's error; the operation's opId.
+   */
+  async function refusedInOperation(logger = processLog) {
+    let opId: string | undefined
+    await runOperation(logger, 'compute', async () => {
+      opId = currentOperation()?.opId
+      throw await refusedFreeCompute()
+    }).catch(() => undefined)
+    return opId
+  }
+
+  it("'capture': the J1 lines carry the operation's opId and name, redacted", async () => {
+    const log = captureLog({ level: 'trace' })
+
+    const opId = await refusedInOperation()
+
+    expect(opId).to.be.a('string')
+    const lines = log.named('oceanjs.logger.error')
+    expect(lines.map((event) => event.msg)).to.deep.equal([
+      'Compute start failed: 400 Bad Request',
+      'Payload was:'
+    ])
+    for (const event of lines) {
+      expect(event.opId).to.equal(opId)
+      expect(event.operation).to.equal('compute')
+    }
+    const [payload] = lines[1].fields.args as [Record<string, unknown>]
+    expect(payload.nonce).to.equal('<redacted>')
+    expectNoJ1Secret(JSON.stringify(log.events))
+  })
+
+  it('goes to the process-wide logger, with the opId of an operation on an instance logger', async () => {
+    const processWide = captureLog()
+    const instanceEvents: LogEvent[] = []
+    const instance = createLogger({
+      level: 'trace',
+      sink: (event) => instanceEvents.push(event)
+    })
+
+    const opId = await refusedInOperation(instance)
+
+    expect(instanceEvents.some((e) => e.event.startsWith('oceanjs.'))).to.equal(
+      false
+    )
+    const lines = processWide.named('oceanjs.logger.error')
+    expect(lines).to.have.length(2)
+    for (const event of lines) expect(event.opId).to.equal(opId)
+    expectNoJ1Secret(JSON.stringify([...processWide.events, ...instanceEvents]))
+  })
+
+  it('carries no opId outside an operation, and none (never a wrong one) without AsyncLocalStorage', async () => {
+    const log = captureLog()
+
+    await refusedFreeCompute()
+    useAsyncContext(false)
+    await refusedInOperation(createLogger({ level: 'silent' }))
+
+    const lines = log.named('oceanjs.logger.error')
+    expect(lines).to.have.length(4)
+    for (const event of lines) {
+      expect(event).not.to.have.property('opId')
+      expect(event).not.to.have.property('operation')
+    }
+  })
+
+  it("'passthrough': ocean.js prints its own lines; nautilus's operation events stay redacted", async () => {
+    configureLogging({ oceanjs: 'passthrough', level: 'trace' })
+    const out = output()
+
+    const opId = await refusedInOperation()
+
+    // ocean.js's own console lines, as the app asked for (documented: unredacted).
+    expect(out.console.error).toHaveBeenCalledTimes(2)
+    // nautilus's own lines for the operation: the failure, with its opId, nothing raw.
+    const events = out.lines
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line) as LogEvent)
+    expect(events.map((event) => event.event)).to.include(
+      'compute.operation.failed'
+    )
+    for (const event of events) expect(event.opId).to.equal(opId)
+    expect(events.some((e) => e.event.startsWith('oceanjs.'))).to.equal(false)
+    expectNoJ1Secret(JSON.stringify(events))
   })
 })
 
