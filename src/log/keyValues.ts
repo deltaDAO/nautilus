@@ -28,14 +28,15 @@ export type KeyValueForm = 'escaped' | 'json' | 'assignment' | 'bare'
 /**
  * A key and its separator, in each form: `\"key\": value` in JSON inside a JSON string
  * (ethers quotes a response body so; `\\\"key\\\": value` a level deeper, and so on, the
- * run of backslashes in group 1), `"key": value` in JSON, `key=value` in a query, a form
- * body or prose (ethers' `code=…, info={ … }`), and `key: value` or `'key': value` (headers,
- * prose, `util.inspect`). A quoted key is any quoted text; an unquoted one a word of
+ * run of backslashes in group 1, read whole so a long run is scanned in linear time),
+ * `"key": value` in JSON, `key=value` in a query, a form body or prose (ethers'
+ * `code=…, info={ … }`), and `key: value` or `'key': value` (headers, prose,
+ * `util.inspect`). A quoted key is any quoted text; an unquoted one a word of
  * letters, digits, `-` and `_` (so `DB_PASSWORD` and `S3_SECRET_KEY` are read whole), read
  * from its last 64 characters when it is longer. Which keys are secret is the rule's call.
  */
 const KEY_VALUE_FORMS: [KeyValueForm, RegExp][] = [
-  ['escaped', /(\\+)"([^"\\]{1,256})\1"\s*:\s*/g],
+  ['escaped', /(?<!\\)(\\+)"([^"\\]{1,256})\1"\s*:\s*/g],
   ['json', /"([^"\\]{1,256})"\s*:\s*/g],
   ['assignment', /([A-Za-z][\w-]{0,63})[ \t]*=[ \t]*/g],
   ['bare', /([A-Za-z][\w-]{0,63})'?[ \t]*:[ \t]*/g]

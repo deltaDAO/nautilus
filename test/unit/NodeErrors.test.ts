@@ -24,6 +24,8 @@ import {
   Wallet
 } from 'ethers'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { SECRET_KEYS } from '../../src/log/keys.js'
+import { redactKeyValues } from '../../src/log/keyValues.js'
 import { redactError, redactMessage } from '../../src/log/redact.js'
 import type { NodeAuth } from '../../src/node/auth.js'
 import { nodeText, redactSecrets, sanitize } from '../../src/node/messages.js'
@@ -1329,6 +1331,29 @@ describe("the node's text in a message", () => {
       expect(elapsed, text.slice(0, 12)).to.be.below(cpuBudget(30))
       expect(clean).to.match(/^(https:\/\/h\.example|127\.0\.0\.1:1)$/)
     }
+  })
+
+  it('reads a long backslash run in linear time, at every tier (security regression)', async () => {
+    // A run of backslashes followed by neither an escape nor a quote: the JSON-escape decoder
+    // and the escaped-key form were retried from each backslash (about 650 ms at 40,000), at
+    // the log window and in the sensitive tier's unbounded mask.
+    const marker = 'api-key-marker-7c41'
+    const runs = [
+      `api\\u004bey=${marker} ${'\\'.repeat(40_000)}x`,
+      `${'\\'.repeat(40_000)}"apiKey"`
+    ]
+    for (const text of runs) {
+      let clean = ''
+      const elapsed = await cpuTime(() => {
+        clean = redactKeyValues(redactSecrets(text), SECRET_KEYS)
+      })
+      expect(elapsed).to.be.below(cpuBudget(50))
+      expect(clean).not.to.contain(marker)
+    }
+    // Still decoded and redacted at any depth.
+    expect(
+      redactSecrets('\\\\\\"api\\u004bey\\\\\\": \\\\\\"v4lue\\\\\\"')
+    ).to.equal('\\\\\\"apiKey\\\\\\": \\\\\\"<redacted>\\\\\\"')
   })
 
   it('redacts a megabyte of hostile text in no time (security regression)', async () => {
