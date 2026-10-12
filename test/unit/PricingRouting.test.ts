@@ -153,6 +153,26 @@ describe('getPricingInfo exchange selection', () => {
     expect(pricing.baseTokenAddress).to.equal(BASE_TOKEN)
   })
 
+  it('does not skip an exchange whose read was rate-limited or not answered', async () => {
+    // Skipped, a paid datatoken read as free (or as unpriced), and a failed previous-order
+    // lookup then warned "the service is free: this costs only gas".
+    for (const failure of [
+      Object.assign(new Error('Too Many Requests'), { status: 429 }),
+      Object.assign(new Error('timeout'), { code: 'TIMEOUT' })
+    ]) {
+      const getExchange = mockChain({
+        fixedRates: ['0xlive'],
+        dispensers: ['0xdispenser'],
+        exchanges: { '0xlive': exchange() }
+      })
+      getExchange.mockRejectedValueOnce(failure)
+
+      await expect(getPricingInfo(signer, DATATOKEN, chainConfig)).rejects.toBe(
+        failure
+      )
+    }
+  })
+
   it('falls through to the dispenser when no exchange is active', async () => {
     // The dead exchange used to win outright, so a free asset with an old fixed-rate
     // exchange on it could not be ordered at all.

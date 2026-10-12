@@ -18,6 +18,7 @@ import {
 import { Decimal } from 'decimal.js'
 import type { Signer } from 'ethers'
 import { getChainId } from './index.js'
+import { codeOf, errorChain, rateLimitOf } from './rpcErrors.js'
 
 export type PricingSchema = 'fixed' | 'free' | 'none'
 
@@ -252,15 +253,27 @@ async function findActiveExchange(
     if (!exchangeId) continue
 
     // One unreadable row must not hide the others: an id this contract does not know
-    // throws rather than answering.
-    const exchange = await contract
-      .getExchange(exchangeId)
-      .catch(() => undefined)
+    // throws rather than answering. An RPC that rate-limits the read or does not answer
+    // says nothing about the row, and skipping it could make a paid datatoken look free.
+    const exchange = await contract.getExchange(exchangeId).catch((error) => {
+      if (rateLimitOf(error) || isTransportFailure(error)) throw error
+      return undefined
+    })
 
     if (exchange?.active) return { exchangeId, exchange }
   }
 
   return undefined
+}
+
+/** ethers' codes for a request the RPC did not answer, or answered with a server error. */
+const TRANSPORT_CODES = new Set(['TIMEOUT', 'NETWORK_ERROR', 'SERVER_ERROR'])
+
+function isTransportFailure(error: unknown): boolean {
+  return errorChain(error).some((entry) => {
+    const code = codeOf(entry)
+    return code !== undefined && TRANSPORT_CODES.has(code)
+  })
 }
 
 /**
