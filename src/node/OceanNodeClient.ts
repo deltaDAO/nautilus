@@ -1817,10 +1817,13 @@ export class OceanNodeClient {
 
   /**
    * Resolves many DIDs in one query, keyed by lower-cased DID. Throws an `OceanNodeError`
-   * when the node answers with a DDO whose `id` is none of `dids` (see `resolve`).
+   * when the node answers with a DDO whose `id` is none of `dids` (see `resolve`), or with
+   * two different DDOs for one DID.
    *
-   * Reads both answer shapes: ocean-node 4.x's `[{ results: [ddo…], totalResults }]` and
-   * an Elasticsearch-style `{ hits: { hits: [{ _source: ddo }] } }`.
+   * Reads the answer shapes of ocean-node 4.x: `[{ results: [ddo…], totalResults }]` with
+   * Elasticsearch (verified against 4.2.2) and `[{ hits: [{ document: ddo }], found }]`
+   * with Typesense (from the 4.2.2 source, not run), one element per DDO schema; and an
+   * Elasticsearch-style `{ hits: { hits: [{ _source: ddo }] } }`.
    */
   async resolveMany(dids: string[]): Promise<Record<string, AssetV5>> {
     if (!dids.length) return {}
@@ -1835,11 +1838,31 @@ export class OceanNodeClient {
     })
 
     const assets: Record<string, AssetV5> = {}
+    /** The DDO kept for each asset, by DID hash, so `did:op:` and `did:ope:` meet. */
+    const seen = new Map<string, AssetV5>()
 
     for (const asset of queryResults(response)) {
       if (!asset?.id) continue
 
       assertServedDid('resolveMany', dids, asset)
+
+      const key = didHash(asset.id) ?? asset.id.trim().toLowerCase()
+      const kept = seen.get(key)
+      if (kept) {
+        // The same document twice (e.g. in two pages) is harmless; two versions are not.
+        if (JSON.stringify(kept) === JSON.stringify(asset)) continue
+        debugRaw('node', 'resolveMany: two DDOs for one DID', {
+          id: asset.id,
+          first: kept,
+          second: asset
+        })
+        throw new ServedDidError(
+          'resolveMany',
+          `the node answered with two different DDOs for ${sanitize(asset.id, 100, null)}. Refused: which one it serves is ambiguous.`
+        )
+      }
+
+      seen.set(key, asset)
       assets[asset.id.toLowerCase()] = asset
     }
 
@@ -3090,15 +3113,24 @@ function assertServedDid(
 }
 
 /**
- * The DDOs in a metadata query's answer. ocean-node 4.x answers
- * `[{ results: [ddo…], totalResults }]` (one page per element); an Elasticsearch-style
- * answer is `{ hits: { hits: [{ _source: ddo }] } }`. Anything else has none.
+ * The DDOs in a metadata query's answer. ocean-node 4.x answers with an array holding one
+ * element per DDO schema (index or collection) that has hits: `{ results: [ddo…],
+ * totalResults }` with Elasticsearch (`ElasticSearchDatabase.search`), `{ hits: [{
+ * document: ddo }], found }` with Typesense (`TypesenseDatabase.search`, the raw Typesense
+ * answer). An Elasticsearch-style answer is `{ hits: { hits: [{ _source: ddo }] } }`.
+ * Anything else has none.
  */
 function queryResults(response: unknown): (AssetV5 | undefined)[] {
   if (Array.isArray(response))
-    return response.flatMap((page) => {
-      const results = (page as { results?: unknown } | null)?.results
-      return Array.isArray(results) ? (results as (AssetV5 | undefined)[]) : []
+    return response.flatMap((element) => {
+      const { results, hits } =
+        (element as { results?: unknown; hits?: unknown } | null) ?? {}
+
+      if (Array.isArray(results)) return results as (AssetV5 | undefined)[]
+
+      return Array.isArray(hits)
+        ? hits.map((hit) => (hit as { document?: AssetV5 } | null)?.document)
+        : []
     })
 
   const hits = (response as { hits?: { hits?: unknown } } | null)?.hits?.hits

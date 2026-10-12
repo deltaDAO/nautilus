@@ -944,6 +944,62 @@ describe('resolve', () => {
       expect(await client().resolveMany([ASSET_DID])).to.deep.equal({})
     })
 
+    it("reads ocean-node 4.x's Typesense answer shape in resolveMany, with the id check", async () => {
+      // TypesenseDatabase.search on 4.2.2: the raw Typesense answer, one per schema.
+      vi.spyOn(Aquarius.prototype, 'querySearch')
+        .mockResolvedValueOnce([
+          { hits: [], found: 0, out_of: 0, page: 1 },
+          {
+            hits: [{ document: { id: ASSET_DID }, highlights: [] }],
+            found: 1,
+            out_of: 1,
+            page: 1
+          }
+        ] as never)
+        .mockResolvedValueOnce([
+          {
+            hits: [
+              { document: { id: ASSET_DID } },
+              { document: { id: OTHER_DID } }
+            ],
+            found: 2
+          }
+        ] as never)
+
+      expect(await client().resolveMany([ASSET_DID])).to.deep.equal({
+        [ASSET_DID]: { id: ASSET_DID }
+      })
+      const error = await rejection(() => client().resolveMany([ASSET_DID]))
+      expect(error.message).to.match(
+        /^\[ocean-node\] resolveMany: .*whose id is "did:ope:e0de.*the DID asked for/
+      )
+    })
+
+    it('refuses two different DDOs for one DID in resolveMany, in either form', async () => {
+      vi.spyOn(Aquarius.prototype, 'querySearch')
+        .mockResolvedValueOnce([
+          { results: [{ id: ASSET_DID, v: 1 }], totalResults: 1 },
+          { results: [{ id: DID_OP, v: 2 }], totalResults: 1 }
+        ] as never)
+        .mockResolvedValueOnce([
+          {
+            results: [
+              { id: ASSET_DID, v: 1 },
+              { id: ASSET_DID, v: 1 }
+            ]
+          }
+        ] as never)
+
+      const error = await rejection(() => client().resolveMany([ASSET_DID]))
+      expect(error.message).to.match(
+        /^\[ocean-node\] resolveMany: the node answered with two different DDOs for did:op:.*ambiguous/
+      )
+      // The same document twice is not ambiguous.
+      expect(await client().resolveMany([ASSET_DID])).to.deep.equal({
+        [ASSET_DID]: { id: ASSET_DID, v: 1 }
+      })
+    })
+
     it('but accepts the other form and case of the same DID', async () => {
       stubFetch({
         [`/assets/ddo/${encodeURIComponent(DID_OP)}`]: {
