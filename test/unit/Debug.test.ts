@@ -833,6 +833,23 @@ describe('what the sensitive tier still hides', () => {
       )
   })
 
+  it('masks user info a quote or a space ended before its `@` (security regression)', () => {
+    // The URL ends at the quote, so no `@` is left in it and `user:secret` read as the host.
+    const secret = 'userinfo-secret-7Hq2Lm9Z'
+    for (const end of ["'", '"', ' ']) {
+      const text = `at https://user:${secret}${end}x@rpc.example.org/path`
+      expect(maskText(text), text).not.to.contain(secret)
+    }
+    expect(maskUrl(`https://user:${secret}`)).to.equal('https://<redacted>')
+    for (const url of [
+      'https://host.test',
+      'https://host.test:8545/a',
+      'http://[::1]:8545/a',
+      'http://127.0.0.1:/a'
+    ])
+      expect(maskUrl(url)).to.equal(url)
+  })
+
   it('masks auth headers and credential fields in text, and keeps JWTs, signatures and session ids', () => {
     const text = `Authorization: Bearer ${FAKE.jwt}; {"secretAccessKey":"${FAKE.s3Secret}","vp_token":"${FAKE.jwt}","sessionId":"${SID}","signature":"${FAKE.signature}"} password=hunter2`
     const masked = maskText(text)
