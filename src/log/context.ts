@@ -32,6 +32,8 @@ export type OperationName =
   | 'freeCompute'
   | 'getComputeStatus'
   | 'getComputeResult'
+  | 'streamComputeResult'
+  | 'getComputeLogs'
   | 'stopCompute'
   | 'waitForIndexer'
 
@@ -135,7 +137,10 @@ const COMPUTE: OperationEvents = {
   finished: 'compute.operation.finished',
   failed: 'compute.operation.failed'
 }
-/** Reads of a job, which apps poll: their events are all `debug`. */
+/**
+ * Reads of a job, which apps poll: their events are all `debug`. `streamComputeResult` and
+ * `getComputeLogs` finish once the stream is open; reading it is the caller's.
+ */
 const COMPUTE_QUERY: OperationEvents = {
   started: 'compute.query.started',
   finished: 'compute.query.finished',
@@ -162,6 +167,8 @@ const EVENTS: Record<OperationName, OperationEvents> = {
   stopCompute: COMPUTE,
   getComputeStatus: COMPUTE_QUERY,
   getComputeResult: COMPUTE_QUERY,
+  streamComputeResult: COMPUTE_QUERY,
+  getComputeLogs: COMPUTE_QUERY,
   waitForIndexer: {
     started: 'node.operation.started',
     finished: 'node.operation.finished',

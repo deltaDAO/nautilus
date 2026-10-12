@@ -2117,6 +2117,15 @@ export class Nautilus {
   async streamComputeResult(
     config: ComputeResultConfig
   ): Promise<ComputeResultStream> {
+    return this.operation('streamComputeResult', () =>
+      this.runStreamComputeResult(config)
+    )
+  }
+
+  /** `streamComputeResult()`, within its operation. */
+  private async runStreamComputeResult(
+    config: ComputeResultConfig
+  ): Promise<ComputeResultStream> {
     const node = this.nodeFor(config.nodeUri)
     const result = await this.findResult(node, config)
 
@@ -2138,6 +2147,15 @@ export class Nautilus {
    * logs.
    */
   async getComputeLogs(
+    config: ComputeLogsConfig
+  ): Promise<ComputeResultStream> {
+    return this.operation('getComputeLogs', () =>
+      this.runGetComputeLogs(config)
+    )
+  }
+
+  /** `getComputeLogs()`, within its operation. */
+  private async runGetComputeLogs(
     config: ComputeLogsConfig
   ): Promise<ComputeResultStream> {
     const node = this.nodeFor(config.nodeUri)

@@ -447,19 +447,19 @@ export const LOG_EVENTS = {
     level: 'debug',
     component: 'compute',
     description:
-      "A call of getComputeStatus() or getComputeResult(), which apps poll, started; the event's operation names the call, and its opId is on every event of the call."
+      "A call of getComputeStatus() or getComputeResult(), which apps poll, or of streamComputeResult() or getComputeLogs(), started; the event's operation names the call, and its opId is on every event of the call."
   },
   'compute.query.finished': {
     level: 'debug',
     component: 'compute',
     description:
-      'A call of getComputeStatus() or getComputeResult(), which apps poll, returned after durationMs.'
+      'A call of getComputeStatus() or getComputeResult(), which apps poll, returned after durationMs; streamComputeResult() and getComputeLogs() return once the stream is open.'
   },
   'compute.query.failed': {
     level: 'debug',
     component: 'compute',
     description:
-      'A call of getComputeStatus() or getComputeResult(), which apps poll, threw after durationMs; the error it threw carries the same opId (error.opId).',
+      'A call of getComputeStatus(), getComputeResult(), streamComputeResult() or getComputeLogs() threw after durationMs; the error it threw carries the same opId (error.opId).',
     fields: ['error']
   },
   'node.operation.started': {
