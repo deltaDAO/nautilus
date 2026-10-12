@@ -34,7 +34,7 @@ export function formatJson(event: LogEvent): string {
 }
 
 /**
- * `[nautilus] [publish] warn: <message> (publish.preflight.denies_all opId=3f9a2c1b
+ * `[nautilus] [publish] warn: <message> (publish.preflight.denies_all opId=3f9a2c1b07e4
  * operation=publish endpoint=https://…)`, on one line.
  */
 export function formatPretty(event: LogEvent): string {

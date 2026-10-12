@@ -55,7 +55,7 @@ export interface DebugEvent {
   message: string
   /**
    * The operation the event belongs to, as on the log events (`LogEvent.opId`). Only
-   * where `AsyncLocalStorage` tells it (Node); unset in a browser.
+   * where `AsyncLocalStorage` tells it (Node 22.3 or newer); unset in a browser.
    */
   opId?: string
   /** The public call `opId` belongs to. */
@@ -291,7 +291,7 @@ export function debugPrefix(tier: DebugTier): string {
 
 /**
  * One line, whatever the data holds:
- * `[nautilus:debug:sensitive] [node] <time> [publish 3f9a2c1b] <message> <data as JSON>`,
+ * `[nautilus:debug:sensitive] [node] <time> [publish 3f9a2c1b07e4] <message> <data as JSON>`,
  * the operation only within one. Line breaks,
  * terminal escapes and other control characters are written as JSON escapes (`\n`,
  * `\u001b`).

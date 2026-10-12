@@ -246,6 +246,13 @@ export class Logger {
     return bound
   }
 
+  /** The logger this one was bound from (`withOperation`), else this one. @internal */
+  root(): Logger {
+    return this.operation
+      ? (Object.getPrototypeOf(this) as Logger).root()
+      : this
+  }
+
   /** Forgets which `once` events were printed. @internal */
   forget(): void {
     this.shown.clear()

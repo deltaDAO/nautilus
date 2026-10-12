@@ -30,13 +30,15 @@ import {
   setLogTap
 } from '../../src/log/logger.js'
 import { formatJson, formatPretty } from '../../src/log/sinks.js'
+import { PolicyDeniedError } from '../../src/node/OceanNodeClient.js'
+import { NonceGuardError } from '../../src/utils/nonceGuard.js'
 import { getAssetFixture } from '../fixtures/Asset.js'
 import { captureLog, cpuTime } from '../helpers.js'
 import { FAKE, findSecrets } from '../secretScan.js'
 
 const ADDRESS = '0x0000000000000000000000000000000000000001'
 const JOB_ID = `0x${'9f86d081'.repeat(8)}-${'3a7bd3e2'.repeat(8)}`
-const OP_ID = /^[0-9a-f]{8}$/
+const OP_ID = /^[0-9a-f]{12}$/
 
 function createNautilus() {
   return Nautilus.create(
@@ -186,7 +188,7 @@ describe('an operation', () => {
     expect(caught).to.deep.equal(new Error('refused'))
   })
 
-  it('keeps an opId the error already has, and rethrows what it cannot tag unchanged', async () => {
+  it('keeps an opId nautilus did not set, and rethrows what it cannot tag unchanged', async () => {
     const tagged = Object.assign(new Error('earlier'), { opId: 'deadbeef' })
     expect(
       await runOperation(log, 'access', async () => {
@@ -233,6 +235,162 @@ describe('an operation', () => {
     expect(captured.named('access.order.sending')[0].operation).to.equal(
       'compute'
     )
+  })
+
+  it('tags the error of a joined call with the outer opId, also when the outer catches it', async () => {
+    const caught = await runOperation(log, 'access', async () => {
+      const opId = currentOperation()?.opId
+      const error = await runOperation(log, 'getComputeStatus', async () => {
+        throw new Error('job not found')
+      }).catch((error) => error)
+      return { opId, error }
+    })
+
+    expect(caught.error.opId).to.match(OP_ID)
+    expect(caught.error.opId).to.equal(caught.opId)
+    expect(caught.error.opIds).to.deep.equal([caught.opId])
+  })
+
+  it('does not join an operation that has ended: a timer it left starts one of its own', async () => {
+    const captured = captureLog({ level: 'trace' })
+    let later!: Promise<unknown>
+
+    const first = await runOperation(log, 'publish', async () => {
+      // Work the call leaves behind: a timer that outlives it and calls nautilus later.
+      later = new Promise((resolve) =>
+        setTimeout(() => {
+          runOperation(log, 'access', async () => {
+            log.emit('access.order.sending', 'from the timer', {})
+            throw new Error('refused')
+          }).catch(resolve)
+        }, 5)
+      )
+      return currentOperation()?.opId
+    })
+    const error = (await later) as { opId?: string }
+
+    const [line] = captured.named('access.order.sending')
+    const [started] = captured.named('access.operation.started')
+    expect(started, 'the later call has events of its own').not.to.equal(
+      undefined
+    )
+    expect(started.opId).to.match(OP_ID)
+    expect(started.opId).not.to.equal(first)
+    expect(line.opId).to.equal(started.opId)
+    expect(line.operation).to.equal('access')
+    expect(captured.named('access.operation.failed')[0].opId).to.equal(
+      started.opId
+    )
+    expect(error.opId).to.equal(started.opId)
+  })
+
+  it("does not join another logger's operation: one tenant's timer serving another", async () => {
+    const tenantA: LogEvent[] = []
+    const tenantB: LogEvent[] = []
+    const a = createLogger({ level: 'trace', sink: (e) => tenantA.push(e) })
+    const b = createLogger({ level: 'trace', sink: (e) => tenantB.push(e) })
+    const open = gate()
+    let later!: Promise<unknown>
+
+    // A shared worker started inside tenant A's call, which serves tenant B while A's call
+    // is still running and after it has ended.
+    const calls = runOperation(a, 'access', async () => {
+      later = Promise.all(
+        [0, 20].map(
+          (ms) =>
+            new Promise((resolve) =>
+              setTimeout(() => {
+                runOperation(b, 'publish', async (bound) => {
+                  bound.emit('lifecycle.state.unchanged', 'tenant B', {})
+                  throw new Error('tenant B failed')
+                }).catch(resolve)
+              }, ms)
+            )
+        )
+      )
+      await open.promise
+      return currentOperation()?.opId
+    })
+    await sleep(5)
+    open.release()
+    const opIdA = await calls
+    const errors = (await later) as { opId?: string }[]
+
+    const started = tenantB.filter(
+      (event) => event.event === 'publish.operation.started'
+    )
+    expect(started).to.have.length(2)
+    for (const event of tenantB) {
+      expect(event.opId).to.match(OP_ID)
+      expect(event.opId).not.to.equal(opIdA)
+      expect(event.operation).to.equal('publish')
+    }
+    expect(errors.map((error) => error.opId)).to.deep.equal(
+      started.map((event) => event.opId)
+    )
+    expect(tenantA.every((event) => event.opId === opIdA)).to.equal(true)
+  })
+
+  it('names every operation that threw one shared error object: the latest as opId, all as opIds', async () => {
+    const captured = captureLog({ level: 'trace' })
+    // One cached rejection that two calls await, as an app's memoised lookup or a shared
+    // abort reason.
+    const shared = Promise.reject(new Error('cached rejection'))
+    shared.catch(() => undefined)
+
+    const errors: { opId?: string; opIds?: string[] }[] = []
+    for (const _ of [1, 2])
+      errors.push(
+        await runOperation(log, 'access', async () => {
+          await shared
+        }).catch((error) => error)
+      )
+
+    const failed = captured
+      .named('access.operation.failed')
+      .map((event) => event.opId)
+    expect(errors[0]).to.equal(errors[1])
+    expect(errors[1].opId).to.equal(failed[1])
+    expect(errors[1].opIds).to.deep.equal(failed)
+    expect(Object.keys(errors[1])).to.deep.equal([])
+
+    // Bounded: the first and the latest 15.
+    const many = new Error('rethrown by every call')
+    const opIds: string[] = []
+    for (let index = 0; index < 20; index++)
+      await runOperation(log, 'access', async () => {
+        opIds.push(currentOperation()?.opId as string)
+        throw many
+      }).catch(() => undefined)
+    const tagged = many as Error & { opId?: string; opIds?: string[] }
+    expect(tagged.opId).to.equal(opIds[19])
+    expect(tagged.opIds).to.deep.equal([opIds[0], ...opIds.slice(5)])
+  })
+
+  it('rethrows a Proxy whose traps throw, or a revoked one, unchanged', async () => {
+    const throwing = new Proxy(new Error('proxied'), {
+      getOwnPropertyDescriptor() {
+        throw new Error('trap')
+      },
+      defineProperty() {
+        throw new Error('trap')
+      }
+    })
+    const { proxy: revoked, revoke } = Proxy.revocable(new Error('revoked'), {})
+    revoke()
+
+    for (const value of [throwing, revoked]) {
+      // Not returned from a callback: resolving a promise with it reads its `then`.
+      let caught: unknown
+      try {
+        await runOperation(log, 'access', async () => {
+          throw value
+        })
+      } catch (error) {
+        caught = error
+      }
+      expect(caught === value).to.equal(true)
+    }
   })
 
   it('redacts the error of failed, like every error field', async () => {
@@ -286,6 +444,77 @@ describe('an operation', () => {
     )
     expect(formatDebugLine(debugged[1])).not.to.contain('[access')
     expect(debugged[1].opId).to.equal(undefined)
+  })
+})
+
+describe('the raw error of a failed operation', () => {
+  function policyDenied(cause?: unknown) {
+    return new PolicyDeniedError({
+      nodeUri: 'https://ocean-node.example.com',
+      did: 'did:ope:1',
+      serviceId: 'service-1',
+      consumerAddress: ADDRESS,
+      reason: 'credential policy failed',
+      policyResults: [
+        { policy: 'allowed-issuer', success: false, error: 'issuer x' }
+      ],
+      ...(cause === undefined ? {} : { cause })
+    })
+  }
+  const nonceGuard = () =>
+    new NonceGuardError({
+      reason: 'attempts-exhausted',
+      attempts: [],
+      moneySend: true,
+      message: 'nonce too low'
+    })
+
+  it("goes to the topic of the error's origin, else the operation's", async () => {
+    captureLog({ level: 'info' })
+    const debugged: DebugEvent[] = []
+    setDebug({ level: 'sensitive', sink: (event) => debugged.push(event) })
+
+    const cases: [string, unknown, string][] = [
+      ['policy denied', policyDenied(), 'policy'],
+      ['nonce guard', nonceGuard(), 'nonce'],
+      [
+        'wrapped',
+        new Error('order failed', { cause: policyDenied() }),
+        'policy'
+      ],
+      ['plain', new Error('no route'), 'order']
+    ]
+    for (const [label, thrown, topic] of cases) {
+      debugged.length = 0
+      await runOperation(log, 'access', async () => {
+        throw thrown
+      }).catch(() => undefined)
+
+      const raw = debugged.filter(
+        (event) =>
+          event.message === 'log event access.operation.failed before redaction'
+      )
+      expect(raw, label).to.have.length(1)
+      expect(raw[0].topic, label).to.equal(topic)
+    }
+  })
+
+  it('is not shown when only the operation topic is on', async () => {
+    captureLog({ level: 'info' })
+    const debugged: DebugEvent[] = []
+    setDebug({
+      level: 'sensitive',
+      topics: ['order'],
+      sink: (event) => debugged.push(event)
+    })
+
+    await runOperation(log, 'access', async () => {
+      throw policyDenied()
+    }).catch(() => undefined)
+
+    expect(
+      debugged.filter((event) => event.message.includes('access.operation'))
+    ).to.deep.equal([])
   })
 })
 
