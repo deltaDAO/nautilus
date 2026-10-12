@@ -12,13 +12,14 @@
  */
 import type { StorageObject } from '@oceanprotocol/lib'
 import { FetchRequest, FetchResponse, makeError, Wallet } from 'ethers'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PublishedNotIndexed } from '../../src/@types/Publish.js'
 import { CredentialListTypes } from '../../src/ddo/types.js'
 import {
   addCredentialAddresses,
   addRequestCredentials
 } from '../../src/identity/policy.js'
+import { useAsyncContext } from '../../src/log/context.js'
 import { type DebugEvent, setDebug } from '../../src/log/debug.js'
 import {
   createLogger,
@@ -1594,6 +1595,53 @@ describe('setup', () => {
         String(call[0]).includes('publish.preflight.publisher_is_node')
       )
     ).to.deep.equal([])
+  })
+})
+
+describe('without AsyncLocalStorage (a browser), the warnings carry the opId', () => {
+  afterEach(() => {
+    useAsyncContext(true)
+  })
+
+  /** The opId of the call's `started` event, and of the events named. */
+  function opIds(log: ReturnType<typeof captureLog>, names: string[]) {
+    const [started] = log.events.filter((event) =>
+      event.event.endsWith('.operation.started')
+    )
+    expect(started.opId).to.match(/^[0-9a-f]{12}$/)
+    for (const name of names) {
+      const events = log.events.filter((event) => event.event === name)
+      expect(events, name).not.to.deep.equal([])
+      for (const event of events)
+        expect(event.opId, name).to.equal(started.opId)
+    }
+    return started.opId
+  }
+
+  it('of publish, edit and completePublish, and their metadata step', async () => {
+    useAsyncContext(false)
+    const { nautilus } = await createNautilus({ node: { policyServer: true } })
+
+    let log = captureLog({ level: 'trace' })
+    await nautilus.publish(validAsset())
+    let opId = opIds(log, ['publish.preflight.denies_all'])
+    // The metadata step gets the bound logger too.
+    const [{ logger }] = vi.mocked(writeMetadata).mock.calls[0]
+    logger?.emit('publish.metadata.sending', 'sending', {})
+    expect(log.named('publish.metadata.sending')[0].opId).to.equal(opId)
+
+    log = captureLog({ level: 'trace' })
+    const fixture = getAssetFixture()
+    fixture.credentialSubject.credentials = {} as never
+    await nautilus.edit(new AssetBuilder(fixture).build())
+    opId = opIds(log, ['publish.preflight.denies_all'])
+    expect(log.named('edit.operation.finished')[0].opId).to.equal(opId)
+
+    log = captureLog({ level: 'trace' })
+    nftState.nonces = undefined as never
+    await nautilus.completePublish(NFT_ADDRESS, validAsset())
+    // denies_all was said once for this node and asset, by the edit.
+    opIds(log, ['publish.preflight.pending_unreadable'])
   })
 })
 
