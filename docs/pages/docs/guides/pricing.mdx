@@ -163,13 +163,16 @@ so an order about to expire is ordered anew rather than extended for a download 
 fail. A service whose timeout is 10 minutes or less is ordered anew every time. Orders mined
 in the last two blocks are not reused either, since a reorg could still drop them.
 
-The events are read newest first, 2 000 blocks per `eth_getLogs` call (halved while the RPC
-refuses the range; a rate limit is not taken for a refusal), back to the first block inside
-the service's timeout and at most 100 000 blocks or 100 rounds of reads, checking at most 50
-candidates. "Not found" means the whole window was read. When a bound ends the read first
-(a timeout longer than 100 000 blocks, a timeout of `0`, an RPC that serves only small
-ranges), with no order found, the lookup is **incomplete**: an older order may still be in
-force.
+The events are read newest first, 2 000 blocks per `eth_getLogs` call (narrowed to 1 000,
+500, 200, 100 blocks and below while the RPC refuses the range, and kept at the size that
+works; a rate limit is not taken for a refusal), back to the first block inside the service's
+timeout and at most 100 000 blocks, in as many rounds of reads as those blocks need at 100
+blocks per round (at least 100) and for at most 5 minutes, checking at most 50 candidates.
+On an RPC that serves 100 blocks per call, a 24-hour window on OP Sepolia (2-second blocks)
+takes about 450 rounds. "Not found" means the whole window was read. When a bound ends the
+read first (a timeout longer than 100 000 blocks, a timeout of `0`, an RPC that serves fewer
+than 100 blocks per call or answers too slowly), with no order found, the lookup is
+**incomplete**: an older order may still be in force.
 
 When the lookup is incomplete, or the RPC fails (a rate limit, no answer, an error), "not
 found" cannot be told apart from "not checked". On a service that costs anything nautilus
