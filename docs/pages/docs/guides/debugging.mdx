@@ -53,8 +53,8 @@ so does any value under a name ending in
 `token`, `key`, `secret`, `password`, `auth`, `cookie`, `jwt` or `credential(s)` (`apiToken`,
 `pinataGatewayToken`, drpc's `dkey`, `S3_SECRET_KEY=`, `PINATA_JWT=`, a `Cookie` header), in
 URLs, objects and text, also in JSON quoted inside JSON (up to eight levels of JSON escaping
-or percent-encoding undone, deeper escaping flattened). Session-scoped values stay readable
-(`vp_token`, `state`, `sessionId`, `nonce`, `signature`, `id`). A credential under a name
+or percent-encoding undone; deeper JSON escaping and percent-encoding, also mixed, are
+flattened). Session-scoped values stay readable (`vp_token`, `state`, `sessionId`, `nonce`, `signature`, `id`). A credential under a name
 nautilus does not know, or without a name, still prints: scan the output before you share
 it. A long id in a URL path (20 or more letters and digits, such as a 64-hex compute job id
 without `0x`, an Arweave id or an S3 object key segment) is masked like an API key in a
