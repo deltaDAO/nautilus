@@ -528,6 +528,21 @@ export const LOG_EVENTS = {
     description:
       "ocean.js logged a debug line through its LoggerInstance, e.g. P2P dial details. Only when ocean.js's own level is Verbose.",
     fields: ['method', 'args']
+  },
+  'oceanjs.capture.nested_dropped': {
+    level: 'warn',
+    component: 'oceanjs',
+    description:
+      'ocean.js logged a line while nautilus was capturing one of its lines, e.g. from a sink or debug sink that logs through LoggerInstance. The nested line is dropped, not printed: printed through ocean.js it would be unredacted.',
+    once: true
+  },
+  'oceanjs.capture.unavailable': {
+    level: 'warn',
+    component: 'oceanjs',
+    description:
+      "ocean.js's LoggerInstance is frozen or not extensible, so nautilus can't capture its lines: ocean.js prints them itself, unredacted, whatever the oceanjs mode. Logged when nautilus is imported.",
+    fields: ['methods'],
+    once: true
   }
 } as const satisfies Record<string, LogEventSpec>
 

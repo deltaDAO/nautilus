@@ -13,8 +13,9 @@
  *
  * - `'capture'` (the default): the line becomes a catalogued `oceanjs.logger.*` event of
  *   the process-wide logger: redacted by field and by `sanitize` like every other event,
- *   printed at nautilus's level and to its sink, and its raw arguments go to the
- *   `sensitive` debug tier (topic `node`) when that is on. ocean.js's own level still
+ *   printed at nautilus's level and to its sink, and its raw arguments go to the debug
+ *   channel (topic `node`) when that is on: its `sensitive` tier, or `secrets` for a
+ *   credential (an RPC key, a Bearer token, a signed transaction). ocean.js's own level still
  *   decides first which lines it emits (errors only by default), so a line ocean.js would
  *   not have printed is not captured either;
  * - `'passthrough'`: ocean.js's own method, unchanged: unredacted, to the console;
@@ -25,6 +26,14 @@
  * still print as they do. `LoggerInstance` is process-wide, so the mode applies to every
  * ocean.js user in the process, not only to nautilus's calls. PR 11's contract test pins
  * that ocean.js logs through this object.
+ *
+ * Several copies of nautilus in one process (a bundled copy, a test runner's reload) share
+ * one state on `LoggerInstance`: the first copy loaded installs the methods, a later copy
+ * keeps the mode in force, and the lines go to the copy that last set the mode
+ * (`configureLogging({ oceanjs })`), else to the first. A line ocean.js logs while one is
+ * being captured (a sink that logs through `LoggerInstance`) is dropped, never printed raw.
+ * A `LoggerInstance` nautilus can't change (frozen) is left alone: nothing is captured, and
+ * the logger warns once.
  */
 
 import { LoggerInstance } from '@oceanprotocol/lib'
@@ -58,30 +67,47 @@ export const OCEANJS_EVENT: Record<OceanJsMethod, LogEventName> = {
 /** How long a string argument may be to be read as JSON. A longer one stays text. */
 const MAX_JSON_ARGUMENT = 65_536
 
-/** Receives one captured line: ocean.js's method and its arguments, untouched. */
-export type OceanJsCapture = (method: OceanJsMethod, args: unknown[]) => void
+/** Receives the captured lines. */
+export interface OceanJsCapture {
+  /** One captured line: ocean.js's method and its arguments, untouched. */
+  line(method: OceanJsMethod, args: unknown[]): void
+  /** ocean.js logged a line while one was being captured; that line was dropped. */
+  nestedDropped(): void
+}
 
 type LoggerMethod = (...args: unknown[]) => void
 
 /**
  * What nautilus keeps on `LoggerInstance` itself, under a registered symbol: ocean.js's own
- * methods and the mode in force. On the object, not in this module, so a second copy of
- * nautilus in the process (or a test runner that loads this module again) finds ocean.js's
- * methods instead of the first copy's, and every copy follows the last `configureLogging`.
+ * methods, the mode in force and where the lines go. On the object, not in this module, so
+ * every copy of nautilus in the process (or a test runner that loads this module again)
+ * shares them.
  */
 interface Shared {
   /** The methods as they were before nautilus replaced them, for `passthrough`. */
   originals: Partial<Record<OceanJsMethod, LoggerMethod>>
   mode: OceanJsLogMode
+  /** The copy that last set the mode, else the first copy loaded. */
   capture?: OceanJsCapture
-  /** Set while a line is being captured: a sink that logs through ocean.js again is not. */
+  /** Whether a copy installed its methods on `LoggerInstance`. */
+  installed: boolean
+  /** Set while a line is being captured: a line logged meanwhile is dropped. */
   capturing: boolean
+  /** Set when a line was dropped during the capture in progress. */
+  dropped: boolean
 }
 
-const SHARED = Symbol.for('@deltadao/nautilus/oceanjs-capture')
+/**
+ * Versioned: a copy whose `Shared` differs uses a key of its own (and wraps the methods it
+ * finds, so both still work) instead of misreading this one.
+ */
+const SHARED = Symbol.for('@deltadao/nautilus/oceanjs-capture/v1')
 
 /** ocean.js's logger, with nautilus's state on it. */
 const target = LoggerInstance as unknown as Record<string | symbol, unknown>
+
+/** The state, when `LoggerInstance` can't hold it (frozen): this copy's own. */
+let local: Shared | undefined
 
 let installed = false
 
@@ -91,28 +117,61 @@ export function getOceanJsMode(): OceanJsLogMode {
 }
 
 /**
- * Sets the mode, and installs nautilus's methods on `LoggerInstance` the first time. Called
- * by the logger when it loads and by `configureLogging`; `onLine` receives the captured
- * lines.
+ * Installs nautilus's methods on `LoggerInstance`, unless an earlier copy did, and sends the
+ * lines to `capture` unless an earlier copy already receives them; the mode in force stays.
+ * Called once, when the logger loads. Returns the methods that could not be replaced (all
+ * five for a frozen `LoggerInstance`): ocean.js prints those itself, whatever the mode.
+ */
+export function initOceanJsCapture(capture: OceanJsCapture): OceanJsMethod[] {
+  const state = shared()
+  state.capture ??= capture
+  return install(state)
+}
+
+/**
+ * Sets the mode, and sends the lines to `capture`: the copy that last sets the mode
+ * receives them. Called by `configureLogging` and `resetLogging`.
  */
 export function setOceanJsMode(
   next: OceanJsLogMode,
-  onLine: OceanJsCapture
+  capture: OceanJsCapture
 ): void {
   const state = shared()
   state.mode = next
-  state.capture = onLine
-  install(state)
+  state.capture = capture
 }
 
 function shared(): Shared {
-  let state = target[SHARED] as Shared | undefined
-  if (!state) {
-    state = { originals: {}, mode: DEFAULT_OCEANJS_MODE, capturing: false }
+  if (local) return local
+  const found = target[SHARED]
+  if (isShared(found)) return found
+
+  const state: Shared = {
+    originals: {},
+    mode: DEFAULT_OCEANJS_MODE,
+    installed: false,
+    capturing: false,
+    dropped: false
+  }
+  try {
     // Not enumerable: kept out of anything that lists the logger's properties.
     Object.defineProperty(target, SHARED, { value: state })
+  } catch {
+    // Frozen, or the key is taken by something else: this copy keeps its state itself.
+    local = state
   }
   return state
+}
+
+function isShared(value: unknown): value is Shared {
+  const state = value as Shared | undefined
+  return (
+    typeof state === 'object' &&
+    state !== null &&
+    typeof state.originals === 'object' &&
+    typeof state.installed === 'boolean' &&
+    typeof state.capturing === 'boolean'
+  )
 }
 
 /** Whether ocean.js's own level lets `method` print. */
@@ -122,53 +181,91 @@ function oceanJsAllows(method: OceanJsMethod): boolean {
   return (typeof level === 'number' ? level : 0) >= METHODS[method]
 }
 
-function install(state: Shared): void {
-  if (installed) return
+function install(state: Shared): OceanJsMethod[] {
+  if (installed || state.installed) return []
   installed = true
 
+  const failed: OceanJsMethod[] = []
   for (const method of Object.keys(METHODS) as OceanJsMethod[]) {
-    // ocean.js's method, unless an earlier copy of this module already replaced it.
+    // ocean.js's method, or an app's own replacement made before nautilus loaded, which
+    // `passthrough` then calls.
     const original = state.originals[method] ?? target[method]
     // Not ocean.js's logger as nautilus knows it: leave that method alone.
     if (typeof original !== 'function') continue
+    const replacement = capturing(state, method, original as LoggerMethod)
+    try {
+      target[method] = replacement
+    } catch {
+      // Frozen, or the method is read-only.
+    }
+    if (target[method] !== replacement) {
+      failed.push(method)
+      continue
+    }
     state.originals[method] = original as LoggerMethod
+  }
+  // Another copy wraps nothing again; a copy with its own state (frozen) has nothing to share.
+  if (state !== local) state.installed = true
+  return failed
+}
 
-    target[method] = function (this: unknown, ...args: unknown[]): void {
-      const { mode, capture } = state
-      if (mode === 'passthrough' || state.capturing || !capture) {
-        ;(original as LoggerMethod).apply(this ?? LoggerInstance, args)
-        return
-      }
-      if (mode === 'silent' || !oceanJsAllows(method)) return
+/** nautilus's replacement of ocean.js's `method`. */
+function capturing(
+  state: Shared,
+  method: OceanJsMethod,
+  original: LoggerMethod
+): LoggerMethod {
+  return function (this: unknown, ...args: unknown[]): void {
+    const { mode, capture } = state
+    if (mode === 'passthrough') {
+      original.apply(this ?? LoggerInstance, args)
+      return
+    }
+    if (mode === 'silent' || !capture || !oceanJsAllows(method)) return
+    // Logged from inside a capture (a sink, or a debug sink, that logs through ocean.js):
+    // printing it through ocean.js's method would print it unredacted, capturing it would
+    // loop.
+    if (state.capturing) {
+      state.dropped = true
+      return
+    }
 
-      state.capturing = true
-      try {
-        capture(method, args)
-      } catch {
-        // Logging must not fail the ocean.js call it logs.
-      } finally {
-        state.capturing = false
+    state.capturing = true
+    try {
+      capture.line(method, args)
+      if (state.dropped) {
+        state.dropped = false
+        capture.nestedDropped()
       }
+    } catch {
+      // Logging must not fail the ocean.js call it logs.
+    } finally {
+      state.capturing = false
+      state.dropped = false
     }
   }
 }
 
 /**
  * One captured line as an event's message and fields: the leading text arguments (strings,
- * numbers, booleans) joined as the console would, and every argument after them in `args`,
- * a string that holds a JSON object or array parsed, so its keys are redacted by field. The
- * logger redacts both before any sink sees them.
+ * numbers, booleans) joined as the console would, and every argument after them in `args`.
+ * A string that reads as a JSON object or array starts `args` too: parsed when it is at most
+ * `MAX_JSON_ARGUMENT` long, so its keys are redacted by field, else kept as text. The logger
+ * redacts both before any sink sees them.
  */
 export function describeLine(
   method: OceanJsMethod,
   args: readonly unknown[]
 ): { msg: string; fields: { method: OceanJsMethod; args?: unknown[] } } {
+  const read = args.map((arg) =>
+    typeof arg === 'string' ? jsonOf(arg) : undefined
+  )
   const words: string[] = []
   let index = 0
   for (; index < args.length; index++) {
     const arg = args[index]
     if (
-      (typeof arg !== 'string' || asJson(arg) !== undefined) &&
+      (typeof arg !== 'string' || read[index] !== undefined) &&
       typeof arg !== 'number' &&
       typeof arg !== 'boolean' &&
       typeof arg !== 'bigint'
@@ -177,19 +274,26 @@ export function describeLine(
     words.push(String(arg))
   }
 
-  const rest = args
-    .slice(index)
-    .map((arg) => (typeof arg === 'string' ? (asJson(arg) ?? arg) : arg))
+  const rest = args.slice(index).map((arg, at) => {
+    const json = read[index + at]
+    return json === undefined || json === TOO_LONG ? arg : json
+  })
   const msg = words.join(' ').trim() || `ocean.js ${method}`
   return { msg, fields: rest.length ? { method, args: rest } : { method } }
 }
 
-/** The object or array `text` holds as JSON, else `undefined`. */
-function asJson(text: string): object | undefined {
+/** A JSON text longer than `MAX_JSON_ARGUMENT`: an argument, but not parsed. */
+const TOO_LONG = Symbol('too long')
+
+/**
+ * The object or array `text` holds as JSON, `TOO_LONG` when it looks like one (`{…}`,
+ * `[…]`) but is too long to parse, else `undefined`.
+ */
+function jsonOf(text: string): object | typeof TOO_LONG | undefined {
   const trimmed = text.trim()
   const ends = `${trimmed[0]}${trimmed[trimmed.length - 1]}`
-  if (trimmed.length > MAX_JSON_ARGUMENT || (ends !== '{}' && ends !== '[]'))
-    return undefined
+  if (ends !== '{}' && ends !== '[]') return undefined
+  if (trimmed.length > MAX_JSON_ARGUMENT) return TOO_LONG
   try {
     const value: unknown = JSON.parse(trimmed)
     return value && typeof value === 'object' ? value : undefined
