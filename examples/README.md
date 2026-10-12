@@ -189,6 +189,16 @@ The warnings you may see while running these commands:
 The paid commands (`access:order`, `access:download` on a fixed-price asset) no longer print
 ocean.js's `No config found for given network 'undefined'`.
 
+With `NAUTILUS_LOG_LEVEL=info`, each call tells its story in a few lines: a `publish:*`
+command prints 5 to 8 (the NFT and datatoken created, the DDO stored and read back, the
+metadata transaction sent and mined, the indexing, and `publish.operation.finished` with the
+DID, the transaction and the time it took), an `access:*` command the order it used and the
+end of the call. `debug` adds every step and decision in between: the nonce each transaction
+was sent with, what the previous-order lookup found and how long it took, how the policy
+session came about, each failed node request. `trace` adds every node request and every
+lookup of an indexer wait. The list per call is in `configureLogging` in the docs ("What each
+operation logs").
+
 Each nautilus call (`publish`, `access`, `compute`, …) has its own `opId`, on every line it
 logs and on the error it throws. When a command fails, it prints the `opId` after the
 error; with `NAUTILUS_LOG_LEVEL=debug`, `grep <opId>` then picks that call's lines out of

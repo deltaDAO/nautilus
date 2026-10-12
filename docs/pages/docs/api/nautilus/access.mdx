@@ -338,3 +338,13 @@ The `cause` is redacted. To see the RPC's full answer when diagnosing, run with
 `NAUTILUS_DEBUG=sensitive` (or [`setDebug`](/docs/api/nautilus/setDebug)): the raw error goes
 to the debug channel under the `order` topic. See [debugging](/docs/guides/debugging) before
 sharing that output.
+
+## Log
+
+At `info`, `access.order.settled` names the order the download is authorised by (placed,
+extended or reused), and `access.operation.finished` ends the call. At `debug` each decision
+shows: how the policy session came about (`identity.session.resolved`, never its id), the
+provider fee quoted, what the previous-order lookup found and how long it took
+(`access.order.lookup_finished`), how the order is settled (`access.order.planned`) and the
+node that signed the download URL (never the URL). See [What each operation
+logs](/docs/api/nautilus/configureLogging#what-each-operation-logs).

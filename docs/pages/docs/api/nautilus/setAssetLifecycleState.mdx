@@ -118,3 +118,10 @@ show the old state on an RPC behind a load balancer whose nodes lag each other b
 ### state
 
 - Type: `LifecycleStates | State`
+
+## Log
+
+At `info` it logs `lifecycle.operation.finished` with the DID, the state asked for and the
+transaction (none when the asset was in that state already); at `debug` also
+`lifecycle.state.sending` with the state it changes from. See [What each operation
+logs](/docs/api/nautilus/configureLogging#what-each-operation-logs).

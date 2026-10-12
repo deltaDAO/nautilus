@@ -140,3 +140,10 @@ so instead of claiming it has none. Wait until the transaction is mined or dropp
 calling `completePublish`. It refuses an NFT that already has metadata, and while the signer
 has pending transactions; pass `metadataTxHash: error.stored.txHash` so it also checks that
 exact transaction.
+
+## Log
+
+Logs like [`publish`](/docs/api/nautilus/publish#log), and at `debug` also
+`publish.reuse.planned`: what it does with each service's datatoken (reuse, price or
+create), decided before the first transaction. See [What each operation
+logs](/docs/api/nautilus/configureLogging#what-each-operation-logs).

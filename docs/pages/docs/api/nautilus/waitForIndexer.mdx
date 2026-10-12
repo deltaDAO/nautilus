@@ -179,3 +179,10 @@ The 2.0.0-beta.0 options `interval` and `maxRetries` still work for now: they ar
 (`node.indexer_wait.legacy_options`, see [logging](/docs/api/nautilus/configureLogging)), and
 will be removed. Rename them. `maxRetries` without `interval` counts
 beta.0's default 30 s interval, so `{ maxRetries: 10 }` waits 5 minutes, polling every 7 s.
+
+## Log
+
+At `info` it logs `node.operation.finished` with the DID; at `debug` also
+`node.indexer_wait.indexed` (how many lookups it took) and each failed lookup, and at
+`trace` every lookup and its result. See [What each operation
+logs](/docs/api/nautilus/configureLogging#what-each-operation-logs).

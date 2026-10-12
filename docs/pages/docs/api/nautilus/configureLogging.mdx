@@ -250,7 +250,9 @@ and a frozen error, a thrown value that is not an object or a `Proxy` that refus
 property gets none; each is rethrown as it was.
 
 Each operation starts with a `…started` event (`debug`) and ends with `…finished` or
-`…failed`, with its `durationMs`; `failed` also has the redacted `error`. They are `info`
+`…failed`, with its `durationMs`; `finished` also names what the call produced (the asset's
+`did`, its last `txHash`, job ids; see [What each operation logs](#what-each-operation-logs)),
+and `failed` the redacted `error`. They are `info`
 (`publish.operation.*`, `edit.operation.*`, `lifecycle.operation.*`, `access.operation.*`,
 `compute.operation.*`, `node.operation.*` for `waitForIndexer`), except for the job reads
 apps poll, `getComputeStatus` and `getComputeResult`, whose `compute.query.*` events are all
@@ -279,3 +281,51 @@ client, the policy-session resolver, the signer's nonce guard, an `S3RemoteStore
 debug channel's have none, never a wrong one. `error.opId` is set everywhere. The `opId`s
 are 12 random hex characters: among millions of calls two can share one, so when you
 correlate over a long time, go by the `opId` and the time.
+
+## What each operation logs
+
+At `info` an operation tells its story in a few lines, each a milestone with its
+transaction hash, DID and `durationMs`; at `debug` the steps and decisions in between show
+too, and at `trace` each request. A publish is 5 to 8 `info` lines:
+
+```
+[nautilus] [publish] info: Created NFT 0xBB10…3656 and its datatoken 0xfF4A…8aD8. (publish.tokens.created opId=8f6dee31caed operation=publish txHash=0xa1a1… durationMs=4210 nftAddress=0xBB10…3656 datatokenAddress=0xfF4A…8aD8)
+[nautilus] [publish] info: Signed, encrypted and stored the DDO of did:ope:7e03…0566. (publish.ddo.stored … pointer={"type":"ipfs","hash":"bafkrei…"} metadataHash=0xabab…)
+[nautilus] [publish] info: Read the stored DDO of did:ope:7e03…0566 back as the node will, unchanged. (publish.ddo.verified …)
+[nautilus] [publish] info: Sent the metadata transaction of did:ope:7e03…0566 (0xa3a3…). (publish.metadata.sent …)
+[nautilus] [publish] info: The metadata transaction of did:ope:7e03…0566 was mined in block 100. (publish.metadata.confirmed … blockNumber=100)
+[nautilus] [publish] info: The node indexed did:ope:7e03…0566. (publish.indexer.indexed …)
+[nautilus] [publish] info: publish finished in 9870 ms. (publish.operation.finished … did=did:ope:7e03…0566 txHash=0xa3a3… nftAddress=0xBB10…3656)
+```
+
+| Call | `info` | `debug` adds | `trace` adds |
+|------|--------|--------------|--------------|
+| `publish` | `publish.tokens.created`, `publish.datatoken.created` (each further service), `publish.ddo.stored`, `publish.ddo.verified` (a store with `verify`), `publish.metadata.sent`, `publish.metadata.confirmed`, `publish.indexer.indexed` (with `waitForIndexer`), `publish.operation.finished` | `publish.operation.started`, `publish.preflight.passed`, `publish.ddo.signed`, `publish.envelope.encrypted`, `store.envelope.stored`, `publish.pointer.encrypted`, `publish.indexer.waiting`, and the [chain](#chain-sends) and [node](#node-requests) lines | node requests, indexer polls |
+| `completePublish` | as `publish`, with `publish.datatoken.created` and `publish.pricing.created` for what it creates | `publish.reuse.planned`: reuse, price or create, per service | as `publish` |
+| `edit` | `publish.datatoken.created` (newly priced services), `publish.ddo.stored`, `publish.ddo.verified`, `publish.metadata.sent`, `publish.metadata.confirmed`, `publish.indexer.indexed`, `edit.operation.finished` | as `publish` | as `publish` |
+| `setServicePrice` | `edit.operation.finished` with the transaction | `edit.price.setting` | |
+| `setAssetLifecycleState` | `lifecycle.operation.finished` with the state and the transaction (none when nothing changed) | `lifecycle.state.sending` | |
+| `access` | `access.order.settled`, `access.operation.finished` with the order's transaction | `identity.session.resolved` (how the policy session came about; never its id), `access.provider_fee.quoted`, `access.provider_fee.requested_again`, `access.order.lookup_finished` (what the previous-order lookup found, and how long it took), `access.order.planned` (reuse as it stands, extend, or order), `access.order.sending`, `access.download_url.created` (the node, never the URL) | `access.order.lookup_read`, each read of the lookup |
+| `compute`, `freeCompute` | `compute.operation.finished` with the job ids | `compute.environment.defaulted`, `identity.session.resolved` per input, `compute.initialize.quoted`, the escrow lines, `compute.orders.settled`, `compute.job.started` | |
+| `getComputeStatus`, `getComputeResult` | | `compute.query.*` (polled by apps, so never `info`) | |
+| `waitForIndexer` | `node.operation.finished` | `node.indexer_wait.indexed`, `node.indexer_wait.lookup_failed` | `node.indexer_wait.polled`, each lookup |
+
+### Chain sends
+
+With a local key, nautilus picks each transaction's nonce (see
+[`nonceManagement`](/docs/api/nautilus/create#noncemanagement)). At `debug`, `chain.nonce.chosen` shows the
+nonce and where it came from (the RPC's pending count and nautilus's own counter), and
+`chain.send.broadcast` each transaction sent. A refusal for the nonce adds
+`chain.nonce.refused`, then the decision: `chain.nonce.already_sent` (`info`),
+`chain.nonce.resending` or `chain.nonce.gave_up` (`warn`). A stale nonce from a lagging RPC
+reads as a pending count below the counter, or a `nonce-expired` refusal followed by a
+resend. No line holds a signed transaction.
+
+### Node requests
+
+Each call to a node logs `node.request.answered` at `trace` and `node.request.failed` at
+`debug`, with the command, the node's origin, the HTTP status when the node answered, and
+`durationMs`. A signed command the node refuses for its nonce and that is sent once more
+logs `node.request.retried`. The request itself (signatures, session ids, consumer data) is
+never logged; run the [debug channel](/docs/api/nautilus/setDebug) for it.
+

@@ -366,3 +366,10 @@ Not an `OrderCheckError`: that one is thrown by [`access`](/docs/api/nautilus/ac
 when its on-chain lookup of a previous order fails. `compute()` makes no such lookup.
 
 All of these are thrown before any approval, deposit or order.
+
+## Log
+
+At `info` it logs `compute.operation.finished` with the job ids. At `debug` it adds the
+environment, each input's policy session, the node's quote (`compute.initialize.quoted`),
+the escrow, the orders (`compute.orders.settled`) and the start. See [What each operation
+logs](/docs/api/nautilus/configureLogging#what-each-operation-logs).

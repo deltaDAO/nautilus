@@ -243,3 +243,12 @@ or handle them in your own `sink`.
   complete. Each carries the full `PublishResponse` as `error.published` (type
   `PublishedNotIndexed`) — see
   [`PublishResponse`](/docs/api/PublishResponse#when-the-write-was-mined-but-the-call-throws).
+
+## Log
+
+At `info` (`NAUTILUS_LOG_LEVEL=info`), a publish logs one line per milestone: the NFT and
+datatokens created, the DDO stored and read back, the metadata transaction sent and mined,
+the indexing when `waitForIndexer` is set, and `publish.operation.finished` with the DID,
+the metadata transaction and the duration. At `debug` it adds each step: the checks passed,
+the signing, both node encryptions, the upload and the nonce of each transaction. See [What
+each operation logs](/docs/api/nautilus/configureLogging#what-each-operation-logs).

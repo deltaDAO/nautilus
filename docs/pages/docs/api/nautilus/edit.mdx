@@ -128,3 +128,10 @@ once more.
   `IndexingError` / `OceanNodeError` of `waitForIndexer`. Each carries the full
   `PublishResponse` as `error.published` (type `PublishedNotIndexed`) — see
   [`PublishResponse`](/docs/api/PublishResponse#when-the-write-was-mined-but-the-call-throws).
+
+## Log
+
+At `info`, an edit logs the datatokens it creates, the DDO stored and read back, the
+metadata transaction sent and mined, and `edit.operation.finished` with the DID and the
+metadata transaction. See [What each operation
+logs](/docs/api/nautilus/configureLogging#what-each-operation-logs).
