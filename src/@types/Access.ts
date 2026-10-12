@@ -36,8 +36,11 @@ export interface AccessConfig extends ProviderFeeLimits {
 export interface AccessResult {
   /**
    * The one-time download URL. Fetch it before requesting another URL for the same consumer
-   * and node: a second URL requested first carries the same one-time number, and whichever
-   * is fetched second is refused with HTTP 401 (`nonce: … is not a valid nonce`).
+   * and node: another URL requested before this one is fetched carries the same one-time
+   * number, and whichever of the two is fetched second is refused with HTTP 401
+   * (`nonce: … is not a valid nonce`). To get a new URL for a paid service, wait until at
+   * least 2 more blocks are mined after the purchase before calling `access()` again:
+   * sooner, it does not find the order yet and pays again.
    */
   url: string
   did: string

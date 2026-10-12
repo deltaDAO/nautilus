@@ -63,7 +63,10 @@ Fetch each URL before you request the next one for the same consumer and node. T
 requested before either is fetched carry the same one-time number: the first fetched works,
 and the other answers HTTP 401 `nonce: … is not a valid nonce`. If that happens, call
 `access()` again and fetch the new URL right away; it reuses the order you hold when it finds
-it. For a paid service, wait a few blocks after the purchase before asking again. See [known limitations](/docs/known-limitations#one-download-url-at-a-time-per-consumer-and-node)
+it. For a paid service, wait until at least 2 more blocks are mined after the purchase before
+you call `access()` again: sooner, it does not find the order yet and pays again, and an RPC
+that lags behind extends that wait. See
+[known limitations](/docs/known-limitations#one-download-url-at-a-time-per-consumer-and-node)
 for this and the other limits of this release.
 
 ## Why access() can stop before paying

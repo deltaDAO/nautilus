@@ -414,11 +414,10 @@ in the allow list: the policy server lets every address through it, which leaves
 all. Treat issuer trust and attribute checks as a filter for honest consumers, not as the only
 protection.
 
-A normal wallet is no guarantee either: a self-issued credential whose `type` list names the
-requested type but ends with another is filed under that other type, so the checks for the
-requested type never run. And a check on the type `VerifiableCredential` checks nothing for
-anyone, since no credential is filed under it: always request a specific type. See
-[known limitations](/docs/known-limitations#credential-checks-can-be-bypassed).
+A normal wallet is no guarantee either: in this release, the credential type alone is not a
+reliable gate. Trust is enforced by the issuer check together with the address allow list, so
+use both. See
+[known limitations](/docs/known-limitations#the-credential-type-alone-is-not-a-reliable-gate).
 
 Gating also works per service, via
 [`ServiceBuilder.addRequestCredentials`](/docs/api/servicebuilder/addRequestCredentials) —
