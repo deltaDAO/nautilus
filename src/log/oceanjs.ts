@@ -15,7 +15,7 @@
  *   the process-wide logger: redacted by field and by `sanitize` like every other event,
  *   printed at nautilus's level and to its sink, and its raw arguments go to the debug
  *   channel (topic `node`) when that is on: its `sensitive` tier, or `secrets` for a
- *   credential (an RPC key, a Bearer token, a signed transaction). ocean.js's own level still
+ *   credential (an RPC key, a Bearer token). ocean.js's own level still
  *   decides first which lines it emits (errors only by default), so a line ocean.js would
  *   not have printed is not captured either;
  * - `'passthrough'`: ocean.js's own method, unchanged: unredacted, to the console;
@@ -30,10 +30,11 @@
  * Several copies of nautilus in one process (a bundled copy, a test runner's reload) share
  * one state on `LoggerInstance`: the first copy loaded installs the methods, a later copy
  * keeps the mode in force, and the lines go to the copy that last set the mode
- * (`configureLogging({ oceanjs })`), else to the first. A line ocean.js logs while one is
- * being captured (a sink that logs through `LoggerInstance`) is dropped, never printed raw.
- * A `LoggerInstance` nautilus can't change (frozen) is left alone: nothing is captured, and
- * the logger warns once.
+ * (`configureLogging({ oceanjs })`), else to the first; the copy that received them until
+ * then warns (`oceanjs.capture.moved`). A line ocean.js logs while one is being captured (a
+ * sink that logs through `LoggerInstance`) is dropped, never printed raw. A `LoggerInstance`
+ * nautilus can't change (frozen) is left alone: nothing is captured, the logger warns once,
+ * and the mode in force reads `'passthrough'`, which is what ocean.js then does.
  */
 
 import { LoggerInstance } from '@oceanprotocol/lib'
@@ -73,6 +74,8 @@ export interface OceanJsCapture {
   line(method: OceanJsMethod, args: unknown[]): void
   /** ocean.js logged a line while one was being captured; that line was dropped. */
   nestedDropped(): void
+  /** Another copy of nautilus set the mode to `mode` and receives the lines from now on. */
+  moved(mode: OceanJsLogMode): void
 }
 
 type LoggerMethod = (...args: unknown[]) => void
@@ -95,6 +98,8 @@ interface Shared {
   capturing: boolean
   /** Set when a line was dropped during the capture in progress. */
   dropped: boolean
+  /** The methods nautilus could not replace: ocean.js prints those itself. */
+  uncaptured?: OceanJsMethod[]
 }
 
 /**
@@ -111,9 +116,19 @@ let local: Shared | undefined
 
 let installed = false
 
-/** The mode in force. */
+/**
+ * The mode in force: `'passthrough'` when a method could not be replaced (a frozen
+ * `LoggerInstance`), since ocean.js then prints that method's lines itself, whatever the mode
+ * set.
+ */
 export function getOceanJsMode(): OceanJsLogMode {
-  return shared().mode
+  const state = shared()
+  return state.uncaptured?.length ? 'passthrough' : state.mode
+}
+
+/** Whether ocean.js's `LoggerInstance` is frozen: its level can't be changed either. */
+export function isOceanJsLoggerFrozen(): boolean {
+  return Object.isFrozen(LoggerInstance)
 }
 
 /**
@@ -130,15 +145,24 @@ export function initOceanJsCapture(capture: OceanJsCapture): OceanJsMethod[] {
 
 /**
  * Sets the mode, and sends the lines to `capture`: the copy that last sets the mode
- * receives them. Called by `configureLogging` and `resetLogging`.
+ * receives them. The copy that received them until then is told (`moved`), so a bundled
+ * copy can't switch the process to `passthrough`, or take the lines, unnoticed. Called by
+ * `configureLogging` and `resetLogging`.
  */
 export function setOceanJsMode(
   next: OceanJsLogMode,
   capture: OceanJsCapture
 ): void {
   const state = shared()
+  const previous = state.capture
   state.mode = next
   state.capture = capture
+  if (!previous || previous === capture) return
+  try {
+    previous.moved(next)
+  } catch {
+    // Logging must not fail the configuration it reports.
+  }
 }
 
 function shared(): Shared {
@@ -204,6 +228,7 @@ function install(state: Shared): OceanJsMethod[] {
     }
     state.originals[method] = original as LoggerMethod
   }
+  if (failed.length) state.uncaptured = failed
   // Another copy wraps nothing again; a copy with its own state (frozen) has nothing to share.
   if (state !== local) state.installed = true
   return failed

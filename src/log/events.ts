@@ -540,9 +540,16 @@ export const LOG_EVENTS = {
     level: 'warn',
     component: 'oceanjs',
     description:
-      "ocean.js's LoggerInstance is frozen or not extensible, so nautilus can't capture its lines: ocean.js prints them itself, unredacted, whatever the oceanjs mode. Logged when nautilus is imported.",
+      "ocean.js's LoggerInstance is frozen, sealed or not extensible (or a method is read-only), so nautilus can't capture its lines: ocean.js prints them itself, unredacted, whatever the oceanjs mode, which reads 'passthrough'. The advice depends on the case: a frozen logger's level can't be changed after it is frozen. Logged when nautilus is imported.",
     fields: ['methods'],
     once: true
+  },
+  'oceanjs.capture.moved': {
+    level: 'warn',
+    component: 'oceanjs',
+    description:
+      "Another copy of nautilus in the process (e.g. one bundled into a plugin) passed oceanjs to configureLogging: it now receives ocean.js's lines, or with 'passthrough' ocean.js prints them itself, unredacted. Logged by the copy that received them until then.",
+    fields: ['mode']
   }
 } as const satisfies Record<string, LogEventSpec>
 
