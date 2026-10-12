@@ -87,8 +87,13 @@ const SECRET_KEYS =
   'signature|consumerSignature|nonce|sessionId|session_id|token|access_token|id_token|vp_token|jwt|authorization|secretAccessKey|apiKey|api_key|password'
 
 const PATTERNS: [string, (text: string) => boolean][] = [
-  ['JWT', (text) => /\beyJ[\w-]*\.[\w-]+\.[\w-]*/.test(text)],
-  ['65-byte hex signature', (text) => /\b0x[0-9a-f]{130}\b/i.test(text)],
+  // Also right after a letter, as one stands when an escape before it was deleted.
+  [
+    'JWT',
+    (text) =>
+      /\beyJ[\w-]*\.[\w-]+\.[\w-]*|eyJ[\w-]*\.eyJ[\w-]*\.[\w-]*/.test(text)
+  ],
+  ['65-byte hex signature', (text) => /0x[0-9a-f]{130}\b/i.test(text)],
   [
     'policy-server session id',
     // Not after `0x` (a compute job id): `0x` runs are matched and skipped, as in
