@@ -150,11 +150,14 @@ const FAILURE_TTL_MS = 60_000
 const MAX_RECORDED_SENDS = 64
 
 /**
- * How long after its broadcast the last counted transaction is assumed in flight: an RPC
- * that does not return it yet (a lagging or load-balanced backend) does not reset the
- * counter within this time.
+ * How long after its broadcast a transaction is assumed in flight: an RPC that does not
+ * return it yet (a lagging or load-balanced backend) does not have its nonce taken again
+ * within this time.
  */
 const COUNTER_GRACE_MS = 60_000
+
+/** At most this many broadcasts per (chain, address) are kept to be checked for a drop. */
+const MAX_OUTSTANDING = 256
 
 /**
  * How far above every other nonce source the "next nonce" an RPC names in its refusal may
@@ -186,6 +189,15 @@ export class NonceGuardState {
   readonly lock = createKeyedLock()
   /** The next nonce per key, after the last successful broadcast at `at` (ms). */
   readonly next = new Map<string, SentAttempt & { next: number; at: number }>()
+  /**
+   * Per key, the latest `MAX_OUTSTANDING` broadcasts by nonce, each with its broadcast time
+   * `at` (ms): the earliest one the RPC's pending count does not cover, when dropped,
+   * leaves a gap no later transaction gets past.
+   */
+  readonly outstanding = new Map<
+    string,
+    Map<number, SentAttempt & { at: number }>
+  >()
 }
 
 const processState = new NonceGuardState()
@@ -1053,23 +1065,32 @@ export class NonceGuardSigner extends AbstractSigner {
 
   /**
    * The nonce for the next send: `max(local next, pending)`. A local counter ahead of the
-   * pending count is kept unless the last transaction it counted was dropped
-   * (`wasDropped`): one that was dropped would otherwise leave a gap no later transaction
-   * gets past.
+   * pending count is kept unless the earliest broadcast the pending count does not cover
+   * (else the last one counted) was dropped (`wasDropped`): one that was dropped leaves a
+   * gap no later transaction gets past, so this send takes the pending count, filling it.
+   * The counter stays, so the send after it skips the transactions still waiting behind
+   * the gap.
    */
   private async nextNonce(key: string, address: string): Promise<number> {
     const provider = this.requireProvider()
     const pending = await provider.getTransactionCount(address, 'pending')
     const local = this.state.next.get(key)
+    const outstanding = this.state.outstanding.get(key)
 
     let nonce = pending
     if (local && local.next > pending) {
-      if (await this.wasDropped(local, address)) {
-        this.state.next.delete(key)
+      // Below `pending` the RPC counts every slot (pending or mined): no gap there.
+      const uncounted = [...(outstanding?.keys() ?? [])].filter(
+        (sent) => sent >= pending
+      )
+      const gap =
+        (uncounted.length && outstanding?.get(Math.min(...uncounted))) || local
+      if (await this.wasDropped(gap, address)) {
+        outstanding?.delete(gap.nonce)
         this.log.emit(
           'chain.nonce.counter_reset',
-          `The RPC no longer knows transaction ${local.hash} (nonce ${local.nonce}) of ${address}, and the account has not mined past that nonce, so it was dropped: the nonce counter falls back to the RPC's pending count ${pending}.`,
-          { address, txNonce: local.nonce, pending, txHash: local.hash }
+          `The RPC no longer knows transaction ${gap.hash} (nonce ${gap.nonce}) of ${address}, and the account has not mined past that nonce, so it was dropped: the next transaction takes the RPC's pending count ${pending}.`,
+          { address, txNonce: gap.nonce, pending, txHash: gap.hash }
         )
       } else nonce = local.next
     }
@@ -1084,7 +1105,7 @@ export class NonceGuardSigner extends AbstractSigner {
   }
 
   /**
-   * Whether the last counted transaction was dropped, so the counter must fall back: sent
+   * Whether a counted transaction was dropped, so its nonce must be taken again: sent
    * more than `COUNTER_GRACE_MS` ago, unknown by hash on two reads (the second through
    * the verification provider, a moment later), and the account's mined count on each
    * provider not past its nonce. An RPC that merely lags (it answers `pending` and the
@@ -1114,13 +1135,19 @@ export class NonceGuardSigner extends AbstractSigner {
   }
 
   private advance(key: string, sent: SentAttempt): void {
+    const at = this.now()
     const current = this.state.next.get(key)
     if (!current || sent.nonce + 1 > current.next)
-      this.state.next.set(key, {
-        ...sent,
-        next: sent.nonce + 1,
-        at: this.now()
-      })
+      this.state.next.set(key, { ...sent, next: sent.nonce + 1, at })
+
+    let outstanding = this.state.outstanding.get(key)
+    if (!outstanding) {
+      outstanding = new Map()
+      this.state.outstanding.set(key, outstanding)
+    }
+    outstanding.set(sent.nonce, { ...sent, at })
+    if (outstanding.size > MAX_OUTSTANDING)
+      outstanding.delete(Math.min(...outstanding.keys()))
   }
 
   /**

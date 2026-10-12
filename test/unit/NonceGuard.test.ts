@@ -372,6 +372,44 @@ describe('NonceGuardSigner: prevention', () => {
     expect(chain.broadcasts.map((tx) => tx.nonce)).to.deep.equal([10, 10])
   })
 
+  it('falls back to the earliest dropped nonce while a later transaction waits behind it (PR #217 review, 4249882132)', async () => {
+    // Nonce 10 was dropped, 11 waits in the pool behind the gap. Checking only the last
+    // transaction (11, known, and sent recently) kept the counter at 12 for ever.
+    let now = 0
+    const chain = fakeChain({ latest: 10 })
+    const signer = guard(chain, { now: () => now })
+    const first = await signer.sendTransaction(request())
+    now = 59_000
+    await signer.sendTransaction(request())
+
+    now = 61_000
+    chain.known.delete(first.hash)
+    chain.setLatest(10)
+    await signer.sendTransaction(request())
+    // The send after the one that filled the gap skips 11, still waiting in the pool.
+    now = 62_000
+    await signer.sendTransaction(request())
+
+    expect(chain.broadcasts.map((tx) => tx.nonce)).to.deep.equal([
+      10, 11, 10, 12
+    ])
+  })
+
+  it('keeps the counter while the earliest transaction is still known, though the RPC does not count it (control)', async () => {
+    let now = 0
+    const chain = fakeChain({ latest: 10 })
+    const signer = guard(chain, { now: () => now })
+    await signer.sendTransaction(request())
+    now = 59_000
+    await signer.sendTransaction(request())
+
+    now = 61_000
+    chain.setLatest(10)
+    await signer.sendTransaction(request())
+
+    expect(chain.broadcasts.map((tx) => tx.nonce)).to.deep.equal([10, 11, 12])
+  })
+
   it('keeps the counter while an RPC that lags right after the broadcast forgets the transaction', async () => {
     // Code review M1: a load-balanced RPC answers pending and the hash lookup from a backend
     // that has not seen the broadcast yet. Resetting would reuse the in-flight nonce.
