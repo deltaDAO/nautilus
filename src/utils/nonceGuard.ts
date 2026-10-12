@@ -50,7 +50,7 @@ import {
 } from 'ethers'
 import { debug, debugRaw } from '../log/debug.js'
 import { type Logger, log } from '../log/logger.js'
-import { redactSecrets, sanitize } from '../node/messages.js'
+import { redactSecrets, sanitize, startOf } from '../node/messages.js'
 import { createKeyedLock } from './keyedLock.js'
 
 /**
@@ -448,6 +448,13 @@ export function notBroadcast(error: unknown): boolean {
   return NOT_BROADCAST_CODES.some((code) => isError(error, code))
 }
 
+/**
+ * How much of each message of a failed send `withoutSignedTransaction` keeps: a hostile or
+ * broken RPC can answer with megabytes, and the redaction costs time in proportion to what
+ * it reads. The raw error is in the debug channel (`nonce`).
+ */
+const MAX_SCRUBBED_LENGTH = 16_000
+
 /** Errors `withoutSignedTransaction` already scrubbed. */
 const scrubbedErrors = new WeakSet<object>()
 
@@ -482,8 +489,9 @@ interface ScrubbedFields {
  * - the HTTP request and response of a failed request (ethers' `SERVER_ERROR`: `request`,
  *   `response`, `info.responseBody`) become a note, and `info.requestUrl` its origin;
  * - every message (the error's, and its copy at the top of the stack; `shortMessage`; the
- *   RPC's own in `error` and `info.error`) is redacted as `redactSecrets` does: URLs to
- *   their origin, credentials.
+ *   RPC's own in `error` and `info.error`) is cut to its first `MAX_SCRUBBED_LENGTH`
+ *   characters and sanitised as `sanitize` does: URLs to their origin, credentials
+ *   redacted, ANSI escapes and control characters stripped.
  *
  * The raw error goes to the debug channel (`nonce`) first. Fields a frozen error does not
  * let go are kept. `confirmTransaction()`'s `cause` is a sanitised copy instead
@@ -507,8 +515,16 @@ export function withoutSignedTransaction(error: unknown): unknown {
   const replacement = `<signed transaction ${hash}>`
   // The RPC may echo it in any letter case, with or without its `0x`.
   const quoted = raw ? new RegExp(`(?:0x)?${raw.slice(2)}`, 'gi') : undefined
-  const clean = (text: string) =>
-    redactSecrets(quoted ? text.replace(quoted, replacement) : text)
+  // Cut before anything else reads it: a cut through the signed transaction drops it
+  // whole (`startOf` ends at a word end).
+  const clean = (text: string) => {
+    const start = startOf(text, MAX_SCRUBBED_LENGTH)
+    return sanitize(
+      quoted ? start.replace(quoted, replacement) : start,
+      2 * MAX_SCRUBBED_LENGTH,
+      null
+    )
+  }
 
   const target = error as ScrubbedFields
   const set = (write: () => void) => {

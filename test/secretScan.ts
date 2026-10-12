@@ -45,7 +45,8 @@ export const FAKE = {
  * The long-lived fixture credentials in the shapes the `sensitive` tier must still hide:
  * a drpc URL, a Pinata gateway token as a query parameter and as a key, `PINATA_JWT=` and
  * `S3_SECRET_KEY=` in an environment dump, a second cookie, an RPC URL with a backslash in
- * its path, and a credential in JSON inside a JSON string (with a JSON-escaped URL).
+ * its path, a credential in JSON inside a JSON string (with a JSON-escaped URL), and
+ * percent-encoded ones: an RPC URL, `apiToken%3D…` and a JSON field.
  */
 export const CREDENTIAL_SHAPES = [
   `https://lb.drpc.org/ogrpc?network=optimism-sepolia&dkey=${FAKE.drpcKey}`,
@@ -60,6 +61,11 @@ export const CREDENTIAL_SHAPES = [
       apiToken: FAKE.nestedApiToken,
       rpc: FAKE.rpcUrl.replace(/\//g, '\\/')
     })
+  }),
+  JSON.stringify({ redirect: encodeURIComponent(FAKE.rpcUrl) }),
+  JSON.stringify({
+    q: encodeURIComponent(`apiToken=${FAKE.nestedApiToken}`),
+    body: encodeURIComponent(`{"apiToken":"${FAKE.nestedApiToken}"}`)
   })
 ].join('\n')
 
