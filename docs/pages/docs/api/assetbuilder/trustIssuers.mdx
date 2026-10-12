@@ -32,23 +32,31 @@ It stores the same policy as writing it by hand in
 
 - Type: `string`
 
-The credential type, e.g. `'gx:LegalPerson'`.
+The credential type, e.g. `'gx:LegalPerson'`: the **last** entry of the expected
+credentials' `type` array, under which walt.id files a presented credential.
+`'VerifiableCredential'` and `'VerifiablePresentation'` throw a `TypeError`: issuer trust on
+them never runs on a credential with a more specific type, which a wallet still presents.
 
 ### issuers
 
 - Type: `string[]`
 
-The issuer DIDs to trust, compared by walt.id with the credential's `iss` (or `issuer`). Each
-must be a DID (`did:<method>:<id>`, e.g. `did:web:delta-dao.com`); anything else, or an empty
-list, throws a `TypeError`: a value that is not a DID never matches an issuer, and an empty
-list refuses every consumer.
+The issuer DIDs to trust. walt.id compares each, as written, with the credential's raw `iss`
+(or `issuer`). Each must be a DID (`did:<method>:<id>`, e.g. `did:web:delta-dao.com`):
+anything else throws a `TypeError`, since an issuer is identified by its DID and a mistyped
+entry would match nobody. An empty list throws too: it would refuse every consumer. On a
+stored asset, `build()` only warns for a non-DID entry (`identity.policy.issuer_not_did`),
+and throws when no usable issuer is left.
 
 ### options
 
 - Type: `{ format?: string }`
 
-Which request credential to change. Without `format`, the one request for `type` already on
-the list, or else a new `jwt_vc_json` one.
+The format of a new request credential. The requests of `type` already on the list are
+changed whatever their format; with none, a new one is added in `format`, else in the format
+the list already uses, else `jwt_vc_json`. walt.id refuses a session whose request
+credentials mix formats, and keeps one policy list per type, so a `format` other than the
+list's throws a `TypeError` instead of adding a second request.
 
 ## Combining
 
@@ -56,9 +64,12 @@ Calls add issuers to the same `allowed-issuer` policy: any of them is trusted. T
 stored first among the credential's policies.
 
 :::warning[Only credentials of the requested type are checked]
-walt.id runs per-credential policies only on presented credentials of the requested type. A
-hand-built presentation holding a self-issued credential of another type skips issuer trust.
-Keep an explicit address allow list. See the
+walt.id runs per-credential policies only on presented credentials whose **last** `type`
+entry is the requested type. A hand-built presentation holding a self-issued credential of
+another type skips issuer trust, and so does a self-issued credential that carries the
+requested type before its last entry, which a normal wallet presents. Issuer trust filters
+honest consumers holding honest credentials; it is not access control. Keep an explicit
+address allow list. See the
 [known limitation](/docs/guides/identity#known-limitation-credentials-of-another-type).
 :::
 

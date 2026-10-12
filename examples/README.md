@@ -464,10 +464,13 @@ set `identity.ts` uses, and why:
 - **Known limitation:** walt.id applies per-credential policies by credential type (the last
   entry of its `type` array). A presented credential of another type runs only the asset-level
   VC policies, so it passes without issuer trust. Until the policy server enforces the
-  requested type, the credential check stops only consumers who use a normal wallet: anyone
-  who builds their own presentation passes it with a self-issued credential of another type.
-  The address allow list is the gate that holds, so list the allowed addresses explicitly; an
-  allow list containing `'*'` leaves no gate at all.
+  requested type, the credential check filters only honest consumers holding honest
+  credentials, whose last `type` entry is the requested type: anyone who builds their own
+  presentation passes it with a self-issued credential of another type, and a normal wallet
+  presents a self-issued credential that carries the requested type before its last entry (e.g.
+  `["VerifiableCredential", "gx:LegalPerson", "gx:Extra"]`), which skips the checks too. The
+  address allow list is the gate that holds, so list the allowed addresses explicitly; an allow
+  list containing `'*'` leaves no gate at all.
 
 **nautilus checks the policies when it builds the asset.** `AssetBuilder.build()` warns
 (`identity.policy.*` events on stderr) about a gate weaker than the set above (no VC or VP

@@ -26,14 +26,16 @@ checks the SSI policies of the asset and its services, see
 [`setSsiPolicyLint`](/docs/api/assetbuilder/setSsiPolicyLint): it logs a warning for a gate
 weaker than the recommended set (no VC or VP `signature`, no `minimum-credentials` of at least
 1, `'*'` in the address allow list), for `holder-binding`, for `presentation-definition` with
-`jwt_vc_json` credentials, for request credentials without per-credential issuer trust and for
-policy names walt.id does not know. It throws an `SsiPolicyError` for policies the policy server
+`jwt_vc_json` credentials, for request credentials without per-credential issuer trust, for
+hand-written attribute schemas that check less than they seem, for stored issuers that are not
+DIDs and for policy names walt.id does not know. It throws an `SsiPolicyError` for policies the policy server
 would refuse or weaken or walt.id would fail on every presentation or silently drop: an
 `SSIpolicy` on a service that requests no credential (for example asset-level VC or VP policies
 next to an ungated service), a VC policy with arguments at asset or service level, VP arguments
 walt.id cannot read (a bare `minimum-credentials`), a per-credential `schema` or
-`allowed-issuer` with unusable arguments, a credential type requested twice with different
-policies.
+`allowed-issuer` with unusable arguments, a per-credential policy list walt.id drops for a
+type requested twice, per-credential policies on `VerifiableCredential`, request credentials
+without one shared format.
 
 ## Returns
 

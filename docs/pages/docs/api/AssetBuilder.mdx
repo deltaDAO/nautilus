@@ -141,10 +141,13 @@ gated
 
 On a node with a policy server the address allow list is required, and it is the check that
 holds. Until the policy server enforces the requested credential type, the credential check
-stops only consumers who use a normal wallet: anyone who builds their own presentation passes
-it with a self-issued credential of another type. An allow list containing `'*'` therefore
-leaves no gate at all, so list the allowed addresses explicitly.
-See the [known limitation](/docs/guides/identity#known-limitation-credentials-of-another-type).
+filters only honest consumers holding honest credentials, whose last `type` entry is the
+requested type: anyone who builds their own presentation passes it with a self-issued
+credential of another type, and a normal wallet presents a self-issued credential that carries
+the requested type before its last entry (e.g. `["VerifiableCredential", "gx:LegalPerson",
+"gx:Extra"]`), which skips the checks too. An allow list containing `'*'` therefore leaves no
+gate at all, so list the allowed addresses explicitly. See the [known
+limitation](/docs/guides/identity#known-limitation-credentials-of-another-type).
 
 See [Credential-gated assets](/docs/guides/identity) for the whole picture, including the
 consumer side.

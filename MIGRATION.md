@@ -413,12 +413,26 @@ without a list of DIDs. walt.id failed such a policy for every presentation.
  ]
 ```
 
-**`AssetBuilder.build()` throws an `SsiPolicyError`** for the same policies on a stored asset
-being edited (`credential-policy-arguments`), and for a credential type requested more than
-once with different formats or policies, asset and service level merged
-(`duplicate-request-type`). walt.id keeps only the last request's per-credential policies for
-a type, so issuer trust at asset level and an attribute check at service level silently
-became the attribute check alone. Put every policy for a type on one request:
+It also throws a `TypeError` for per-credential policies on `VerifiableCredential` or
+`VerifiablePresentation`: walt.id files a presented credential under the **last** entry of
+its `type` array, so such policies never ran on a `["VerifiableCredential",
+"gx:LegalPerson"]` credential, which a wallet presents for the request. Request the
+credentials' own type, the last entry of their `type` array.
+
+**`AssetBuilder.build()` throws an `SsiPolicyError`** in every lint mode, on new and stored
+assets alike, for:
+
+- the policies above (`credential-policy-arguments`, `generic-request-type`);
+- a type requested more than once where a non-empty per-credential list is dropped
+  (`credential-policies-replaced`, a warning in PR 12's checks, now fatal). walt.id keeps
+  only the last non-empty list per type, so issuer trust at asset level and an attribute
+  check at service level silently became the attribute check alone. A request of the type
+  without policies next to one with policies is fine;
+- request credentials without a format, with different formats (one type in two formats
+  included) or with one walt.id does not request (`request-format`): walt.id refused to open
+  the session for every consumer.
+
+Put every policy for a type on one request, in one format:
 
 ```diff
  assetBuilder
@@ -435,13 +449,28 @@ became the attribute check alone. Put every policy for a type on one request:
 -  ])
 ```
 
-It also warns (`identity.policy.unknown_name`) about a policy name walt.id does not know.
+It also warns about a policy name walt.id does not know (`identity.policy.unknown_name`), a
+hand-written `schema` that checks less than it seems (`identity.policy.weak_schema`: keys
+walt.id ignores, no constraint, attributes left out of `required`, an unsupported `$schema`)
+and a stored `allowed-issuer` entry that is not a DID (`identity.policy.issuer_not_did`).
 
 **New:** `requireCredentialAttributes`, `trustIssuers` and `setRequestCredentials` on both
-builders, and an attribute check before presenting: `WaltIdCredentialProvider` throws a
+builders. A requirement needs exactly one of `equals`, `oneOf` and `exists: true`; one with
+none, or with a key set to `undefined` (an unset variable), throws. Their `format` option
+throws when it would add a second request of the type or a second format.
+`setRequestCredentials(list, [])` removes the gate with a `warn` event
+(`identity.policy.gate_removed`), and throws when the list admits `'*'`. There is also an
+attribute check before presenting: `WaltIdCredentialProvider` throws a
 `CredentialRejectedLocallyError` with `policy: 'schema'`, `reason: 'attribute-mismatch'` and
 `path` for a credential the verifier would refuse for its attributes. See
 [requiring credential attributes](https://nautilus.delta-dao.com/docs/guides/identity#requiring-credential-attributes).
+
+Issuer trust and attribute checks run only on presented credentials whose **last** `type`
+entry is the requested type. A hand-built presentation with a self-issued credential of
+another type skips them, and so does a self-issued credential that carries the requested type
+before its last entry, which a normal wallet presents. They filter honest consumers holding
+honest credentials; they are not access control. Keep an explicit address allow list (see the
+[known limitation](https://nautilus.delta-dao.com/docs/guides/identity#known-limitation-credentials-of-another-type)).
 
 ## Upgrading from 2.0.0-beta.0
 

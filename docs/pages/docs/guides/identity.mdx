@@ -202,8 +202,10 @@ says so. Attribute schemas that use JSON Schema keywords beyond `type`, `require
 `properties`, `const` and `enum` are not judged either (`debug` event
 `identity.preflight.schema_skipped`). Pass `preflight: false` to the provider for a verifier
 whose rules differ from walt.id's. Every
-other refusal still comes from the verifier, as above. This check helps honest consumers; it
-is no access control, which stays with the verifier and the address allow list.
+other refusal still comes from the verifier, as above. When the wallet selected several
+credentials of the type and one fails, the message points to the provider's
+`onSelectCredentials` option: walt.id checks each one presented. This check helps honest
+consumers; it is no access control, which stays with the verifier and the address allow list.
 
 ### What the wallet trusts
 
@@ -416,10 +418,13 @@ them, and:
 | `'*'` in the address allow list of a credential-gated service, as the policy server reads it | Warns: `identity.policy.wildcard_allow` (no gate against a hand-built presentation; see the [limitation below](#known-limitation-credentials-of-another-type)) |
 | `holder-binding` | Warns: `identity.policy.holder_binding` |
 | `presentation-definition` with a `jwt_vc_json` or `jwt_vc` credential | Warns: `identity.policy.presentation_definition_vc_jwt` |
-| A per-credential `schema` whose `args` are not a JSON Schema object (a string, an array, none), or an `allowed-issuer` without a list of DIDs | Throws an `SsiPolicyError` (`credential-policy-arguments`): walt.id fails it for every presentation. `addRequestCredentials` and `setRequestCredentials` already throw a `TypeError` for these |
-| A credential type requested more than once with different formats or policies, e.g. issuer trust at asset level and an attribute check at service level | Throws an `SsiPolicyError` (`duplicate-request-type`): walt.id keeps only the last request's per-credential policies for a type and silently drops the others |
+| A per-credential `schema` whose `args` are not a JSON Schema object (a string, an array, none) | Throws an `SsiPolicyError` (`credential-policy-arguments`): walt.id fails it for every presentation. `addRequestCredentials` and `setRequestCredentials` already throw a `TypeError` for it |
+| A type requested more than once, where a non-empty per-credential list is dropped, e.g. issuer trust at asset level and an attribute check at service level | Throws an `SsiPolicyError` (`credential-policies-replaced`): walt.id keeps only the last non-empty list per type, after the policy server drops repeats of an identical request (the first one keeps its position), so a check you configured never runs. A request of the type without policies next to one with policies is fine: walt.id drops the empty one |
+| Per-credential policies on `VerifiableCredential` or `VerifiablePresentation` | Throws an `SsiPolicyError` (`generic-request-type`): walt.id files a credential under the **last** entry of its `type`, so they never run on a credential with a more specific type, which every wallet still presents. The builders throw a `TypeError` |
+| Request credentials without a format, with different formats, or with one walt.id does not request | Throws an `SsiPolicyError` (`request-format`): walt.id refuses to open the session ("Credentials formats must be distinct for a presentation request"), so every consumer is refused. This includes one type in two formats |
 | A requested credential type whose effective per-credential policies have no `allowed-issuer` | Warns: `identity.policy.no_issuer_trust` (a self-issued credential of that type is accepted) |
-| A type requested twice with different per-credential policies | Warns: `identity.policy.credential_policies_replaced`: walt.id keeps only the last non-empty list per type, after the policy server drops repeats of an identical request (the first one keeps its position), so the other lists never run |
+| A stored `allowed-issuer` entry that is not a DID, next to a usable one | Warns: `identity.policy.issuer_not_did` (walt.id compares the credential's `iss` with the entry as written). With no usable entry left it throws, as above |
+| A hand-written per-credential `schema` that checks less than it seems: keys outside JSON Schema draft 7 (walt.id ignores them), no constraint at all, an attribute under `properties` missing from its level's `required`, or a `$schema` walt.id does not support | Warns: `identity.policy.weak_schema`. Only the unsupported `$schema` refuses anyone (everyone); the rest let credentials through. Generated schemas never warn |
 | A policy name walt.id does not know, at any level | Warns: `identity.policy.unknown_name` (a verifier that does not know it fails every presentation) |
 
 The policy server may add `signature` to every session from its operator's
@@ -464,8 +469,11 @@ assetBuilder
 [`requireCredentialAttributes`](/docs/api/assetbuilder/requireCredentialAttributes) writes
 walt.id's per-credential `schema` policy: a JSON Schema built from the requirements, with
 `required` and `properties` from `credentialSubject` down to each attribute, and `const`
-(`equals`), `enum` (`oneOf`) or nothing (`exists`, or no condition) at the attribute. The
-example stores this request credential, issuer trust first:
+(`equals`), `enum` (`oneOf`) or nothing (`exists: true`: present, `null` included) at the
+attribute. Each requirement needs exactly one of them: a requirement with none, or with a key
+set to `undefined` (say, `equals: process.env.COUNTRY` with the variable unset), throws a
+`TypeError` instead of quietly becoming an existence check. The example stores this request
+credential, issuer trust first:
 
 ```json
 {
@@ -480,11 +488,20 @@ example stores this request credential, issuer trust first:
 
 Several requirements, and several calls, combine with AND; issuers of several
 [`trustIssuers`](/docs/api/assetbuilder/trustIssuers) calls combine with OR. Both add to the
-one request credential of that type (adding it if needed), because walt.id keeps a single
-per-credential policy list per type. For the same reason, request each type once, at asset
-or at service level: `build()` throws when a type is requested twice with different
-policies. Use [`setRequestCredentials`](/docs/api/assetbuilder/setRequestCredentials) to
-replace the list, e.g. to drop a requirement on an edit.
+request credentials of that type (adding one if needed, in the list's format), because
+walt.id keeps a single per-credential policy list per type. For the same reason, put all of a
+type's policies at one level, asset or service: `build()` throws when a policy list is
+dropped. The `format` option only sets the format of a new request: it throws when the type,
+or another type on the list, is already requested in another format, since walt.id refuses
+a session whose requests mix formats. Use
+[`setRequestCredentials`](/docs/api/assetbuilder/setRequestCredentials) to replace the list,
+e.g. to drop a requirement on an edit.
+
+**The type is the last `type` entry.** walt.id files a presented credential under the last
+entry of its `type` array, so request the type your credentials end with, e.g.
+`gx:LegalPerson` for `["VerifiableCredential", "gx:LegalPerson"]`. Per-credential policies on
+`VerifiableCredential` would never run on such a credential, which a wallet still presents;
+the builders throw a `TypeError` for it, and `build()` for a stored one.
 
 **The shape walt.id checks.** walt.id validates the credential's `vc` claim when it has one
 (VCDM 1.1), and the whole JWT payload otherwise (VCDM 2.0 `vc+jwt`, such as the Gaia-X
@@ -492,7 +509,11 @@ replace the list, e.g. to drop a requirement on an edit.
 generated schema works for both. A hand-written schema must match that shape: one wrapped in
 `vc` refuses every credential. Its `args` must be the schema **object**: a string such as
 `JSON.stringify(schema)` or an array makes walt.id fail the policy for every presentation, so
-nautilus throws for them.
+nautilus throws for them. Beyond that, nautilus does not validate a hand-written schema: it
+warns (`identity.policy.weak_schema`) for the common ways one checks nothing, such as the
+credential's own shape pasted as a schema, a misspelled `required` or an attribute left out
+of `required`, but only `requireCredentialAttributes` guarantees each requirement is
+checked.
 
 **Consumers are told before presenting.** `WaltIdCredentialProvider` checks the selected
 credentials against the requirements and throws a `CredentialRejectedLocallyError` with
@@ -501,12 +522,14 @@ credentials against the requirements and throws a `CredentialRejectedLocallyErro
 
 :::warning[Attribute checks run only on credentials of the requested type]
 Like issuer trust, the attribute check is a per-credential policy, so it runs only on
-presented credentials whose type is the requested one. A hand-built presentation holding a
-self-issued credential of **another** type skips it, and the issuer check too: on the local
-SSI stack, a DE gate accepted such a presentation with no `gx:legalAddress` at all. The
-requirement filters honest consumers, whose wallet presents only the requested type, and is a
-compliance signal; it is not access control against someone who builds their own
-presentation. See the limitation below, and keep an explicit address allow list.
+presented credentials whose **last** `type` entry is the requested type. A presentation
+holding a self-issued credential of another type skips it, and the issuer check too: on the
+local SSI stack, a DE gate accepted such a presentation with no `gx:legalAddress` at all. So
+does a credential that carries the requested type elsewhere in its `type` list, e.g.
+`["VerifiableCredential", "gx:LegalPerson", "gx:Extra"]`, which a normal wallet presents.
+The requirement filters honest consumers holding honest credentials, and is a compliance
+signal; it is not access control. See the limitation below, and keep an explicit address
+allow list.
 :::
 
 ### Known limitation: credentials of another type
@@ -518,22 +541,25 @@ So a presentation holding a self-issued credential of another type passes a gate
 trust is per credential: any credential that passes `signature` will do.
 
 Put plainly: until the policy server enforces the requested credential type, the credential
-check stops only consumers who use a normal wallet, which presents a credential of the
-requested type or nothing. Anyone who builds their own presentation passes it with a
-self-issued credential of another type. nautilus cannot close that on its own.
+check filters only honest consumers holding honest credentials, whose last `type` entry is the
+requested type. Anyone who builds their own presentation passes it with a self-issued
+credential of another type. A normal wallet does too, with a self-issued credential that
+carries the requested type but not as its last entry (`["VerifiableCredential",
+"gx:LegalPerson", "gx:Extra"]`): the wallet presents it for a `gx:LegalPerson` request, and
+walt.id files it under `gx:Extra`. nautilus cannot close that on its own.
 
 What holds is the address allow list: the consumer signs the download with their Ethereum key,
 and the policy server checks that address independently of the credential.
 
-| Address allow list | Against a consumer with a normal wallet | Against a consumer who builds their own presentation |
+| Address allow list | Against an honest consumer with an honest credential | Against a consumer who builds their own presentation or credential |
 | --- | --- | --- |
 | Explicit addresses | Address **and** credential required | Address only |
 | Contains `'*'` | Credential required | **No gate at all** |
 
 So **list the allowed addresses explicitly**, and never combine a credential gate with `'*'`
 in the allow list: the policy server lets every address through it, which leaves no gate at
-all. Treat issuer trust and attribute checks as a filter for honest consumers, not as the only
-protection.
+all. Treat issuer trust and attribute checks as a filter for honest consumers holding honest
+credentials, not as the only protection.
 
 `build()` warns about `'*'` on a credential-gated service (`identity.policy.wildcard_allow`),
 reading the allow lists as the policy server does: the asset's list holds `'*'`, and the
