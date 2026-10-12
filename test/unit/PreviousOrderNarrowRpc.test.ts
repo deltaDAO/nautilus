@@ -36,6 +36,7 @@ import {
   findPreviousOrder,
   IncompleteOrderLookupError
 } from '../../src/utils/previousOrder.js'
+import { rateLimitOf } from '../../src/utils/rpcErrors.js'
 import { CHAIN_ID, DATATOKEN_ADDRESS, SERVICE_ID } from '../fixtures/Asset.js'
 import {
   PROVIDER_FEE_TOKEN,
@@ -100,6 +101,13 @@ const REFUSALS = {
 
 type Refusal = keyof typeof REFUSALS
 
+/**
+ * rpc.pontus-x.eu (OP Sepolia), measured: a span of 100 blocks is served, 101 and more are
+ * refused with HTTP 400 and this body, not a JSON-RPC error object.
+ */
+const PONTUS_X_REFUSAL =
+  '{"code":400,"message":"\'eth_getLogs\' Exceeded maximum block range: 100"}'
+
 interface StubLog {
   address: string
   topics: string[]
@@ -119,6 +127,10 @@ class StubRpc {
   refusal: Refusal = 'block range too large (-32000)'
   /** Milliseconds before each answer. */
   latency = 0
+  /** Refuse with HTTP 400 and `PONTUS_X_REFUSAL`, as rpc.pontus-x.eu does. */
+  http400 = false
+  /** Widest range served, in blocks. */
+  widest = 0
   logs: StubLog[] = []
   receipts = new Map<string, { to: string; blockNumber: number }>()
   served = 0
@@ -134,6 +146,7 @@ class StubRpc {
         const payload = JSON.parse(body)
         if (this.latency)
           await new Promise((resolve) => setTimeout(resolve, this.latency))
+        const refused = this.refused
         const answers = (Array.isArray(payload) ? payload : [payload]).map(
           (message: { id: number; method: string; params: unknown[] }) => ({
             jsonrpc: '2.0',
@@ -142,6 +155,10 @@ class StubRpc {
           })
         )
         outgoing.setHeader('content-type', 'application/json')
+        if (this.http400 && this.refused > refused) {
+          outgoing.statusCode = 400
+          return outgoing.end(PONTUS_X_REFUSAL)
+        }
         outgoing.end(
           JSON.stringify(Array.isArray(payload) ? answers : answers[0])
         )
@@ -163,6 +180,8 @@ class StubRpc {
     this.cap = cap
     this.refusal = refusal
     this.latency = 0
+    this.http400 = false
+    this.widest = 0
     this.logs = []
     this.receipts.clear()
     this.served = 0
@@ -234,6 +253,7 @@ class StubRpc {
           return { error: REFUSALS[this.refusal](this.cap) }
         }
         this.served++
+        this.widest = Math.max(this.widest, to - from + 1)
         return {
           result: this.logs
             .filter(
@@ -380,6 +400,31 @@ describe('the previous-order lookup on an RPC that serves 100 blocks per eth_get
       // Every block of the window was read.
       expect(rpc.served / 2).to.be.at.least(Math.ceil(DAY_BLOCKS / 100))
     }, 60_000)
+
+  it('takes rpc.pontus-x.eu’s HTTP 400 "Exceeded maximum block range: 100" for a range refusal', async () => {
+    rpc.http400 = true
+
+    // As ethers reports it: a SERVER_ERROR for the HTTP 400, not a rate limit.
+    const refused = await provider
+      .getLogs({ address: DATATOKEN_ADDRESS, fromBlock: 1, toBlock: 101 })
+      .catch((error) => error)
+    expect(refused).to.have.property('code', 'SERVER_ERROR')
+    expect(rateLimitOf(refused)).to.equal(undefined)
+
+    rpc.reset(100)
+    rpc.http400 = true
+    expect(await findPreviousOrder(query())).to.equal(undefined)
+    expect(rpc.served / 2).to.be.at.least(Math.ceil(DAY_BLOCKS / 100))
+    expect(rpc.widest).to.equal(100)
+    expect(rpc.refused / 2).to.equal(4)
+
+    rpc.reset(100)
+    rpc.http400 = true
+    rpc.order(tx(1), 23 * 3_600)
+    expect(await settle()).to.deep.equal({ transferTxId: tx(1), reused: true })
+    expect(vi.mocked(order)).not.toHaveBeenCalled()
+    expect(vi.mocked(reuseOrder)).not.toHaveBeenCalled()
+  }, 60_000)
 
   it('finds an order 20 hours old and buys nothing', async () => {
     rpc.order(tx(1), 20 * 3_600)
