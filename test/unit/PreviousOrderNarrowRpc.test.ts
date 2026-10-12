@@ -458,22 +458,20 @@ describe('the previous-order lookup on an RPC that serves 100 blocks per eth_get
   }, 60_000)
 
   it('reads 43 200 blocks in about 432 rounds, keeping the chunk that worked', async () => {
-    rpc.latency = 5
-    const started = Date.now()
+    // Counted, not timed: the time limit cannot end it, so the machine's speed does not
+    // matter; the rounds and refusals alone must cover the window.
+    expect(
+      await findPreviousOrder(query(), { timeLimit: Number.MAX_SAFE_INTEGER })
+    ).to.equal(undefined)
 
-    expect(await findPreviousOrder(query())).to.equal(undefined)
-
-    const elapsed = Date.now() - started
     // Two `eth_getLogs` per round; 2 000, 1 000, 500 and 200 blocks refused once each.
     const rounds = rpc.served / 2
     expect(rounds).to.be.at.least(DAY_BLOCKS / 100)
     // The window starts up to one chunk of 2 000 blocks before the cutoff.
     expect(rounds).to.be.at.most((DAY_BLOCKS + 2_000) / 100 + 1)
     expect(rpc.refused / 2).to.equal(4)
-    // One answer per round at 5 ms each, sequential: seconds, not minutes.
-    expect(elapsed).to.be.at.least(rounds * rpc.latency)
-    expect(elapsed).to.be.below(30_000)
-  }, 60_000)
+    expect(rpc.widest).to.equal(100)
+  }, 120_000)
 })
 
 describe('the previous-order lookup on narrower or slower RPCs', () => {

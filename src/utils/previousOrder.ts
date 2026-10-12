@@ -172,6 +172,9 @@ export class InconsistentRpcAnswerError extends Error {
   }
 }
 
+/** The longest delay `setTimeout` takes: 2^31 - 1 milliseconds. */
+const MAX_TIMER_MS = 2_147_483_647
+
 /** Rejects a wait for the RPC that the lookup's time limit ended (`timeBound`). */
 class TimeLimitReached extends Error {}
 
@@ -191,7 +194,11 @@ function timeBound(deadline: number): Bound {
 
     let timer: ReturnType<typeof setTimeout> | undefined
     const reached = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => reject(new TimeLimitReached()), left)
+      // A longer delay than `setTimeout` takes (about 24.8 days) would fire at once.
+      timer = setTimeout(
+        () => reject(new TimeLimitReached()),
+        Math.min(left, MAX_TIMER_MS)
+      )
     })
     return Promise.race([pending, reached]).finally(() => clearTimeout(timer))
   }
