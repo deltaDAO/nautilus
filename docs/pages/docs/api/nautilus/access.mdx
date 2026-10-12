@@ -75,6 +75,10 @@ What happens in order:
    spender, after every check has passed.
 6. The download URL is built, carrying the policy-server session if there is one.
 
+Some limits of this release apply to `access()`: one download URL at a time per consumer and
+node, parallel purchases of the same service, an RPC that lags behind, and orders older than
+about 55 hours. See [known limitations](/docs/known-limitations).
+
 A fixed-price or free order prints nothing of its own at the default level. Earlier
 releases let ocean.js print `No config found for given network 'undefined'` twice for each
 fixed-price order, and once for a free order on a template-1 datatoken. The exchange and the
@@ -100,6 +104,17 @@ the download is visible to the caller.
 - Type: `string`
 
 The one-time URL to download the raw data.
+
+:::warning[Use each URL before you request the next]
+The URL carries a one-time number that the node accepts only once, and two URLs requested for
+the same consumer and node before either is fetched carry the same number. The first one
+fetched works; the other answers HTTP 401 `nonce: … is not a valid nonce`, because it was
+replaced by a newer URL for the same consumer and node. nautilus does not fetch the URL, so the
+401 reaches you as the node sent it. Fetch each URL before calling `access()` again, and don't
+call `access()` for the same consumer and node in parallel. After a 401 like this, call
+`access()` again and fetch the new URL right away: it reuses the order you hold when it finds
+it (for a paid service, wait a few blocks after the purchase before asking again). See [known limitations](/docs/known-limitations#one-download-url-at-a-time-per-consumer-and-node).
+:::
 
 ##### did / serviceId
 

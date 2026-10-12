@@ -2,6 +2,12 @@
 
 Resolve several assets in a single query.
 
+:::warning[Returns nothing on ocean-node 4.2]
+Against ocean-node 4.2.x this returns `{}`, even for assets that exist: the node answers the
+query in a shape this release does not read. Call [`getAsset(did)`](/docs/api/nautilus/getAsset)
+for each asset instead. See [known limitations](/docs/known-limitations#getassets-returns-nothing-on-ocean-node-42).
+:::
+
 ## Usage
 
 ```ts twoslash

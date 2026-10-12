@@ -34,7 +34,11 @@ export interface AccessConfig extends ProviderFeeLimits {
 
 /** What `access()` resolved on the way to the download URL. */
 export interface AccessResult {
-  /** The one-time download URL. */
+  /**
+   * The one-time download URL. Fetch it before requesting another URL for the same consumer
+   * and node: a second URL requested first carries the same one-time number, and whichever
+   * is fetched second is refused with HTTP 401 (`nonce: … is not a valid nonce`).
+   */
   url: string
   did: string
   serviceId: string

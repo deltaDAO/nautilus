@@ -1993,7 +1993,15 @@ export class Nautilus {
 
   // #region access
 
-  /** Orders a service if needed and returns a one-time download URL. */
+  /**
+   * Orders a service if needed and returns a one-time download URL.
+   *
+   * Fetch each URL before requesting the next one for the same consumer and node: two URLs
+   * requested before either is fetched carry the same one-time number, so the node serves
+   * the first one fetched and answers the other with HTTP 401 `nonce: … is not a valid
+   * nonce` (it was replaced by the newer URL). Then call `access()` again and fetch the new
+   * URL at once (it reuses the order held when it finds it).
+   */
   async access(config: AccessConfig): Promise<AccessResult> {
     return this.operation('access', (log) =>
       access(this.withProviderFeeDefaults(config), {
