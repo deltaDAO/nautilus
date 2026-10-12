@@ -50,9 +50,10 @@ const URL_PATTERN =
 
 /**
  * A JSON escape for `/` or a `\uXXXX` character, after any number of backslashes: JSON
- * nested in JSON strings doubles them at each level (`\/`, `\\/`, `\\\u0049`).
+ * nested in JSON strings doubles them at each level (`\/`, `\\/`, `\\\u0049`). Read
+ * from the start of a backslash run only, so a long run is scanned in linear time.
  */
-const JSON_ESCAPE = /\\+(?:\/|u([0-9a-fA-F]{4}))/g
+const JSON_ESCAPE = /(?<!\\)\\+(?:\/|u([0-9a-fA-F]{4}))/g
 /**
  * What a `\uXXXX` escape may be decoded to: characters that are part of a key or a URL and
  * that end no value in any form. A quote, a backslash or a delimiter stays escaped, so it

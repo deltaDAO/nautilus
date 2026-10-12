@@ -1102,6 +1102,28 @@ describe("the node's text in a message", () => {
     }
   })
 
+  it('reads a long backslash run in linear time (security regression)', () => {
+    // A run of backslashes followed by neither an escape nor a quote: the JSON-escape decoder
+    // and the escaped-key form were retried from each backslash (about 650 ms at 40,000).
+    const marker = 'api-key-marker-7c41'
+    const runs = [
+      `api\\u004bey=${marker} ${'\\'.repeat(40_000)}x`,
+      `${'\\'.repeat(40_000)}"apiKey"`
+    ]
+    for (const text of runs) {
+      // Processor time of this test process, not the clock: other workers hold the processor.
+      const started = process.cpuUsage()
+      const clean = redactSecrets(text)
+      const { user, system } = process.cpuUsage(started)
+      expect((user + system) / 1_000).to.be.below(process.env.CI ? 200 : 50)
+      expect(clean).not.to.contain(marker)
+    }
+    // Still decoded and redacted at any depth.
+    expect(
+      redactSecrets('\\\\\\"api\\u004bey\\\\\\": \\\\\\"v4lue\\\\\\"')
+    ).to.equal('\\\\\\"apiKey\\\\\\": \\\\\\"<redacted>\\\\\\"')
+  })
+
   it('catches a key split by a control character, an escape or a line break', () => {
     for (const text of [
       'session\u0000Id=val-sid-x9',
