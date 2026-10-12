@@ -34,7 +34,7 @@ import {
   OceanNodeError
 } from '../../src/node/OceanNodeClient.js'
 import { ASSET_DID, CHAIN_ID, NFT_ADDRESS } from '../fixtures/Asset.js'
-import { cpuTime, INVISIBLE_CODES } from '../helpers.js'
+import { cpuBudget, cpuTime, INVISIBLE_CODES } from '../helpers.js'
 import { FAKE } from '../secretScan.js'
 
 const NODE = 'https://node.test.invalid'
@@ -1228,7 +1228,7 @@ describe("the node's text in a message", () => {
       const elapsed = await cpuTime(() => {
         clean = redactMessage(text)
       })
-      expect(elapsed, text.slice(0, 12)).to.be.below(30)
+      expect(elapsed, text.slice(0, 12)).to.be.below(cpuBudget(30))
       expect(clean).to.match(/^(https:\/\/h\.example|127\.0\.0\.1:1)$/)
     }
   })
@@ -1241,7 +1241,7 @@ describe("the node's text in a message", () => {
       const elapsed = await cpuTime(() => {
         clean = sanitize(text, 1_000, null)
       })
-      expect(elapsed, text.slice(0, 4)).to.be.below(50)
+      expect(elapsed, text.slice(0, 4)).to.be.below(cpuBudget(50))
       expect(clean.length).to.be.at.most(1_001)
     }
   })
@@ -1280,7 +1280,8 @@ describe("the node's text in a message", () => {
         result = clean(text)
       })
 
-      if (elapsed >= budget) slow.push(`${label}: ${elapsed.toFixed(0)} ms`)
+      if (elapsed >= cpuBudget(budget))
+        slow.push(`${label}: ${elapsed.toFixed(0)} ms`)
       expect(result, label).to.equal(`${'a'.repeat(maxLength)}…`)
     }
     expect(slow).to.deep.equal([])

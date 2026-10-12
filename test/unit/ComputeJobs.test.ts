@@ -28,7 +28,12 @@ import {
 import { Nautilus } from '../../src/index.js'
 import { type DebugEvent, setDebug } from '../../src/log/debug.js'
 import { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
-import { captureLog, cpuTime, expectThrowsAsync } from '../helpers.js'
+import {
+  captureLog,
+  cpuBudget,
+  cpuTime,
+  expectThrowsAsync
+} from '../helpers.js'
 import { FAKE } from '../secretScan.js'
 
 const ADDRESS = '0x0000000000000000000000000000000000000001'
@@ -557,7 +562,7 @@ describe('Nautilus compute jobs', () => {
 
     // About 30 ms; 150 ms when the cut word was found by a regular expression. CI runners
     // are about four times slower (110-140 ms seen for the good case there).
-    expect(elapsed).to.be.below(process.env.CI ? 400 : 100)
+    expect(elapsed).to.be.below(cpuBudget(100))
     expect(streamed.message).to.match(
       /Results: \[.*… \(2 results; getComputeStatus\(\) lists them all\)$/
     )
