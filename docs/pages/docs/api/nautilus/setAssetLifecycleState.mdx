@@ -1,6 +1,7 @@
 # setAssetLifecycleState
 
-Change an asset's lifecycle state on its NFT.
+Change an asset's lifecycle state on its NFT. The target is the asset, its DID or its NFT
+address.
 
 ## Usage
 
@@ -9,19 +10,43 @@ import { LifecycleStates, Nautilus } from '@deltadao/nautilus'
 import { Wallet } from 'ethers'
 const nautilus = await Nautilus.create(new Wallet('0x1234'))
 // ---cut---
-const asset = await nautilus.getAsset('did:ope:2a6ebce0af...')
+// the NFT address you stored from the publish result
+const nftAddress = '0x8d1f7c3B5bCb3D3E44a7F2bD2e1D0a4C5f6E7a8B'
 
 const receipt = await nautilus.setAssetLifecycleState( // [!code focus]
-  asset, // [!code focus]
-  LifecycleStates.ASSET_UNLISTED // [!code focus]
+  nftAddress, // [!code focus]
+  LifecycleStates.REVOKED_BY_PUBLISHER // [!code focus]
 ) // [!code focus]
 ```
 
 Resolves with the receipt once the transaction is **mined**, and throws if it was not
-submitted or reverted. Returns `undefined` without sending a transaction when the asset is
-already in the requested state. Within one instance, it waits for any `publish()`,
+submitted or reverted. Within one instance, it waits for any `publish()`,
 `completePublish()` or `edit()` of the same NFT still running before it sends its
 transaction.
+
+**The current state is read from the chain**, not from a DDO: when the NFT is in the
+requested state already, nothing is sent, it resolves `undefined` and logs
+`lifecycle.state.unchanged`. An asset object fetched before someone else changed the state
+does not decide this any more. After a change it logs `lifecycle.state.set` (level `info`)
+with the DID, the NFT address, the previous state and the transaction hash.
+
+### Which target to pass
+
+| Target | Use it when | What is checked |
+| --- | --- | --- |
+| NFT address (`0x…`) | Always works, also once the node no longer serves the asset. Store it from the publish result. | A valid address; a mixed-case one must have a correct checksum. Nothing is resolved. |
+| DID (`did:ope:…`) | The node still serves the asset. | The DDO the node serves must be the DID's ([`getAsset`](/docs/api/nautilus/getAsset)'s check), and its NFT must be the one the DID is derived from on the configured chain, so a wrong or malicious node cannot redirect an irreversible revoke to another NFT. When the node answers 404, the NFT named in its indexing record is used under the same check; ocean-node 4.2.2 records none for a deprecated or revoked asset, so the call then throws and asks for the NFT address. |
+| Asset (`AssetV5`) | You have a fetched DDO at hand. | Its NFT must be the one its `id` is derived from, on the configured chain. Its lifecycle state is **not** used. |
+
+For every target, before anything is sent, the NFT must have been created by the configured
+ERC721 factory, the signer must hold its metadata role (the NFT owner or a manager-granted
+`updateMetadata` permission), and the NFT must carry metadata. Each refusal ends in "Nothing
+was sent." For `DEPRECATED` and `REVOKED_BY_PUBLISHER`, the errors and the
+`lifecycle.state.set` message also name the NFT's ERC721 name and symbol and its DID, so a
+wrong target is visible.
+
+To read the state back, use
+[`getAssetLifecycleState`](/docs/api/nautilus/getAssetLifecycleState).
 
 The states can also be set while editing, via
 [`AssetBuilder.setLifecycleState`](/docs/api/assetbuilder/setLifecycleState) — use that when
@@ -51,6 +76,10 @@ What the node serves afterwards depends on the node's version and database:
 - **With Typesense, it keeps a short document** holding only the NFT state, without metadata
   or services.
 
+The node drops or shortens the document only for a move **from `ACTIVE`**. From another state
+(e.g. `ASSET_UNLISTED`), ocean-node 4.2.2 keeps serving the full DDO with
+`indexedMetadata.nft.state` updated. Either way the state on chain is final.
+
 Setting `ACTIVE` again does not restore it: only a new metadata write could, and
 [`edit`](/docs/api/nautilus/edit) refuses an NFT in either state and needs the full published
 DDO as its baseline, which the node no longer has. Treat both states as final. Assets cannot
@@ -71,13 +100,12 @@ leave it out.
 
 **Read the state from the chain, not from the node.** After a `DEPRECATED` or
 `REVOKED_BY_PUBLISHER` change, a 4.2.x node with Elasticsearch has no document to read it
-from. The NFT's `getMetaData()` holds it as its third value. Start from the NFT address you
-stored from the publish result, not from `getAsset()`: the node may no longer have the
-document to look it up in:
+from. [`getAssetLifecycleState`](/docs/api/nautilus/getAssetLifecycleState) reads it from
+the NFT, and takes the same targets. Pass the NFT address you stored from the publish
+result; the DID works only while the node still serves the asset:
 
 ```ts twoslash
-import { Nft } from '@oceanprotocol/lib'
-import { getChainId, Nautilus, type NautilusAsset } from '@deltadao/nautilus'
+import { Nautilus, type NautilusAsset } from '@deltadao/nautilus'
 import { Wallet } from 'ethers'
 const nautilus = await Nautilus.create(new Wallet('0x1234'))
 declare const asset: NautilusAsset
@@ -86,11 +114,7 @@ declare const asset: NautilusAsset
 const { nftAddress } = await nautilus.publish(asset)
 
 // later, after the state change
-const signer = nautilus.getSigner()
-const nft = new Nft(signer, await getChainId(signer))
-
-const metadata = (await nft.getMetadata(nftAddress)) as unknown[] // [!code focus]
-const state = Number(metadata[2]) // [!code focus]
+const state = await nautilus.getAssetLifecycleState(nftAddress) // [!code focus]
 ```
 
 A state change does not update the indexed transaction id either, so
@@ -111,10 +135,24 @@ show the old state on an RPC behind a load balancer whose nodes lag each other b
 
 ## Parameters
 
-### asset
+### target
 
-- Type: `AssetV5`
+- Type: `LifecycleTarget` (`AssetV5 | string`)
+
+The asset, its DID (`did:ope:…`; `did:op:` is accepted for the same hash) or its NFT address.
+See [which target to pass](#which-target-to-pass).
 
 ### state
 
 - Type: `LifecycleStates | State`
+
+## Throws
+
+- an `Error` ending in "Nothing was sent." when the target is not an asset, a DID or an
+  address, the address checksum is wrong, the NFT is not the DID's or not the factory's, the
+  signer lacks the metadata role, or the NFT carries no metadata;
+- an `Error` asking for the NFT address when the node does not serve the DID and its
+  indexing record names no NFT (ocean-node 4.2.x after a deprecate or revoke);
+- the [`OceanNodeError`](/docs/api/node/OceanNodeClient) of a failed resolve, for a DID
+  target;
+- the transaction's error when it was not submitted or reverted.

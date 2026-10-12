@@ -303,20 +303,25 @@ edit, so an algorithm whose container moved gets its pin updated.
 
 ## Changing the lifecycle state
 
-To retire or unlist an asset without touching anything else, one transaction is enough:
+To retire or unlist an asset without touching anything else, one transaction is enough.
+Pass the asset, its DID or its NFT address; the NFT address keeps working once the node no
+longer serves the asset:
 
 ```ts twoslash
 import { LifecycleStates, Nautilus } from '@deltadao/nautilus'
 import { Wallet } from 'ethers'
 const nautilus = await Nautilus.create(new Wallet('0x1234'))
-const published = await nautilus.getAsset('did:ope:2a6ebce0af...')
+const nftAddress = '0x8d1f7c3B5bCb3D3E44a7F2bD2e1D0a4C5f6E7a8B'
 // ---cut---
-await nautilus.setAssetLifecycleState(published, LifecycleStates.ASSET_UNLISTED) // [!code focus]
+await nautilus.setAssetLifecycleState(nftAddress, LifecycleStates.ASSET_UNLISTED) // [!code focus]
 ```
 
 It resolves once the transaction is mined, and returns `undefined` without sending anything
-when the asset is already in that state. If you are changing metadata anyway, set it on the
-builder instead with [`setLifecycleState`](/docs/api/assetbuilder/setLifecycleState).
+when the NFT is already in that state **on chain** (a fetched asset's own state is not
+used). A DID is bound to its NFT before anything is sent, so a wrong or malicious node cannot
+redirect a revoke; see [which target to pass](/docs/api/nautilus/setAssetLifecycleState#which-target-to-pass).
+If you are changing metadata anyway, set it on the builder instead with
+[`setLifecycleState`](/docs/api/assetbuilder/setLifecycleState).
 
 Without `setLifecycleState`, `edit()` writes the state the NFT has on chain at that moment,
 not the one in the asset you built from. So an edit built from a copy you fetched before
@@ -341,9 +346,9 @@ that state.
 
 A lifecycle change does not update the indexed transaction id, so
 `waitForIndexer(did, receipt.hash)` cannot wait for it. Read the state from the chain instead,
-from the NFT's `getMetaData()`, as shown in
-[reading the state](/docs/api/nautilus/setAssetLifecycleState#reading-the-state): after a
-`DEPRECATED` or `REVOKED_BY_PUBLISHER` change, a 4.2.x node has no document to read it from.
+with [`getAssetLifecycleState`](/docs/api/nautilus/getAssetLifecycleState) and the NFT
+address: after a `DEPRECATED` or `REVOKED_BY_PUBLISHER` change, a 4.2.x node has no document
+to read it from, and `getAsset` answers 404 with a hint saying so.
 
 ## Waiting for the change to be visible
 

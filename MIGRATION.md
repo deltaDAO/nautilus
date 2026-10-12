@@ -343,10 +343,43 @@ only when signing (`The DDO declares issuer "…" but it is being signed by "…
 now ends with "Nothing was sent." A custom `DdoSigner` whose payload carries `iss`, `sub` or
 `jti` must make `iss` its `issuer` and `sub`/`jti` the DDO's id, as the built-in signers do.
 
-**`getAsset()` and `getAssets()` refuse a DDO whose id is not a DID asked for**, with an
-`OceanNodeError`, and `edit()` refuses, before any transaction, a DDO whose id is not the DID
+**`getAsset()`, `getAssets()` and `waitForIndexer()` refuse a DDO whose id is not a DID
+asked for**, with an `OceanNodeError` (`waitForIndexer()` at once, without polling on), and `edit()` refuses, before any transaction, a DDO whose id is not the DID
 of its `nftAddress` on the configured chain. A correct node never serves either. `getOwner()`
 returns the account that wrote the metadata last; read `ownerOf` on chain for the owner.
+
+### Lifecycle: by NFT address, state from chain
+
+**`setAssetLifecycleState(target, state)` takes the asset, its DID or its NFT address.**
+ocean-node 4.2.x with Elasticsearch stops serving a `DEPRECATED` or `REVOKED_BY_PUBLISHER`
+asset, so there was no asset to pass for a second change (deprecate, then revoke); pass the
+NFT address you stored from the publish result. A DID is bound to its NFT before anything is
+sent; when the node no longer serves it, the call asks for the NFT address.
+
+**"Already in that state" is judged from the chain**, no longer from the asset's possibly
+stale DDO: a stale copy used to send a redundant transaction, or to skip a needed one (an
+asset unlisted elsewhere stayed unlisted when set `ACTIVE` with a copy that said `ACTIVE`).
+
+**It refuses more, before any transaction:** an NFT the configured factory did not create, a
+signer without the NFT's metadata role, an NFT without metadata, and an asset object whose
+NFT is not the one its `id` is derived from on the configured chain. Each error ends in
+"Nothing was sent."
+
+```ts
+// beta.1: the asset was needed, and its DDO decided whether anything was sent
+await nautilus.setAssetLifecycleState(await nautilus.getAsset(did), LifecycleStates.REVOKED_BY_PUBLISHER)
+
+// now: the NFT address works after the node drops the DDO; the state is read from chain
+await nautilus.setAssetLifecycleState(nftAddress, LifecycleStates.REVOKED_BY_PUBLISHER)
+const state = await nautilus.getAssetLifecycleState(nftAddress)
+```
+
+**New: [`getAssetLifecycleState(target)`](https://nautilus.delta-dao.com/docs/api/nautilus/getAssetLifecycleState)**
+reads the state from the NFT, so you no longer need ocean.js's `Nft.getMetadata()[2]`.
+
+**`getAssets()` works against ocean-node 4.x.** It read only an Elasticsearch-style
+`{ hits: { hits } }` answer, while 4.x answers `[{ results, totalResults }]`, so it
+returned `{}`; it now reads both.
 
 ## Upgrading from 2.0.0-beta.0
 
@@ -659,7 +692,9 @@ drops it from the index when that envelope is gone. See
 refuse to write metadata in either state. What the node serves afterwards depends on the
 node's version and database: ocean-node 4.2.x with Elasticsearch drops the DDO (`getAsset`
 answers 404); with Typesense it keeps a short document holding only the NFT state. Either
-way, read the state from the chain, not from the node. See
+way, read the state from the chain with
+[`getAssetLifecycleState`](https://nautilus.delta-dao.com/docs/api/nautilus/getAssetLifecycleState), and pass the NFT address to
+`setAssetLifecycleState`, which takes the asset, its DID or its NFT address. See
 [lifecycle states](https://nautilus.delta-dao.com/docs/api/nautilus/setAssetLifecycleState#states).
 
 ## 1. Dependencies

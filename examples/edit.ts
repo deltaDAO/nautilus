@@ -71,6 +71,10 @@ import { publishedResult, publishSession } from './publish'
  *     `setOwner()` may name only the signer or that owner.
  *   - **Checked before any transaction:** the DDO's id must be the DID of its NFT, and a
  *     declared issuer must be the signer (`setIssuer()` to re-issue under another one).
+ *   - **`setAssetLifecycleState` takes an NFT address or a DID** as well as an asset, and
+ *     judges "already in that state" from the chain. `getAssetLifecycleState` reads the
+ *     state from the chain. `asset:revoke` and `asset:unlist` take either, so a revoked
+ *     asset the node no longer serves can still be handled by its NFT address.
  */
 
 /**
@@ -497,23 +501,36 @@ export async function removeService(
 }
 
 /**
- * Retires an asset.
+ * The NFT address to change the state of: `target` itself when it is one, else the NFT of
+ * the DID the node serves. Once the node no longer serves an asset (ocean-node 4.2.x with
+ * Elasticsearch drops a DEPRECATED or REVOKED one), only the NFT address works; it is in
+ * PUBLISH_LOG and in the publish result.
+ */
+async function lifecycleNft(nautilus: Nautilus, target: string) {
+  if (/^0x/i.test(target.trim())) return target.trim()
+
+  return getNftAddress(await nautilus.getAsset(target))
+}
+
+/**
+ * Retires an asset, given its DID or its NFT address.
  *
  * One transaction, no republish — the state lives on the NFT, not in the DDO. Returns without
- * sending anything if the asset is already in that state.
+ * sending anything if the NFT is in that state already on chain. Before sending, nautilus
+ * binds a DID to its NFT, checks that the factory created the NFT and that the signer holds
+ * its metadata role; for a revoke its errors name the NFT's name, symbol and DID.
  *
  * **One-way.** nautilus refuses to write metadata for a revoked asset again: no edit, no
  * `completePublish`. What the node serves afterwards depends on the node's version and
  * database: ocean-node 4.2.x with Elasticsearch drops the DDO, so `getAsset` answers 404 from
- * then on; with Typesense it keeps a short document holding only the NFT state. That is why
- * the wait below reads the state from the chain.
+ * then on (with a hint saying why); with Typesense it keeps a short document holding only the
+ * NFT state. That is why this works on the NFT address and reads the state from the chain.
  */
-export async function revokeAsset(nautilus: Nautilus, did: string) {
-  const asset = await nautilus.getAsset(did)
-  const nftAddress = getNftAddress(asset)
+export async function revokeAsset(nautilus: Nautilus, target: string) {
+  const nftAddress = await lifecycleNft(nautilus, target)
 
   const receipt = await nautilus.setAssetLifecycleState(
-    asset,
+    nftAddress,
     LifecycleStates.REVOKED_BY_PUBLISHER
   )
 
@@ -522,7 +539,8 @@ export async function revokeAsset(nautilus: Nautilus, did: string) {
     return
   }
 
-  console.log(`Revoked ${did}`)
+  console.log(`Revoked ${target}`)
+  console.log(`  NFT: ${nftAddress}`)
   console.log(`  tx: ${receipt.hash}`)
 
   await waitForLifecycleState(
@@ -535,13 +553,9 @@ export async function revokeAsset(nautilus: Nautilus, did: string) {
   )
 }
 
-/** `ERC721Template.getMetaData()`: the third value is the NFT's lifecycle state. */
-const NFT_METADATA_ABI = [
-  'function getMetaData() view returns (string, string, uint8, bool)'
-] as const
-
 /**
- * Polls the NFT on chain until it holds the new lifecycle state.
+ * Polls the NFT on chain until it holds the new lifecycle state, with
+ * `getAssetLifecycleState`.
  *
  * The chain, not the node: on ocean-node 4.2.x with Elasticsearch a DEPRECATED or REVOKED
  * asset's DDO is gone, so `getAsset` answers 404 and would never show the state (with
@@ -549,10 +563,9 @@ const NFT_METADATA_ABI = [
  * `waitForIndexer(did, receipt.hash)`: the indexer records a transaction id only for
  * MetadataCreated/Updated, so a MetadataState change never ends that wait.
  *
- * This is the read ocean.js's `Nft.getMetadata(nftAddress)[2]` does, through ethers so the
- * examples need no ocean.js of their own. `setAssetLifecycleState` resolves once the
- * transaction is mined, so this normally returns on the first read; it polls only for an RPC
- * behind a load balancer whose nodes lag each other.
+ * `setAssetLifecycleState` resolves once the transaction is mined, so this normally returns
+ * on the first read; it polls only for an RPC behind a load balancer whose nodes lag each
+ * other.
  */
 async function waitForLifecycleState(
   nautilus: Nautilus,
@@ -560,13 +573,11 @@ async function waitForLifecycleState(
   expected: LifecycleStates,
   { timeoutMs = 60_000, intervalMs = 2_000 } = {}
 ) {
-  const nft = new Contract(nftAddress, NFT_METADATA_ABI, nautilus.getSigner())
   const deadline = Date.now() + timeoutMs
 
   while (Date.now() < deadline) {
-    const state = await nft
-      .getFunction('getMetaData')()
-      .then((metadata) => Number(metadata[2]))
+    const state = await nautilus
+      .getAssetLifecycleState(nftAddress)
       .catch(() => undefined)
 
     if (state === expected) {
@@ -583,18 +594,18 @@ async function waitForLifecycleState(
 }
 
 /**
- * Unlists an asset. Reversible: set the state back to ACTIVE to list it again.
+ * Unlists an asset, given its DID or its NFT address. Reversible: set the state back to
+ * ACTIVE to list it again.
  *
  * Unlisting hides nothing by itself. Once the node indexes the change, it still resolves the
  * asset by DID and returns it in searches, with `indexedMetadata.nft.state` 5: a market has
  * to filter on that state. The wait below confirms the state on chain, not on the node.
  */
-export async function unlistAsset(nautilus: Nautilus, did: string) {
-  const asset = await nautilus.getAsset(did)
-  const nftAddress = getNftAddress(asset)
+export async function unlistAsset(nautilus: Nautilus, target: string) {
+  const nftAddress = await lifecycleNft(nautilus, target)
 
   const receipt = await nautilus.setAssetLifecycleState(
-    asset,
+    nftAddress,
     LifecycleStates.ASSET_UNLISTED
   )
 
@@ -603,7 +614,8 @@ export async function unlistAsset(nautilus: Nautilus, did: string) {
     return
   }
 
-  console.log(`Unlisted ${did}`)
+  console.log(`Unlisted ${target}`)
+  console.log(`  NFT: ${nftAddress}`)
   console.log(`  tx: ${receipt.hash}`)
 
   await waitForLifecycleState(

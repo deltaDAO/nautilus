@@ -157,9 +157,11 @@ Wait for the update carried by this transaction, not just for the asset to exist
 :::warning
 A lifecycle change made with
 [`setAssetLifecycleState`](/docs/api/nautilus/setAssetLifecycleState) does not update the
-indexed transaction id, so `waitForIndexer(did, receipt.hash)` cannot wait for it. Poll
-[`getAsset`](/docs/api/nautilus/getAsset) and read
-[`getLifecycleState`](/docs/api/ddo/getLifecycleState) instead.
+indexed transaction id, so `waitForIndexer(did, receipt.hash)` cannot wait for it. Read the
+state from the chain with
+[`getAssetLifecycleState`](/docs/api/nautilus/getAssetLifecycleState) instead; to see when
+the node has caught up with a reversible state, poll [`getAsset`](/docs/api/nautilus/getAsset)
+and read [`getLifecycleState`](/docs/api/ddo/getLifecycleState).
 :::
 
 ### options (optional)

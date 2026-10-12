@@ -195,6 +195,10 @@ export const sidebar = {
                 {
                   text: 'setAssetLifecycleState',
                   link: '/docs/api/nautilus/setAssetLifecycleState'
+                },
+                {
+                  text: 'getAssetLifecycleState',
+                  link: '/docs/api/nautilus/getAssetLifecycleState'
                 }
               ]
             },

@@ -365,15 +365,15 @@ export const COMMANDS: Record<string, Command> = {
   },
   'asset:unlist': {
     summary:
-      'Unlist an asset: still resolvable and searchable, flagged for markets to hide',
-    args: ['did'],
-    run: (ctx, did) => unlistAsset(ctx.nautilus, did)
+      'Unlist an asset by DID or NFT address: still resolvable and searchable, flagged for markets to hide',
+    args: ['didOrNftAddress'],
+    run: (ctx, target) => unlistAsset(ctx.nautilus, target)
   },
   'asset:revoke': {
     summary:
-      'Revoke an asset (one-way; ocean-node 4.2.x with Elasticsearch then drops the DDO)',
-    args: ['did'],
-    run: (ctx, did) => revokeAsset(ctx.nautilus, did)
+      'Revoke an asset by DID or NFT address (one-way; ocean-node 4.2.x with Elasticsearch then drops the DDO)',
+    args: ['didOrNftAddress'],
+    run: (ctx, target) => revokeAsset(ctx.nautilus, target)
   },
 
   // ─── download ──────────────────────────────────────────────────────────────

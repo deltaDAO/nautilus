@@ -155,6 +155,9 @@ const received: string[] = []
 
 /** `getMetaData()`'s selector. */
 const GET_METADATA = id('getMetaData()').slice(0, 10)
+/** ERC721 `name()` and `symbol()`: what a revoke names the NFT by. */
+const NAME = id('name()').slice(0, 10)
+const SYMBOL = id('symbol()').slice(0, 10)
 const HEAD = 100
 const NOW = Math.floor(Date.now() / 1000)
 
@@ -204,7 +207,8 @@ function startServer(): Promise<string> {
         // No previous order: access places a fresh one.
         return []
       case 'eth_call': {
-        // ERC721Template.getMetaData(): what examples/edit.ts reads after a state change.
+        // ERC721Template.getMetaData(), and the NFT's name and symbol, which
+        // setAssetLifecycleState() names in a revoke's messages.
         const [call] = params as [{ data?: string; input?: string }]
         const data = call.data ?? call.input ?? ''
         if (data.startsWith(GET_METADATA))
@@ -212,6 +216,9 @@ function startServer(): Promise<string> {
             ['string', 'string', 'uint8', 'bool'],
             ['', chain.owner, chain.state, true]
           )
+        if (data.startsWith(NAME))
+          return coder.encode(['string'], ['Smoke NFT'])
+        if (data.startsWith(SYMBOL)) return coder.encode(['string'], ['SMOKE'])
         unstubbed.push(`eth_call ${data.slice(0, 10)}`)
         throw new Error(`no eth_call stub for ${data.slice(0, 10)}`)
       }
@@ -460,6 +467,14 @@ describe('example commands', () => {
     const out = await run('asset:revoke', ASSET_DID)
 
     expect(out).toContain(`Revoked ${ASSET_DID}`)
+    expect(out).toContain(`NFT: ${NFT_ADDRESS}`)
     expect(out).toContain('state on chain: 3')
+  })
+
+  it('asset:unlist takes the NFT address, without the node', async () => {
+    const out = await run('asset:unlist', NFT_ADDRESS)
+
+    expect(out).toContain(`Unlisted ${NFT_ADDRESS}`)
+    expect(out).toContain('state on chain: 5')
   })
 })

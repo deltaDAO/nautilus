@@ -1,0 +1,56 @@
+# getAssetLifecycleState
+
+Read an asset's lifecycle state from its NFT on chain.
+
+New in 2.0.0-beta.3.
+
+## Usage
+
+```ts twoslash
+import { LifecycleStates, Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+// ---cut---
+// the NFT address you stored from the publish result
+const nftAddress = '0x8d1f7c3B5bCb3D3E44a7F2bD2e1D0a4C5f6E7a8B'
+
+const state = await nautilus.getAssetLifecycleState(nftAddress) // [!code focus]
+
+if (state === LifecycleStates.REVOKED_BY_PUBLISHER) console.log('revoked')
+```
+
+The state comes from the NFT's `getMetaData()`, not from a DDO. A DDO can be stale (the
+state changed after it was fetched) or gone: ocean-node 4.2.x with Elasticsearch stops
+serving a `DEPRECATED` or `REVOKED_BY_PUBLISHER` asset, so
+[`getLifecycleState`](/docs/api/ddo/getLifecycleState) on a fetched asset can't show those
+states. Use this to wait for a state change, too: it is on chain as soon as
+[`setAssetLifecycleState`](/docs/api/nautilus/setAssetLifecycleState) resolves (an RPC
+behind a load balancer may lag a block).
+
+## Returns
+
+- Type: `Promise<number>`
+
+The NFT's metadata state, one of the [`LifecycleStates`](/docs/api/nautilus/setAssetLifecycleState#states)
+values.
+
+## Parameters
+
+### target
+
+- Type: `LifecycleTarget` (`AssetV5 | string`)
+
+The asset, its DID or its NFT address, checked as in
+[`setAssetLifecycleState`](/docs/api/nautilus/setAssetLifecycleState#which-target-to-pass):
+an address must be valid (a mixed-case one with a correct checksum); a DID is resolved, and
+the NFT must be the one it is derived from on the configured chain; an asset's NFT must be
+the one its `id` is derived from. Pass the NFT address once the node no longer serves the
+asset. Nothing is sent, so no factory or role check is made.
+
+## Throws
+
+- an `Error` when the target is not an asset, a DID or an address, the checksum is wrong, the
+  NFT is not the DID's, or the NFT carries no metadata (it is not a published asset);
+- an `Error` asking for the NFT address when the node does not serve the DID and its
+  indexing record names no NFT;
+- an `Error` when the chain read fails ("Could not read the metadata state of NFT …").

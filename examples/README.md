@@ -131,7 +131,7 @@ usage and requirements without connecting to anything. The groups are:
 | `check:` | Diagnostics. `check:node` is the one to run first. |
 | `store:` | `store:check` — the DDO store's preflight, without a transaction. `store:remove <cid\|objectKey> [force]` — unpin or delete one stored envelope: an intermediate version, a revoked asset's, or one a failed write left. Refuses the creation or latest envelope `PUBLISH_LOG` lists unless `force`. |
 | `publish:` | Datasets, algorithms, SaaS offers, multi-service assets, local validation, and `publish:resume` for a publish that stopped after the mint. |
-| `asset:` | Inspecting, unlisting and revoking a published asset, and `asset:indexing-state` — why the node did or did not index it. |
+| `asset:` | Inspecting, unlisting and revoking a published asset, and `asset:indexing-state` — why the node did or did not index it. `asset:unlist` and `asset:revoke` take a DID or the NFT address (in `PUBLISH_LOG`); after a revoke, ocean-node 4.2.x no longer serves the DID, so use the NFT address then. |
 | `edit:` | Metadata, descriptions, a service's name/description/timeout, files, endpoint and allowlist, prices, trusted algorithms. |
 | `access:` | Price checks, ordering, downloading, service selection, consumer parameters. |
 | `compute:` | Environments, free and paid jobs, status, logs, results, multi-dataset jobs. |

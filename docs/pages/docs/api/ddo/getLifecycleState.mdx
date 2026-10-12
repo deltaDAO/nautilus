@@ -34,7 +34,10 @@ Compare against `LifecycleStates`:
 | `5` | `ASSET_UNLISTED` |
 
 Change it with
-[`setAssetLifecycleState`](/docs/api/nautilus/setAssetLifecycleState).
+[`setAssetLifecycleState`](/docs/api/nautilus/setAssetLifecycleState). This is the state the
+node indexed, which can be stale, and a node that dropped a `DEPRECATED` or
+`REVOKED_BY_PUBLISHER` asset has no DDO to read it from: for the state on chain, use
+[`getAssetLifecycleState`](/docs/api/nautilus/getAssetLifecycleState).
 
 ## Parameters
 
