@@ -157,27 +157,53 @@ paid and no consent is asked, even when the node quotes one. With the first thre
 order is extended with `reuseOrder` and the fee the node quotes now. Otherwise a new order
 is placed. Either way `reusedOrder` and `transferTxId` say which.
 
-An order is reused only with at least 10 minutes of its timeout left, as it stands or
-extended: the node checks it again at download, and a reuse does not restart the timeout,
-so an order about to expire is ordered anew rather than extended for a download that would
-fail. A service whose timeout is 10 minutes or less is ordered anew every time. Orders mined
-in the last two blocks are not reused either, since a reorg could still drop them.
+An order is reused only with at least 10 minutes of its timeout left (half the timeout,
+when that is less), as it stands or extended: the node checks it again at download, and a
+reuse does not restart the timeout, so an order about to expire is ordered anew rather than
+extended for a download that would fail. Orders mined in the last two blocks have no
+confirmations yet and are not reused, since a reorg could still drop them; they are not
+ignored either: when one of yours is there and no older order can be used as it stands,
+the lookup is **incomplete** (see below), so a retry right after a purchase does not buy
+again. On a live chain that lasts a few seconds; a local chain that mines only on demand
+needs two more transactions.
 
-The events are read newest first, 2 000 blocks per `eth_getLogs` call (halved while the RPC
-refuses the range; a rate limit is not taken for a refusal), back to the first block inside
-the service's timeout and at most 100 000 blocks or 100 rounds of reads, checking at most 50
-candidates. "Not found" means the whole window was read. When a bound ends the read first
-(a timeout longer than 100 000 blocks, a timeout of `0`, an RPC that serves only small
-ranges), with no order found, the lookup is **incomplete**: an older order may still be in
-force.
+The events are read newest first, 10 000 blocks per `eth_getLogs` call: the newest chunk
+alone, then up to four chunks at a time, each checked only after every newer one. A range
+the RPC refuses is read again in halves, and the size grows back after reads the RPC
+accepts; the accepted size is remembered for the next lookup on the same provider instance
+and chain. A rate limit is not taken for a refusal: the read waits (`Retry-After`, else 1,
+2 and 4 seconds) and is made again, then the rate limit is reported. When the RPC refuses
+only the read of `OrderReused` events (which anyone can flood, for gas), that range is read
+with your `OrderStarted` events alone. The read goes back to the first block inside the
+service's timeout and at most 1 000 000 blocks (about 23 days of 2-second blocks) or 100
+reads, checking at most 50 candidates. For a service whose orders never expire, it goes
+back to the block the datatoken was created in, when that block is within the 1 000 000
+and the RPC can prove it (the datatoken's code first appears there, and the chain's NFT
+factory logged the datatoken's creation in it); otherwise to the 1 000 000.
+
+"Not found" means the whole window was read. When a bound ends the read first (a timeout
+longer than 1 000 000 blocks, a never-expiring service whose datatoken is older than that or
+whose creation the RPC cannot prove, an RPC that serves only small ranges), with no order
+found, the lookup is **incomplete**: an older order may still be in force. An RPC whose
+newest block is older than the whole order window (it lags, or the computer's clock is off
+by that much) cannot show an order in force either: that is a failed lookup, not "not
+found".
 
 When the lookup is incomplete, or the RPC fails (a rate limit, no answer, an error), "not
 found" cannot be told apart from "not checked". On a service that costs anything nautilus
 then does not buy: it throws an [`OrderCheckError`](/docs/api/nautilus/access#ordercheckerror)
 before paying, with nothing ordered, and the call can be retried. A free service is ordered
 with a warning, and `orderOnLookupFailure: true` orders a paid one anyway, also with a
-warning. For a paid service whose orders never expire (`timeout: 0`) on a chain longer than
-100 000 blocks, a first purchase therefore needs `orderOnLookupFailure: true`.
+warning. For a paid service whose orders never expire (`timeout: 0`) whose datatoken is
+older than 1 000 000 blocks, or whose creation the RPC cannot prove (an RPC without old
+state), a first purchase therefore needs `orderOnLookupFailure: true`.
+
+Concurrent orders from one account are safe: an approval sets an allowance rather than
+adding to it, so nautilus holds each (token, spender) allowance from the approval until
+the order using it is confirmed, and the next order of the same account approves after
+that. Three `access()` calls at once for one paid asset buy three times, one after the
+other, instead of two of them reverting. Other processes and tools using the same key are
+not covered.
 
 :::warning
 [`compute`](/docs/api/nautilus/compute) does not send a `transferTxId` with its inputs, so

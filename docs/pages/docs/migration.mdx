@@ -321,9 +321,13 @@ back over the whole order window) and the service costs anything, nothing is bou
 buying without the check could pay twice. Nothing was ordered or paid; the
 same call can be made again. "No previous order found" still orders, as before.
 
-A paid service whose orders never expire (`timeout: 0`), or whose timeout is longer than
-100 000 blocks, now needs `orderOnLookupFailure: true` for a purchase when no order is
-found in the last 100 000 blocks: an older one may still be in force.
+A paid service whose orders never expire (`timeout: 0`) and whose datatoken's creation
+cannot be proven within the last 1 000 000 blocks, or whose timeout is longer than
+1 000 000 blocks, now needs `orderOnLookupFailure: true` for a purchase when no order is
+found in the last 1 000 000 blocks: an older one may still be in force. A retry right after
+a purchase, while the order has no confirmations yet, throws `OrderCheckError` (`reason:
+'incomplete'`, `limit: 'unconfirmed'`) instead of buying again; it reuses the order once the
+chain has mined two more blocks.
 
 ```ts
 // beta.1: a failed lookup ordered anew, silently

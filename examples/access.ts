@@ -48,9 +48,13 @@ function explainOrderCheck(error: unknown): never {
     console.error(
       `Not bought (reason: ${error.reason}); a new order would cost ${costs || 'an amount that could not be read'}.`
     )
-    if (error.reason === 'incomplete')
+    if (error.limit === 'unconfirmed')
       console.error(
-        `  checked the last ${hours(error.checkedHours)} of ${hours(error.windowHours)} hours`
+        '  An order of this account has no confirmations yet: retry once the chain has mined two more blocks.'
+      )
+    else if (error.reason === 'incomplete')
+      console.error(
+        `  checked the last ${hours(error.checkedHours)} of ${hours(error.windowHours)} hours (stopped by: ${error.limit})`
       )
     if (error.costs.length)
       console.error(

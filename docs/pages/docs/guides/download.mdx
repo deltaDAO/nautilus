@@ -74,10 +74,12 @@ access() stopped before paying for service "Download (JSON)" of asset "Weather" 
 `error.retryable` is `true` and `error.reason` says why (`'rate-limited'`, `'unreachable'`,
 `'incomplete'` or `'rpc-error'`). Retry after a pause or with another RPC; to accept the
 risk of a second payment, pass `orderOnLookupFailure: true`. An `incomplete` lookup stopped
-by the lookup's depth (a service whose orders never expire, or whose timeout is longer than
-about 100 000 blocks) ends the same way on every retry, and the message says so: if you
+by the lookup's depth (a service whose orders never expire and whose datatoken's creation
+cannot be proven within 1 000 000 blocks, or whose timeout is longer than that) ends the same way on every retry, and the message says so: if you
 have not bought the service in that window, buying with `orderOnLookupFailure: true` is
-safe. A free service is ordered anyway,
+safe. One stopped by an order of yours in the last two blocks (`error.limit` is
+`'unconfirmed'`, typically a retry right after a purchase) reuses that order once the
+chain has mined two more blocks. A free service is ordered anyway,
 with one warning, since a second order costs only gas. To see the RPC's unredacted answer,
 run with `NAUTILUS_DEBUG=sensitive` (topic `order`; see [debugging](/docs/guides/debugging)).
 
