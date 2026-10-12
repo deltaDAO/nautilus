@@ -325,9 +325,15 @@ A paid service whose orders never expire (`timeout: 0`) and whose datatoken's cr
 cannot be proven within the last 1 000 000 blocks, or whose timeout is longer than
 1 000 000 blocks, now needs `orderOnLookupFailure: true` for a purchase when no order is
 found in the last 1 000 000 blocks: an older one may still be in force. A retry right after
-a purchase, while the order has no confirmations yet, throws `OrderCheckError` (`reason:
-'incomplete'`, `limit: 'unconfirmed'`) instead of buying again; it reuses the order once the
-chain has mined two more blocks.
+a purchase, while the order has no confirmations yet (or the RPC does not show it yet),
+throws `OrderCheckError` (`reason: 'incomplete'`, `limit: 'unconfirmed'`) instead of buying
+again, even with `orderOnLookupFailure: true`; it reuses the order once the chain has mined
+two more blocks. Concurrent `access()` or `settleOrder()` calls for one service from one
+account pay once: the later ones wait for the first and use its order (`reusedOrder:
+true`), or get its error. A call that waits more than five minutes for another purchase of
+the same service, or for an allowance another order holds, throws an `OrderInProgressError`
+without paying. A pricing read the RPC rate-limits or does not answer throws an `Error`
+named `PricingReadError`, whose message and `cause` hold no RPC URL.
 
 ```ts
 // beta.1: a failed lookup ordered anew, silently
@@ -342,7 +348,8 @@ try {
   // prevents. Show the message (cost, cause, what to do) and let the user decide; retrying
   // later or with another RPC is the safe first step.
   const costs = error.costs.map((c) => `${c.amount} ${c.symbol}`).join(' + ')
-  if (costs && (await askUser(`${error.message}\n\nBuy anyway, maybe paying ${costs} twice?`)))
+  // `unconfirmed`: the account already holds the order; a retry soon reuses it.
+  if (costs && error.limit !== 'unconfirmed' && (await askUser(`${error.message}\n\nBuy anyway, maybe paying ${costs} twice?`)))
     await nautilus.access({ assetDid, orderOnLookupFailure: true })
 }
 ```

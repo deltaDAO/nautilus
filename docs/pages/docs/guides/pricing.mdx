@@ -47,6 +47,15 @@ exchange nor a dispenser, in which case it simply cannot be ordered. `getFixedRa
 `getDispensers()` are the authoritative source.
 :::
 
+`getFixedRates()` keeps every exchange ever created, so a deactivated one is skipped, and so
+is one the exchange contract does not know (its read reverts). A read the RPC rate-limits or
+does not answer, or answers with an HTTP error (ethers' `TIMEOUT`, `NETWORK_ERROR`,
+`SERVER_ERROR`), is not skipped: skipping it could make a paid datatoken look free.
+`getPricingInfo()` then throws an `Error` named `PricingReadError` ("Could not read the
+pricing: …"), whose `cause` is the RPC's error, redacted (no URL); the raw error goes to the
+debug channel's `rpc` topic. An RPC that answers a reverted call with an HTTP 5xx instead of
+a JSON-RPC error makes such a datatoken unreadable, not free: use another RPC.
+
 ## `OrderPrice`
 
 Every field is a decimal string.
@@ -168,15 +177,28 @@ again. On a live chain that lasts a few seconds; a local chain that mines only o
 needs two more transactions.
 
 The events are read newest first, 10 000 blocks per `eth_getLogs` call: the newest chunk
-alone, then up to four chunks at a time, each checked only after every newer one. A range
-the RPC refuses is read again in halves, and the size grows back after reads the RPC
-accepts; the accepted size is remembered for the next lookup on the same provider instance
-and chain. A rate limit is not taken for a refusal: the read waits (`Retry-After`, else 1,
-2 and 4 seconds) and is made again, then the rate limit is reported. When the RPC refuses
-only the read of `OrderReused` events (which anyone can flood, for gas), that range is read
-with your `OrderStarted` events alone. The read goes back to the first block inside the
-service's timeout and at most 1 000 000 blocks (about 23 days of 2-second blocks) or 100
-reads, checking at most 50 candidates. For a service whose orders never expire, it goes
+alone, then up to four chunks at a time, each checked only after every newer one. An order
+in the newest chunk is used without waiting for anything else. When the RPC refuses a range
+as too wide, the size is halved (or set back to the widest range it accepted), and every
+range not read yet is read at that size; the size grows back after reads the RPC accepts,
+but never again to a width it refused for its range in this lookup. That width, and the
+accepted size, are remembered for the next lookups on the same provider instance and chain
+(the width for an hour). An RPC that serves 1 000 or 2 000 blocks per call covers a 48-hour
+window. A rate limit is not taken for a refusal: the read waits (`Retry-After`, else 1, 2
+and 4 seconds) and is made again, within 20 seconds of waiting for the whole lookup, then
+the rate limit is reported; this holds for every read of the lookup (blocks, logs,
+receipts, code). Once the lookup has returned, its reads still running make no further call
+and wait no longer. When the RPC refuses only the read of `OrderReused` events (which anyone
+can flood, for gas), those events are read again alone in smaller ranges; only a single
+block whose reuses the RPC refuses even alone is read with your `OrderStarted` events alone
+(the debug channel's `order` topic says so). A refusal that names a timeout ("query timeout
+exceeded") may be transient: the whole range is read in smaller parts instead. The read goes
+back to the first block inside the service's timeout and at most 1 000 000 blocks (about 23
+days of 2-second blocks), 150 reads (each one or two `eth_getLogs` calls) or 20 refused
+ranges, checking at most 50 candidates. A service whose orders never expire, on a chain
+longer than 1 000 000 blocks and without proof of its datatoken's creation, makes about
+200 `eth_getLogs` calls before the lookup ends as incomplete, since an order may be found on
+the way. For a service whose orders never expire, it goes
 back to the block the datatoken was created in, when that block is within the 1 000 000
 and the RPC can prove it (the datatoken's code first appears there, and the chain's NFT
 factory logged the datatoken's creation in it); otherwise to the 1 000 000.
@@ -194,16 +216,27 @@ found" cannot be told apart from "not checked". On a service that costs anything
 then does not buy: it throws an [`OrderCheckError`](/docs/api/nautilus/access#ordercheckerror)
 before paying, with nothing ordered, and the call can be retried. A free service is ordered
 with a warning, and `orderOnLookupFailure: true` orders a paid one anyway, also with a
-warning. For a paid service whose orders never expire (`timeout: 0`) whose datatoken is
+warning, except for an order of yours too new to use (`limit: 'unconfirmed'`), which no
+option buys again. For a paid service whose orders never expire (`timeout: 0`) whose datatoken is
 older than 1 000 000 blocks, or whose creation the RPC cannot prove (an RPC without old
 state), a first purchase therefore needs `orderOnLookupFailure: true`.
 
-Concurrent orders from one account are safe: an approval sets an allowance rather than
-adding to it, so nautilus holds each (token, spender) allowance from the approval until
-the order using it is confirmed, and the next order of the same account approves after
-that. Three `access()` calls at once for one paid asset buy three times, one after the
-other, instead of two of them reverting. Other processes and tools using the same key are
-not covered.
+Concurrent purchases from one account pay once. `access()` and `settleOrder()` run one
+purchase per service (chain, datatoken, consumer, service index) at a time in the process:
+a call made while another one for the same service runs waits for it and uses its order
+(`reusedOrder: true`), or gets its error, and sends nothing. Three `access()` calls at once
+for one paid asset buy it once and download three times. A call made after the first one
+finished looks the order up again; this process remembers the orders it confirmed, so while
+the RPC does not show the new order with its confirmations yet (its backend a block or more
+behind), the call stops with `OrderCheckError` (`limit: 'unconfirmed'`) instead of buying
+again, and a retry a few seconds later reuses the order. A new process does not know the
+orders of an earlier one: retried within seconds through a lagging RPC, it can still buy
+again. Different services of one datatoken are bought side by side: an approval sets an
+allowance rather than adding to it, so nautilus holds each (token, spender) allowance from
+the approval until the order using it is confirmed. A call that waits more than five
+minutes for another purchase or allowance (a transaction pending, or dropped) throws an
+`OrderInProgressError` without sending anything. Other processes and tools using the same
+key are not covered.
 
 :::warning
 [`compute`](/docs/api/nautilus/compute) does not send a `transferTxId` with its inputs, so

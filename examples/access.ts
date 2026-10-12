@@ -56,7 +56,9 @@ function explainOrderCheck(error: unknown): never {
       console.error(
         `  checked the last ${hours(error.checkedHours)} of ${hours(error.windowHours)} hours (stopped by: ${error.limit})`
       )
-    if (error.costs.length)
+    // An order too new to use is held, not unknown: `orderOnLookupFailure` does not buy
+    // it again, so the option is not offered.
+    if (error.costs.length && error.limit !== 'unconfirmed')
       console.error(
         '  To buy anyway (it may pay twice), add --order-on-lookup-failure.'
       )

@@ -77,9 +77,12 @@ risk of a second payment, pass `orderOnLookupFailure: true`. An `incomplete` loo
 by the lookup's depth (a service whose orders never expire and whose datatoken's creation
 cannot be proven within 1 000 000 blocks, or whose timeout is longer than that) ends the same way on every retry, and the message says so: if you
 have not bought the service in that window, buying with `orderOnLookupFailure: true` is
-safe. One stopped by an order of yours in the last two blocks (`error.limit` is
-`'unconfirmed'`, typically a retry right after a purchase) reuses that order once the
-chain has mined two more blocks. A free service is ordered anyway,
+safe. One stopped by an order of yours in the last two blocks, or one this process just
+confirmed that the RPC does not show yet (`error.limit` is `'unconfirmed'`, typically a
+retry right after a purchase), says you already have an order that is too new to use: no
+option buys again then, and a retry once the chain has mined two more blocks reuses that
+order. Concurrent `access()` calls for one service from one account pay once: the later
+ones wait for the first and download with its order. A free service is ordered anyway,
 with one warning, since a second order costs only gas. To see the RPC's unredacted answer,
 run with `NAUTILUS_DEBUG=sensitive` (topic `order`; see [debugging](/docs/guides/debugging)).
 

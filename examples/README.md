@@ -617,9 +617,13 @@ answer, an error), or the lookup cannot read back over the whole order window,
 `access:order` and `access:download` stop **before paying** for a paid service, with an
 `OrderCheckError`: buying without that check could pay twice. Nothing is spent; run the
 command again in a minute or with another `RPC_URL`. The message says when a retry would
-end the same way (a service whose orders never expire, past the lookup's 100 000 blocks).
-To buy anyway, add `--order-on-lookup-failure` (`orderOnLookupFailure: true`); any other
-`--` option fails the command. `NAUTILUS_DEBUG=sensitive`
+end the same way (a service whose orders never expire, past the lookup's 1,000,000 blocks,
+when the RPC cannot prove when the datatoken was created). To buy anyway, add
+`--order-on-lookup-failure` (`orderOnLookupFailure: true`); any other `--` option fails
+the command. Right after a purchase, the account's new order may not have confirmations yet
+(`limit: 'unconfirmed'`): the command stops then too, and no option buys it again; run it
+once the chain has mined two more blocks (on the local dev chain, which mines only on
+demand, any two transactions) and it reuses that order. `NAUTILUS_DEBUG=sensitive`
 shows the RPC's unredacted answer (topic `order`). A free service is ordered anyway, with
 a warning.
 

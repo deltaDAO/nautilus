@@ -64,7 +64,12 @@ What happens in order:
    short** (it cannot read back over the whole order window) is not "no order found": on a
    service that costs anything, `access()` stops before paying and throws an
    [`OrderCheckError`](#ordercheckerror), since buying without the check could pay twice. A free service is ordered anyway, with a warning
-   ([`orderOnLookupFailure`](#orderonlookupfailure-optional) does the same for a paid one).
+   ([`orderOnLookupFailure`](#orderonlookupfailure-optional) does the same for a paid one,
+   except when your order is only too new to use: `limit: 'unconfirmed'`). One purchase of
+   a service by an account runs at a time in the process: concurrent `access()` calls for
+   it wait for the first and download with its order, paying once
+   ([details](/docs/guides/pricing#downloads-the-order-on-chain)); one that waits more than
+   five minutes throws an `OrderInProgressError` without paying.
 5. Only then is your consent asked, and only for the fee that will be paid: none when an
    order is used as it stands, whatever the node quoted; the fee the node quotes now when
    an order is extended or a new one placed. A non-zero fee must be allowed by
@@ -201,7 +206,9 @@ anything (a price, a publish-market fee or a provider fee). By default `access()
 [`OrderCheckError`](#ordercheckerror) before paying: if your account already holds a valid
 order, a new one would pay twice. `true` places a new order anyway, and still warns
 (`access.order.lookup_failed`). Only `true` opts in: `'true'`, `1` or any other value does
-not.
+not. It does not apply when the lookup found your order but it is too new to use
+(`limit: 'unconfirmed'`, typically right after a purchase): that order is held, so buying
+again would pay twice for certain; retry a few seconds later instead.
 
 ```text
 Could not check whether 0x4C84…4A52 already holds an order for service "Download (JSON)" of asset "Weather" (did:ope:59a18b63…): the RPC did not answer. A new order will be placed, as `orderOnLookupFailure` allows: if the account already holds one, this will pay twice (1.002 devEURAU).
@@ -245,7 +252,15 @@ read either (usually the same failing RPC), nothing can be bought, and `access()
   `'no-limit'`, `'over-limit'` or `'declined'`.
 
 - [`OrderCheckError`](#ordercheckerror): the service costs anything and the previous order
-  could not be checked on chain (the lookup failed or stopped short).
+  could not be checked on chain (the lookup failed or stopped short), or your order is too
+  new to use.
+- `OrderInProgressError` (`code: 'ORDER_IN_PROGRESS'`, `retryable: true`): another purchase
+  of the same service by the same account in this process, or another order holding the
+  same allowance, has not finished after five minutes (its transaction may be pending, or
+  dropped). Nothing was ordered or paid by this call; retry once that one has finished.
+- An `Error` named `PricingReadError`: the pricing could not be read because the RPC
+  rate-limited the exchange read or did not answer it
+  ([details](/docs/guides/pricing#pricinginfo)). Its `cause` is redacted.
 
 All of these are thrown before any approval, purchase or order; `ConsumerParameterError` and
 the service errors before any node call other than resolving the asset.
@@ -254,8 +269,9 @@ the service errors before any node call other than resolving the asset.
 
 `access()` stopped before paying, because it could not check whether your account already
 holds a valid order for the service, and buying without that check could make you pay
-twice. **Nothing was ordered or paid, and it is safe to retry.** The message says so, with
-the price and the cause in plain words:
+twice; or because it found your order but it is too new to use (`limit: 'unconfirmed'`).
+**Nothing was ordered or paid, and it is safe to retry.** The message says so, with the
+price and the cause in plain words:
 
 ```text
 access() stopped before paying for service "Download (JSON)" of asset "Weather" (did:ope:59a18b63…): it could not check whether 0x4C84…4A52 already holds a valid order, and buying without that check could make you pay twice (1.002 devEURAU). Nothing was ordered or paid; it is safe to retry. Cause: the RPC rate-limited the check (HTTP 429). Retry in a minute or use another RPC. To buy anyway, pass `orderOnLookupFailure: true`.
@@ -273,19 +289,19 @@ Fields, so a program need not parse the text:
 | `price` | `{ amount: string; symbol: string } \| undefined` | The main cost of a new order, in whole tokens: the datatoken's price (exchange fees included), or for a free datatoken the first fee due. `symbol` is `tokens of 0x…` when the token's symbol cannot be read. `undefined` when the pricing could not be read either. |
 | `costs` | `{ amount: string; symbol: string }[]` | Every part a new order would pay, each in its own token: the price, the publish-market fee and the provider fee, those that are not zero. The message names them all (`1.002 devEURAU + 0.1 OCEAN`). Empty when the pricing could not be read. |
 | `checkedHours`, `windowHours` | `number` | For `incomplete` only: how far back the check read (`NaN` when unknown), and the order window, the service's `timeout` (`Infinity` when its orders never expire). |
-| `limit` | `'reads' \| 'depth' \| 'candidates' \| 'unconfirmed'` | For `incomplete` only: what stopped the lookup (below). `reads` and `unconfirmed` can end differently on a retry; `depth` and `candidates` end the same way. |
+| `limit` | `IncompleteLookupLimit`: `'reads' \| 'depth' \| 'candidates' \| 'unconfirmed'` | For `incomplete` only: what stopped the lookup (below). `reads` and `unconfirmed` can end differently on a retry; `depth` and `candidates` end the same way. |
 | `cause` | `Error` | The RPC's error, redacted: first line only, no URL, long hex shortened, at most 200 characters. |
 
 | `reason` | The cause in the message |
 | --- | --- |
-| `rate-limited` | the RPC rate-limited the check (HTTP 429): an HTTP 429, a `Retry-After` header on an answer that is not a server error, JSON-RPC code `-32005` that does not refuse the block range, QuickNode's `-32007`, or "rate limit", "too many requests", "request limit reached" or "capacity exceeded" in the answer (also thrown as a bare string). The lookup itself waits out a rate limit three times before it reports one |
+| `rate-limited` | the RPC rate-limited the check (HTTP 429): an HTTP 429, a `Retry-After` header on an answer that is not a server error, JSON-RPC code `-32005` that does not refuse the block range, QuickNode's `-32007`, or "rate limit", "too many requests", "request limit reached" or "capacity exceeded" in the answer (also thrown as a bare string). The lookup itself waits out a rate limit, three times per read and 20 seconds in all, before it reports one |
 | `unreachable` | the RPC did not answer: a network error or a timeout (not an RPC that answered with an error that mentions a timeout) |
-| `incomplete` | the check covered only the last 16 of the 24 hours an order stays valid: the lookup stopped before it covered the order window (below); or this account has an order in the newest blocks that has no confirmations yet |
-| `rpc-error` | the RPC returned an error: … (the RPC's own words, redacted); or the RPC's answer lacked data the check needs (…): no newest block, no receipt for an order transaction its own logs list, or a receipt without that order's event, as a load-balanced RPC whose backends lag each other can answer; or the RPC's newest block is N hours old, older than the order window, so the RPC lags or this computer's clock is off |
+| `incomplete` | the check covered only the last 16 of the 24 hours an order stays valid: the lookup stopped before it covered the order window (below); or, with `limit: 'unconfirmed'`, the order is in the newest blocks, or not yet shown by the RPC, and has no confirmations there yet |
+| `rpc-error` | the RPC returned an error: … (the RPC's own words, redacted); or the RPC's answer lacked data the check needs (…): no newest block, no receipt for an order transaction its own logs list, or a receipt without that order's event, as a load-balanced RPC whose backends lag each other can answer; or the RPC's newest block is 45 minutes old (seconds, minutes or hours), older than the order window: the RPC lags, this computer's clock is off, or the chain has not mined a block since (a local chain that mines only on demand) |
 
 The lookup reads at most 1 000 000 blocks back (for orders that never expire, back to the
-datatoken's creation when the RPC can prove it), in at most 100 reads, and checks at most
-50 candidate orders. When one of those bounds ends it before the service's `timeout` with
+datatoken's creation when the RPC can prove it), in at most 150 reads with at most 20
+ranges refused, and checks at most 50 candidate orders. When one of those bounds ends it before the service's `timeout` with
 no order found, the result is `incomplete` (`limit` says which), not "not found":
 
 - **Out of reads** (`reads`: the RPC refuses large block ranges, so each read covers only a
@@ -298,8 +314,13 @@ no order found, the result is `incomplete` (`limit` says which), not "not found"
   the cause reads "the check covered only the last 555 hours, and orders of this service
   never expire".
 - **Unconfirmed** (`unconfirmed`): an order of the account in the last two blocks, too new
-  to reuse, and none older usable as it stands. The next step is "Retry in a few seconds,
-  once the chain has mined two more blocks." A retry then reuses it.
+  to reuse, and none older usable as it stands; or an order this process confirmed that
+  the RPC does not show yet (its backend a block or more behind). The account holds that
+  order, so the message leads with "… already has an order for it that is too new to use,
+  and buying again would make you pay twice", offers no opt-in, and
+  `orderOnLookupFailure: true` does not buy it again. The next step is "Retry in a few
+  seconds, once the chain has mined two more blocks (a local chain that mines only on
+  demand needs two more transactions); the retry then reuses that order."
 
 When the price cannot be read either, the message says "the price could not be read
 either" instead of the price, and offers no opt-in: nothing can be bought until the RPC
@@ -309,7 +330,7 @@ Don't catch the error and buy anyway on your own: that brings the second payment
 the message, which names the cost, the cause and what to do, and let the user decide.
 Retrying later, or with another RPC, is the safe first step. Offer `orderOnLookupFailure:
 true` only when the user knows the account holds no order in force, for example when an
-`incomplete` lookup reports that a retry ends the same way.
+`incomplete` lookup reports that a retry ends the same way, and never for `unconfirmed`.
 
 ```ts twoslash
 import { Nautilus, OrderCheckError } from '@deltadao/nautilus'
@@ -329,8 +350,10 @@ try {
   const costs = error.costs
     .map((cost) => `${cost.amount} ${cost.symbol}`)
     .join(' + ')
+  // `unconfirmed`: the account holds the order, which a retry soon reuses.
   const buyAnyway =
     costs !== '' &&
+    error.limit !== 'unconfirmed' &&
     (await askUser(
       `${error.message}\n\nBuy anyway? If this account already holds an order, this pays ${costs} a second time.`
     ))
