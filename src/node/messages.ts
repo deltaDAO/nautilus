@@ -25,9 +25,10 @@ const URL_PATTERN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>\\]*/gi
 
 /**
  * A JSON escape for `/` or a `\uXXXX` character, after any number of backslashes: JSON
- * nested in JSON strings doubles them at each level (`\/`, `\\/`, `\\\u0049`).
+ * nested in JSON strings doubles them at each level (`\/`, `\\/`, `\\\u0049`). Read
+ * from the start of a backslash run only, so a long run is scanned in linear time.
  */
-const JSON_ESCAPE = /\\+(?:\/|u([0-9a-fA-F]{4}))/g
+const JSON_ESCAPE = /(?<!\\)\\+(?:\/|u([0-9a-fA-F]{4}))/g
 /**
  * What a `\uXXXX` escape may be decoded to: characters that are part of a key or a URL and
  * that end no value in any form. A quote, a backslash or a delimiter stays escaped, so it
@@ -41,14 +42,15 @@ type KeyValueForm = 'escaped' | 'json' | 'assignment' | 'bare'
 /**
  * A key and its separator, in each form: `\"key\": value` in JSON inside a JSON string
  * (ethers quotes a response body so; `\\\"key\\\": value` a level deeper, and so on, the
- * run of backslashes in group 1), `"key": value` in JSON, `key=value` in a query, a form
- * body or prose (ethers' `code=…, info={ … }`), and `key: value` or `'key': value` (headers,
- * prose, `util.inspect`). A quoted key is any quoted text; an unquoted one a word of
- * letters, digits, `-` and `_`, read from its last 64 characters when it is longer. Which
- * keys are secret is `redactsValue`'s call (`log/keys.ts`), as for log fields.
+ * run of backslashes in group 1, read whole so a long run is scanned in linear time),
+ * `"key": value` in JSON, `key=value` in a query, a form body or prose (ethers'
+ * `code=…, info={ … }`), and `key: value` or `'key': value` (headers, prose,
+ * `util.inspect`). A quoted key is any quoted text; an unquoted one a word of letters,
+ * digits, `-` and `_`, read from its last 64 characters when it is longer. Which keys are
+ * secret is `redactsValue`'s call (`log/keys.ts`), as for log fields.
  */
 const KEY_VALUE_FORMS: [KeyValueForm, RegExp][] = [
-  ['escaped', /(\\+)"([^"\\]{1,256})\1"\s*:\s*/g],
+  ['escaped', /(?<!\\)(\\+)"([^"\\]{1,256})\1"\s*:\s*/g],
   ['json', /"([^"\\]{1,256})"\s*:\s*/g],
   ['assignment', /([A-Za-z][\w-]{0,63})[ \t]*=[ \t]*/g],
   ['bare', /([A-Za-z][\w-]{0,63})'?[ \t]*:[ \t]*/g]
