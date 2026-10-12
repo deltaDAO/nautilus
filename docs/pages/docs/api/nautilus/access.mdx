@@ -280,7 +280,7 @@ Fields, so a program need not parse the text:
 | `rate-limited` | the RPC rate-limited the check (HTTP 429): an HTTP 429, a `Retry-After` header on an answer that is not a server error, JSON-RPC code `-32005` that does not refuse the block range, or "rate limit" / "too many requests" in the answer |
 | `unreachable` | the RPC did not answer: a network error or a timeout (not an RPC that answered with an error that mentions a timeout) |
 | `incomplete` | the check covered only the last 16 of the 24 hours an order stays valid: the lookup stopped before it covered the order window (below) |
-| `rpc-error` | the RPC returned an error: … (the RPC's own words, redacted); or the RPC's answer lacked data the check needs (…): no newest block, no receipt for an order transaction its own logs list, or a receipt without that order's event, as a load-balanced RPC whose backends lag each other can answer |
+| `rpc-error` | the RPC returned an error: … (the RPC's own words, redacted); or the RPC's answer lacked data the check needs (…): no newest block, no receipt for an order transaction its own logs list, or a receipt without one of the order events those logs list, as a load-balanced RPC whose backends lag each other can answer |
 
 The lookup reads at most 100 000 blocks back, in at most 100 rounds of reads, and checks
 at most 50 candidate orders. When one of those bounds ends it before the service's

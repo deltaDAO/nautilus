@@ -24,11 +24,11 @@ whole order window.
   now fails the lookup (`reason: 'rate-limited'`).
 - **An RPC answer without the data its own answers promise is a failed lookup, not "no
   order".** No newest block, no receipt for an order transaction the RPC's logs list (or
-  for the order a reuse of the account names), or a receipt without that order's event,
-  as a load-balanced RPC whose backends lag each other answers for a recent order, gave
-  "not found" and a second order. It now fails the lookup (`reason: 'rpc-error'`, "the
-  RPC's answer lacked data the check needs"). Orders of another service, past the timeout
-  or of another account are still skipped.
+  for the order a reuse of the account names), or a receipt without one of the order events
+  those logs list, as a load-balanced RPC whose backends lag each other answers for a
+  recent order, gave "not found" and a second order. It now fails the lookup (`reason:
+  'rpc-error'`, "the RPC's answer lacked data the check needs"). Orders of another
+  service, past the timeout or of another account are still skipped.
 - **A paid service whose orders never expire (`timeout: 0`), or whose timeout is longer
   than 100 000 blocks (about 55 hours on OP Sepolia), throws `OrderCheckError`
   (`'incomplete'`) when no order is found in the blocks read**, since an older order may
