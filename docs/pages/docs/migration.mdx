@@ -51,6 +51,46 @@ Nautilus.configureLogging({ oceanjs: 'passthrough' })
 
 See [`configureLogging`](/docs/api/nautilus/configureLogging#oceanjs).
 
+### Access: no silent second payment
+
+**`access()` throws an `OrderCheckError` instead of ordering anew when it cannot check for
+an order you already hold.** When the on-chain lookup of a previous order fails (the RPC
+rate-limits it, does not answer, answers with an error, or answers without the data the
+check needs) or stops short (it cannot read
+back over the whole order window) and the service costs anything, nothing is bought:
+buying without the check could pay twice. Nothing was ordered or paid; the
+same call can be made again. "No previous order found" still orders, as before.
+
+A paid service whose orders never expire (`timeout: 0`), or whose timeout is longer than
+100,000 blocks, now needs `orderOnLookupFailure: true` for a purchase when no order is
+found in the last 100,000 blocks: an older one may still be in force. The same refusal
+comes from an RPC that serves fewer than 100 blocks per `eth_getLogs` call, or answers too
+slowly, when the reads end before they cover the service's timeout: beta.2 reported "not
+found" there and bought again. Use another RPC, and keep paid timeouts at 24 hours or less
+on an RPC that serves 100 blocks per call (see
+[Known limitations](/docs/known-limitations)).
+
+```ts
+// beta.2: a failed lookup ordered anew, silently
+const { url } = await nautilus.access({ assetDid })
+
+// now
+try {
+  const { url } = await nautilus.access({ assetDid })
+} catch (error) {
+  if (!(error instanceof OrderCheckError)) throw error
+  // Nothing was paid. Don't buy anyway on your own: that is the second payment this
+  // prevents. Show the message (cost, cause, what to do) and let the user decide; retrying
+  // later or with another RPC is the safe first step.
+  const costs = error.costs.map((c) => `${c.amount} ${c.symbol}`).join(' + ')
+  if (costs && (await askUser(`${error.message}\n\nBuy anyway, maybe paying ${costs} twice?`)))
+    await nautilus.access({ assetDid, orderOnLookupFailure: true })
+}
+```
+
+A free service is still ordered, now with a warning. Only `true` opts in. `compute()` makes
+no such lookup and is unchanged. See [`OrderCheckError`](/docs/api/nautilus/access#ordercheckerror).
+
 ## Upgrading from 2.0.0-beta.1
 
 ### VP policies
@@ -325,41 +365,6 @@ longer required: the address is read from the token's `address` claim, as ocean.
 
 **`PolicyDeniedError.consumerAddress` is the address sent**, which for a `Signer` is its own
 address, not the one in the request.
-
-### Access: no silent second payment
-
-**`access()` throws an `OrderCheckError` instead of ordering anew when it cannot check for
-an order you already hold.** When the on-chain lookup of a previous order fails (the RPC
-rate-limits it, does not answer, answers with an error, or answers without the data the
-check needs) or stops short (it cannot read
-back over the whole order window) and the service costs anything, nothing is bought:
-buying without the check could pay twice. Nothing was ordered or paid; the
-same call can be made again. "No previous order found" still orders, as before.
-
-A paid service whose orders never expire (`timeout: 0`), or whose timeout is longer than
-100 000 blocks, now needs `orderOnLookupFailure: true` for a purchase when no order is
-found in the last 100 000 blocks: an older one may still be in force.
-
-```ts
-// beta.1: a failed lookup ordered anew, silently
-const { url } = await nautilus.access({ assetDid })
-
-// now
-try {
-  const { url } = await nautilus.access({ assetDid })
-} catch (error) {
-  if (!(error instanceof OrderCheckError)) throw error
-  // Nothing was paid. Don't buy anyway on your own: that is the second payment this
-  // prevents. Show the message (cost, cause, what to do) and let the user decide; retrying
-  // later or with another RPC is the safe first step.
-  const costs = error.costs.map((c) => `${c.amount} ${c.symbol}`).join(' + ')
-  if (costs && (await askUser(`${error.message}\n\nBuy anyway, maybe paying ${costs} twice?`)))
-    await nautilus.access({ assetDid, orderOnLookupFailure: true })
-}
-```
-
-A free service is still ordered, now with a warning. Only `true` opts in. `compute()` makes
-no such lookup and is unchanged. See [`OrderCheckError`](/docs/api/nautilus/access#ordercheckerror).
 
 ## Upgrading from 2.0.0-beta.0
 

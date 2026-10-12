@@ -17,9 +17,9 @@
  * - **recovers** from nonce-class refusals only (`NONCE_EXPIRED` / "nonce too low",
  *   `REPLACEMENT_UNDERPRICED`, "already known"): a transaction the chain already knows is
  *   returned, never sent again; one it does not know is sent again, identical but for the
- *   nonce, at most three times. A send that moves value (an order, a purchase, an
- *   approval, an escrow payment) is sent again only with proof from two RPCs that the first
- *   one can never land (`provenNeverSent`, `provenSlotsTaken`); otherwise, and always
+ *   nonce, at most three attempts in all (an "already known" refusal is never sent again).
+ *   A send that moves value (an order, a purchase, an approval, an escrow payment) is sent
+ *   again only with proof from two RPCs that the first one can never land (`provenNeverSent`, `provenSlotsTaken`); otherwise, and always
  *   without a `verificationProvider`, it stops with "may have been sent";
  * - **reports** each send failure per contract, so `confirmTransaction()` names the cause
  *   instead of "ocean.js returned no transaction", when it is unambiguous which send

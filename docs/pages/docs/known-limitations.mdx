@@ -119,7 +119,8 @@ valid. When it finds no order of yours in those 55 hours, `access()` stops with 
 is older than about 55 hours. Passing
 [`orderOnLookupFailure: true`](/docs/api/nautilus/access#orderonlookupfailure-optional) then
 buys; for an older order that is still valid, that pays a second time. Within about 55 hours
-of a purchase, the order is found and reused.
+of a purchase (less on an RPC that serves 100 blocks per `eth_getLogs` call, about 40
+hours), the order is found and reused.
 
 **Workaround:** publish paid services with a timeout the check can read within its 5
 minutes, and use the opt-in only for a first purchase, when you know the account holds no
@@ -127,9 +128,9 @@ order for the service. How long a timeout that allows depends on the RPC: the ch
 RPC that answers `eth_getLogs` for at least 100 blocks per call, and reads the whole timeout
 before it pays. On an RPC that serves only 100 blocks per call (about 0.4 s per call), a
 24-hour service takes about 450 reads, about 3 minutes, and a 48-hour service does not fit in
-the 5 minutes. So keep paid services at **24 hours or less** on such an RPC; an RPC that
-serves 1,000 blocks or more per call allows up to the 48 hours the 100,000-block depth
-covers. When the reads end before they cover the timeout, `access()` stops with an
+the 5 minutes. So keep paid services at **24 hours or less** on such an RPC. An RPC that
+serves 1,000 blocks or more per call reads the whole 100,000-block depth, about 55 hours;
+keep paid services at 48 hours or less there. When the reads end before they cover the timeout, `access()` stops with an
 `incomplete` [`OrderCheckError`](/docs/api/nautilus/access#ordercheckerror) that asks for
 another RPC, and nothing is paid.
 

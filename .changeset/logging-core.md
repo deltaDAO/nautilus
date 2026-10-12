@@ -9,14 +9,15 @@ nautilus has its own logger, and its warnings are now visible by default.
 - **Warnings print by default.** nautilus logged most of its warnings through ocean.js's
   `LoggerInstance`, whose default level is errors only, so they were never shown: among them
   "this node's policy server will refuse every consumer of this asset", "requested
-  `maxJobDuration` capped", "could not look up a previous order, ordering anew", "asset is
+  `maxJobDuration` capped", "a free service's previous order could not be looked up,
+  ordering anew", "asset is
   already in that state". They now print to stderr at the default level, `warn`. The
   one-time warnings that went to `console.warn` go to the same place. To silence them, set
   `Nautilus.configureLogging({ level: 'silent' })` or `NAUTILUS_LOG_LEVEL=silent`.
 - **Structured, catalogued events.** Every line is an event with a stable name
   (`component.step.outcome`, e.g. `publish.preflight.denies_all`), a level, a component, a
-  message and fields. On a terminal it prints as one readable line, otherwise as one JSON
-  object per line. `LOG_EVENTS` lists every event with its level, component and fields.
+  message and fields. By default it prints as one readable line on a terminal or in a
+  browser console, and as one JSON object per line when stderr is not a terminal. `LOG_EVENTS` lists every event with its level, component and fields.
 - **Output goes to `process.stderr`, not `console.warn`.** In Node, every line is written
   straight to `process.stderr` (JSON lines when stderr is not a terminal), so hooks on
   `console.warn` no longer see the one-time warnings that used to go there (the publisher is
@@ -26,10 +27,10 @@ nautilus has its own logger, and its warnings are now visible by default.
 - **The log level now governs those warnings too.** They used to print at any level;
   `Nautilus.setLogLevel(LogLevel.None)` or `LogLevel.Error`, `configureLogging({ level:
   'silent' | 'error' })` and `NAUTILUS_LOG_LEVEL=silent|error` now silence them along with
-  every other warning, security warnings included. Keep the level at `warn` or above (or a
-  `sink`) where you rely on them.
+  every other warning, security warnings included. Keep the level at `warn` or more verbose
+  (`info`, `debug`, `trace`), or use a `sink`, where you rely on them.
 - **Redacted by field.** Before any output, fields are redacted by key, compared without
-  case, `-`, `_` or invisible characters and matched whole, in nested objects and class
+  case, `-`, `_`, spaces or invisible characters and matched whole, in nested objects and class
   instances too: the exact keys `nonce`, `sid`, `auth`, `bearer`, `seed`, `pk`, `privkey`,
   `otp`, `pin`, `hmac`, `dkey`, `sig`, `pass`, `pwd`, `requestUri`; any key holding
   `privateKey` or `privKey` (`privateKeyHex`); any key ending in the word `pass`
@@ -52,6 +53,8 @@ nautilus has its own logger, and its warnings are now visible by default.
   of keys was redacted in text. Error messages thrown by nautilus change accordingly (e.g. a
   node's `nonce: 1 is not a valid nonce` now reads `nonce: <redacted> …`). Text is matched by
   pattern: a credential without a key in front of it is not recognised.
+- **Bounded and robust.** Messages, fields and errors are bounded in size; a sink that throws
+  is ignored; fields that cannot be read become one `fieldsError` field.
 
 **New API**
 
@@ -59,8 +62,10 @@ nautilus has its own logger, and its warnings are now visible by default.
   levels `silent`, `error`, `warn` (default), `info`, `debug`, `trace`; `format` `'pretty'` or
   `'json'`; `components` to narrow `info`/`debug`/`trace` output; `sink(event)` to hand the
   redacted events to your own logger (pino, winston, the browser console) instead of stderr.
-  `oceanjs` decides what happens to ocean.js's own lines (see the `capture-oceanjs-logs`
-  entry).
+  `oceanjs` decides what happens to ocean.js's own lines (see ocean.js's own log lines,
+  below). An unknown level, format, component or `oceanjs` mode, or a `sink` that is not a
+  function, passed to `configureLogging` or `createLogger` throws a `TypeError`; the
+  environment variables below only warn.
 - `Nautilus.create(signer, { logger })`: one instance's own level, format, components or
   sink, e.g. per tenant, as options or as a logger from `createLogger(options)` that several
   instances share. `S3RemoteStore`'s warnings always go to the process-wide configuration.

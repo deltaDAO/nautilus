@@ -20,11 +20,13 @@ can be told apart, and a thrown error leads to its lines.
   logger bound to it to the steps it runs (orders, escrow, the NFT mint, price changes,
   compute start, publish's and edit's checks and metadata transaction); events of code it
   does not hand that logger (the node client, the policy-session resolver, the signer's
-  nonce guard, an `S3RemoteStore`) carry no `opId`, never a wrong one.
+  nonce guard, an `S3RemoteStore`, the process-wide logger and the ocean.js lines it
+  captures) carry no `opId`, never a wrong one.
 - **`error.opId`.** The error such a call throws carries the same `opId`. It is not
   enumerable, so the error compares, prints and serialises as before. One error object
   thrown by several calls (a cached rejection, a shared abort reason) has the latest call's
-  `opId`, and every call's in `error.opIds` (the first one first). An error whose own `opId`
+  `opId`, and `error.opIds` holds the first call's `opId` followed by the latest ones (at
+  most 16). An error whose own `opId`
   nautilus did not set keeps it.
 - **Operation events with `durationMs`.** Each call logs `…operation.started` (`debug`) and
   `…operation.finished` or `…operation.failed` (`info`, with `durationMs`; `failed` with the
@@ -34,15 +36,16 @@ can be told apart, and a thrown error leads to its lines.
   default level (`warn`). In Node 22.3 or newer, a call made from inside another call of the
   same logger that is still running (from a `confirmProviderFees` callback, say) joins that
   one; a timer or listener a finished call left behind starts an operation of its own. With
-  `NAUTILUS_DEBUG=sensitive`, the raw error of a `failed` event goes to the debug topic of
-  its origin where nautilus knows it (`policy`, `wallet`, `nonce`), else to the operation's.
-- New exported type: `OperationName`. `LogEvent` gains `operation`; `DebugEvent` gains
-  `opId` and `operation`.
+  `NAUTILUS_DEBUG=sensitive` and the log level at `info` or more verbose, the raw error of a
+  `failed` event goes to the debug topic of its origin where nautilus knows it (`policy`,
+  `wallet`, `nonce`), else to the component's (`rpc` for publish, edit and lifecycle,
+  `order` for access, `compute`, `node`).
+- New exported type `OperationName`; `LogEvent` and `DebugEvent` have `opId` and
+  `operation`.
 
-- **Redaction fix.** A JWT, a signature or a signed transaction right after an escape
-  sequence that ends in a letter (`Evil\u001b[2J<token>`) was printed: deleting the escape
-  glued the token to the word before it. Such tokens are now redacted there too, in log
-  lines and error messages.
+- **Redaction fix.** A JWT or 65-byte signature right after an escape sequence ending in a
+  letter (`Evil\u001b[2J<token>`) was left in error messages (deleting the escape glued it
+  to the preceding word); it is now redacted, as are raw signed transactions.
 
 The `opId` is random and the operation a fixed name: neither carries your data, the node's
 or the chain's, and both pass the same field redaction as every other field.

@@ -329,7 +329,8 @@ export interface NautilusOptions
    *   concurrent publishes and orders of one key in this process do not collide. A
    *   transaction refused for its nonce (`NONCE_EXPIRED`, `REPLACEMENT_UNDERPRICED`,
    *   "already known") that the chain already has is waited for, never sent again; one it
-   *   does not have is sent again with a fresh nonce, at most three times. An order, a
+   *   does not have is sent again with a fresh nonce, at most three attempts in all (an
+   *   "already known" refusal is never sent again). An order, a
    *   purchase, an approval or an escrow payment is sent again only with proof that the
    *   first transaction can never be mined; otherwise it stops with a `NonceGuardError`
    *   ("may have been sent"). Wallet-managed signers (`JsonRpcSigner`, browser wallets)

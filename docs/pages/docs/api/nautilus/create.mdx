@@ -258,7 +258,8 @@ Who chooses transaction nonces. nautilus wraps the signer in a nonce guard
 signs locally (an ethers `Wallet`), it sends one transaction at a time per chain and
 address, with the nonce `max(its counter, the pending count)`, and recovers from a nonce
 refusal: a transaction the chain already has is waited for, never sent again; one it does
-not have is sent again with a fresh nonce, at most three times; an order, purchase,
+not have is sent again with a fresh nonce, at most three attempts in all (an "already
+known" refusal is never sent again); an order, purchase,
 approval or escrow payment only with proof from two RPCs (needs `verificationProvider`)
 that the first can never be mined, otherwise it stops with a `NonceGuardError` ("may have
 been sent"). Wallet-managed signers

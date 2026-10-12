@@ -2,9 +2,8 @@
 "@deltadao/nautilus": patch
 ---
 
-Credentials hidden by escaping in an RPC's answer are redacted, the order check covers a
-24-hour service on an RPC that serves 100 blocks per `eth_getLogs` call, and the known limits
-of this release are documented on one page.
+Credentials hidden by escaping in an RPC's answer are redacted, and the known limits of this
+release are documented on one page.
 
 **What changes for you**
 
@@ -21,10 +20,6 @@ of this release are documented on one page.
   there. Text that hides nothing keeps its escapes. The raw value is still in the debug
   channel: at `NAUTILUS_DEBUG=secrets`, not at `sensitive`, which now reads the same escapes,
   JSON-escaped URLs included.
-- **A failed send's error is bounded.** The nonce guard keeps the first 16,000 characters of
-  each message of a failed send, with ANSI escapes and control characters stripped, so a huge
-  error body from an RPC is redacted in bounded time. The raw error is in the debug channel
-  (`nonce`).
 - **A download URL can be replaced by a newer one.** The URL `access()` returns carries a
   one-time number the node checks. Two URLs requested for the same consumer and node before
   either is fetched carry the same number: the first one fetched works, and the other answers
@@ -33,15 +28,6 @@ of this release are documented on one page.
   `access()` again and fetch the new URL right away (for a paid service, only once at least
   2 more blocks are mined after the purchase: sooner, `access()` does not find the order yet
   and pays again). The `access()` docs and the download guide say so.
-- **The order check covers a 24-hour service on an RPC that serves 100 blocks per
-  `eth_getLogs` call.** On such an RPC the check narrowed its 2 000-block reads to 62 blocks
-  and ran out of its 100 rounds after about 3 hours, so `access()` refused the first purchase
-  of a paid 24-hour service with an `incomplete` `OrderCheckError` (nothing was paid). The
-  check now narrows the range to 1 000, 500, 200 and 100 blocks (and below), keeps the size
-  that works, does not count refused ranges as reads, and reads as many rounds as the window
-  needs at 100 blocks each, for at most 5 minutes. An RPC that serves fewer than 100 blocks
-  per call, or answers so slowly that the reads take longer, still ends with an `incomplete`
-  `OrderCheckError` before anything is paid.
 - **Known limitations page.** [Known limitations](https://nautilus.delta-dao.com/docs/known-limitations)
   lists what this release does not handle yet, each with what to do instead: the credential
   type alone is not a reliable gate (enforce trust with trusted issuers and an explicit
@@ -49,5 +35,7 @@ of this release are documented on one page.
   one key, a second `access()` right after buying a paid service (wait until at least 2 more
   blocks are mined after the purchase, or it pays again; a lagging RPC extends that wait),
   every `compute()` buying its paid datasets and algorithms again (price compute services as
-  free, or expect one purchase per job), orders older than about 55 hours, a stuck fee
+  free, or expect one purchase per job), orders older than about 55 hours (less on an RPC
+that serves 100 blocks per `eth_getLogs` call: keep paid services at 24 hours or less
+there), a stuck fee
   approval, `getAssets` on ocean-node 4.2, and revoking after deprecating.
