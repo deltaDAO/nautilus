@@ -43,7 +43,8 @@ ocean.js no longer prints "No config found" during an order.
   (cut at 100 characters or less), read at eight times its length. The word that cut splits
   is dropped, so a cut JWT or URL never shows in part; a URL the cut goes through is dropped
   whole, so its user info (`https://user:secret,…@host`) is never read as its host. User
-  info with a quote or `<`/`>` in it (`https://user:12345'secret@host`) is dropped up to its
+  info with a quote or `<`/`>` in it (`https://user:12345'secret@host`, also as a JSON
+  escape, `\u0027`, or in a URL percent-encoded into a query) is dropped up to its
   `@`, also when the cut falls in it, in messages and in the `sensitive` debug tier; a URL
   whose authority is otherwise no host and port (a space in its password ended it) reads
   `scheme://<redacted>`. A URL with a backslash in its path

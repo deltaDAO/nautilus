@@ -28,14 +28,18 @@ export const SCHEMELESS_URL =
 
 /**
  * A URL's scheme and user info where a quote or `<`/`>` stands in the user info
- * (`https://user:12345'secret@host`, also escaped, `\"`): the URL patterns end at it, so
- * they would read the user info before it as the host and port, and leave the rest of it
- * after the URL. Group 1 is the scheme and its `//`. No whitespace, `/`, `?`, `#` or
- * backslash but before a quote, so prose with a URL in quotes and an address after it is
- * not read as one. Each part ends at the next one's first character, so the scan is linear.
+ * (`https://user:12345'secret@host`, also escaped, `\"`, or as a JSON escape the redaction
+ * does not decode, `'`, `\\u0022`, `<`): the URL patterns end at it, or read the
+ * backslash as the end of the authority, so they would read the user info before it as the
+ * host and port, and leave the rest of it after the URL. Also percent-encoded, as
+ * `encodeURIComponent` leaves a `'` in a URL it encodes for a query
+ * (`https%3A%2F%2Fuser%3A12345'secret%40host`); there the user info ends at `%2F` or `%40`.
+ * Group 1 is the scheme and its `//`. No whitespace, `/`, `?`, `#` or backslash but before
+ * a quote, so prose with a URL in quotes and an address after it is not read as one. Each
+ * part ends at the next one's first character, so the scan is linear.
  */
 export const QUOTED_USER_INFO =
-  /([a-z][a-z0-9+.-]{0,31}:(?:\\*\/){2})[^\s"'<>\\/?#@]*(?:\\*["'<>][^\s"'<>\\/?#@]*)+@/gi
+  /([a-z][a-z0-9+.-]{0,31}(?::(?:\\*\/){2}|%3a%2f%2f))(?:(?<=\/)[^\s"'<>\\/?#@]*(?:(?:\\*["'<>]|\\+u00(?:2[27]|3[ce]))[^\s"'<>\\/?#@]*)+@|(?<=%2f)(?:[^\s"'<>\\/?#@%]|%(?!2f|40))*(?:(?:\\*["'<>]|\\+u00(?:2[27]|3[ce]))(?:[^\s"'<>\\/?#@%]|%(?!2f|40))*)+%40)/gi
 
 /**
  * A URL's scheme and authority read on past a quote or a comma, as `QUOTED_USER_INFO`

@@ -277,7 +277,12 @@ export function maskUrl(url: string, nesting = 0): string {
   // (`https:\/\/host\/v3\/<key>`) are read as slashes, as `originOnly` (`messages.ts`)
   // reads them.
   const trailing = trailingPunctuation(url)
-  const core = url.slice(0, url.length - trailing.length).replace(/\\+\//g, '/')
+  // User info a quote stands in is dropped up to its `@`, and marked below. A backslash
+  // run is read from its start, so a long one is read in linear time.
+  const core = url
+    .slice(0, url.length - trailing.length)
+    .replace(QUOTED_USER_INFO, '$1@')
+    .replace(/(?<!\\)\\+\//g, '/')
 
   // A backslash ends the authority and splits the path, as a URL parser reads it.
   const match =
@@ -323,9 +328,10 @@ function maskParameters(part: string, nesting: number): string {
       if (value && isLongLivedCredential(decodePart(rawName), value, 'query'))
         return `${rawName}=${REDACTED}`
       if (value.includes('://') && nesting < MAX_URL_NESTING) {
-        const masked = value.replace(URL_PATTERN, (url) =>
-          maskUrl(url, nesting + 1)
-        )
+        // Decoded, a quote may stand in its user info (`%27`, `%5Cu0027`).
+        const masked = value
+          .replace(QUOTED_USER_INFO, '$1@')
+          .replace(URL_PATTERN, (url) => maskUrl(url, nesting + 1))
         if (masked !== value) return `${rawName}=${masked}`
       }
       return pair
