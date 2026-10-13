@@ -1,5 +1,613 @@
 # @deltadao/nautilus
 
+## 2.0.0-beta.3
+
+### Minor Changes
+
+- [#212](https://github.com/deltaDAO/nautilus/pull/212) [`6375d84`](https://github.com/deltaDAO/nautilus/commit/6375d84f6c5a2f332fc031a55c52b61fbb4daa99) Thanks [@Abrom8](https://github.com/Abrom8)! - ocean.js's own log lines go through nautilus's logger, redacted, by default.
+  
+  ocean.js logs through one process-wide object, its `LoggerInstance`, straight to the console.
+  After a refused compute start or initialize it logs the request payload at error level, its
+  default: the request's nonce and the policy-server session ids, unredacted (e.g. when the
+  node refuses an untrusted algorithm). None of nautilus's settings applied to those
+  lines: not the level, not the sink, not the redaction.
+  
+  **What changes for you**
+  
+  - **`configureLogging({ oceanjs })`, default `'capture'`.** ocean.js's lines become
+    nautilus events of the component `oceanjs`: `oceanjs.logger.error`, `oceanjs.logger.warn`,
+    `oceanjs.logger.log` (`info`, also ocean.js's `bypass`) and `oceanjs.logger.debug`, with the
+    text ocean.js logged as the message and the objects after it in `fields.args` (a JSON
+    string holding an object or array is read as it, up to 65,536 characters; a longer one
+    stays text), redacted by field and by text like every
+    other event: the payload's `nonce`, `signature` and `sessionId`s are `<redacted>`. They
+    print at nautilus's level, in its format and to its sink, so the payload dump now prints as
+    a redacted `[oceanjs] error` line on stderr instead of an unredacted one on the console.
+    The raw lines of events that print reach only the debug channel (topic `node`): its `sensitive` tier, or
+    `secrets` for a credential (an RPC key, a Bearer token). The arguments of one line hold at
+    most 2,000 values, so a node's large answer body stays a short line.
+  - `'passthrough'` keeps the old behaviour: ocean.js prints itself, unredacted. `'silent'`
+    drops ocean.js's lines. `oceanjs: undefined` goes back to `'capture'`.
+  - ocean.js's own level (`LoggerInstance.setLevel`, errors only by default) still decides first
+    which lines it emits, so `LoggerInstance.setLevel(LogLevel.None)` still silences it, except
+    ocean.js's `bypass` lines; nautilus's level then decides which of them print. The
+    deprecated `setLogLevel` sets both, as before.
+  - Captured lines always use the process-wide configuration from `configureLogging`, not an
+    instance's own `logger`.
+  - `LoggerInstance` is process-wide: the mode applies to every ocean.js user in the process.
+    nautilus replaces that object's five logging methods (`error`, `warn`, `log`, `debug`,
+    `bypass`) when it is imported, and calls ocean.js's own ones for `'passthrough'`. It does not
+    patch `console`, and doesn't change ocean.js's level. Tests that spied on `console.error`
+    to see ocean.js's lines now see them as nautilus events (on stderr, or through a `sink`), or
+    can spy on `LoggerInstance.error` itself.
+  - Not captured: the few ocean.js functions that write to `console` directly (none of them on
+    the paths nautilus calls logs a request payload), and the logger of ocean.js's other bundle,
+    which an app gets when it loads ocean.js through `require`.
+  - Several copies of nautilus in one process share the capture: a copy loaded later keeps the
+    mode in force, whichever copy set it, and the lines go to the copy that last set `oceanjs`
+    (else to the first one loaded). The copy that received them until then warns
+    (`oceanjs.capture.moved`), e.g. when a bundled copy sets `'passthrough'`. They share the
+    operation context too, so a captured line carries the `opId` of the call that caused it,
+    whichever copy ran the call and whichever receives the line.
+  - A line ocean.js logs while nautilus captures one (a `sink` or debug sink that logs through
+    `LoggerInstance`) is dropped, with one `oceanjs.capture.nested_dropped` warning; it never
+    prints unredacted. A frozen or sealed `LoggerInstance`, or one whose logging methods are read-only, is left
+    alone for those methods: they are not captured, and
+    `oceanjs.capture.unavailable` warns once when nautilus is imported, with advice that works
+    for the case (a frozen logger's level can't change after it is frozen).
+
+- [#212](https://github.com/deltaDAO/nautilus/pull/212) [`4716dd5`](https://github.com/deltaDAO/nautilus/commit/4716dd512be5075251b318d66044e616faf6b1b3) Thanks [@Abrom8](https://github.com/Abrom8)! - A sensitive debug channel, off by default, shows the raw data nautilus redacts, so a failure
+  the redacted error does not explain can be diagnosed without out-of-band queries.
+  
+  **What changes for you**
+  
+  - **`Nautilus.setDebug({ level, topics?, sink? })`, or `NAUTILUS_DEBUG`.** `level` is `'off'`
+    (the default), `'sensitive'` (raw node, wallet, verifier and RPC answers, policy-server
+    session ids and redirect URIs, the verifier's per-policy results with their full errors,
+    request payloads with signatures and nonces, raw signed transactions, presented VP/VC
+    JWTs, storage pointers without their credentials) or `'secrets'` (also the RPC URL's token,
+    S3 secret keys, IPFS JWTs and `Authorization` headers). `topics` narrows it to `node`,
+    `wallet`, `policy`, `rpc`, `order`, `nonce`, `store` or `compute`. In Node,
+    `NAUTILUS_DEBUG=sensitive|secrets` and `NAUTILUS_DEBUG_TOPICS=policy,wallet` do the same
+    without a code change; they are read once at import, and `setDebug` overrides them.
+    `secrets` is reached only by naming it. In `NAUTILUS_DEBUG_TOPICS` an unknown topic is
+    ignored with a `config.env.invalid` warning, and a list of unknown topics turns on none;
+    `setDebug` throws a `TypeError` for an unknown level or topic. `sensitive`
+    hides long-lived credentials best effort, by name and shape (any key or URL parameter
+    ending in `token`, `key`, `secret`, `password`, `auth`, `cookie`, `jwt`, `credential(s)`,
+    drpc's `dkey`, …, except session-scoped ones such as `vp_token`, `state`, `sessionId`,
+    `nonce`, `signature`); scan its output before sharing it. New exported types: `DebugEvent`, `DebugTopic`,
+    `DebugOptions`, `DebugLevel`, `DebugTier`, `DebugSink`.
+  - **One line per event**, on stderr (in a browser, the console), prefixed `[nautilus:debug:sensitive]` or
+    `[nautilus:debug:SECRETS]` and the topic; line breaks and control characters in the data
+    are written as JSON escapes. After masking, a string is cut at 32,768 characters and an
+    event at about 256 K; a string longer than 65,536 characters (or past the event's budget)
+    is read only up to the last word before that point, so masking never sees part of a
+    credential. A cut string ends in `…(cut: N of M characters shown)`. A `sink` receives
+    `{ time, tier, topic, message, opId?, operation?, data }` instead.
+  - **A warning when it is turned on**, once per tier, on stderr, whatever the log level or
+    sink; stronger under `NODE_ENV=production`.
+  - **Errors, return values and log events do not change.** They stay exactly as redacted as
+    with the channel off; the raw values go to this channel only. A rejected presentation's
+    per-policy results are shown in the channel (e.g. `holder-binding: failed
+    (java.lang.NullPointerException)`), and an answer that is not the policy server's envelope
+    (a proxy's 502 page) as it came; the error thrown is the same.
+  - **The signer's private key or mnemonic is never printed**, at any tier: nautilus never
+    holds them.
+  
+  **Also fixed**
+  
+  - **Wallet errors no longer carry the policy-server session id.** A `WaltIdWalletError`
+    carries the wallet's answer with credentials redacted, URLs reduced to their origin, at
+    most 500 characters; the raw answer goes to the debug channel (topic `wallet`). For a
+    refused presentation, see the `CredentialPresentationError` entry.
+  - **Raw signed transactions are redacted** in error texts, warnings and log events. ethers
+    quotes the signed transaction of a failed `eth_sendRawTransaction` in its error message
+    (`transaction="0x02f8…"`); one that was never mined (e.g. `INSUFFICIENT_FUNDS`) can still
+    be sent by whoever reads the log. Short ones are recognised by their RLP length, down to a
+    minimal legacy transfer (97 bytes) or contract creation.
+  - **More credentials are redacted in error texts, warnings and log events:** a URL whose
+    slashes are JSON-escaped (`https:\/\/host\/v3\/<key>`, as a JSON body quoted in JSON has
+    it) is reduced to its origin like any other, and a `Cookie` header is redacted to the end
+    of its line, every cookie of it (a quoted cookie value, or one with an apostrophe in it,
+    included).
+
+- [#212](https://github.com/deltaDAO/nautilus/pull/212) [`a8bea76`](https://github.com/deltaDAO/nautilus/commit/a8bea76523421c3409bdaafcbd250aa194af9322) Thanks [@Abrom8](https://github.com/Abrom8)! - nautilus has its own logger, and its warnings are now visible by default.
+  
+  **What changes for you**
+  
+  - **Warnings print by default.** nautilus logged most of its warnings through ocean.js's
+    `LoggerInstance`, whose default level is errors only, so they were never shown: among them
+    "this node's policy server will refuse every consumer of this asset", "requested
+    `maxJobDuration` capped", "a free service's previous order could not be looked up,
+    ordering anew", "asset is
+    already in that state". They now print to stderr at the default level, `warn`. The
+    one-time warnings that went to `console.warn` go to the same place. To silence them, set
+    `Nautilus.configureLogging({ level: 'silent' })` or `NAUTILUS_LOG_LEVEL=silent`.
+  - **Structured, catalogued events.** Every line is an event with a stable name
+    (`component.step.outcome`, e.g. `publish.preflight.denies_all`), a level, a component, a
+    message and fields. By default it prints as one readable line on a terminal or in a
+    browser console, and as one JSON object per line when stderr is not a terminal. `LOG_EVENTS` lists every event with its level, component and fields.
+  - **Output goes to `process.stderr`, not `console.warn`.** In Node, every line is written
+    straight to `process.stderr` (JSON lines when stderr is not a terminal), so hooks on
+    `console.warn` no longer see the one-time warnings that used to go there (the publisher is
+    the node's own key, shared S3 credentials, a writable S3 read key, persisted presented
+    sessions, an empty policy-server URL, the legacy `waitForIndexer` options). Hand them to your own code with a `sink`. In a
+    browser, lines still go to the console.
+  - **The log level now governs those warnings too.** They used to print at any level;
+    `Nautilus.setLogLevel(LogLevel.None)` or `LogLevel.Error`, `configureLogging({ level:
+    'silent' | 'error' })` and `NAUTILUS_LOG_LEVEL=silent|error` now silence them along with
+    every other warning, security warnings included. Keep the level at `warn` or more verbose
+    (`info`, `debug`, `trace`), or use a `sink`, where you rely on them.
+  - **Redacted by field.** Before any output, fields are redacted by key, compared without
+    case, `-`, `_`, spaces or invisible characters and matched whole, in nested objects and class
+    instances too: the exact keys `nonce`, `sid`, `auth`, `bearer`, `seed`, `pk`, `privkey`,
+    `otp`, `pin`, `hmac`, `dkey`, `sig`, `pass`, `pwd`, `requestUri`; any key holding
+    `privateKey` or `privKey` (`privateKeyHex`); any key ending in the word `pass`
+    (`DB_PASS`, `dbPass`, not `bypass`); any key ending in a credential name
+    (`session_id`, `client_secret`, `aws_secret_access_key`, `x-api-key`, `passphrase`,
+    `mnemonic`, `authorizationCode`, `presentation`, `rawTx`, …); any other key ending in
+    `key` or `auth` (`accessKey`, `encryptionKey`, `apiAuth`) except `key`, `publicKey` and
+    `objectKey`; any key ending in `token` unless its value is an EVM address
+    (`paymentToken` stays readable); `code` and one-time codes (`otpCode`, `recoveryCode`,
+    `txCode`, …) unless the value reads as an error code (`SERVER_ERROR`, `ECONNREFUSED`,
+    `-32005`, ethers' `TIMEOUT`/`CANCELLED`). Other `…code` keys (`exitCode`, `bytecode`,
+    `statusCode`) stay readable. Credentials become
+    `<redacted>`, URLs are reduced to their origin, errors are sanitised with up to two levels
+    of their `cause`, byte arrays print as `[N bytes]`.
+  - **The same keys in text.** Messages, error messages (node answers, ethers errors and their
+    `cause`s, e.g. an RPC response body) and other text have the value of every such key
+    redacted when it is written as `key=value`, `key: value`, `'key': 'value'`, a JSON field or
+    a JSON field inside a JSON string (at any depth), a key or a URL behind JSON escapes read
+    decoded (`"session\u0049d"`, `https:\/\/host\/path`); `Bearer` and `Basic` credentials,
+    JWTs and 65-byte hex signatures are redacted anywhere, URLs reduced to their origin.
+    Before, only a short list of keys was redacted in text. Error messages thrown by nautilus
+    change accordingly (e.g. a node's `nonce: 1 is not a valid nonce` now reads
+    `nonce: <redacted> …`). Text is matched by pattern: a credential without a key in front of
+    it is not recognised.
+  - **Bounded and robust.** Messages, fields and errors are bounded in size; a sink that throws
+    is ignored; fields that cannot be read become one `fieldsError` field.
+  
+  **New API**
+  
+  - `Nautilus.configureLogging({ level, format, components, sink, oceanjs })`, process-wide:
+    levels `silent`, `error`, `warn` (default), `info`, `debug`, `trace`; `format` `'pretty'` or
+    `'json'`; `components` to narrow `info`/`debug`/`trace` output; `sink(event)` to hand the
+    redacted events to your own logger (pino, winston, the browser console) instead of stderr.
+    `oceanjs` decides what happens to ocean.js's own lines (see ocean.js's own log lines,
+    below). An unknown level, format, component or `oceanjs` mode, or a `sink` that is not a
+    function, passed to `configureLogging` or `createLogger` throws a `TypeError`; the
+    environment variables below only warn.
+  - `Nautilus.create(signer, { logger })`: one instance's own level, format, components or
+    sink, e.g. per tenant, as options or as a logger from `createLogger(options)` that several
+    instances share. `S3RemoteStore`'s warnings always go to the process-wide configuration.
+  - Environment variables, read once at import and overridden by `configureLogging`:
+    `NAUTILUS_LOG_LEVEL`, `NAUTILUS_LOG_FORMAT` (`json` or `pretty`) and
+    `NAUTILUS_LOG_COMPONENTS` (e.g. `publish,access`). An unknown value is ignored, with a
+    warning. In a browser there is no environment; the console is the output.
+  - `createLogger(options)`, `LOG_EVENTS` and the types `Logger`, `LogEvent`, `LogFields`,
+    `LogSink`, `LogFormat`, `LoggingLevel`, `LogLevelName`, `LogComponent`, `LogEventName`,
+    `LogEventSpec`, `LoggingOptions`, `LoggingConfig` and `OceanJsLogMode`. The node client
+    takes a `logger` option.
+  
+  **Deprecated**
+  
+  - `Nautilus.setLogLevel(LogLevel)` still works: it maps `None`/`Error`/`Warn`/`Log`/`Verbose`
+    to `silent`/`error`/`warn`/`info`/`trace`, and still sets ocean.js's `LoggerInstance` level
+    as before. Use `configureLogging({ level })` instead. nautilus's own lines no longer go
+    through ocean.js's `LoggerInstance`, so tests or hooks that spied on it to see nautilus's
+    warnings must use a `sink` instead.
+
+- [#212](https://github.com/deltaDAO/nautilus/pull/212) [`0e1e3da`](https://github.com/deltaDAO/nautilus/commit/0e1e3da2e31eb16a006fd4bd05d02db6162375ed) Thanks [@Abrom8](https://github.com/Abrom8)! - A refused presentation names the policies that failed, and no presentation error carries the
+  policy-server session id or the wallet's redirect URI any more.
+  
+  **Breaking (beta API)**
+  
+  - **A presentation the verifier refuses is a `PolicyDeniedError`, also when the wallet reports
+    it.** walt.id answers a refused presentation with an HTTP 400, so `WaltIdCredentialProvider`
+    threw a `CredentialPresentationError` whose message was the wallet's raw answer (the
+    verifier's error URL with the policy-server session id included), and the verifier's
+    per-policy results were never read. Now, when `present()` throws a
+    `CredentialPresentationError` with `reason: 'verifier-rejected'`, or any other kind of
+    error, nautilus reads
+    the verifier's record of the session (`checkSessionId`, through the node, best effort, cut
+    after 15 seconds): when it names failed policies, you get a `PolicyDeniedError` whose
+    `reason` lists them, with `policyResults` and the wallet's error as `cause`. Otherwise, or
+    when the record cannot be read, the wallet's error is thrown as before; a failure before
+    the verifier (no matching credential, no wallet, …) is thrown without the read. Code that
+    caught `CredentialPresentationError` for a refused presentation should catch
+    `PolicyDeniedError` as well. A refused session is never cached.
+  - **A custom provider that throws `CredentialPresentationError` for a verifier refusal must
+    pass `'verifier-rejected'` as the third argument.** Otherwise its `reason` is
+    `'wallet-failed'` and the failed policies are not read.
+  - **`PolicyDeniedError.reason` for a refused presentation reads differently.** It was
+    `the verifier did not accept the presentation (…)`; it is now `the node reports that the
+    verifier did not accept the presentation (holder-binding: java.lang.NullPointerException)`,
+    because the node relays the verifier's record (and for a download the node is the
+    publisher's choice). Code that matches on the old text must change. The list in parentheses
+    always fits the reason's 200 characters, closing parenthesis included: each failure is cut
+    at 80 characters, as many as fit are listed and the rest counted (`; 2 more in
+    policyResults`).
+  - **`CredentialPresentationError.details` no longer holds the wallet's whole answer.**
+    `WaltIdHttpWallet` parses the wallet's 400 answer and keeps only its `errorMessage` (or the
+    `message` of walt.id's error handler, for an exception in the wallet such as a malformed
+    request), control characters stripped, credentials redacted, at most 500 characters. The
+    `redirectUri`, the verifier's error page with the policy-server session id in it, is
+    dropped. `details` is `{ errorMessage }` for a rejection (`'the wallet gave no reason'`
+    when walt.id gives none), and `undefined` only when a custom wallet reports an error
+    redirect without a message; no `redirectUri` is kept. The message reads `The verifier
+    rejected the presentation: <errorMessage>` (or `The wallet could not present the
+    credentials: …` when the wallet failed itself). `PresentationResult` gains
+    `rejectedBy: 'verifier' | 'wallet'` for a 400 answer.
+  
+  **New**
+  
+  - **`CredentialPresentationError.reason`**, a stable `CredentialPresentationReason`:
+    `'verifier-rejected'`, `'wallet-failed'`, `'no-matching-credential'`, `'none-selected'`,
+    `'wallet-setup'` or `'request-invalid'`. The constructor takes it as a third argument
+    (default `'wallet-failed'`). A custom provider that throws it with a reason other than
+    `'verifier-rejected'` skips the verifier read.
+  - **`PolicyDeniedError.cause`**: the provider's error, when the refusal was read after a
+    failed `present()`.
+  
+  **Fixed**
+  
+  - **The policy-server session id is redacted from the wallet's text.** walt.id's verifier
+    quotes it bare for an expired or unknown session (`Id parameter <id> doesn't refer to an
+    existing session`), and the wallet passes that on. `WaltIdCredentialProvider` now removes
+    the session id (and each of its two halves) from the wallet's message, whatever its length,
+    also the start of it that a cut left before the message's closing `…` (`WaltIdHttpWallet`
+    bounds the message before the provider sees it, so an id that crosses the 500th character
+    is cut), and again after sanitising, where deleting a control or zero-width character
+    joins it or a JSON or percent escape hides it. `checkPolicySession` removes the session id
+    it read, whatever its shape, the same way from each per-policy name and error (also where
+    deleting a control character joins it, an escape hides it, or the 100-character cut splits
+    it) and from its own error, so neither `PolicyDeniedError.message`, `.reason` and
+    `.policyResults` nor an `OceanNodeError` for an expired session quotes it. Every sanitiser
+    also redacts the policy server's id shape (`<64 hex>-<64 hex>`, not after `0x`, which is a
+    compute job id) wherever it stands, in node text and per-policy errors too. A URL quoted
+    in the wallet's text still keeps its origin, so the verifier's host can appear.
+  - **The node's per-policy results are bounded.** `checkPolicySession` keeps at most 50
+    results (failures first), and strips control characters from, redacts and cuts at 100
+    characters each policy and credential name and each error. Each is read up to 800
+    characters only (a field of a bound of 100 characters or less is read at eight times it,
+    not at 8,192), so a hostile record costs milliseconds.
+  - **The `setVpPolicies` JSDoc** recommends the safe set
+    (`[{ policy: 'signature' }, { policy: 'minimum-credentials', args: '1' }]`) and no longer
+    suggests `holder-binding`.
+  
+  With `NAUTILUS_DEBUG=sensitive` and the `policy` and `wallet` topics, the wallet's answer and
+  the verifier's record reach the debug channel as sent, long-lived credentials still masked. Don't send `policyResults` to a
+  central log: a policy's error can quote a value of the presented credential.
+
+- [#212](https://github.com/deltaDAO/nautilus/pull/212) [`dfca35b`](https://github.com/deltaDAO/nautilus/commit/dfca35b21883bc2ff83ec617a5773e0f46bfbd43) Thanks [@Abrom8](https://github.com/Abrom8)! - `access()` no longer buys a paid service a second time, silently, when the RPC fails to
+  look up the order the account may already hold, or the lookup cannot read back over the
+  whole order window.
+  
+  **Breaking (beta API)**
+  
+  - **`access()` throws an `OrderCheckError` instead of ordering anew** when the previous-order
+    lookup fails (an RPC rate limit, no answer, or an RPC error) or stops short (it reached
+    its depth of 100,000 blocks, its rounds of reads (as many as the window needs at 100
+    blocks each, at least 100), its 5 minutes or its 50 candidates before the end of the
+    service's timeout), not when it finds no order, and the service costs anything (a
+    price, a publish-market fee or a provider fee). It is thrown
+    before any approval, purchase or order: nothing was paid, and the call can be retried.
+    Before, any lookup error was logged and a new order placed, which pays twice when the
+    account already holds a valid order. `settleOrder()` does the same when given `service`.
+    The message says what happened, why it stopped (it could have paid twice, with the
+    price), that nothing was paid, the cause in plain words, and what to do.
+  - **The lookup no longer takes a rate limit for a range refusal.** In 2.0.0-beta.2 a 429
+    (also after ethers' retries), a `Retry-After`, a rate-limit `-32005` or "too many
+    requests" was read as a refused range: the lookup halved its block range until its 100
+    reads ran out, then reported "not found", and `access()` placed a new order. It now fails
+    the lookup (`reason: 'rate-limited'`).
+  - **An RPC that serves few blocks per `eth_getLogs` call no longer buys unchecked.** In
+    2.0.0-beta.2 the lookup stopped after 100 reads wherever it was and reported "not found",
+    so on a narrow RPC an order more than a few hours old was not seen and a second one was
+    placed. The lookup now narrows a refused range to 1,000, 500, 200 and 100 blocks (and
+    below), keeps the size that works, does not count refused ranges as reads, and reads as
+    many rounds as the window needs at 100 blocks each (at least 100) for at most 5 minutes,
+    which also bound each wait for the RPC: a call it does not answer in time ends the lookup
+    at the 5 minutes, not when its answer comes. When the reads end before they cover the service's timeout, it throws `OrderCheckError`
+    (`'incomplete'`) before anything is paid.
+  - **Keep paid timeouts within what the check can read:** at most 24 hours on an RPC that
+    serves 100 blocks per `eth_getLogs` call, up to about 55 hours (48 recommended) on one
+    that serves 1,000 blocks or more.
+  - **An RPC answer without the data its own answers promise is a failed lookup, not "no
+    order".** No newest block, no receipt for an order transaction the RPC's logs list (or
+    for the order a reuse of the account names), or a receipt without one of the order events
+    those logs list, as a load-balanced RPC whose backends lag each other answers for a
+    recent order, gave "not found" and a second order. It now fails the lookup (`reason:
+    'rpc-error'`, "the RPC's answer lacked data the check needs"). Orders of another
+    service, past the timeout or of another account are still skipped.
+  - **A paid service throws `OrderCheckError` (`'incomplete'`) when no order is found in the
+    blocks read but they do not cover its timeout**: orders that never expire (`timeout: 0`),
+    a timeout longer than the 100,000-block depth (about 55 hours on OP Sepolia), reads that
+    end first (an RPC that serves fewer than 100 blocks per call, or answers too slowly for
+    the 5 minutes or not at all), or 50 candidates checked without one to reuse or extend, since an older order may
+    still be in force. If the account never bought it, pass `orderOnLookupFailure: true`.
+  
+  **What changes for you**
+  
+  - **`OrderCheckError`** (exported): `code: 'ORDER_CHECK_FAILED'`, `reason`
+    (`'rate-limited'`, `'unreachable'`, `'incomplete'` or `'rpc-error'`), `retryable: true`,
+    `did`, `serviceId`, `consumer`, `price` (`{ amount, symbol }`, in whole tokens;
+    `undefined` when the pricing could not be read either), `costs` (every part a new order
+    pays: price, publish-market fee, provider fee), `checkedHours` and `windowHours` (for
+    `incomplete`; `windowHours` is `Infinity` for orders that never expire), and `cause`, the
+    RPC's error redacted (first line, credentials also under JSON escaping, so a key spelt
+    `"api\u004bey"` is redacted too and a value with an escaped quote or delimiter in it is
+    redacted whole, no URL, long hex shortened, at most 200 characters). The unredacted error
+    goes to the debug channel (`NAUTILUS_DEBUG=sensitive`, topic `order`).
+  - **`access({ orderOnLookupFailure: true })`** (also on `settleOrder()`) orders anyway, with a
+    warning that it may pay twice. Only `true` opts in. When the price cannot be read either,
+    nothing can be bought and `OrderCheckError` is thrown regardless.
+  - **A free service** is still ordered when the lookup fails, now with one visible, redacted
+    warning (`access.order.lookup_failed`, with `reason` and `free` fields), since a second
+    order costs only gas. "No previous order found" orders as before, with no warning.
+  - **`compute()` is unchanged:** it makes no previous-order lookup on chain, so it does not
+    throw `OrderCheckError` and has no `orderOnLookupFailure` option. (It sends the node no
+    `transferTxId`, so the node reports no valid order and each paid input is bought on every
+    job; that known limitation is not changed here.)
+  
+  **Migrate:** catch `OrderCheckError` where you call `access()`, show its message (it names
+  the cost, the cause and what to do) and retry later or with another RPC. Don't retry with
+  `orderOnLookupFailure: true` on your own right after catching it: that is the second
+  payment this change prevents. Offer it to the user, who knows whether the account already
+  holds an order, and pass it only on their decision.
+
+- [#212](https://github.com/deltaDAO/nautilus/pull/212) [`8be5d9b`](https://github.com/deltaDAO/nautilus/commit/8be5d9be1c743f033a2d6053f2c225f755822767) Thanks [@Abrom8](https://github.com/Abrom8)! - Every transaction now goes through a nonce guard, so concurrent publishes and orders from one
+  key no longer collide, a publishing, pricing or metadata transaction refused for a stale nonce
+  from the RPC is sent again, and a failed send says why instead of "ocean.js returned no
+  transaction". A paid transaction (an order, purchase, approval or escrow payment) refused for
+  its nonce is not sent again without proof that the first can never be mined, which gives up
+  after 128 blocks: it stops with "may have been sent".
+  
+  **What changes for you**
+  
+  - **Concurrent calls from one key work.** `Promise.all` of publishes, edits and orders of
+    different services from one `Wallet` used to lose one of them to `REPLACEMENT_UNDERPRICED` or "nonce too low",
+    reported only as `… failed: ocean.js returned no transaction`. `Nautilus.create` now wraps
+    the signer in a nonce guard: for a locally signing signer (an ethers `Wallet`) it sends one
+    transaction at a time per chain and address (only the broadcast, not the wait for mining),
+    with the nonce `max(its own counter, the RPC's pending count)`, advancing the counter only
+    after a successful broadcast. Buying the same service in parallel is still a known
+    limitation.
+  - **Recovery from nonce refusals only** (`NONCE_EXPIRED`, `REPLACEMENT_UNDERPRICED`,
+    "already known"), for a refused transaction that is provably the call's own: one the chain
+    already has is waited for and never sent again; one it does not have is sent again with a
+    fresh nonce, at most three attempts in all (an "already known" refusal is never sent
+    again). An order, purchase, approval or escrow payment is sent
+    again only with proof from two RPCs that the first can never be mined (the account's
+    mined count past its nonce on both, read first; the hash unknown on both; and, in the
+    blocks since the send on each RPC, another call of the account holding that nonce in a
+    finalized block, not the same call to the same contract, which may be this one sped up
+    or retried, searched over at most 128 blocks; nautilus does not wait for finality, so on
+    a chain that finalizes in minutes a fresh collision stops), so never without a
+    `verificationProvider`; otherwise it stops with the new **`NonceGuardError`**
+    (`reason: 'may-have-been-sent'`). A timeout, network error or any other refusal is never
+    retried; a resend that fails that way is a `NonceGuardError` too, keeping the earlier
+    refused transactions in `attempts` (`attemptsComplete` says whether that list is whole).
+    `NonceGuardError` has `code`, `reason` (`'may-have-been-sent'`, `'attempts-exhausted'`,
+    `'unverifiable'` or `'not-managed'`), `attempts`, `attemptsComplete` and `moneySend`.
+  - **The counter survives a lagging RPC.** A send takes the RPC's pending count instead only
+    when the earliest transaction the pending count does not cover was dropped from the pool
+    (sent over a minute ago, unknown on two reads, and the account not mined past its nonce),
+    so a dropped transaction no longer leaves a gap that later ones wait behind for ever. A
+    send that fails to fill the gap leaves it to the next send.
+  - **New options on `Nautilus.create`:** `nonceManagement: 'auto' | 'off'` (default `'auto'`;
+    `'off'` never sets a nonce or resends) and `verificationProvider`, a second RPC on the
+    same chain for the "never sent" proofs, recommended for paid flows; `create` checks its
+    chain and refuses the signer's own provider (the same object or URL), and refuses any
+    other `nonceManagement` value.
+    Wallet-managed signers (`JsonRpcSigner`, browser wallets) keep choosing their nonces.
+  - **`getSigner()` returns the guarded signer**, not the object you passed in, so
+    `getSigner() instanceof Wallet` is `false`. It signs through your signer. Passed to
+    `Nautilus.create` again, it is not wrapped twice: the new instance applies its own
+    `nonceManagement` and `verificationProvider` to your signer, and shares the per-address
+    order and nonce counter with the first.
+  - **Errors name the cause.** `confirmTransaction(operation, response, signer?, to?)` takes
+    the signer and the contract the call went to and, when ocean.js returned no transaction,
+    names that contract's recorded failure, with "It may have been sent" unless it was refused
+    before the broadcast, and puts it on `cause` (the `NonceGuardError`, or a sanitised copy of
+    the wallet's or RPC's error). With two sends to one contract on record (a broadcast until
+    it is confirmed, a failure for a minute) it cannot tell which call failed, and keeps the
+    generic message (also through ocean.js's confidential-chain wrapper, which shares the
+    record). ocean.js's own errors for a failed datatoken creation or order also name the
+    recorded failure. No error from a failed send carries a raw signed transaction or the RPC's URL path any more:
+    ethers' errors reach you with `<signed transaction 0x…hash>` in place of the signed bytes
+    (also where the RPC echoes them), the RPC URL cut to its origin (its path may hold an API
+    key), and the HTTP `request`, `response` and response body of a failed request dropped
+    (an error that cannot be changed in place, frozen or with read-only fields, is thrown as
+    a sanitised copy with its `name`, `code`, `reason`, hashes and redacted messages);
+    the raw values go to the debug channel (`NAUTILUS_DEBUG=sensitive`, topic `nonce`), with
+    the nonce reads and the guard's decisions; credentials such as an RPC URL's token only at
+    `NAUTILUS_DEBUG=secrets`.
+  - **A failed send's error is bounded.** Each message of a failed send is cut to 16,000
+    characters (a URL the cut runs through is dropped whole, so its user info cannot read as
+    its host), with ANSI escapes and control characters removed, so a huge error body from an
+    RPC is redacted in bounded time. The raw error is in the debug channel (topic `nonce`).
+  - **A metadata transaction refused for its nonce** keeps its stored envelope unless it is
+    proven never mined (hash unknown on two reads, the account past its nonce at each RPC's
+    finalized block, and no metadata event with this `metadataHash` up to a block each RPC
+    names): `cleanup: 'removed'` only then (`'not-removed'` if the store cannot remove it),
+    else `'kept'`. A nonce taken only in blocks not yet finalized keeps the envelope, as a
+    reorg could still mine the metadata transaction. On a confidential chain it is always kept.
+    `REPLACEMENT_UNDERPRICED` no longer counts as "never broadcast" by itself.
+  - **New log events:** `chain.nonce.resending`, `chain.nonce.already_sent`,
+    `chain.nonce.gave_up`, `chain.nonce.counter_reset`, `chain.send.failed`,
+    `publish.metadata.nonce_refused`, `node.indexer_nonce.zero_byte_accepted`.
+  - **One key per process.** The guard covers one process; two processes sending with one key
+    can still collide.
+  - **The indexer-nonce preflight knows ocean-node 4.2.2.** `isIndexerNonceSignable(address,
+    nonce, nodeVersion?)` and `getIndexerNonceState()` (new field `nodeVersion`, from
+    `GET /`) no longer report a zero-byte nonce hash as stuck on a node of 4.2.2 or later,
+    which accepts it, so `publish()` no longer refuses there; it logs
+    `node.indexer_nonce.zero_byte_accepted` at `info` instead. Unknown or older versions keep
+    the refusal. The version is self-reported and the fix is in the OE fork (`oe-ocean-node`):
+    an upstream ocean-node with the same number would leave such an asset unindexed. New
+    export `nodeAcceptsZeroByteNonce(version)`.
+
+- [#212](https://github.com/deltaDAO/nautilus/pull/212) [`98231ac`](https://github.com/deltaDAO/nautilus/commit/98231ac2749db28fc77d57cd69f6b653e792abbe) Thanks [@Abrom8](https://github.com/Abrom8)! - Every log line names the call it comes from, so the lines of calls that run at the same time
+  can be told apart, and a thrown error leads to its lines.
+  
+  **What changes for you**
+  
+  - **`opId` and `operation` on every event of a call.** `publish`, `completePublish`, `edit`,
+    `setServicePrice`, `setAssetLifecycleState`, `access`, `compute`, `freeCompute`,
+    `stopCompute`, `getComputeStatus`, `getComputeResult`, `streamComputeResult`,
+    `getComputeLogs`, `waitForIndexer` and the reads `getAsset`, `getAssets`, `query`,
+    `getComputeEnvironments` and `getComputeEnvironment` each give their call a random 12-hex-character `opId`. Every `LogEvent` the call causes carries it, with the
+    call's name as `operation`, in the JSON and the pretty format and in a `sink`. In Node 22.3
+    or newer it follows the call through every `await`, timer and callback (`AsyncLocalStorage`, read
+    through `process.getBuiltinModule`, so no bundle has to resolve `node:async_hooks`), and so
+    reaches the node client's, the process-wide logger's and the sensitive debug channel's
+    events too (`DebugEvent.opId`, and `[access 3f9a2c1b07e4]` after the time on a debug line).
+    In a browser, and in Node 22.0 to 22.2 (no `process.getBuiltinModule`), the call hands a
+    logger bound to it to the steps it runs (orders, escrow, the NFT mint, price changes,
+    compute start, publish's and edit's checks and metadata transaction); events of code it
+    does not hand that logger (the node client, the policy-session resolver, the signer's
+    nonce guard, an `S3RemoteStore`, the process-wide logger and the ocean.js lines it
+    captures) carry no `opId`, never a wrong one.
+  - **`error.opId`.** The error such a call throws carries the same `opId`. It is not
+    enumerable, so the error compares, prints and serialises as before. One error object
+    thrown by several calls (a cached rejection, a shared abort reason) has the latest call's
+    `opId`, and `error.opIds` holds the first call's `opId` followed by the latest ones (at
+    most 16). An error whose own `opId`
+    nautilus did not set keeps it.
+  - **Operation events with `durationMs`.** Each call logs `…operation.started` (`debug`) and
+    `…operation.finished` or `…operation.failed` (`info`, with `durationMs`; `failed` with the
+    redacted `error`) under its component: `publish`, `edit`, `lifecycle`, `access`, `compute`
+    and `node` (`waitForIndexer`). The job reads, `getComputeStatus` and `getComputeResult`
+    (which apps poll), `streamComputeResult` and `getComputeLogs` (which finish once the stream
+    is open), and the environment reads log `compute.query.*`; the metadata reads `getAsset`,
+    `getAssets` and `query` log `node.query.*`; all of these at `debug`. Nothing new prints at the
+    default level (`warn`). In Node 22.3 or newer, a call made from inside another call of the
+    same logger that is still running (from a `confirmProviderFees` callback, say) joins that
+    one; a timer or listener a finished call left behind starts an operation of its own. With
+    `NAUTILUS_DEBUG=sensitive` and the log level at `info` or more verbose, the raw error of a
+    `failed` event goes to the debug topic of its origin where nautilus knows it (`policy`,
+    `wallet`, `nonce`), else to the component's (`rpc` for publish, edit and lifecycle,
+    `order` for access, `compute`, `node`).
+  - New exported type `OperationName`; `LogEvent` and `DebugEvent` have `opId` and
+    `operation`.
+  
+  - **Redaction fix.** A JWT, a signature or a signed transaction right after an escape
+    sequence that ends in a letter (`Evil\u001b[2J<token>`) was printed: deleting the escape
+    glued the token to the word before it. Such tokens are now redacted there too, in log
+    lines and error messages, also when the JWT's payload JSON has whitespace (`{\n"sub":…}`,
+    encoded `ewo…` rather than `eyJ…`). A JWT whose header JSON has whitespace is now redacted
+    as well; it was printed even on its own.
+  
+  The `opId` is random and the operation a fixed name: neither carries your data, the node's
+  or the chain's, and both pass the same field redaction as every other field.
+
+- [#212](https://github.com/deltaDAO/nautilus/pull/212) [`a708dc9`](https://github.com/deltaDAO/nautilus/commit/a708dc9870fea44a3966956f5736cf3626c2220b) Thanks [@Abrom8](https://github.com/Abrom8)! - Warnings are printed once per subject, node text in them is cleaned and shortened, and
+  ocean.js no longer prints "No config found" during an order.
+  
+  **What changes for you**
+  
+  - **The policy-server warning names the node and the asset, and is printed once for each
+    pair.** `publish.preflight.denies_all` warns when a node's policy server would refuse every
+    consumer, because the asset has no address allow list. It now warns for each node that has
+    a policy server, the configured one and each service's `serviceEndpoint` (an endpoint with
+    a trailing slash is the same node). Before, it stopped at the first. It is printed once per
+    node and asset. The asset is its DID on an edit and in `completePublish`, which has the
+    NFT; the event carries `did`. Before the mint there is no DID, so the key is the
+    publisher's address and the asset's name: new assets of one publisher with the same name
+    warn once per node, and the event carries `name`. Publishing or editing the same asset
+    again no longer repeats the warning; publishing it and then editing it warns once for
+    each.
+  - **Other warnings are printed once where repeating them adds nothing:**
+    - `publish.preflight.indexer_nonce_will_stick`: once per node and nonce.
+    - `compute.result.unavailable`: once per node, job and reason (the node does not know
+      the job; the job has no `output`), however often `getComputeResult` is polled.
+      `compute.result.not_ready` is unchanged.
+    - `compute.duration.capped`: once per node, environment, requested duration and limit.
+  
+    These stay printed every time, because each one is a new failure:
+    `publish.preflight.pending_unreadable`, `publish.metadata.events_unchecked` and
+    `access.order.lookup_failed`. A logger remembers the last 1,000 keys; a key longer than
+    256 characters is remembered by its hash.
+  - **A compute job's status text and result list are cleaned before they appear** in the
+    `compute.result.unavailable` and `compute.result.not_ready` warnings and in the errors `streamComputeResult` and
+    `getComputeLogs` throw. Control characters and ANSI escapes are removed from each result
+    entry, URLs keep only their origin, credentials are redacted, the status is cut at 200
+    characters and the result list at 1,000; a cut list says how many results there are and
+    that `getComputeStatus()` lists them all. Before, the list was put in as the node sent it,
+    at any length. When the list was cut or cleaned, the list as the node sent it goes to the
+    debug channel (`compute` topic; credentials still masked).
+  - **Node text is redacted in bounded time, and a backslash no longer ends a URL.** The
+    redaction of a node's text, an error or a log message reads only the start of a long
+    text: eight times the length it is cut to, at least 8,192 characters, except a short field
+    (cut at 100 characters or less), read at eight times its length. The word that cut splits
+    is dropped, so a cut JWT or URL never shows in part; a URL the cut goes through is dropped
+    whole, so its user info (`https://user:secret,…@host`) is never read as its host. User
+    info with a quote or `<`/`>` in it (`https://user:12345'secret@host`, also as a JSON
+    escape, `\u0027`, or in a URL percent-encoded into a query) is dropped up to its
+    `@`, also when the cut falls in it, in messages and in the `sensitive` debug tier; a URL
+    whose authority is otherwise no host and port (a space in its password ended it) reads
+    `scheme://<redacted>`. A URL with a backslash in its path
+    (`https://host/x\y/v3/<key>`) now keeps only its origin in messages, and its path token is
+    masked in the `sensitive` debug tier as well; before, the text after the backslash was
+    printed. So does a URL with a BOM in its path (the token after the BOM used to be
+    printed), and a URL without a scheme on an IP address, `localhost` or an
+    IPv6 address in brackets (`127.0.0.1:8545/v3/<key>` reads `127.0.0.1:8545`).
+  - **No more `No config found for given network 'undefined'`.** The `FixedRateExchange` and
+    `Dispenser` that nautilus builds for orders, prices and `editPrice` now get the chain id and
+    the chain config, as the datatoken and the NFT already did. ocean.js used to print the line
+    at its default level, twice per fixed-price order. Those contracts' transactions now also
+    use the config's `gasFeeMultiplier`, and on an `sdk: 'oasis'` chain the wrapped signer.
+    `getDatatokenBalance(signer, datatokenAddress, config?)` takes the chain config as an
+    optional third argument. Without it, the chain id is read from the signer, and so does
+    `getPricingInfo(signer, datatokenAddress)` without its config.
+  - **A node's reason ends in one period.** `PolicyDeniedError`, `PublishIncompleteError` and
+    the error `waitForIndexer` throws after repeated failed lookups no longer read `…at asset level..` when the node's text already
+    ends in `.`, `!`, `?` or `…`. A period is still added when it ends in none of these.
+
+### Patch Changes
+
+- [#212](https://github.com/deltaDAO/nautilus/pull/212) [`6be269d`](https://github.com/deltaDAO/nautilus/commit/6be269df2910ecbfbb525499f2a2bef9788b0ac8) Thanks [@Abrom8](https://github.com/Abrom8)! - Credentials hidden by escaping in an RPC's answer are redacted, and the known limits of this
+  release are documented on one page.
+  
+  **What changes for you**
+  
+  - **Credentials under escaping in an RPC's answer are redacted in errors and log lines.**
+    When an RPC answers with an error, ethers quotes its answer in the error message, and each
+    level of quoting escapes it again. A credential the answer carried as a JSON field (a
+    `pinataGatewayToken`, an `apiToken` in a body quoted inside JSON, a field written with
+    `\u0022` or `\'` quotes) or percent-encoded (`apiToken%3D…`, an encoded JSON field, an
+    encoded RPC URL) reached the `error` field of a log event, an operation's
+    `…operation.failed` event, an `OceanNodeError` and the message of a failed send, because
+    the redaction did not look under the escapes. It now reads the text with up to eight levels
+    of JSON escaping and percent-encoding undone, one level at a time, so a quote escaped inside
+    a value stays part of it, and flattens deeper JSON escaping and percent-encoding of any
+    depth (also mixed, and chains where undoing one escape makes the next, such as
+    `\u005cu005c…u003d`) for one more read; what it finds there is redacted with the rest of
+    the text after it. Text that hides nothing keeps its escapes. The raw value is still in the debug
+    channel: at `NAUTILUS_DEBUG=secrets`, not at `sensitive`, which now reads the same escapes,
+    JSON-escaped URLs included.
+  - **A download URL can be replaced by a newer one.** The URL `access()` returns carries a
+    one-time number the node checks. Two URLs requested for the same consumer and node before
+    either is fetched carry the same number: the first one fetched works, and the other answers
+    HTTP 401 `nonce: … is not a valid nonce`. nautilus does not fetch the URL, so it cannot
+    change that answer. Fetch each URL before you request the next one; after such a 401, call
+    `access()` again and fetch the new URL right away (for a paid service, only once at least
+    2 more blocks are mined after the purchase: sooner, `access()` does not find the order yet
+    and pays again). The `access()` docs and the download guide say so.
+  - **Known limitations page.** [Known limitations](https://nautilus.delta-dao.com/docs/known-limitations)
+    lists what this release does not handle yet, each with what to do instead: the credential
+    type alone is not a reliable gate (enforce trust with trusted issuers and an explicit
+    address allow list), one download URL at a time, buying the same service in parallel from
+    one key, a second `access()` right after buying a paid service (wait until at least 2 more
+    blocks are mined after the purchase, or it pays again; a lagging RPC extends that wait),
+    every `compute()` buying its paid datasets and algorithms again (price compute services as
+    free, or expect one purchase per job), orders older than about 55 hours (less on an RPC
+  that serves 100 blocks per `eth_getLogs` call: keep paid services at 24 hours or less
+  there), a stuck fee
+    approval, `getAssets` on ocean-node 4.2, and revoking after deprecating.
+
 ## 2.0.0-beta.2
 
 ### Patch Changes
