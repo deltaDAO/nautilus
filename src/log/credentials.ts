@@ -47,6 +47,7 @@ import {
 import { redactKeyValues } from './keyValues.js'
 import {
   INVISIBLE_CHARACTERS,
+  QUOTED_USER_INFO,
   SCHEMELESS_URL,
   trailingPunctuation
 } from './textShapes.js'
@@ -206,6 +207,8 @@ function maskOnce(text: string, known: readonly string[]): string {
 
   return redactKeyValues(
     masked
+      // User info a quote stands in is dropped up to its `@`; `maskUrl` marks it.
+      .replace(QUOTED_USER_INFO, '$1@')
       .replace(URL_PATTERN, (url) => maskUrl(url))
       .replace(SCHEMELESS_URL, (url) => maskUrl(`x://${url}`).slice(4))
       .replace(AUTH_SCHEME, `$1 ${REDACTED}`)

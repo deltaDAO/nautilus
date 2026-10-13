@@ -24,7 +24,7 @@ import {
   type WaltIdWallet
 } from '../../src/identity/waltid/client.js'
 import { setDebug } from '../../src/log/debug.js'
-import { redactSecrets } from '../../src/node/messages.js'
+import { redactSecrets, sessionIdRemover } from '../../src/node/messages.js'
 import {
   OceanNodeClient,
   PolicyDeniedError,
@@ -560,6 +560,58 @@ describe("a hostile node's per-policy results, in bounded time", () => {
   })
 })
 
+describe("a huge session id in the node's per-policy results, in bounded time", () => {
+  it('is removed from 300 cut fields in milliseconds (security regression)', async () => {
+    // The node chooses the id, and `checkPolicySession` removes it from each policy and
+    // credential name and each error, twice. Folding the letter case of the whole id and
+    // reading all of it for the start a cut left, for each field, cost 6 s for 50 results
+    // with a 500 KB id.
+    const sessionId = `${'Q'.repeat(500_000)}e-${'f'.repeat(40)}`
+    const field = `${'x'.repeat(50)}-${'q'.repeat(49)}…`
+
+    let removed: string[] = []
+    const elapsed = await cpuTime(async () => {
+      const remove = sessionIdRemover(sessionId)
+      removed = Array.from({ length: 300 }, () => remove(field))
+    })
+
+    expect(elapsed).to.be.below(cpuBudget(50))
+    for (const text of removed)
+      expect(text).to.equal(`${'x'.repeat(50)}-<redacted>…`)
+
+    // And through the client: each error is cut at 100 characters inside the id's start.
+    vi.spyOn(ProviderInstance, 'PolicyServerPassthrough').mockResolvedValue({
+      success: false,
+      httpStatus: 400,
+      message: {
+        verificationResult: false,
+        policyResults: {
+          results: Array.from({ length: 50 }, () => ({
+            credential: 'VerifiableId',
+            policyResults: [
+              {
+                policy: 'signature',
+                is_success: false,
+                error: `${'x'.repeat(50)}-${'q'.repeat(700)}`
+              }
+            ]
+          }))
+        }
+      }
+    } as never)
+    const check = await new OceanNodeClient({
+      nodeUri: '16Uiu2HAmPeer',
+      chainId: CHAIN_ID,
+      auth: 'a-session-token',
+      consumerAddress: OWNER_ADDRESS
+    }).checkPolicySession(sessionId)
+
+    expect(check.policyResults).to.have.length(50)
+    for (const result of check.policyResults)
+      expect(result.error).to.equal(`${'x'.repeat(50)}-<redacted>…`)
+  })
+})
+
 describe("CredentialPresentationError's reason", () => {
   it('says which step failed', async () => {
     const { node } = policyNode(HOLDER_BINDING_NPE)
@@ -1016,6 +1068,124 @@ describe("a policy-server session id in the wallet's text (D10)", () => {
         error: 'no session <redacted>'
       }
     ])
+  })
+
+  it("is removed as the known session id from the node's per-policy results and the refusal, whatever its shape (PR #216 review)", async () => {
+    const sessionId = 'custom-policy-session-0123456789abcdef'
+    // The id quoted whole, in another letter case, split by a control character the
+    // sanitiser deletes, in a policy and a credential name, and cut by the 100-character
+    // bound of an error at every position.
+    const errors = [
+      `Id parameter ${sessionId} expired`,
+      `Id parameter ${sessionId.toUpperCase()} expired`,
+      `Id parameter custom-policy-\u0007session-0123456789abcdef expired`,
+      ...Array.from(
+        { length: sessionId.length + 1 },
+        (_, cut) => `${'x'.repeat(100 - cut)}${sessionId} expired`
+      )
+    ]
+    const record = {
+      success: false,
+      httpStatus: 400,
+      message: {
+        verificationResult: false,
+        policyResults: {
+          results: [
+            {
+              credential: `VerifiableId ${sessionId}`,
+              policyResults: errors.map((error, index) => ({
+                policy: index ? `policy-${index}` : `policy ${sessionId}`,
+                is_success: false,
+                error
+              }))
+            }
+          ]
+        }
+      }
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(record), { status: 400 }))
+    )
+    const node = new OceanNodeClient({
+      nodeUri: NODE,
+      chainId: CHAIN_ID,
+      auth: 'a-session-token',
+      consumerAddress: OWNER_ADDRESS
+    })
+    vi.spyOn(node, 'hasPolicyServer').mockResolvedValue(true)
+    vi.spyOn(node, 'initializePolicyVerification').mockResolvedValue({
+      success: true,
+      httpStatus: 200,
+      message: {
+        sessionId,
+        redirectUri:
+          'openid4vp://authorize?response_uri=https%3A%2F%2Fps.test.invalid%2Fverify'
+      }
+    })
+    const presented = new PolicySessionResolver({
+      credentials: { present: async () => undefined }
+    })
+    const failedPresentation = new PolicySessionResolver({
+      credentials: {
+        present: async () => {
+          throw new Error('the presentation failed')
+        }
+      }
+    })
+
+    for (const resolver of [presented, failedPresentation]) {
+      const thrown = await resolve(node, resolver).catch((error) => error)
+
+      expect(thrown).to.be.instanceOf(PolicyDeniedError)
+      expect(thrown.policyResults).to.have.length(errors.length)
+      expect(thrown.policyResults[0]).to.deep.include({
+        credential: 'VerifiableId <redacted>',
+        policy: 'policy <redacted>',
+        error: 'Id parameter <redacted> expired'
+      })
+      expect(thrown.policyResults[1].error).to.equal(
+        'Id parameter <redacted> expired'
+      )
+      expect(thrown.policyResults[2].error).to.equal(
+        'Id parameter <redacted> expired'
+      )
+      const text = everything(thrown).toLowerCase()
+      for (let length = 4; length <= sessionId.length; length++)
+        expect(text, `${length} characters of the id`).not.to.contain(
+          sessionId.slice(0, length)
+        )
+    }
+  })
+
+  it("is removed as the known session id from the node's answer that is no session record", async () => {
+    const sessionId = 'custom-policy-session-0123456789abcdef'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              success: false,
+              httpStatus: 400,
+              message: `Id parameter ${sessionId} doesn't refer to an existing session, or session expired`
+            }),
+            { status: 400 }
+          )
+      )
+    )
+
+    const thrown = await new OceanNodeClient({
+      nodeUri: NODE,
+      chainId: CHAIN_ID,
+      auth: 'a-session-token',
+      consumerAddress: OWNER_ADDRESS
+    })
+      .checkPolicySession(sessionId)
+      .catch((error) => error)
+
+    expect(thrown.message).to.contain('Id parameter <redacted> doesn')
+    expect(everything(thrown)).not.to.contain('custom-policy')
   })
 })
 

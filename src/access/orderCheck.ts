@@ -114,6 +114,14 @@ const URL_TEXT = /[a-z][a-z0-9+.-]{0,31}:(?:\\*\/){2}(?:[^\s"'<>\\]|\\+\/)*/gi
  * linear time.
  */
 const JSON_UNICODE_ESCAPE = /\\+(?:u00([2-6][0-9a-f]|7[0-9a-e]))?/gi
+/**
+ * What a `JSON_UNICODE_ESCAPE` may be undone to: a character of a key or a URL that ends no
+ * value in any form (as `DECODABLE` in `node/messages.ts`). A quote, a space or a delimiter
+ * (`"`, `'`, `&`, `,`, `}` …) stays escaped, so it cannot cut a value short of the
+ * redaction (`"password":"x\u0022<secret>"`). A backslash is undone only before a `u`, where
+ * it starts the next level's escape (`\u005cu004b`).
+ */
+const UNESCAPABLE = /^[A-Za-z0-9_\-.:/@~+]$/
 /** How many levels of `\u00XX` escaping are undone (`\u005cu004b`, escaped twice). */
 const MAX_UNESCAPE_LEVELS = 4
 /** A URL without its scheme: `host.tld[:port]/path…`. */
@@ -395,7 +403,8 @@ function redactedError(error: unknown): Error {
 
   // Redaction first, on the RPC's whole first line: the URL removal below cannot cut a URL
   // short of a token in it (`https://host/x\y/v3/<token>`) before `sanitize` sees it. Its
-  // `\u00XX` escapes are undone before, so a key spelt with them is read as the key. The
+  // `\u00XX` escapes of key characters are undone before, so a key spelt with them is read
+  // as the key; an escaped quote or delimiter stays, so no value is cut short. The
   // raw error is in the debug channel already (`classifyLookupFailure`).
   const line = undoUnicodeEscapes(raw.split(/\r?\n/)[0] ?? '')
   const text = sanitize(line, MAX_DETAIL_LENGTH, null)
@@ -416,16 +425,22 @@ function redactedError(error: unknown): Error {
 }
 
 /**
- * `text` with up to `MAX_UNESCAPE_LEVELS` levels of `\u00XX` escapes of printable ASCII
- * undone (`JSON_UNICODE_ESCAPE`). Linear in the length of `text` per level.
+ * `text` with up to `MAX_UNESCAPE_LEVELS` levels of `\u00XX` escapes undone
+ * (`JSON_UNICODE_ESCAPE`), of the characters that cannot end a value only (`UNESCAPABLE`).
+ * Linear in the length of `text` per level.
  */
 function undoUnicodeEscapes(text: string): string {
   let current = text
   for (let level = 0; level < MAX_UNESCAPE_LEVELS; level++) {
     const next = current.replace(
       JSON_UNICODE_ESCAPE,
-      (run, code: string | undefined) =>
-        code ? String.fromCharCode(Number.parseInt(code, 16)) : run
+      (run: string, code: string | undefined, offset: number, all: string) => {
+        if (!code) return run
+        const char = String.fromCharCode(Number.parseInt(code, 16))
+        const nextLevel =
+          char === '\\' && /u/i.test(all.charAt(offset + run.length))
+        return UNESCAPABLE.test(char) || nextLevel ? char : run
+      }
     )
     if (next === current) break
     current = next

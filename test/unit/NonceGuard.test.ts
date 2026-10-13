@@ -395,6 +395,44 @@ describe('NonceGuardSigner: prevention', () => {
     ])
   })
 
+  it('keeps the gap after a refill that fails, and fills it on the next send (PR #217 review, 4255862781)', async () => {
+    // Nonce 10 was dropped, 11 waits behind it. The send that fills 10 fails (no funds):
+    // forgetting 10 then gave the next send 12, and 10 stayed empty for ever.
+    let now = 0
+    let refuse = false
+    const chain = fakeChain({
+      latest: 10,
+      broadcast: async (raw) => {
+        if (!refuse) return undefined
+        refuse = false
+        throw makeError('insufficient funds', 'INSUFFICIENT_FUNDS', {
+          transaction: raw
+        } as never)
+      }
+    })
+    const signer = guard(chain, { now: () => now })
+    const first = await signer.sendTransaction(request())
+    now = 59_000
+    await signer.sendTransaction(request())
+
+    now = 61_000
+    chain.known.delete(first.hash)
+    chain.setLatest(10)
+    refuse = true
+    const error = await failure(signer.sendTransaction(request()))
+    expect(error.message).to.match(/insufficient funds/)
+
+    now = 62_000
+    await signer.sendTransaction(request())
+    now = 63_000
+    await signer.sendTransaction(request())
+
+    // The failed refill at 10, then 10 again, then 12 (11 still waits in the pool).
+    expect(chain.broadcasts.map((tx) => tx.nonce)).to.deep.equal([
+      10, 11, 10, 10, 12
+    ])
+  })
+
   it('keeps the counter while the earliest transaction is still known, though the RPC does not count it (control)', async () => {
     let now = 0
     const chain = fakeChain({ latest: 10 })

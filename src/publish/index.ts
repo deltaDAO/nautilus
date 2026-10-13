@@ -881,13 +881,15 @@ function refusedAttempts(
 /**
  * Whether a metadata write refused for its nonce provably changed nothing, so its envelope
  * can be removed: (a) none of its transactions known on two reads (the second through the
- * `verificationProvider` when configured), (b) the publisher's mined count past their
- * nonces, so other transactions used them, and (c) no `MetadataCreated`/`MetadataUpdated`
- * of the NFT carrying this `metadataHash` since just before the send. (c) is read from
- * each provider up to a block it names (`toBlock` its head, not `'latest'`, which a
- * load-balanced RPC may answer from a backend further behind), at which the publisher's
- * mined count is past the nonces too: so the logs cover the block that used each nonce.
- * Anything not proven, including a read that fails, keeps the envelope.
+ * `verificationProvider` when configured), (b) the publisher's mined count at each
+ * provider's finalized block past their nonces, so other transactions used them for good
+ * (a nonce used only in unfinalized blocks can come free again in a reorg; an RPC without
+ * a `finalized` block proves nothing), and (c) no `MetadataCreated`/`MetadataUpdated` of
+ * the NFT carrying this `metadataHash` since just before the send. (c) is read from each
+ * provider up to a block it names (`toBlock` its head, not `'latest'`, which a
+ * load-balanced RPC may answer from a backend further behind), at or above its finalized
+ * block: so the logs cover the block that used each nonce. Anything not proven, including
+ * a read that fails, keeps the envelope.
  */
 async function provenNotWritten(params: {
   signer: Signer
@@ -918,9 +920,13 @@ async function provenNotWritten(params: {
 
   try {
     for (const each of new Set([provider, second ?? provider])) {
+      // Read first: a block at or below it, read afterwards, is final. A nonce used only
+      // above it can come free again in a reorg, and the metadata transaction mine.
+      const finalized = (await each.getBlock('finalized'))?.number
+      if (typeof finalized !== 'number') return false
       const head = await each.getBlockNumber()
-      if (head < fromBlock) return false
-      if ((await each.getTransactionCount(publisher, head)) <= highest)
+      if (head < fromBlock || head < finalized) return false
+      if ((await each.getTransactionCount(publisher, finalized)) <= highest)
         return false
 
       const logs = await each.getLogs({
