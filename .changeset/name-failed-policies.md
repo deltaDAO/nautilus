@@ -62,15 +62,15 @@ policy-server session id or the wallet's redirect URI any more.
   the session id (and each of its two halves) from the wallet's message, whatever its length,
   also the start of it that a cut left before the message's closing `…` (`WaltIdHttpWallet`
   bounds the message before the provider sees it, so an id that crosses the 500th character
-  is cut), and again after sanitising, where deleting a control or zero-width character or
-  decoding a JSON escape joins it. `checkPolicySession` removes the session id it read,
-  whatever its shape, the same way from each per-policy name and error (also where deleting
-  a control character joins it, or the 100-character cut splits it) and from its own error,
-  so neither `PolicyDeniedError.message`, `.reason` and `.policyResults` nor an
-  `OceanNodeError` for an expired session quotes it. Every sanitiser also redacts the policy server's id shape
-  (`<64 hex>-<64 hex>`, not after `0x`, which is a compute job id) wherever it stands, in
-  node text and per-policy errors too. A URL quoted in
-  the wallet's text still keeps its origin, so the verifier's host can appear.
+  is cut), and again after sanitising, where deleting a control or zero-width character
+  joins it or a JSON or percent escape hides it. `checkPolicySession` removes the session id
+  it read, whatever its shape, the same way from each per-policy name and error (also where
+  deleting a control character joins it, an escape hides it, or the 100-character cut splits
+  it) and from its own error, so neither `PolicyDeniedError.message`, `.reason` and
+  `.policyResults` nor an `OceanNodeError` for an expired session quotes it. Every sanitiser
+  also redacts the policy server's id shape (`<64 hex>-<64 hex>`, not after `0x`, which is a
+  compute job id) wherever it stands, in node text and per-policy errors too. A URL quoted
+  in the wallet's text still keeps its origin, so the verifier's host can appear.
 - **The node's per-policy results are bounded.** `checkPolicySession` keeps at most 50
   results (failures first), and strips control characters from, redacts and cuts at 100
   characters each policy and credential name and each error. Each is read up to 800

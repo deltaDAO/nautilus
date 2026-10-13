@@ -203,10 +203,21 @@ export function redactSecrets(text: string): string {
  * it decoded redacts more; then it is shown decoded.
  */
 function redactShallow(text: string): string {
-  const plain = redactPatterns(text)
+  return withJsonEscapesRead(text, redactPatterns)
+}
+
+/**
+ * `text` through `pass`, as it is and with the JSON escapes `decodeJsonEscapes` decodes:
+ * the text keeps them unless the pass finds more in it decoded; then it is shown decoded.
+ */
+function withJsonEscapesRead(
+  text: string,
+  pass: (text: string) => string
+): string {
+  const plain = pass(text)
   const decoded = decodeJsonEscapes(text)
   if (decoded === text) return plain
-  const read = redactPatterns(decoded)
+  const read = pass(decoded)
   return read === decodeJsonEscapes(plain) ? plain : read
 }
 
@@ -539,12 +550,17 @@ export function sessionIdRemover(sessionId: string): (text: string) => string {
     ...(sessionId.length >= 8 ? [sessionId] : []),
     ...sessionId.split('-').filter((part) => part.length >= 32)
   ].map(asciiLowerCase)
-
-  return (text) =>
+  const removeOnce = (text: string) =>
     withoutCutStart(
       parts.reduce((current, part) => withoutText(current, part), text),
       parts
     )
+
+  // An escape inside the id (`custom\u002dpolicy-…`, `%2D`, `-\u200b`) hides it from a
+  // literal match, and `sanitize` keeps such an escape (`redactShallow`): the id is also
+  // looked for with the escapes undone, as `redactSecrets` reads a credential.
+  return (text) =>
+    withEscapesUndone(text, (part) => withJsonEscapesRead(part, removeOnce))
 }
 
 /**

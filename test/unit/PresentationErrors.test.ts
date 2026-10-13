@@ -1020,6 +1020,79 @@ describe("a policy-server session id in the wallet's text (D10)", () => {
       }
   })
 
+  it('is removed when an escape that sanitize keeps hides it, from a custom wallet and from the node (inc1)', async () => {
+    // `sanitize` keeps an escape unless decoding it redacts more (`redactShallow`,
+    // `withEscapesUndone`), so a removal after it reads the id behind the escape too.
+    const sessionId = 'custom-policy-session-0123456789abcdef'
+    const hexId = `${'a1'.repeat(32)}-${'b2'.repeat(32)}`
+    const hiding = (id: string) => [
+      id.replace('-', '\\u002d'),
+      id.replace('-', '\\u002D'),
+      id.replace('-', '\\\\u002d'),
+      id.replace('-', '%2D'),
+      id.replace('-', '%5Cu002d'),
+      id.replace('-', '-\\u200b'),
+      id.replace('1', '\\u0031'),
+      id.replace('1', '%31')
+    ]
+
+    const { node } = policyNode(HOLDER_BINDING_NPE)
+    const base = walletPresentingThrough(httpWallet(400, VERIFIER_400))
+    for (const hidden of hiding(sessionId)) {
+      const presented = await waltIdProvider(node, {
+        ...base,
+        usePresentationRequest: async () => ({
+          errorMessage: `Id parameter ${hidden} expired`
+        })
+      })
+        .present(challengeFor(node, sessionId))
+        .catch((error) => error)
+      expect(presented.details, hidden).to.deep.equal({
+        errorMessage: 'Id parameter <redacted> expired'
+      })
+    }
+
+    // The node's per-policy errors: each half of the policy server's id shape, too.
+    for (const id of [sessionId, hexId])
+      for (const hidden of hiding(id)) {
+        vi.spyOn(ProviderInstance, 'PolicyServerPassthrough').mockResolvedValue(
+          {
+            success: false,
+            httpStatus: 400,
+            message: {
+              verificationResult: false,
+              policyResults: {
+                results: [
+                  {
+                    credential: 'VerifiableId',
+                    policyResults: [
+                      {
+                        policy: 'signature',
+                        is_success: false,
+                        error: `Id parameter ${hidden} expired`
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          } as never
+        )
+        const check = await new OceanNodeClient({
+          nodeUri: '16Uiu2HAmPeer',
+          chainId: CHAIN_ID,
+          auth: 'a-session-token',
+          consumerAddress: OWNER_ADDRESS
+        }).checkPolicySession(id)
+        const error = check.policyResults[0]?.error ?? ''
+        expect(error, hidden).to.match(
+          /^Id parameter (<redacted>\S*)+ expired$/
+        )
+        for (const half of id.split('-'))
+          expect(error.toLowerCase(), hidden).not.to.include(half.slice(0, 12))
+      }
+  })
+
   it("removes a split session id from a long custom wallet's message in linear time (security regression)", async () => {
     const { node } = policyNode(HOLDER_BINDING_NPE)
     const base = walletPresentingThrough(httpWallet(400, VERIFIER_400))
