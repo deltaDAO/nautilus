@@ -42,6 +42,7 @@ const node = new OceanNodeClient({
 | `consumerAddress` | `string` | For a JWT `auth`: the address to name when a call needs one. Optional: by default it is read from the token's `address` claim, as ocean.js reads it (decoded, not verified). Required for a token without that claim. |
 | `allowInsecureTransport` | `boolean` | Accept a plain `http://` `nodeUri` on a host other than `localhost`, `127.0.0.0/8`, `::1` or `*.localhost`. Default `false`: the constructor throws an `OceanNodeError`, the same rule as `Nautilus.create`. It also applies to the `nodeUri` argument of `encrypt` and `getFileInfo`. Carried over to `forEndpoint` clients. |
 | `requestTimeoutMs` | `number` | How long one `encrypt` call may run, its nonce retry included; over HTTP also an `initialize` request, and the signing of a `getComputeLogs` request (the log request waits for the job's first output with no timeout; abort its `signal` to stop). Default `120000` (2 minutes, room for a wallet's signature prompt). Must be a positive finite number. Carried over to `forEndpoint` clients. |
+| `logger` | `Logger` | Where this client's log events go, e.g. one from `createLogger({ sink })`. Default: the process-wide logger ([`configureLogging`](/docs/api/nautilus/configureLogging)); `Nautilus` passes its instance's. Carried over to `forEndpoint` clients. |
 
 ## Selected methods
 
@@ -138,7 +139,8 @@ a body that is not JSON throws an `OceanNodeError` (operation `getNodeAddress`);
 
 ```ts
 const state = await node.getIndexerNonceState()
-// { nodeAddress: '0x…', storedNonce: 264, nextNonce: 265, stuck: true }, or undefined over P2P
+// { nodeAddress: '0x…', storedNonce: 264, nextNonce: 265, nodeVersion: '4.2.0', stuck: true },
+// or undefined over P2P
 ```
 
 A read-only check (two `GET`s, nothing signed) of whether the node will accept its
@@ -147,15 +149,22 @@ next nonce, and the stored nonce advances only when a call succeeds. `stuck: tru
 node will not accept a call signed with `nextNonce` (`401 consumer address and nonce
 signature mismatch`): a publish or edit would go on chain without being indexed until the
 node operator advances the stored nonce of the node's address.
-`isIndexerNonceSignable(nodeAddress, nonce)` is the underlying check.
+`isIndexerNonceSignable(nodeAddress, nonce, nodeVersion?)` is the underlying check: before
+ocean-node 4.2.2 a call whose signed message hash starts with a zero byte is refused; 4.2.2
+and later accept it (`nodeAcceptsZeroByteNonce(version)`). `nodeVersion` is the `version`
+the node reports in `GET /` (sanitised); without one, or for a pre-release of 4.2.2, the
+zero-byte rule applies. The version is self-reported, and the fix is in the OE fork
+(`oe-ocean-node`): an upstream ocean-node with the same number still refuses such a call.
+When a zero-byte nonce is let through on the version alone, `getIndexerNonceState()` logs
+`node.indexer_nonce.zero_byte_accepted` at `info`, once per node and nonce.
 
 `publish`, `completePublish` and `edit` call it before their first transaction and throw an
 `IndexerNonceStuckError` (an `OceanNodeError` carrying this `state`) when `stuck`; pass
 `{ checkIndexerNonce: false }` to skip that. When the check fails (P2P, a node without the
 nonce endpoint, a network error) they go on silently.
 
-They also read `getNodeAddress()` once per instance and `console.warn` once when the
-publisher is that same address: the node's decrypt calls then collide with the publisher's
+They also read `getNodeAddress()` once per instance and warn once
+(`publish.preflight.publisher_is_node`) when the publisher is that same address: the node's decrypt calls then collide with the publisher's
 nonces and fail with 401, so the asset goes on chain but is never indexed. Publish with a
 different key than the node's.
 
@@ -269,9 +278,12 @@ For the calls that go through ocean.js, a JSON string or `{ error }` answer is u
 no status, and nothing of a plain-text answer.
 
 The node's text is sanitized before it goes into a message: ANSI escapes and control
-characters (CR and LF included) are removed; signatures, tokens (`vp_token`, `id_token`,
-JWTs, bearer credentials), `request_uri`, `code`, `nonce`, passwords and API keys are
-replaced by `<redacted>`, in a query, a JSON field or `key: value` prose; a URL keeps its
+characters (CR and LF included) are removed; the value of every key the log redaction
+treats as secret (signatures, tokens such as `vp_token` and `id_token`, `request_uri`, a
+`code` that is not an error code, `nonce`, session ids, passwords, API keys, …; see
+[`configureLogging`](/docs/api/nautilus/configureLogging)) is replaced by `<redacted>`, in a
+query, a JSON field, escaped JSON or `key: value` prose, and so are JWTs and `Bearer` and
+`Basic` credentials anywhere; a URL keeps its
 origin only, so a policy server's redirect URI or an internal path is not relayed; and the
 text is cut at 200 characters. An error answer's body is read up to 64 KB.
 

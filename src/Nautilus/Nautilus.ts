@@ -15,6 +15,7 @@ import {
   getAddress,
   isAddress,
   isHexString,
+  type Provider,
   type Signer,
   type TransactionReceipt
 } from 'ethers'
@@ -47,9 +48,21 @@ import type { CredentialProvider } from '../identity/CredentialProvider.js'
 import { PolicySessionResolver } from '../identity/PolicySessionResolver.js'
 import { isAddressCredential } from '../identity/policy.js'
 import type { SessionStore } from '../identity/session.js'
+import { type OperationName, runOperation } from '../log/context.js'
+import {
+  type DebugOptions,
+  debugEnabled,
+  debugRaw,
+  setDebug
+} from '../log/debug.js'
+import { fromOceanLogLevel } from '../log/levels.js'
+import { configureLogging, type Logger, loggerFor } from '../log/logger.js'
+import type { LoggingConfig, LoggingOptions } from '../log/types.js'
+import { sanitize, stripControlCharacters } from '../node/messages.js'
 import {
   IndexerNonceStuckError,
   isIndexerNonceSignable,
+  nodeAcceptsZeroByteNonce,
   OceanNodeClient,
   type WaitForIndexerOptions
 } from '../node/OceanNodeClient.js'
@@ -58,6 +71,7 @@ import {
   assertDid,
   assertEncryptOption,
   assertWritableState,
+  expectedDid,
   readMetadataState,
   readMetadataStatus
 } from '../publish/envelope.js'
@@ -87,6 +101,7 @@ import { resolvePublisherTrustedAlgorithms } from '../utils/helpers/trusted-algo
 import { errorMessage } from '../utils/http.js'
 import { getChainId } from '../utils/index.js'
 import { createKeyedLock } from '../utils/keyedLock.js'
+import { guardSigner, type NonceManagement } from '../utils/nonceGuard.js'
 import {
   assertValidLimits,
   type EscrowPaymentLimits,
@@ -94,7 +109,6 @@ import {
 } from '../utils/paymentLimits.js'
 import { getPricingInfo } from '../utils/pricing.js'
 import { assertSecureTransport } from '../utils/transport.js'
-import { warnOnce } from '../utils/warn.js'
 import type { NautilusAsset } from './Asset/NautilusAsset.js'
 import { PLACEHOLDER_ADDRESS } from './Asset/NautilusDDO.js'
 import type {
@@ -297,6 +311,49 @@ export interface NautilusOptions
    * signing of `getComputeLogs` over HTTP, passed to `OceanNodeClient`. Default 120 s.
    */
   requestTimeoutMs?: number
+  /**
+   * This instance's own logging, e.g. one sink per tenant in a multi-tenant server: either
+   * options (level, format, components, sink; those left out follow
+   * `Nautilus.configureLogging`), or a logger made with `createLogger(options)`, which
+   * several instances can share. Without it, the instance logs through the process-wide
+   * configuration.
+   */
+  logger?: LoggingOptions | Logger
+  /**
+   * Who chooses transaction nonces. nautilus sends every transaction through a nonce guard
+   * wrapped around the signer (`getSigner()` returns it):
+   *
+   * - `'auto'` (default): for a signer that signs locally (an ethers `Wallet`), nautilus
+   *   sends one transaction at a time per chain and address (only the broadcast, not the
+   *   wait for mining), with the nonce `max(its own counter, the RPC's pending count)`, so
+   *   concurrent publishes and orders of one key in this process do not collide. A
+   *   transaction refused for its nonce (`NONCE_EXPIRED`, `REPLACEMENT_UNDERPRICED`,
+   *   "already known") that the chain already has is waited for, never sent again; one it
+   *   does not have is sent again with a fresh nonce, at most three attempts in all (an
+   *   "already known" refusal is never sent again). An order, a
+   *   purchase, an approval or an escrow payment is sent again only with proof that the
+   *   first transaction can never be mined; otherwise it stops with a `NonceGuardError`
+   *   ("may have been sent"). Wallet-managed signers (`JsonRpcSigner`, browser wallets)
+   *   keep choosing their own nonces.
+   * - `'off'`: nautilus never sets a nonce and never sends a transaction again.
+   *
+   * Either way, a transaction the chain already has is returned instead of failing, and a
+   * failed send is named in the error (ocean.js itself reports only that it returned no
+   * transaction). The guard covers this process only: use one key per process.
+   *
+   * Given another instance's `getSigner()`, `create()` guards the signer underneath it with
+   * this instance's options; the two guards share the per-address order and nonce counter.
+   */
+  nonceManagement?: NonceManagement
+  /**
+   * A second RPC provider for the chain, asked for the second read before nautilus decides
+   * a transaction was never sent: before an order, purchase, approval or escrow payment is
+   * sent again after a nonce refusal, and before a stored envelope is removed after a
+   * failed metadata transaction. Default: the signer's own provider, read twice. It must
+   * be another RPC than the signer's: `create()` refuses the same provider object or the
+   * same URL. Without it, nautilus never sends a transaction that moves value again.
+   */
+  verificationProvider?: Provider
 }
 
 export interface PublishOptions {
@@ -338,6 +395,49 @@ export interface CompletePublishOptions extends PublishOptions {
    * only the signer's pending transaction count guards against a second write.
    */
   metadataTxHash?: string
+}
+
+/** How much of a job's status goes into a message or an error. */
+const MAX_JOB_STATUS_LENGTH = 200
+/** How much of a job's result list goes into a message or an error. */
+const MAX_JOB_RESULTS_LENGTH = 1_000
+
+/**
+ * A job's status as messages show it, `status 70: Job finished`: the node's text without
+ * control characters, redacted and bounded. The raw text goes to the `compute` debug topic
+ * when that changed it.
+ */
+function jobStatus(job: Pick<NodeComputeJob, 'status' | 'statusText'>): string {
+  return sanitize(
+    `status ${job.status}: ${job.statusText}`,
+    MAX_JOB_STATUS_LENGTH,
+    'compute'
+  )
+}
+
+/**
+ * The results a job lists, as JSON, made safe the same way: a node can list any number of
+ * results with any names, and a warning or an error must not carry all of them. When the
+ * list is cut, how many results there are is said, and where to read them all. The whole
+ * list, as the node sent it, goes to the `compute` debug topic when the text was cut or
+ * cleaned.
+ */
+function jobResults(job: Pick<NodeComputeJob, 'results'>): string {
+  const raw = JSON.stringify(job.results) ?? String(job.results)
+  // Each string cleaned before it is quoted: JSON would only escape an ANSI sequence or a
+  // line break (`\u001b[2J`, `\r\n`), leaving its text in the message.
+  const text =
+    JSON.stringify(job.results, (_key, value: unknown) =>
+      typeof value === 'string' ? stripControlCharacters(value) : value
+    ) ?? raw
+  const clean = sanitize(text, MAX_JOB_RESULTS_LENGTH, null)
+  // Compared with the list as the node sent it, so a list only cleaned of control
+  // characters is handed over too.
+  if (clean !== raw && debugEnabled('sensitive', 'compute'))
+    debugRaw('compute', 'job results before redaction', job.results)
+  if (text.length <= MAX_JOB_RESULTS_LENGTH || !Array.isArray(job.results))
+    return clean
+  return `${clean} (${job.results.length} results; getComputeStatus() lists them all)`
 }
 
 /** Whether the asset-level `allow` list has an `address` entry naming at least one address. */
@@ -411,14 +511,23 @@ export class Nautilus {
   /** Opens and caches the policy-server sessions of `access()` and `compute()`. */
   private readonly policySessions: PolicySessionResolver
 
+  /** Where this instance's log events go: `options.logger`, else the process-wide logger. */
+  private readonly log: Logger
+
   private constructor(signer: Signer, options: NautilusOptions) {
-    this.signer = signer
     this.options = options
+    this.log = loggerFor(options.logger)
+    this.signer = guardSigner(signer, {
+      nonceManagement: options.nonceManagement,
+      verificationProvider: options.verificationProvider,
+      logger: this.log
+    })
     this.policySessions = new PolicySessionResolver({
       credentials: options.credentials,
       sessionStore: options.sessionStore,
       persistPresentedSessions: options.persistPresentedSessions,
-      sessionTtlMs: options.sessionTtlMs
+      sessionTtlMs: options.sessionTtlMs,
+      logger: this.log
     })
   }
 
@@ -430,20 +539,88 @@ export class Nautilus {
     // A malformed ceiling fails here, not at the first paid call.
     assertValidLimits(options)
 
+    if (
+      options.nonceManagement !== undefined &&
+      options.nonceManagement !== 'auto' &&
+      options.nonceManagement !== 'off'
+    )
+      throw new Error(
+        `Nautilus.create: nonceManagement must be 'auto' or 'off', got ${JSON.stringify(options.nonceManagement)}.`
+      )
+
     const instance = new Nautilus(signer, options)
 
     await instance.init()
 
-    LoggerInstance.debug(
-      `Nautilus ready on chain ${instance.config.chainId} via ${instance.config.oceanNodeUri}`
+    instance.log.emit(
+      'chain.config.ready',
+      `Nautilus ready on chain ${instance.config.chainId}`,
+      {
+        chainId: instance.config.chainId,
+        nodeUri: instance.config.oceanNodeUri
+      }
     )
 
     return instance
   }
 
-  /** Sets the log level. ocean.js's `LoggerInstance` is used throughout. */
+  /**
+   * Configures nautilus's logging for the whole process: the lowest `level` printed
+   * (default `'warn'`), the `format` of the stderr output (`'pretty'` on a terminal, else
+   * `'json'`), the `components` whose `info`/`debug`/`trace` events print, and a `sink`
+   * that receives the redacted events instead of stderr. Only the options given change.
+   * Overrides `NAUTILUS_LOG_LEVEL`, `NAUTILUS_LOG_FORMAT` and `NAUTILUS_LOG_COMPONENTS`.
+   * An instance created with `logger` options uses those over these.
+   *
+   * `oceanjs` decides what happens to ocean.js's own log lines (its process-wide
+   * `LoggerInstance`): `'capture'` (the default) routes them through this logger as
+   * `oceanjs.logger.*` events, redacted (the nonce, signature and session ids of ocean.js's
+   * payload dump included) and at this level; `'passthrough'` lets ocean.js print them
+   * itself, **unredacted**; `'silent'` drops them. ocean.js's own level still decides first
+   * which lines it emits (errors only by default). It applies to every ocean.js user in the
+   * process, not only to nautilus.
+   */
+  static configureLogging(options: LoggingConfig): void {
+    configureLogging(options)
+  }
+
+  /**
+   * Turns the sensitive debug channel on or off for the whole process: the raw data
+   * nautilus redacts everywhere else (node, wallet, verifier and RPC answers, session ids,
+   * signatures, request payloads, storage pointers), so a failure the redacted error does
+   * not explain can be diagnosed. Errors, return values, warnings and log events stay
+   * exactly as redacted as without it.
+   *
+   * - `level`: `'off'` (the default), `'sensitive'`, or `'secrets'`, which also prints
+   *   long-lived credentials (the RPC URL with its token, S3 secret keys, IPFS JWTs, auth
+   *   headers). The signer's private key or mnemonic is never printed: nautilus never holds
+   *   them;
+   * - `topics`: only these (`node`, `wallet`, `policy`, `rpc`, `order`, `nonce`, `store`,
+   *   `compute`). Default: all;
+   * - `sink`: receives each `DebugEvent` instead of stderr, where each event is one line
+   *   prefixed `[nautilus:debug:sensitive]` or `[nautilus:debug:SECRETS]`.
+   *
+   * Replaces the whole setting, and overrides `NAUTILUS_DEBUG` and `NAUTILUS_DEBUG_TOPICS`.
+   * Turning it on prints a warning on stderr that no log setting suppresses. Never use it
+   * in production, and don't share the output unchecked.
+   */
+  static setDebug(options: DebugOptions): void {
+    setDebug(options)
+  }
+
+  /**
+   * @deprecated Use `Nautilus.configureLogging({ level })`.
+   *
+   * Sets nautilus's log level for the whole process, mapped from ocean.js's `LogLevel`:
+   * `None` → `'silent'`, `Error` → `'error'`, `Warn` → `'warn'`, `Log` → `'info'`,
+   * `Verbose` → `'trace'`. For backward compatibility it also still sets ocean.js's own
+   * `LoggerInstance` level, which decides what ocean.js itself prints.
+   */
   static setLogLevel(level: LogLevel) {
     LoggerInstance.setLevel(level)
+
+    const mapped = fromOceanLogLevel(level)
+    if (mapped) configureLogging({ level: mapped })
   }
 
   // #region setup
@@ -459,11 +636,30 @@ export class Nautilus {
         `Nautilus.create: config.chainId is ${configured}, but the signer's provider is on chain ${chainId}. Connect the signer to the right RPC, or drop config.chainId.`
       )
 
+    // The proofs that a transaction was never sent read both providers: one on another
+    // chain would never know the transaction, which proves nothing.
+    const verifier = this.options.verificationProvider
+    if (verifier) {
+      // The same RPC twice is one read source, so it proves nothing a second RPC would: a
+      // transaction that moves value would be sent again on the word of one RPC.
+      if (sameRpc(verifier, this.signer.provider))
+        throw new Error(
+          "Nautilus.create: verificationProvider is the signer's own RPC (the same provider, or the same URL). Pass a provider for another RPC of the chain, or leave it out: without it, an order or payment refused for its nonce is never sent again."
+        )
+      const verifierChainId = Number((await verifier.getNetwork()).chainId)
+      if (verifierChainId !== chainId)
+        throw new Error(
+          `Nautilus.create: verificationProvider is on chain ${verifierChainId}, but the signer's provider is on chain ${chainId}. Pass a provider for the same chain.`
+        )
+    }
+
     const defaults = new ConfigHelper().getConfig(chainId)
 
     if (!defaults)
-      LoggerInstance.debug(
-        `No default Ocean config for chain ${chainId}; relying entirely on the config you passed.`
+      this.log.emit(
+        'chain.config.no_defaults',
+        `No default Ocean config for chain ${chainId}; relying entirely on the config you passed.`,
+        { chainId }
       )
 
     this.config = {
@@ -485,7 +681,8 @@ export class Nautilus {
       chainId: this.config.chainId,
       auth: this.signer,
       allowInsecureTransport: this.options.allowInsecureTransport,
-      requestTimeoutMs: this.options.requestTimeoutMs
+      requestTimeoutMs: this.options.requestTimeoutMs,
+      logger: this.log
     })
   }
 
@@ -543,6 +740,11 @@ export class Nautilus {
     return this.node
   }
 
+  /**
+   * The signer nautilus sends with: the one given to `create()`, wrapped in the nonce guard
+   * (see `NautilusOptions.nonceManagement`). Transactions sent through it share the
+   * guard's per-address order and nonce counter with nautilus's own.
+   */
   getSigner(): Signer {
     return this.signer
   }
@@ -561,17 +763,17 @@ export class Nautilus {
 
   /** Resolves an asset by DID. */
   async getAsset(did: string): Promise<AssetV5> {
-    return this.node.resolve(did)
+    return this.operation('getAsset', () => this.node.resolve(did))
   }
 
   /** Resolves several assets in one query, keyed by lower-cased DID. */
   async getAssets(dids: string[]): Promise<Record<string, AssetV5>> {
-    return this.node.resolveMany(dids)
+    return this.operation('getAssets', () => this.node.resolveMany(dids))
   }
 
   /** Raw metadata search against the node's index. */
   async query(query: SearchQuery): Promise<unknown> {
-    return this.node.query(query)
+    return this.operation('query', () => this.node.query(query))
   }
 
   /**
@@ -585,7 +787,9 @@ export class Nautilus {
     txid?: string,
     options?: WaitForIndexerOptions
   ): Promise<AssetV5> {
-    return this.node.waitForIndexer(did, txid, options)
+    return this.operation('waitForIndexer', () =>
+      this.node.waitForIndexer(did, txid, options)
+    )
   }
 
   // #endregion
@@ -602,6 +806,17 @@ export class Nautilus {
   async publish(
     asset: NautilusAsset,
     options: PublishOptions = {}
+  ): Promise<PublishResponse> {
+    return this.operation('publish', (log) =>
+      this.runPublish(asset, options, log)
+    )
+  }
+
+  /** `publish()`, within its operation. */
+  private async runPublish(
+    asset: NautilusAsset,
+    options: PublishOptions,
+    log: Logger
   ): Promise<PublishResponse> {
     assertEncryptOption(options)
     assertWritableState(asset.lifecycleState ?? 0, 'the asset')
@@ -638,9 +853,9 @@ export class Nautilus {
     // The DID depends on the NFT address, so the DDO can only be stored after the mint. A
     // store that can tell it will fail says so now, before anything is spent.
     await remoteStore.check?.()
-    await this.warnIfPublisherIsNode()
-    await this.warnIfPolicyServerDeniesAll(asset)
-    await this.assertIndexerNotStuck(options)
+    await this.warnIfPublisherIsNode(log)
+    await this.warnIfPolicyServerDeniesAll(log, asset)
+    await this.assertIndexerNotStuck(options, log)
 
     const published: PublishedService[] = []
 
@@ -653,7 +868,8 @@ export class Nautilus {
       chainConfig: this.config,
       nftParams: asset.getNftParams(owner),
       service: first,
-      owner
+      owner,
+      logger: log
     })
 
     first.datatokenAddress = created.datatokenAddress
@@ -679,7 +895,8 @@ export class Nautilus {
           lifecycleState: asset.lifecycleState ?? 0,
           remoteStore,
           ddoSigner,
-          issuer
+          issuer,
+          log
         })
       } catch (error) {
         throw new PublishIncompleteError(
@@ -691,11 +908,14 @@ export class Nautilus {
         )
       }
 
-      return this.assertAloneInBlock({
-        ...result,
-        nftAddress: created.nftAddress,
-        services: published
-      })
+      return this.assertAloneInBlock(
+        {
+          ...result,
+          nftAddress: created.nftAddress,
+          services: published
+        },
+        log
+      )
     })
 
     return this.finishWrite(response, options)
@@ -725,6 +945,18 @@ export class Nautilus {
     asset: NautilusAsset,
     options: CompletePublishOptions = {}
   ): Promise<PublishResponse> {
+    return this.operation('completePublish', (log) =>
+      this.runCompletePublish(nftAddress, asset, options, log)
+    )
+  }
+
+  /** `completePublish()`, within its operation. */
+  private async runCompletePublish(
+    nftAddress: string,
+    asset: NautilusAsset,
+    options: CompletePublishOptions,
+    log: Logger
+  ): Promise<PublishResponse> {
     assertEncryptOption(options)
     assertWritableState(asset.lifecycleState ?? 0, 'the asset')
 
@@ -748,7 +980,7 @@ export class Nautilus {
       // between these checks and that read shows up there.
       if (metadataTxHash)
         await this.assertEarlierWriteSettled(nftAddress, metadataTxHash)
-      await this.assertNoPendingTransactions(nftAddress)
+      await this.assertNoPendingTransactions(nftAddress, log)
 
       const status = await readMetadataStatus(
         new Nft(this.signer, this.config.chainId, this.config),
@@ -794,9 +1026,9 @@ export class Nautilus {
         issuer
       })
       await remoteStore.check?.()
-      await this.warnIfPublisherIsNode()
-      await this.warnIfPolicyServerDeniesAll(asset)
-      await this.assertIndexerNotStuck(options)
+      await this.warnIfPublisherIsNode(log)
+      await this.warnIfPolicyServerDeniesAll(log, asset, nftAddress)
+      await this.assertIndexerNotStuck(options, log)
 
       // Every reused datatoken is on its service before the first transaction, so a retry
       // after a failure further down finds them by name.
@@ -839,14 +1071,18 @@ export class Nautilus {
         lifecycleState: asset.lifecycleState ?? 0,
         remoteStore,
         ddoSigner,
-        issuer
+        issuer,
+        log
       })
 
-      return this.assertAloneInBlock({
-        ...result,
-        nftAddress,
-        services: published
-      })
+      return this.assertAloneInBlock(
+        {
+          ...result,
+          nftAddress,
+          services: published
+        },
+        log
+      )
     })
 
     return this.finishWrite(response, options)
@@ -1012,7 +1248,10 @@ export class Nautilus {
    * signer counts, since nautilus cannot tell which it is. Best effort: when the counts
    * cannot be read, it warns and goes on.
    */
-  private async assertNoPendingTransactions(nftAddress: string): Promise<void> {
+  private async assertNoPendingTransactions(
+    nftAddress: string,
+    log: Logger
+  ): Promise<void> {
     let pending: number
     let latest: number
     try {
@@ -1021,8 +1260,10 @@ export class Nautilus {
         this.signer.getNonce('latest')
       ])
     } catch (error) {
-      LoggerInstance.warn(
-        `[publish] completePublish could not read the signer's pending transaction count, so it cannot tell whether an earlier metadata transaction for ${nftAddress} is still pending: ${errorMessage(error)}`
+      log.emit(
+        'publish.preflight.pending_unreadable',
+        `completePublish could not read the signer's pending transaction count, so it cannot tell whether an earlier metadata transaction for ${nftAddress} is still pending.`,
+        { nftAddress, error }
       )
       return
     }
@@ -1082,6 +1323,15 @@ export class Nautilus {
     asset: NautilusAsset,
     options: PublishOptions = {}
   ): Promise<PublishResponse> {
+    return this.operation('edit', (log) => this.runEdit(asset, options, log))
+  }
+
+  /** `edit()`, within its operation. */
+  private async runEdit(
+    asset: NautilusAsset,
+    options: PublishOptions,
+    log: Logger
+  ): Promise<PublishResponse> {
     const baseline = asset.ddo.getOriginalDDO()
 
     if (!baseline)
@@ -1133,9 +1383,9 @@ export class Nautilus {
         issuer
       })
       await remoteStore.check?.()
-      await this.warnIfPublisherIsNode()
-      await this.warnIfPolicyServerDeniesAll(asset)
-      await this.assertIndexerNotStuck(options)
+      await this.warnIfPublisherIsNode(log)
+      await this.warnIfPolicyServerDeniesAll(log, asset)
+      await this.assertIndexerNotStuck(options, log)
 
       const published: PublishedService[] = []
       const created: string[] = []
@@ -1154,7 +1404,8 @@ export class Nautilus {
           lifecycleState,
           remoteStore,
           ddoSigner,
-          issuer
+          issuer,
+          log
         })
       } catch (error) {
         if (!created.length) throw error
@@ -1166,11 +1417,14 @@ export class Nautilus {
         )
       }
 
-      return this.assertAloneInBlock({
-        ...result,
-        nftAddress,
-        services: published
-      })
+      return this.assertAloneInBlock(
+        {
+          ...result,
+          nftAddress,
+          services: published
+        },
+        log
+      )
     })
 
     return this.finishWrite(response, options)
@@ -1215,7 +1469,8 @@ export class Nautilus {
    * Best effort: when the logs cannot be read, it logs that and goes on.
    */
   private async assertAloneInBlock(
-    response: PublishResponse
+    response: PublishResponse,
+    log: Logger
   ): Promise<PublishResponse> {
     const receipt = response.setMetadataTxReceipt
     if (typeof receipt?.blockNumber !== 'number') return response
@@ -1228,8 +1483,14 @@ export class Nautilus {
         receipt.blockNumber
       )
     } catch (error) {
-      LoggerInstance.warn(
-        `[metadata] could not check block ${receipt.blockNumber} for other metadata events on ${response.nftAddress}: ${errorMessage(error)}`
+      log.emit(
+        'publish.metadata.events_unchecked',
+        `Could not check block ${receipt.blockNumber} for other metadata events on ${response.nftAddress}.`,
+        {
+          nftAddress: response.nftAddress,
+          blockNumber: receipt.blockNumber,
+          error
+        }
       )
       return response
     }
@@ -1276,8 +1537,10 @@ export class Nautilus {
    * (`providerAddress` from `GET /`). The indexer then signs its decrypt calls with the
    * same key and nonce sequence as the publisher's requests, they collide, and decrypt
    * fails with 401: the asset goes on chain but is never indexed. Best effort.
+   *
+   * The check runs once, so its events belong to the operation that ran it (`log`).
    */
-  private warnIfPublisherIsNode(): Promise<void> {
+  private warnIfPublisherIsNode(log: Logger): Promise<void> {
     this.nodeKeyCheck ??= (async () => {
       try {
         const [nodeAddress, publisher] = await Promise.all([
@@ -1286,13 +1549,17 @@ export class Nautilus {
         ])
 
         if (nodeAddress && getAddress(publisher) === getAddress(nodeAddress))
-          warnOnce(
-            `publisher-is-node:${nodeAddress}`,
-            `The publisher ${publisher} is the node's own address (${this.node.nodeUri} reports providerAddress ${nodeAddress}). The indexer signs its decrypt calls with that key, so its nonces collide with yours and decrypt fails with 401: the asset goes on chain but is not indexed. Publish with a different key than the node's.`
+          log.emit(
+            'publish.preflight.publisher_is_node',
+            `The publisher ${publisher} is the node's own address (${this.node.nodeUri} reports providerAddress ${nodeAddress}). The indexer signs its decrypt calls with that key, so its nonces collide with yours and decrypt fails with 401: the asset goes on chain but is not indexed. Publish with a different key than the node's.`,
+            { publisher, nodeAddress, nodeUri: this.node.nodeUri },
+            { once: nodeAddress }
           )
       } catch (error) {
-        LoggerInstance.debug(
-          `[publish] could not read the node's address: ${errorMessage(error)}`
+        log.emit(
+          'publish.preflight.node_address_unreadable',
+          "Could not read the node's address.",
+          { nodeUri: this.node.nodeUri, error }
         )
       }
     })()
@@ -1308,38 +1575,64 @@ export class Nautilus {
    * address that is not on it, so it refuses every consumer: the asset is published, but
    * nobody can download it or run compute on it.
    *
-   * The nodes asked are the configured one and each service's `serviceEndpoint`. Best
-   * effort: a node whose status cannot be read is skipped. Never throws.
+   * The nodes asked are the configured one and each service's `serviceEndpoint`; each
+   * node that has a policy server warns. Best effort: a node whose status cannot be read is
+   * skipped. Never throws.
+   *
+   * Once per node and asset, so a server that publishes or edits the same asset again is
+   * not told again. The asset is its DID when it has one (an edit, or `completePublish`
+   * with its NFT); before the mint there is no DID, so it is the publisher's address and
+   * the asset's name: assets with the same name and publisher warn once per node. A
+   * publish and a later edit of the same asset therefore warn once each. Endpoints that
+   * differ only in a trailing slash are one node.
    */
   private async warnIfPolicyServerDeniesAll(
-    asset: NautilusAsset
+    log: Logger,
+    asset: NautilusAsset,
+    nftAddress?: string
   ): Promise<void> {
     if (hasAddressAllowList(asset.ddo.credentials)) return
 
-    const endpoints = new Set([
-      this.node.nodeUri,
-      ...asset.ddo.services
-        .map((service) => service.serviceEndpoint)
+    const did =
+      asset.ddo.id ||
+      (nftAddress ? expectedDid(nftAddress, this.config.chainId) : undefined)
+    const name = asset.ddo.metadata.name ?? ''
+    const endpoints = new Set(
+      [
+        this.node.nodeUri,
+        ...asset.ddo.services.map((service) => service.serviceEndpoint)
+      ]
         .filter(Boolean)
-    ])
+        .map((endpoint) => endpoint.replace(/\/+$/, ''))
+    )
+    let subject: string | undefined = did
 
     for (const endpoint of endpoints) {
       let configured: boolean | undefined
       try {
         configured = await this.node.forEndpoint(endpoint).hasPolicyServer()
       } catch (error) {
-        LoggerInstance.debug(
-          `[publish] could not ask ${endpoint} whether it has a policy server: ${errorMessage(error)}`
+        log.emit(
+          'publish.preflight.policy_server_unknown',
+          'Could not ask the node whether it has a policy server.',
+          { endpoint, error }
         )
         continue
       }
 
-      if (configured) {
-        LoggerInstance.warn(
-          `[publish] ${endpoint} has a policy server, and this asset's credentials have no address allow list (credentials: {}, or an allow list without an 'address' entry). The policy server checks the consumer's address against that list first, so it denies every consumer: the asset will be published, but nobody can download it or compute on it. Add the consumers' addresses with addCredentialAddresses(CredentialListTypes.ALLOW, [...]) before publishing.`
-        )
-        return
-      }
+      if (!configured) continue
+      // Before the mint: the publisher and the name, so another publisher's asset of the
+      // same name (another tenant of a server) is still warned about.
+      subject ??= JSON.stringify([
+        await this.signer.getAddress().catch(() => ''),
+        name
+      ])
+      log.emit(
+        'publish.preflight.denies_all',
+        `${endpoint} has a policy server, and this asset's credentials have no address allow list (credentials: {}, or an allow list without an 'address' entry). The policy server checks the consumer's address against that list first, so it denies every consumer: the asset will be published, but nobody can download it or compute on it. Add the consumers' addresses with addCredentialAddresses(CredentialListTypes.ALLOW, [...]) before publishing.`,
+        did ? { endpoint, did } : { endpoint, name },
+        { once: JSON.stringify(['denies-all', endpoint, subject]) }
+      )
     }
   }
 
@@ -1354,15 +1647,20 @@ export class Nautilus {
    * will be after this publish, and the asset will not be indexed; that is warned about,
    * not refused.
    */
-  private async assertIndexerNotStuck(options: PublishOptions): Promise<void> {
+  private async assertIndexerNotStuck(
+    options: PublishOptions,
+    log: Logger
+  ): Promise<void> {
     if (options.checkIndexerNonce === false) return
 
     let state: Awaited<ReturnType<OceanNodeClient['getIndexerNonceState']>>
     try {
       state = await this.node.getIndexerNonceState()
     } catch (error) {
-      LoggerInstance.debug(
-        `[publish] could not read the indexer's nonce, skipping the check: ${errorMessage(error)}`
+      log.emit(
+        'publish.preflight.indexer_nonce_unreadable',
+        "Could not read the indexer's nonce; skipping the check.",
+        { nodeUri: this.node.nodeUri, error }
       )
       return
     }
@@ -1370,9 +1668,36 @@ export class Nautilus {
     if (!state) return
     if (state.stuck) throw new IndexerNonceStuckError(state)
 
-    if (!isIndexerNonceSignable(state.nodeAddress, state.nextNonce + 1))
-      LoggerInstance.warn(
-        `[publish] the indexer of ${this.node.nodeUri} will sign its second decrypt call for this asset with nonce ${state.nextNonce + 1}, which the node does not accept: unless another decrypt moves the nonce first, this asset will not be indexed and the indexer nonce will be stuck until the operator advances it.`
+    const decryptNonce = state.nextNonce + 1
+    if (
+      state.nodeVersion &&
+      nodeAcceptsZeroByteNonce(state.nodeVersion) &&
+      !isIndexerNonceSignable(state.nodeAddress, decryptNonce)
+    )
+      log.emit(
+        'node.indexer_nonce.zero_byte_accepted',
+        `The indexer of ${this.node.nodeUri} will sign its second decrypt call for this asset with nonce ${decryptNonce}, whose hash starts with a zero byte, which ocean-node before 4.2.2 refuses; the node reports version ${state.nodeVersion} (self-reported; the fix is in the OE fork), so nautilus does not warn. If this asset is not indexed, check the node's logs for 'consumer address and nonce signature mismatch'.`,
+        {
+          nodeUri: this.node.nodeUri,
+          nodeVersion: state.nodeVersion,
+          nonce: decryptNonce
+        },
+        // Until the nonce moves, every publish onto this node would say the same.
+        { once: `${this.node.nodeUri}:${decryptNonce}` }
+      )
+    else if (
+      !isIndexerNonceSignable(
+        state.nodeAddress,
+        decryptNonce,
+        state.nodeVersion
+      )
+    )
+      log.emit(
+        'publish.preflight.indexer_nonce_will_stick',
+        `The indexer of ${this.node.nodeUri} will sign its second decrypt call for this asset with nonce ${decryptNonce}, which the node does not accept: unless another decrypt moves the nonce first, this asset will not be indexed and the indexer nonce will be stuck until the operator advances it.`,
+        { nodeUri: this.node.nodeUri, decryptNonce },
+        // Until the nonce moves, every publish onto this node would say the same.
+        { once: `${this.node.nodeUri}:${decryptNonce}` }
       )
   }
 
@@ -1471,6 +1796,8 @@ export class Nautilus {
     ddoSigner: DdoSigner
     /** Resolved before the first transaction, so it is not asked for twice. */
     issuer: string
+    /** The operation's logger. */
+    log: Logger
   }): Promise<Omit<PublishResponse, 'nftAddress' | 'services' | 'indexed'>> {
     const {
       asset,
@@ -1478,7 +1805,8 @@ export class Nautilus {
       create,
       lifecycleState,
       remoteStore,
-      ddoSigner
+      ddoSigner,
+      log
     } = params
 
     const ddo = await asset.ddo.getDDO(this.node, {
@@ -1545,7 +1873,8 @@ export class Nautilus {
         onProgress: (progress, hash) => {
           sent = progress === 'sent'
           txHash = hash ?? txHash
-        }
+        },
+        logger: log
       })
     } catch (error) {
       throw await settleStoredEnvelope(error, {
@@ -1571,18 +1900,21 @@ export class Nautilus {
     serviceId: string,
     newPrice: string
   ): Promise<TransactionReceipt> {
-    if (
-      typeof newPrice !== 'string' ||
-      Number.isNaN(Number.parseFloat(newPrice))
-    )
-      throw new Error('newPrice must be a numeric string, e.g. "2.5".')
+    return this.operation('setServicePrice', async (log) => {
+      if (
+        typeof newPrice !== 'string' ||
+        Number.isNaN(Number.parseFloat(newPrice))
+      )
+        throw new Error('newPrice must be a numeric string, e.g. "2.5".')
 
-    return editPrice({
-      asset,
-      serviceId,
-      newPrice,
-      chainConfig: this.config,
-      signer: this.signer
+      return editPrice({
+        asset,
+        serviceId,
+        newPrice,
+        chainConfig: this.config,
+        signer: this.signer,
+        logger: log
+      })
     })
   }
 
@@ -1591,11 +1923,24 @@ export class Nautilus {
     asset: AssetV5,
     state: AssetState
   ): Promise<TransactionReceipt | undefined> {
+    return this.operation('setAssetLifecycleState', (log) =>
+      this.runSetAssetLifecycleState(asset, state, log)
+    )
+  }
+
+  /** `setAssetLifecycleState()`, within its operation. */
+  private async runSetAssetLifecycleState(
+    asset: AssetV5,
+    state: AssetState,
+    log: Logger
+  ): Promise<TransactionReceipt | undefined> {
     const current = getLifecycleState(asset)
 
     if (current === state) {
-      LoggerInstance.warn(
-        `[lifecycle] asset ${asset.id} is already in state ${state}; nothing to do`
+      log.emit(
+        'lifecycle.state.unchanged',
+        `Asset ${asset.id} is already in state ${state}; nothing to do.`,
+        { did: asset.id, state }
       )
       return undefined
     }
@@ -1652,14 +1997,31 @@ export class Nautilus {
 
   // #region access
 
-  /** Orders a service if needed and returns a one-time download URL. */
+  /**
+   * Orders a service if needed and returns a one-time download URL.
+   *
+   * Fetch each URL before requesting the next one for the same consumer and node: two URLs
+   * requested before either is fetched carry the same one-time number, so the node serves
+   * the first one fetched and answers the other with HTTP 401 `nonce: … is not a valid
+   * nonce` (it was replaced by the newer URL). Then call `access()` again and fetch the new
+   * URL at once.
+   *
+   * A call reuses an order the account holds only once at least 2 more blocks are mined
+   * after the block that holds it, and this one returns as soon as its order is mined. So
+   * for a paid service, wait until at least 2 more blocks are mined after the purchase
+   * before calling it again: sooner, it pays again. An RPC that lags behind extends that
+   * wait. See the known limitations page of the docs.
+   */
   async access(config: AccessConfig): Promise<AccessResult> {
-    return access(this.withProviderFeeDefaults(config), {
-      node: this.node,
-      signer: this.signer,
-      chainConfig: this.config,
-      policySessions: this.policySessions
-    })
+    return this.operation('access', (log) =>
+      access(this.withProviderFeeDefaults(config), {
+        node: this.node,
+        signer: this.signer,
+        chainConfig: this.config,
+        policySessions: this.policySessions,
+        logger: log
+      })
+    )
   }
 
   // #endregion
@@ -1668,28 +2030,32 @@ export class Nautilus {
 
   /** Lists the node's compute environments, with their resources, limits and fees. */
   async getComputeEnvironments(): Promise<ComputeEnvironment[]> {
-    return this.node.getComputeEnvironments()
+    return this.operation('getComputeEnvironments', () =>
+      this.node.getComputeEnvironments()
+    )
   }
 
   /** Resolves one environment by id, or the node's first. */
   async getComputeEnvironment(
     computeEnv?: string
   ): Promise<ComputeEnvironment> {
-    return selectEnvironment(this.node, computeEnv)
+    return this.operation('getComputeEnvironment', (log) =>
+      selectEnvironment(this.node, computeEnv, log)
+    )
   }
 
   /** Starts a paid compute job: orders inputs, funds escrow, then starts. */
   async compute(config: ComputeConfig): Promise<ComputeResult> {
-    return compute(
-      this.withEscrowDefaults(this.withProviderFeeDefaults(config)),
-      {
+    return this.operation('compute', (log) =>
+      compute(this.withEscrowDefaults(this.withProviderFeeDefaults(config)), {
         node: this.node,
         signer: this.signer,
         chainConfig: this.config,
         policySessions: this.policySessions,
         escrow: this.explicitEscrow,
-        escrowLock: this.escrowLock
-      }
+        escrowLock: this.escrowLock,
+        logger: log
+      })
     )
   }
 
@@ -1697,12 +2063,15 @@ export class Nautilus {
   async freeCompute(
     config: FreeComputeConfig
   ): Promise<Omit<ComputeResult, 'initializeResults' | 'orders'>> {
-    return freeCompute(config, {
-      node: this.node,
-      signer: this.signer,
-      chainConfig: this.config,
-      policySessions: this.policySessions
-    })
+    return this.operation('freeCompute', (log) =>
+      freeCompute(config, {
+        node: this.node,
+        signer: this.signer,
+        chainConfig: this.config,
+        policySessions: this.policySessions,
+        logger: log
+      })
+    )
   }
 
   /**
@@ -1715,7 +2084,9 @@ export class Nautilus {
   async getComputeStatus(
     config: ComputeStatusConfig
   ): Promise<NodeComputeJob | undefined> {
-    return this.nodeFor(config.nodeUri).getComputeJob(config.jobId)
+    return this.operation('getComputeStatus', () =>
+      this.nodeFor(config.nodeUri).getComputeJob(config.jobId)
+    )
   }
 
   /**
@@ -1729,12 +2100,35 @@ export class Nautilus {
   async getComputeResult(
     config: ComputeResultConfig
   ): Promise<string | undefined> {
+    return this.operation('getComputeResult', (log) =>
+      this.runGetComputeResult(config, log)
+    )
+  }
+
+  /** `getComputeResult()`, within its operation. */
+  private async runGetComputeResult(
+    config: ComputeResultConfig,
+    log: Logger
+  ): Promise<string | undefined> {
     const node = this.nodeFor(config.nodeUri)
     const result = await this.findResult(node, config)
 
     if ('reason' in result) {
-      if (result.retry) LoggerInstance.log(`[compute] ${result.reason}`)
-      else LoggerInstance.warn(`[compute] ${result.reason}`)
+      log.emit(
+        result.retry
+          ? 'compute.result.not_ready'
+          : 'compute.result.unavailable',
+        result.reason,
+        { jobId: config.jobId },
+        // A job that will not get there answers the same every time it is asked: say it
+        // once per node, job and kind of reason, not on every poll. A job the node did not
+        // know and that later has no output is told about twice.
+        result.retry
+          ? {}
+          : {
+              once: JSON.stringify([node.nodeUri, config.jobId, result.kind])
+            }
+      )
       return undefined
     }
 
@@ -1747,6 +2141,15 @@ export class Nautilus {
    * `undefined`.
    */
   async streamComputeResult(
+    config: ComputeResultConfig
+  ): Promise<ComputeResultStream> {
+    return this.operation('streamComputeResult', () =>
+      this.runStreamComputeResult(config)
+    )
+  }
+
+  /** `streamComputeResult()`, within its operation. */
+  private async runStreamComputeResult(
     config: ComputeResultConfig
   ): Promise<ComputeResultStream> {
     const node = this.nodeFor(config.nodeUri)
@@ -1772,6 +2175,15 @@ export class Nautilus {
   async getComputeLogs(
     config: ComputeLogsConfig
   ): Promise<ComputeResultStream> {
+    return this.operation('getComputeLogs', () =>
+      this.runGetComputeLogs(config)
+    )
+  }
+
+  /** `getComputeLogs()`, within its operation. */
+  private async runGetComputeLogs(
+    config: ComputeLogsConfig
+  ): Promise<ComputeResultStream> {
     const node = this.nodeFor(config.nodeUri)
     let job = await this.requireJob(node, config.jobId)
 
@@ -1792,7 +2204,7 @@ export class Nautilus {
 
     if (index === undefined)
       throw new Error(
-        `[compute] the job has finished (status ${job.status}: ${job.statusText}) and has no 'algorithmLog' result. Results: ${JSON.stringify(job.results)}`
+        `[compute] the job has finished (${jobStatus(job)}) and has no 'algorithmLog' result. Results: ${jobResults(job)}`
       )
 
     return node.getComputeResult(job.jobId, index)
@@ -1800,9 +2212,8 @@ export class Nautilus {
 
   /** Asks the node to stop a job, and returns the jobs as they stand after the request. */
   async stopCompute(config: StopComputeConfig): Promise<NodeComputeJob[]> {
-    return this.nodeFor(config.nodeUri).computeStop(
-      config.jobId,
-      config.agreementId
+    return this.operation('stopCompute', () =>
+      this.nodeFor(config.nodeUri).computeStop(config.jobId, config.agreementId)
     )
   }
 
@@ -1831,7 +2242,13 @@ export class Nautilus {
     node: OceanNodeClient,
     config: ComputeResultConfig
   ): Promise<
-    { jobId: string; index: number } | { reason: string; retry: boolean }
+    | { jobId: string; index: number }
+    | {
+        reason: string
+        retry: boolean
+        /** What kind of reason, for a `once` key: each kind is said once. */
+        kind?: 'unknown' | 'no-output'
+      }
   > {
     if (config.resultIndex !== undefined) assertResultIndex(config.resultIndex)
 
@@ -1840,10 +2257,11 @@ export class Nautilus {
     if (!job)
       return {
         reason: `${nodeLabel(node.nodeUri)} does not know the job`,
-        retry: false
+        retry: false,
+        kind: 'unknown'
       }
 
-    const status = `status ${job.status}: ${job.statusText}`
+    const status = jobStatus(job)
 
     if (!isJobFinished(job))
       return { reason: `the job is not finished yet (${status})`, retry: true }
@@ -1859,9 +2277,23 @@ export class Nautilus {
       }
 
     return {
-      reason: `the job has no 'output' result (${status}); pass resultIndex to read another. Results: ${JSON.stringify(job.results)}`,
-      retry: false
+      reason: `the job has no 'output' result (${status}); pass resultIndex to read another. Results: ${jobResults(job)}`,
+      retry: false,
+      kind: 'no-output'
     }
+  }
+
+  /**
+   * Runs `run` as the operation `name` (`src/log/context.ts`): every event it causes, and
+   * the error it throws, carry the operation's `opId`. `run` gets this instance's logger
+   * bound to the operation; hand it to the functions it calls, which is how the `opId`
+   * reaches their events where there is no `AsyncLocalStorage` (a browser).
+   */
+  private operation<T>(
+    name: OperationName,
+    run: (log: Logger) => Promise<T>
+  ): Promise<T> {
+    return runOperation(this.log, name, run)
   }
 
   /** A client for another node, when a job runs somewhere other than the default. */
@@ -1873,9 +2305,31 @@ export class Nautilus {
       chainId: this.config.chainId,
       auth: this.signer,
       allowInsecureTransport: this.options.allowInsecureTransport,
-      requestTimeoutMs: this.options.requestTimeoutMs
+      requestTimeoutMs: this.options.requestTimeoutMs,
+      logger: this.log
     })
   }
 
   // #endregion
+}
+
+/**
+ * Whether two providers are one RPC: the same object, or JSON-RPC providers with the same
+ * URL (ethers' `JsonRpcProvider` exposes it through `_getConnection()`).
+ */
+function sameRpc(a: Provider, b: Provider | null): boolean {
+  if (!b) return false
+  if (a === b) return true
+  const urlOf = (provider: Provider) => {
+    try {
+      const url = (
+        provider as { _getConnection?: () => { url?: unknown } }
+      )._getConnection?.().url
+      return typeof url === 'string' ? new URL(url).href : undefined
+    } catch {
+      return undefined
+    }
+  }
+  const url = urlOf(a)
+  return url !== undefined && url === urlOf(b)
 }

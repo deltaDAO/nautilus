@@ -46,6 +46,8 @@
  * Node ≥ 22 and in the browser.
  */
 import type { StorageObject } from '@oceanprotocol/lib'
+import { debugEnabled, debugRaw } from '../log/debug.js'
+import { log } from '../log/logger.js'
 import {
   errorMessage,
   type FetchedText,
@@ -59,7 +61,6 @@ import {
   isIpAddress,
   isLoopbackHost
 } from '../utils/transport.js'
-import { warnOnce } from '../utils/warn.js'
 import type { RemoteStore } from './RemoteStore.js'
 import { encodeRfc3986, sha256Hex, signS3Request } from './sigv4.js'
 import { assertStoredHash } from './verify.js'
@@ -196,9 +197,11 @@ export class S3RemoteStore implements RemoteStore {
       )
 
     if (this.sharedCredentials)
-      warnOnce(
-        `s3-shared-credentials:${options.writeCredentials.accessKeyId}`,
-        `S3RemoteStore: allowSharedCredentials is set, so the WRITE key ${options.writeCredentials.accessKeyId} is written, node-encrypted, into every on-chain pointer, permanently. Whoever holds the node's key can overwrite or delete every stored DDO with it. Use a separate read-only key scoped to the prefix.`
+      log.emit(
+        'store.s3.shared_credentials',
+        `S3RemoteStore: allowSharedCredentials is set, so the WRITE key ${options.writeCredentials.accessKeyId} is written, node-encrypted, into every on-chain pointer, permanently. Whoever holds the node's key can overwrite or delete every stored DDO with it. Use a separate read-only key scoped to the prefix.`,
+        { accessKeyId: options.writeCredentials.accessKeyId },
+        { once: options.writeCredentials.accessKeyId }
       )
 
     assertHttpEndpoint('endpoint', options.endpoint)
@@ -453,7 +456,12 @@ export class S3RemoteStore implements RemoteStore {
 
     if (!this.options.allowWritableReadKey) throw new Error(message)
 
-    warnOnce(`s3-writable-read-key:${this.options.bucket}:${can}`, message)
+    log.emit(
+      'store.s3.writable_read_key',
+      message,
+      { bucket: this.options.bucket, can },
+      { once: `${this.options.bucket}:${can}` }
+    )
   }
 
   /** A fresh probe key, shaped like the keys `put()` writes. */
@@ -605,6 +613,18 @@ export class S3RemoteStore implements RemoteStore {
     response: FetchedText
   ): string {
     const { status, body } = response
+    if (debugEnabled('sensitive', 'store'))
+      debugRaw(
+        'store',
+        `S3 answer HTTP ${status} to ${method}`,
+        { status, body },
+        // An S3 error answer can quote what was sent; the secret keys never show below
+        // the `secrets` tier, also percent-encoded or in base64.
+        [
+          this.options.writeCredentials.secretAccessKey,
+          this.options.readCredentials.secretAccessKey
+        ]
+      )
     const code = s3ErrorCode(body)
     const where = `${method} s3://${this.options.bucket}/${key} with the ${role} key`
 

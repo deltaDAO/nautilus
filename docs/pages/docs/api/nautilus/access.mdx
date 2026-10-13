@@ -59,7 +59,12 @@ What happens in order:
    is checked from its receipt the way the node checks a download: yours, for this
    service, inside the service's timeout with at least 10 minutes left
    ([details](/docs/guides/pricing#downloads-the-order-on-chain)). Otherwise a datatoken is
-   bought and a new order placed.
+   bought and a new order placed. "No order found" places a new one. A lookup that
+   **fails** (the RPC rate-limits it, does not answer, answers with an error, or answers without the data the check needs) or **stops
+   short** (it cannot read back over the whole order window) is not "no order found": on a
+   service that costs anything, `access()` stops before paying and throws an
+   [`OrderCheckError`](#ordercheckerror), since buying without the check could pay twice. A free service is ordered anyway, with a warning
+   ([`orderOnLookupFailure`](#orderonlookupfailure-optional) does the same for a paid one).
 5. Only then is your consent asked, and only for the fee that will be paid: none when an
    order is used as it stands, whatever the node quoted; the fee the node quotes now when
    an order is extended or a new one placed. A non-zero fee must be allowed by
@@ -69,6 +74,20 @@ What happens in order:
    publish-market fee and the provider fee) is approved with one allowance per token and
    spender, after every check has passed.
 6. The download URL is built, carrying the policy-server session if there is one.
+
+Some limits of this release apply to `access()`: one download URL at a time per consumer and
+node, parallel purchases of the same service, a second `access()` right after buying (it pays
+again until 2 more blocks are mined), and orders older than about 55 hours. See
+[known limitations](/docs/known-limitations).
+
+A fixed-price or free order prints nothing of its own at the default level. Earlier
+releases let ocean.js print `No config found for given network 'undefined'` twice for each
+fixed-price order, and once for a free order on a template-1 datatoken. The exchange and the
+dispenser were built without the chain's config. Now every ocean.js contract nautilus builds
+gets the config, so the line is gone. Their transactions also use the config's
+`gasFeeMultiplier`, as the datatoken's own transactions already did. The exported
+`getPricingInfo` and `getDatatokenBalance` take the config as an optional last argument;
+without it they read the chain id from the signer, so they don't print the line either.
 
 ## Returns
 
@@ -86,6 +105,20 @@ the download is visible to the caller.
 - Type: `string`
 
 The one-time URL to download the raw data.
+
+:::warning[Use each URL before you request the next]
+The URL carries a one-time number that the node accepts only once, and two URLs requested for
+the same consumer and node before either is fetched carry the same number. The first one
+fetched works; the other answers HTTP 401 `nonce: … is not a valid nonce`, because it was
+replaced by a newer URL for the same consumer and node. nautilus does not fetch the URL, so the
+401 reaches you as the node sent it. Fetch each URL before calling `access()` again, and don't
+call `access()` for the same consumer and node in parallel. After a 401 like this, call
+`access()` again and fetch the new URL right away: it reuses the order you hold when it finds
+it. For a paid service, wait until at least 2 more blocks are mined after the purchase before
+you call `access()` again: sooner, it does not find the order yet and pays again, and an RPC
+that lags behind extends that wait. See
+[known limitations](/docs/known-limitations#one-download-url-at-a-time-per-consumer-and-node).
+:::
 
 ##### did / serviceId
 
@@ -177,13 +210,45 @@ So a tight `maxProviderFee` passed here never falls back to a permissive
 `confirmProviderFees` set in `Nautilus.create`, and `{ confirmProviderFees: undefined }`
 clears the default callback.
 
+##### orderOnLookupFailure (optional)
+
+- Type: `boolean`
+- Default: `false`
+
+What to do when the previous order cannot be checked on chain and the service costs
+anything (a price, a publish-market fee or a provider fee). By default `access()` throws an
+[`OrderCheckError`](#ordercheckerror) before paying: if your account already holds a valid
+order, a new one would pay twice. `true` places a new order anyway, and still warns
+(`access.order.lookup_failed`). Only `true` opts in: `'true'`, `1` or any other value does
+not.
+
+```text
+Could not check whether 0x4C84…4A52 already holds an order for service "Download (JSON)" of asset "Weather" (did:ope:59a18b63…): the RPC did not answer. A new order will be placed, as `orderOnLookupFailure` allows: if the account already holds one, this will pay twice (1.002 devEURAU).
+```
+
+A free service is ordered either way, with a warning that it costs only gas. "No previous
+order found" is not a failure and always orders, with no warning. When the price cannot be
+read either (usually the same failing RPC), nothing can be bought, and `access()` throws an
+`OrderCheckError` even with `true`.
+
 ## Throws
 
 - `PolicyDeniedError`: the policy server refused this consumer (`error.code` is the HTTP
   status, `error.reason` its message, e.g. `Access denied: Address not allowed at asset
   level.`), or the verifier did not accept the presentation (`error.code` is `undefined`,
-  `error.reason` names the failed policies). Also carries `did`, `serviceId` and
-  `consumerAddress`.
+  `error.reason` names the failed policies as the node reports them, e.g. `holder-binding:
+  java.lang.NullPointerException`, and `error.policyResults` lists them all; `error.cause`
+  is the wallet's error when the wallet reported the failure). Also carries `did`,
+  `serviceId` and `consumerAddress`. Don't send `policyResults` to a central log: a policy's
+  error can quote a credential value. See
+  [what a rejection looks like](/docs/guides/identity#what-a-rejection-looks-like).
+- `CredentialPresentationError` (from `WaltIdCredentialProvider`): the wallet could not
+  present, e.g. it holds no credential of the requested type (`error.reason` is
+  `'no-matching-credential'`), or the verifier refused and its record names no failed policy
+  (`'verifier-rejected'`; the others are listed on
+  [`WaltIdCredentialProvider`](/docs/api/identity/WaltIdCredentialProvider#errors)).
+  Neither error carries the policy-server session id; `NAUTILUS_DEBUG=sensitive` with the
+  `policy` and `wallet` topics shows the raw answers ([debugging](/docs/guides/debugging)).
 - An `Error` when the service asks for a verifiable presentation and no credential provider
   is set.
 - `ConsumerParameterError`: `userdata` does not fit the service's consumer parameters.
@@ -198,5 +263,100 @@ clears the default callback.
   `maxProviderFee` nor `confirmProviderFees` allows it. `error.fees` lists the fees, `error.reason` is
   `'no-limit'`, `'over-limit'` or `'declined'`.
 
+- [`OrderCheckError`](#ordercheckerror): the service costs anything and the previous order
+  could not be checked on chain (the lookup failed or stopped short).
+
 All of these are thrown before any approval, purchase or order; `ConsumerParameterError` and
 the service errors before any node call other than resolving the asset.
+
+### OrderCheckError
+
+`access()` stopped before paying, because it could not check whether your account already
+holds a valid order for the service, and buying without that check could make you pay
+twice. **Nothing was ordered or paid, and it is safe to retry.** The message says so, with
+the price and the cause in plain words:
+
+```text
+access() stopped before paying for service "Download (JSON)" of asset "Weather" (did:ope:59a18b63…): it could not check whether 0x4C84…4A52 already holds a valid order, and buying without that check could make you pay twice (1.002 devEURAU). Nothing was ordered or paid; it is safe to retry. Cause: the RPC rate-limited the check (HTTP 429). Retry in a minute or use another RPC. To buy anyway, pass `orderOnLookupFailure: true`.
+```
+
+Fields, so a program need not parse the text:
+
+| Field | Type | |
+| --- | --- | --- |
+| `code` | `'ORDER_CHECK_FAILED'` | |
+| `reason` | `'rate-limited' \| 'unreachable' \| 'incomplete' \| 'rpc-error'` | Why the check failed (below). |
+| `retryable` | `true` | Nothing was sent: the same call can be made again. |
+| `did`, `serviceId` | `string` | The asset and service. |
+| `consumer` | `string` | The account the order is for. |
+| `price` | `{ amount: string; symbol: string } \| undefined` | The main cost of a new order, in whole tokens: the datatoken's price (exchange fees included), or for a free datatoken the first fee due. `symbol` is `tokens of 0x…` when the token's symbol cannot be read. `undefined` when the pricing could not be read either. |
+| `costs` | `{ amount: string; symbol: string }[]` | Every part a new order would pay, each in its own token: the price, the publish-market fee and the provider fee, those that are not zero. The message names them all (`1.002 devEURAU + 0.1 OCEAN`). Empty when the pricing could not be read. |
+| `checkedHours`, `windowHours` | `number` | For `incomplete` only: how far back the check read (`NaN` when unknown), and the order window, the service's `timeout` (`Infinity` when its orders never expire). |
+| `cause` | `Error` | The RPC's error, redacted: first line only, credentials redacted also under JSON escaping or percent-encoding (so a key spelt `"api\u004bey"` is redacted too, and a value with an escaped quote or delimiter in it is redacted whole: the escape cannot cut it short), no URL, long hex shortened, at most 200 characters. |
+
+| `reason` | The cause in the message |
+| --- | --- |
+| `rate-limited` | the RPC rate-limited the check (HTTP 429): an HTTP 429, a `Retry-After` header on an answer that is not a server error, JSON-RPC code `-32005` that does not refuse the block range, or "rate limit" / "too many requests" in the answer |
+| `unreachable` | the RPC did not answer: a network error or a timeout (not an RPC that answered with an error that mentions a timeout) |
+| `incomplete` | the check covered only the last 16 of the 24 hours an order stays valid: the lookup stopped before it covered the order window (below) |
+| `rpc-error` | the RPC returned an error: … (the RPC's own words, redacted); or the RPC's answer lacked data the check needs (…): no newest block, no receipt for an order transaction its own logs list, or a receipt without one of the order events those logs list, as a load-balanced RPC whose backends lag each other can answer |
+
+The lookup reads at most 100 000 blocks back, in as many rounds of reads as the blocks to
+read need at 100 blocks per round (at least 100 rounds) and for at most 5 minutes, and checks
+at most 50 candidate orders. When one of those bounds ends it before the service's
+`timeout` with no order found, the result is `incomplete`, not "not found":
+
+- **Out of reads** (the RPC serves fewer than 100 blocks per `eth_getLogs` call, or answers
+  so slowly that the reads take more than 5 minutes; a call the RPC does not answer within
+  them ends the lookup at the 5 minutes): the next step is "Use another RPC, or
+  retry."
+- **Out of depth** (a `timeout` longer than 100 000 blocks, about 55 hours on OP Sepolia,
+  or `0`, so orders never expire) or **out of candidates**: a retry ends the same way. The
+  message says so, and when the account has not bought the service in that window (never,
+  for orders that never expire), buying with `orderOnLookupFailure: true` is safe. For orders
+  that never expire the cause reads "the check covered only the last 55 hours, and orders
+  of this service never expire".
+
+When the price cannot be read either, the message says "the price could not be read
+either" instead of the price, and offers no opt-in: nothing can be bought until the RPC
+answers.
+
+Don't catch the error and buy anyway on your own: that brings the second payment back. Show
+the message, which names the cost, the cause and what to do, and let the user decide.
+Retrying later, or with another RPC, is the safe first step. Offer `orderOnLookupFailure:
+true` only when the user knows the account holds no order in force, for example when an
+`incomplete` lookup reports that a retry ends the same way.
+
+```ts twoslash
+import { Nautilus, OrderCheckError } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+/** Your UI: shows `question` and returns the user's answer. */
+declare function askUser(question: string): Promise<boolean>
+// ---cut---
+const assetDid = 'did:ope:1234abcd...'
+try {
+  await nautilus.access({ assetDid })
+} catch (error) {
+  if (!(error instanceof OrderCheckError)) throw error
+
+  // Nothing was ordered or paid. With no costs, the price could not be read: nothing can
+  // be bought until the RPC answers.
+  const costs = error.costs
+    .map((cost) => `${cost.amount} ${cost.symbol}`)
+    .join(' + ')
+  const buyAnyway =
+    costs !== '' &&
+    (await askUser(
+      `${error.message}\n\nBuy anyway? If this account already holds an order, this pays ${costs} a second time.`
+    ))
+
+  if (buyAnyway)
+    await nautilus.access({ assetDid, orderOnLookupFailure: true })
+}
+```
+
+The `cause` is redacted. To see the RPC's full answer when diagnosing, run with
+`NAUTILUS_DEBUG=sensitive` (or [`setDebug`](/docs/api/nautilus/setDebug)): the raw error goes
+to the debug channel under the `order` topic. See [debugging](/docs/guides/debugging) before
+sharing that output.

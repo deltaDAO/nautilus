@@ -142,7 +142,7 @@ trusted algorithm, so `serviceIds` is finally honoured — see
 ## Per-service gating
 
 New in DDO v5: credentials sit on services as well as assets, so one service can be
-restricted while another stays open.
+restricted while another needs no credential (allow-listed accounts only).
 
 ```ts twoslash
 import {
@@ -159,12 +159,18 @@ const service = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
   .addFile({ type: 'url', url: 'https://data.example/x.csv', method: 'GET' })
   .setPricing({ type: 'free' })
   .addRequestCredentials(CredentialListTypes.ALLOW, [ // [!code focus]
-    { type: 'VerifiableId', format: 'jwt_vc_json' } // [!code focus]
+    { // [!code focus]
+      type: 'VerifiableId', // [!code focus]
+      format: 'jwt_vc_json', // [!code focus]
+      policies: [{ policy: 'allowed-issuer', args: ['did:web:issuer.example'] }] // [!code focus]
+    } // [!code focus]
   ]) // [!code focus]
   .build()
 ```
 
-See [Credential-gated assets](/docs/guides/identity).
+A service-level gate runs with the policy server's default VC and VP policies only: see
+[`addRequestCredentials`](/docs/api/servicebuilder/addRequestCredentials) and
+[Credential-gated assets](/docs/guides/identity).
 
 ## Attaching it to an asset
 

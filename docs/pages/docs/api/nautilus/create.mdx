@@ -206,6 +206,84 @@ a rejected nonce. Over HTTP it also bounds an `initialize` request, and the sign
 timeout (pass `signal` to stop it). Passed to the node clients `create` builds; see
 [`OceanNodeClient`](/docs/api/node/OceanNodeClient).
 
+##### logger
+
+- Type: `LoggingOptions | Logger`, where `LoggingOptions` is `{ level?, format?, components?, sink? }`
+- Default: the process-wide configuration
+
+This instance's own logging, e.g. one sink per tenant in a multi-tenant server. Pass either:
+
+- **options**: the instance gets a logger of its own. Options you leave out follow
+  [`configureLogging`](/docs/api/nautilus/configureLogging);
+- **a `Logger`** made with `createLogger(options)`: the same rules, but several instances
+  (e.g. one tenant's instances on several chains) can share it, and with it the memory of
+  which once-only warnings were already printed.
+
+The events of other instances are not affected. The instance passes its logger to its node
+clients, its policy-session resolver and every call it makes. An
+[`S3RemoteStore`](/docs/api/remote/S3RemoteStore) has no logger of its own: its warnings go to
+the process-wide configuration, so give that a `sink` too.
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { type LogEvent, Nautilus } from '@deltadao/nautilus'
+const signer = new Wallet('0x1234', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const config = { oceanNodeUri: 'https://node.example.org' }
+declare const tenantLog: (event: LogEvent) => void
+// ---cut---
+const nautilus = await Nautilus.create(signer, {
+  config,
+  logger: { level: 'info', sink: tenantLog } // [!code focus]
+})
+```
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { createLogger, type LogEvent, Nautilus } from '@deltadao/nautilus'
+const signer = new Wallet('0x1234', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const config = { oceanNodeUri: 'https://node.example.org' }
+declare const tenantLog: (event: LogEvent) => void
+// ---cut---
+const logger = createLogger({ level: 'info', sink: tenantLog }) // [!code focus]
+const nautilus = await Nautilus.create(signer, { config, logger }) // [!code focus]
+```
+
+##### nonceManagement
+
+- Type: `'auto' | 'off'`
+- Default: `'auto'`
+
+Who chooses transaction nonces. nautilus wraps the signer in a nonce guard
+([`getSigner`](/docs/api/nautilus/getSigner) returns it). With `'auto'` and a signer that
+signs locally (an ethers `Wallet`), it sends one transaction at a time per chain and
+address, with the nonce `max(its counter, the pending count)`, and recovers from a nonce
+refusal: a transaction the chain already has is waited for, never sent again; one it does
+not have is sent again with a fresh nonce, at most three attempts in all (an "already
+known" refusal is never sent again); an order, purchase,
+approval or escrow payment only with proof from two RPCs (needs `verificationProvider`)
+that the first can never be mined, otherwise it stops with a `NonceGuardError` ("may have
+been sent"). Wallet-managed signers
+(`JsonRpcSigner`, browser wallets) keep choosing their own nonces. `'off'`: nautilus never
+sets a nonce and never resends. Either way a refused transaction the chain already has is
+returned, and the cause of a failed send is named. In-process only: use one key per
+process. See [Concurrency and nonces](/docs/guides/config#concurrency-and-nonces).
+Given another instance's [`getSigner`](/docs/api/nautilus/getSigner), the new instance
+applies its own `nonceManagement` and `verificationProvider` to the signer underneath, and
+shares the per-address order and nonce counter with the first.
+
+##### verificationProvider
+
+- Type: `Provider` (ethers)
+- Default: none (the signer's provider, read twice)
+
+A second, independent RPC provider for the same chain (not the signer's own provider, nor
+one with the same URL: `create` refuses both), read in every proof that a
+transaction was never sent: before an order, purchase, approval or escrow payment is sent
+again after a nonce refusal, and before an envelope is removed after a metadata transaction
+refused for its nonce. **Without it, a transaction that moves value is never sent again**:
+it stops with "may have been sent". Recommended for paid flows, where a single
+load-balanced RPC whose transaction index lags could make a mined order look unsent.
+
 ##### maxProviderFee
 
 - Type: `TokenAmount | TokenAmount[]`, where `TokenAmount` is
@@ -292,6 +370,8 @@ other's escrow authorisation. Jobs from another instance or process are not cove
   `allowInsecureTransport`.
 - When `nftFactoryAddress`, `fixedRateExchangeAddress` or `dispenserAddress` is missing or not
   an address, or `escrow` is set but is not an address.
+- When `nonceManagement` is neither `'auto'` nor `'off'`, or `verificationProvider` is on
+  another chain than the signer, or is the signer's own provider (the same object or URL).
 - When `maxProviderFee` or `maxEscrowPayment` has an entry whose `token` is not an address,
   whose `amount` is not a non-negative integer, or whose token is listed twice, or when
   `confirmProviderFees` or `confirmEscrowPayment` is not a function.

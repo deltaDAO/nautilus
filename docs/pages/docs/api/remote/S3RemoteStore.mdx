@@ -83,7 +83,7 @@ node's key can read them, and they can never be removed.
 | `nodeForcePathStyle` | `boolean` | `forcePathStyle` | The addressing style written into the pointer. Required to be `true` (directly or through `forcePathStyle`) when `nodeEndpoint` is an IP address or `localhost`. |
 | `writeCredentials` | `{ accessKeyId, secretAccessKey }` | — | Uploads and removes. Never written anywhere. Required. |
 | `readCredentials` | `{ accessKeyId, secretAccessKey }` | — | Written, node-encrypted, into the on-chain pointer. Must be read-only. Required. |
-| `allowSharedCredentials` | `boolean` | `false` | Accept one key pair for both. The write key then sits in every pointer, forever, and a one-time `console.warn` says so. |
+| `allowSharedCredentials` | `boolean` | `false` | Accept one key pair for both. The write key then sits in every pointer, forever, and a one-time warning (`store.s3.shared_credentials`) says so. |
 | `allowWritableReadKey` | `boolean` | `false` | Let `check()` pass, with a warning, although the read key can write or delete. |
 | `allowInsecureTransport` | `boolean` | `false` | Accept a plain `http://` `endpoint` on a non-loopback host. |
 | `requestTimeoutMs` | `number` | `30000` | Timeout of each request, body included. A finite number of milliseconds, more than 0; above 2^31 − 1 it is clamped to that. A network error or a 500/502/503/504 is retried once, freshly signed; a timeout is not. |
@@ -91,6 +91,15 @@ node's key can read them, and they can never be removed.
 | `now` | `() => Date` | `() => new Date()` | The clock used for signing. For tests only. |
 
 Both credential options are `S3Credentials`, `{ accessKeyId: string; secretAccessKey: string }`.
+
+The two warnings (`store.s3.shared_credentials`, `store.s3.writable_read_key`, `warn` level)
+go to the **process-wide** logger, set with
+[`Nautilus.configureLogging`](/docs/api/nautilus/configureLogging), not to the `logger` of the
+`Nautilus` instance the store is passed to: an `S3RemoteStore` has no logger of its own. In a
+multi-tenant server, where each tenant's instance has its own
+[`logger`](/docs/api/nautilus/create#logger), give the process-wide configuration a `sink`
+too, so these warnings reach your logs rather than stderr. They name the access key id or
+the bucket, never a secret key.
 
 The constructor throws when:
 

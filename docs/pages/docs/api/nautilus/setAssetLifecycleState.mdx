@@ -38,15 +38,23 @@ you are changing metadata anyway, and this when the state is all you want to cha
 | `2` | `DEPRECATED` | Superseded by another asset. **One-way on ocean-node.** |
 | `3` | `REVOKED_BY_PUBLISHER` | Withdrawn. **One-way on ocean-node.** |
 | `4` | `ORDERING_DISABLED_TEMPORARILY` | Visible, but cannot be ordered. Reversible. |
-| `5` | `ASSET_UNLISTED` | Accessible by DID, hidden from markets. Reversible. |
+| `5` | `ASSET_UNLISTED` | For markets to hide. The node still resolves it by DID and returns it in searches, flagged with the state. Reversible. |
 
 :::warning[DEPRECATED and REVOKED are one-way]
-When an active asset moves to `DEPRECATED` or `REVOKED_BY_PUBLISHER`, ocean-node replaces its
-full DDO with a stub that keeps only the NFT state. Setting `ACTIVE` again does not restore
-it: only a new metadata write could, and [`edit`](/docs/api/nautilus/edit) refuses an NFT in
-either state and needs the full published DDO as its baseline, which the stub no longer is.
-Treat both states as final. Assets cannot be deleted; `REVOKED_BY_PUBLISHER` is the strongest
-state a publisher can set.
+Once an active asset moves to `DEPRECATED` or `REVOKED_BY_PUBLISHER`, it does not come back.
+What the node serves afterwards depends on the node's version and database:
+
+- **ocean-node 4.2.x with Elasticsearch drops the DDO.** The indexer deletes the full
+  document, then fails to write the short one it means to keep, so
+  [`getAsset`](/docs/api/nautilus/getAsset) answers 404 and the node's indexing state for the
+  DID (`GET /api/aquarius/state/ddo?did=…`) records "Schema for version deprecated not found".
+- **With Typesense, it keeps a short document** holding only the NFT state, without metadata
+  or services.
+
+Setting `ACTIVE` again does not restore it: only a new metadata write could, and
+[`edit`](/docs/api/nautilus/edit) refuses an NFT in either state and needs the full published
+DDO as its baseline, which the node no longer has. Treat both states as final. Assets cannot
+be deleted; `REVOKED_BY_PUBLISHER` is the strongest state a publisher can set.
 
 Revoking does not make the stored DDO unreadable either: the envelope stays in the remote
 store, and a node that decrypts for anyone will still decrypt it. Remove it from the store
@@ -55,10 +63,48 @@ store, and a node that decrypts for anyone will still decrypt it. Remove it from
 an asset retired for good: without its creation envelope, a node reindex cannot restore it.
 :::
 
-A state change does not update the indexed transaction id, so
+:::tip[Revoking a deprecated asset]
+Once the node has dropped a deprecated asset, `getAsset` has nothing to give you, and this
+call needs an asset object. To withdraw an asset, set `REVOKED_BY_PUBLISHER` directly. If you
+deprecate first, keep the asset object you read before (from `getAsset` or `publish()`'s
+`ddo`): it holds the NFT address, and this call can still revoke with it. See
+[known limitations](/docs/known-limitations#revoking-after-deprecating).
+:::
+
+`ASSET_UNLISTED` hides nothing by itself. The asset stays resolvable by DID and searchable on
+the node, with `indexedMetadata.nft.state` set to `5`: a market must filter on that state to
+leave it out.
+
+### Reading the state
+
+**Read the state from the chain, not from the node.** After a `DEPRECATED` or
+`REVOKED_BY_PUBLISHER` change, a 4.2.x node with Elasticsearch has no document to read it
+from. The NFT's `getMetaData()` holds it as its third value. Start from the NFT address you
+stored from the publish result, not from `getAsset()`: the node may no longer have the
+document to look it up in:
+
+```ts twoslash
+import { Nft } from '@oceanprotocol/lib'
+import { getChainId, Nautilus, type NautilusAsset } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+declare const asset: NautilusAsset
+// ---cut---
+// at publish time: store the NFT address with your own records
+const { nftAddress } = await nautilus.publish(asset)
+
+// later, after the state change
+const signer = nautilus.getSigner()
+const nft = new Nft(signer, await getChainId(signer))
+
+const metadata = (await nft.getMetadata(nftAddress)) as unknown[] // [!code focus]
+const state = Number(metadata[2]) // [!code focus]
+```
+
+A state change does not update the indexed transaction id either, so
 [`waitForIndexer`](/docs/api/nautilus/waitForIndexer) with the receipt's hash cannot wait for
-it. Poll [`getAsset`](/docs/api/nautilus/getAsset) and read
-[`getLifecycleState`](/docs/api/ddo/getLifecycleState).
+it. For the reversible states, polling [`getAsset`](/docs/api/nautilus/getAsset) and reading
+[`getLifecycleState`](/docs/api/ddo/getLifecycleState) shows when the node has caught up.
 
 DDO v5's `State` enum carries the same values and is accepted too. nautilus re-exports it as a
 type only, so pass `LifecycleStates` members when you need a value.

@@ -163,7 +163,9 @@ export async function compute(
 
   console.log(`Job started: ${job.jobId}`)
   console.log(`  status: ${job.status} (${job.statusText})`)
-  // One order per input, keyed by DID. A reused order shows the earlier transaction.
+  // One order per input, keyed by DID. compute() looks nothing up on chain, and the node
+  // reports no valid order (compute() sends it no transferTxId), so each paid input is
+  // bought again on every job; unlike access() it never stops with an OrderCheckError.
   console.log('  orders:', result.orders)
 
   if (result.initializeResults.payment)

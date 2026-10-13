@@ -8,6 +8,8 @@
  * have their message unwrapped. Whatever the node says is redacted, stripped of control
  * characters and bounded before it reaches a message.
  */
+
+import { inspect } from 'node:util'
 import {
   Aquarius,
   LoggerInstance,
@@ -15,22 +17,33 @@ import {
   ProviderInstance
 } from '@oceanprotocol/lib'
 import {
-  getBytes,
   hexlify,
+  id,
   solidityPackedKeccak256,
+  toBeArray,
   toUtf8Bytes,
   verifyMessage,
   Wallet
 } from 'ethers'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { SECRET_KEYS } from '../../src/log/keys.js'
+import { redactKeyValues } from '../../src/log/keyValues.js'
+import { configureLogging } from '../../src/log/logger.js'
+import {
+  redactError,
+  redactFields,
+  redactMessage
+} from '../../src/log/redact.js'
 import type { NodeAuth } from '../../src/node/auth.js'
-import { nodeText } from '../../src/node/messages.js'
+import { nodeText, redactSecrets, sanitize } from '../../src/node/messages.js'
 import {
   AssetNotFoundError,
   OceanNodeClient,
   OceanNodeError
 } from '../../src/node/OceanNodeClient.js'
 import { ASSET_DID, CHAIN_ID, NFT_ADDRESS } from '../fixtures/Asset.js'
+import { cpuBudget, cpuTime, INVISIBLE_CODES } from '../helpers.js'
+import { FAKE } from '../secretScan.js'
 
 const NODE = 'https://node.test.invalid'
 const PEER = '16Uiu2HAmPeerIdOnly'
@@ -272,27 +285,33 @@ describe('getComputeLogs', () => {
   })
 
   it('signs the request as ocean.js does', async () => {
-    const wallet = Wallet.createRandom()
-    const fetch = stubFetch({
-      '/api/services/nonce': { status: 200, body: '{"nonce":"4"}' },
-      '/api/services/computeStreamableLogs': { status: 200, body: '' }
-    })
+    // Fixed wallets, not random ones: for 1 in 256 addresses the hash starts with a zero
+    // byte, which ocean.js drops (`toBeArray`), and this test once failed by chance. Seed
+    // 398's hash is such a one.
+    for (const seed of ['signer 0', 'signer 398']) {
+      const wallet = new Wallet(id(seed))
+      const fetch = stubFetch({
+        '/api/services/nonce': { status: 200, body: '{"nonce":"4"}' },
+        '/api/services/computeStreamableLogs': { status: 200, body: '' }
+      })
 
-    await client(NODE, wallet).getComputeLogs(JOB)
+      await client(NODE, wallet).getComputeLogs(JOB)
 
-    const url = new URL(urls(fetch)[1])
-    const query = Object.fromEntries(url.searchParams)
-    expect(query.jobId).to.equal(JOB)
-    expect(query.consumerAddress).to.equal(wallet.address)
-    expect(query.nonce).to.equal('5')
-    // ocean.js's signRequest: the keccak256 of the message bytes, signed as bytes.
-    const hash = solidityPackedKeccak256(
-      ['bytes'],
-      [hexlify(toUtf8Bytes(`${wallet.address}5getComputeStreamableLogs`))]
-    )
-    expect(verifyMessage(getBytes(hash), query.signature)).to.equal(
-      wallet.address
-    )
+      const url = new URL(urls(fetch)[1])
+      const query = Object.fromEntries(url.searchParams)
+      expect(query.jobId).to.equal(JOB)
+      expect(query.consumerAddress).to.equal(wallet.address)
+      expect(query.nonce).to.equal('5')
+      // ocean.js's signRequest: the keccak256 of the message bytes, signed as the bytes of
+      // its number, so without leading zero bytes.
+      const hash = solidityPackedKeccak256(
+        ['bytes'],
+        [hexlify(toUtf8Bytes(`${wallet.address}5getComputeStreamableLogs`))]
+      )
+      expect(verifyMessage(toBeArray(hash), query.signature), seed).to.equal(
+        wallet.address
+      )
+    }
   })
 
   it("sends a JWT as Authorization, without a signature, naming the token's address", async () => {
@@ -564,7 +583,8 @@ describe('calls that stay on ocean.js', () => {
         body: JSON.stringify(ACCESS_DENIED)
       }
     })
-    vi.spyOn(console, 'error').mockImplementation(() => {})
+    // ocean.js's error lines, captured as events: kept off stderr (the suite's tap still scans them).
+    configureLogging({ sink: () => {} })
 
     const error = await rejection(() => freeCompute(client()))
 
@@ -580,7 +600,8 @@ describe('calls that stay on ocean.js', () => {
         body: JSON.stringify({ error: 'Missing algorithm' })
       }
     })
-    vi.spyOn(console, 'error').mockImplementation(() => {})
+    // ocean.js's error lines, captured as events: kept off stderr (the suite's tap still scans them).
+    configureLogging({ sink: () => {} })
 
     const error = await rejection(() =>
       client().initializeCompute({
@@ -824,7 +845,9 @@ describe('ocean.js logging', () => {
   })
 
   it('is not triggered by a refused initialize or compute-logs request', async () => {
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    // nautilus sends these requests itself, not through ocean.js: ocean.js's logger is
+    // not called at all, whatever the oceanjs mode.
+    const oceanJsError = vi.spyOn(LoggerInstance, 'error')
     stubFetch({
       '/api/services/initialize': {
         status: 403,
@@ -840,7 +863,7 @@ describe('ocean.js logging', () => {
     await rejection(() => node.initialize(DID_OP, 'svc'))
     await rejection(() => node.getComputeLogs(JOB))
 
-    expect(consoleError).not.toHaveBeenCalled()
+    expect(oceanJsError).not.toHaveBeenCalled()
   })
 })
 
@@ -885,6 +908,301 @@ describe("the node's text in a message", () => {
     }
   })
 
+  it('redacts S3 secret keys, OAuth client secrets and refresh tokens, and private keys', () => {
+    for (const [text, kept] of [
+      [
+        'secretAccessKey=wJalr/K7MDENG secret_access_key=s2',
+        'secretAccessKey=<redacted> secret_access_key=<redacted>'
+      ],
+      ['aws_secret_access_key=s3x', 'aws_secret_access_key=<redacted>'],
+      [
+        'secretKey=minio1 secret_key=minio2',
+        'secretKey=<redacted> secret_key=<redacted>'
+      ],
+      [
+        'client_secret=cs1&refresh_token=rt1',
+        'client_secret=<redacted>&refresh_token=<redacted>'
+      ],
+      [
+        'privateKey=0x12 private_key=0x34',
+        'privateKey=<redacted> private_key=<redacted>'
+      ],
+      [
+        '{"secretAccessKey":"wJalr","client_secret":"cs1","private_key":"0x12"}',
+        '{"secretAccessKey":"<redacted>","client_secret":"<redacted>","private_key":"<redacted>"}'
+      ],
+      [
+        'secretAccessKey: wJalr, aws_secret_access_key: s3x, client_secret: cs1',
+        'secretAccessKey: <redacted>, aws_secret_access_key: <redacted>, client_secret: <redacted>'
+      ],
+      [
+        'refresh_token: rt1 privateKey: 0x12 x-api-key: k9',
+        'refresh_token: <redacted> privateKey: <redacted> x-api-key: <redacted>'
+      ]
+    ]) {
+      expect(nodeText(text), text).to.contain(kept)
+    }
+  })
+
+  it('keeps a code that reads as an error code, and redacts an authorization code', () => {
+    for (const [text, kept] of [
+      [
+        'server response 500 (code=SERVER_ERROR, version=6.16.0)',
+        'code=SERVER_ERROR'
+      ],
+      [
+        'could not coalesce error (error={ "code": -32005, "message": "range" })',
+        '"code": -32005,'
+      ],
+      [
+        'raw {\\"code\\":\\"SERVER_ERROR\\"}',
+        '{\\"code\\":\\"SERVER_ERROR\\"}'
+      ],
+      ['raw {\\"code\\":\\"s3cr3t\\"}', '{\\"code\\":\\"<redacted>\\"}'],
+      ['{"code":"CALL_EXCEPTION"}', '{"code":"CALL_EXCEPTION"}'],
+      ['callback?x code=SplxlOBeZQQYbYS6WxSbIA', 'code=<redacted>'],
+      ['code=123', 'code=<redacted>'],
+      ['{"code":"abc-def"}', '{"code":"<redacted>"}']
+    ]) {
+      expect(redactSecrets(text), text).to.contain(kept)
+    }
+  })
+
+  it('redacts every key the field redaction does, in every form (round 3)', () => {
+    // Keys from both round-2 reviews; the value is never kept.
+    const keys = [
+      'accessToken',
+      'refreshToken',
+      'clientSecret',
+      'sid',
+      'cookie',
+      'Set-Cookie',
+      'sessionToken',
+      'aws_session_token',
+      'X-Amz-Security-Token',
+      'passphrase',
+      'mnemonic',
+      'credential',
+      'presentation',
+      'signedTx',
+      'rawTx',
+      'pre-authorized_code',
+      'authorization_code',
+      'x-api-key',
+      'apiToken',
+      'csrfToken',
+      'privKey',
+      'seedPhrase',
+      'hmac',
+      'sessionId',
+      'nonce',
+      'signature',
+      'authorization'
+    ]
+    for (const key of keys) {
+      const value = `val-${key.length}-x9`
+      for (const text of [
+        `${key}=${value}`,
+        `failed: ${key}: ${value}, retry`,
+        `{ ${key}: '${value}' }`,
+        `{ '${key}': "${value}" }`,
+        `{"${key}":"${value}","ok":1}`,
+        `{"${key}": 123456}`,
+        `body="{\\"${key}\\":\\"${value}\\"}"`
+      ]) {
+        const out = redactSecrets(text)
+        expect(out, text).not.to.contain(value)
+        expect(out, text).not.to.contain('123456')
+        expect(out, text).to.contain('<redacted>')
+      }
+    }
+  })
+
+  it('redacts every cookie of a header whose values are quoted, inside JSON too (round 2)', () => {
+    const session = 'quoted-cookie-session-x9'
+    for (const [text, kept] of [
+      [`Cookie: theme="dark"; session=${session}`, 'Cookie: <redacted>'],
+      [`Cookie: theme='dark'; session=${session}`, 'Cookie: <redacted>'],
+      [`Cookie: a=1; theme="dark"; session=${session}\nnext`, '<redacted>'],
+      [
+        `{"msg":"Cookie: theme=\\"dark\\"; session=${session}","other":"keep"}`,
+        '{"msg":"Cookie: <redacted>","other":"keep"}'
+      ]
+    ]) {
+      for (const out of [
+        sanitize(text, 2000, null),
+        redactSecrets(text),
+        String(redactFields({ error: text }).error)
+      ]) {
+        expect(out, text).to.contain(kept)
+        expect(out, text).not.to.contain(session)
+      }
+    }
+    // A quote after `=` that is no cookie value still ends the JSON string around it.
+    expect(redactSecrets('{"msg":"Cookie: a=","other":"keep"}')).to.equal(
+      '{"msg":"Cookie: <redacted>","other":"keep"}'
+    )
+  })
+
+  it('redacts every cookie of a header with an apostrophe in a value, keeping the string around it (round 3)', () => {
+    const session = 'secret-cookie'
+    // The reviewer's case, and the other RFC 6265 cookie-octets around an apostrophe.
+    expect(
+      sanitize(`Cookie: theme=it'sdark; session=${session}`, 2000, null)
+    ).to.equal('Cookie: <redacted>')
+    expect(
+      redactFields({ error: `Cookie: theme=it'sdark; session=${session}` })
+    ).to.deep.equal({ error: 'Cookie: <redacted>' })
+    for (const text of [
+      `Cookie: a=x'; session=${session}`,
+      `Cookie: a=x''y; b=\`!#$%&*+-.^_|~'; session=${session}`,
+      `Cookie: theme='dark; session=${session}\nnext`,
+      `{"msg":"Cookie: theme=it'sdark; session=${session}","other":"keep"}`,
+      JSON.stringify({
+        body: JSON.stringify({
+          m: `Cookie: theme=it'sdark; session=${session}`
+        })
+      }),
+      inspect({ msg: `Cookie: theme=it'sdark; session=${session}`, o: 'keep' }),
+      // `util.inspect` escapes the apostrophe when the text holds both kinds of quote.
+      inspect({ msg: `Cookie: a=it's; session=${session} "q" \`b\`` })
+    ]) {
+      for (const out of [
+        sanitize(text, 2000, null),
+        redactSecrets(text),
+        String(redactFields({ error: text }).error)
+      ]) {
+        expect(out, text).to.contain('Cookie: <redacted>')
+        expect(out, text).not.to.contain(session)
+      }
+    }
+    // An apostrophe that closes the string around the header still ends the value.
+    for (const [text, expected] of [
+      [
+        "{ msg: 'Cookie: a=1', other: 'keep' }",
+        "{ msg: 'Cookie: <redacted>', other: 'keep' }"
+      ],
+      ["[ 'Cookie: a=1' ]", "[ 'Cookie: <redacted>' ]"],
+      [
+        "{ msg: 'Cookie: a=', other: 'keep' }",
+        "{ msg: 'Cookie: <redacted>', other: 'keep' }"
+      ],
+      ["'Cookie: a=1'", "'Cookie: <redacted>'"]
+    ])
+      expect(redactSecrets(text), text).to.equal(expected)
+  })
+
+  it('redacts Basic credentials, and an authorization value after its scheme', () => {
+    for (const [text, kept] of [
+      ['Authorization: Basic dXNlcjpwYXNz', 'Authorization: Basic <redacted>'],
+      ['authorization=Basic dXNlcjpwYXNz', 'authorization=Basic <redacted>'],
+      ['sent Basic dXNlcjpwYXNz to it', 'sent Basic <redacted> to it'],
+      ['proxy-authorization: Bearer abc.def', 'Bearer <redacted>']
+    ]) {
+      expect(redactSecrets(text), text).to.contain(kept)
+      expect(redactSecrets(text), text).not.to.match(/dXNlcjpwYXNz|abc\.def/)
+    }
+  })
+
+  it('keeps a token address, an error code, a status and other …code keys, and redacts the rest', () => {
+    const address = '0x1B3fC2A9e4d5E6f708192a3b4C5d6E7f80912a3B'
+    for (const [text, expected] of [
+      [`paymentToken=${address}`, `paymentToken=${address}`],
+      [`{"baseToken":"${address}"}`, `{"baseToken":"${address}"}`],
+      ['paymentToken=0xabc', 'paymentToken=<redacted>'],
+      ['code=TIMEOUT code=CANCELLED', 'code=TIMEOUT code=CANCELLED'],
+      ['errorCode: ECONNREFUSED', 'errorCode: ECONNREFUSED'],
+      ['statusCode: 503', 'statusCode: 503'],
+      ['statusCode: 777', 'statusCode: 777'],
+      // Only `code` and one-time codes are secret: an exit code or bytecode stays readable.
+      [
+        'exitCode=0 bytecode: 0x6080604052',
+        'exitCode=0 bytecode: 0x6080604052'
+      ],
+      [
+        'otpCode=JBSWY3DP recoveryCode: abcd-efgh',
+        'otpCode=<redacted> recoveryCode: <redacted>'
+      ],
+      // An upper-case base32 one-time code is not an error code.
+      ['code=JBSWY3DPEHPK3PXP', 'code=<redacted>'],
+      ['otp: 123456, pin: 1234', 'otp: <redacted>, pin: <redacted>'],
+      // Readable keys stay readable, also when a secret key is part of a longer word.
+      ['decryptNonce=7 consideration: x', 'decryptNonce=7 consideration: x']
+    ]) {
+      expect(redactSecrets(text), text).to.equal(expected)
+    }
+  })
+
+  it('decodes JSON escapes in keys and URLs, nested JSON strings included (PR #213 review)', () => {
+    const sessionId = 'val-sid-u0049-x9'
+    const pathToken = 'rpc-path-escaped-x9'
+    const raw = [
+      // `I` is `I`: the key is `sessionId`, as a JSON parser reads it.
+      `{"session\\u0049d":"${sessionId}"}`,
+      `{"session\\u0000Id":"${sessionId}"}`,
+      // JSON may escape `/`: the URL is a URL all the same.
+      `{"requestUrl":"https:\\/\\/rpc.example.org\\/v3\\/${pathToken}"}`,
+      `{"note":"see https:\\u002f\\u002frpc.example.org\\u002fv3\\u002f${pathToken}"}`
+    ]
+    for (const body of raw) {
+      // As it is, inside a JSON string (ethers' `responseBody`), and two levels deep.
+      const once = JSON.stringify(body)
+      const twice = JSON.stringify(JSON.stringify({ body }))
+      for (const text of [
+        body,
+        `body=${once}`,
+        `info={ "responseBody": ${once} }`,
+        twice
+      ]) {
+        const out = redactSecrets(text)
+        expect(out, text).not.to.contain(sessionId)
+        expect(out, text).not.to.contain(pathToken)
+        expect(nodeText(text), text).not.to.match(/val-sid|rpc-path/)
+      }
+    }
+    expect(redactSecrets(raw[0])).to.equal('{"sessionId":"<redacted>"}')
+    expect(redactSecrets(raw[2])).to.equal(
+      '{"requestUrl":"https://rpc.example.org"}'
+    )
+    expect(
+      redactSecrets(JSON.stringify(JSON.stringify({ body: raw[0] })))
+    ).to.equal(
+      JSON.stringify(JSON.stringify({ body: '{"sessionId":"<redacted>"}' }))
+    )
+  })
+
+  it('keeps an escaped quote or delimiter inside a secret value from cutting it short', () => {
+    for (const text of [
+      '{"sessionId":"head\\u0022tail-x9"}',
+      'sessionId=head\\u0027tail-x9',
+      'sessionId=head\\u0026tail-x9',
+      'password: head\\u002ctail-x9',
+      JSON.stringify(JSON.stringify({ sessionId: 'head"tail-x9' })),
+      JSON.stringify(JSON.stringify({ sessionId: 'head\\"tail-x9' })),
+      JSON.stringify(
+        JSON.stringify(JSON.stringify({ sessionId: 'head"\\tail-x9' }))
+      )
+    ]) {
+      const out = redactSecrets(text)
+      expect(out, text).not.to.contain('tail-x9')
+      expect(out, text).to.contain('<redacted>')
+    }
+  })
+
+  it('catches a key split by a control character, an escape or a line break', () => {
+    for (const text of [
+      'session\u0000Id=val-sid-x9',
+      'session\u001b[0mId: val-sid-x9',
+      'session​Id: val-sid-x9',
+      '{"access\u0000Token":"val-sid-x9"}',
+      'password\n=\nval-sid-x9'
+    ]) {
+      const out = nodeText(text)
+      expect(out, JSON.stringify(text)).not.to.contain('val-sid-x9')
+      expect(out, JSON.stringify(text)).to.contain('<redacted>')
+    }
+  })
+
   it('redacts a bare JWT and a bare 65-byte signature', () => {
     const token = jwt({ address: NFT_ADDRESS })
     const signature = `0x${'ab'.repeat(65)}`
@@ -895,6 +1213,76 @@ describe("the node's text in a message", () => {
     expect(nodeText(`mismatch for ${signature}.`)).to.equal(
       'mismatch for <redacted>.'
     )
+  })
+
+  it('redacts a raw signed transaction, as ethers quotes it in a failed send', () => {
+    // A signed EIP-1559 transaction and a legacy one: whoever holds one that was never
+    // mined can still send it.
+    const typed = `0x02f8${'5a'.repeat(110)}`
+    const legacy = `0xf86c${'0b'.repeat(108)}`
+    const hash = `0x${'ab'.repeat(32)}`
+
+    expect(
+      redactSecrets(
+        `insufficient funds for intrinsic transaction cost (transaction="${typed}", info={ "error": { "code": -32000 } }, code=INSUFFICIENT_FUNDS, version=6.16.0)`
+      )
+    ).to.equal(
+      'insufficient funds for intrinsic transaction cost (transaction="<redacted>", info={ "error": { "code": -32000 } }, code=INSUFFICIENT_FUNDS, version=6.16.0)'
+    )
+    expect(
+      redactSecrets(
+        `{"method":"eth_sendRawTransaction","params":["${legacy}"]}`
+      )
+    ).to.equal('{"method":"eth_sendRawTransaction","params":["<redacted>"]}')
+    // A transaction hash stays.
+    expect(redactSecrets(`tx ${hash} reverted`)).to.equal(`tx ${hash} reverted`)
+  })
+
+  it('redacts a short signed transaction: a minimal legacy transfer, a contract creation', async () => {
+    // Real signatures by a fake key. A legacy transfer at chain 1 with nonce, gas price
+    // and value 1 is 97 bytes; a contract creation without data, 77. Both can be sent.
+    const wallet = new Wallet(`0x${'11'.repeat(32)}`)
+    const transfer = await wallet.signTransaction({
+      type: 0,
+      chainId: 1,
+      nonce: 0,
+      gasPrice: 1,
+      gasLimit: 21_000,
+      to: `0x${'22'.repeat(20)}`,
+      value: 1
+    })
+    const creation = await wallet.signTransaction({
+      type: 0,
+      chainId: 1,
+      nonce: 0,
+      gasPrice: 1,
+      gasLimit: 53_000
+    })
+    expect((transfer.length - 2) / 2).to.equal(97)
+
+    for (const raw of [transfer, creation]) {
+      const message = `replacement fee too low (transaction="${raw}", code=REPLACEMENT_UNDERPRICED)`
+      const error = Object.assign(new Error(message), {
+        code: 'REPLACEMENT_UNDERPRICED'
+      })
+      expect(redactSecrets(message), raw).to.equal(
+        'replacement fee too low (transaction="<redacted>", code=REPLACEMENT_UNDERPRICED)'
+      )
+      expect(sanitize(message, 2_000, null), raw).not.to.contain(raw.slice(2))
+      expect(redactError(error), raw).not.to.contain(raw.slice(2))
+      expect(redactSecrets(raw.toUpperCase().replace('0X', '0x'))).to.equal(
+        '<redacted>'
+      )
+    }
+  })
+
+  it('keeps short hex that is not a whole RLP list', () => {
+    // An RLP list prefix whose length byte does not match what follows: a 32-byte hash
+    // and other short blobs that merely start with `f8` stay readable.
+    const hash = `0xf8${'ab'.repeat(31)}`
+    const blob = `0xf860${'cd'.repeat(60)}`
+    expect(redactSecrets(`tx ${hash} reverted`)).to.equal(`tx ${hash} reverted`)
+    expect(redactSecrets(`data ${blob}`)).to.equal(`data ${blob}`)
   })
 
   it("keeps a URL's origin only", () => {
@@ -930,5 +1318,395 @@ describe("the node's text in a message", () => {
     expect(cause.name).to.equal('TypeError')
     expect(cause.message).not.to.contain('0xsecret')
     expect(cause.message.length).to.be.at.most(201)
+  })
+  it('keeps a URL whole across a backslash in its path, and ends it at a quote', () => {
+    const token = FAKE.rpcPathToken
+    for (const [text, expected] of [
+      [
+        `see https://rpc.example.org/x\\y/v3/${token} now`,
+        'see https://rpc.example.org now'
+      ],
+      [
+        `see https://rpc.example.org\\v3\\${token}.`,
+        'see https://rpc.example.org.'
+      ],
+      [
+        `see https://rpc.example.org/x\\/v3/${token} now`,
+        'see https://rpc.example.org now'
+      ],
+      // A quote ends the URL (`\"` as well): the JSON after it is kept.
+      [
+        '{"u":"https://h.example/p?apikey=1","next":"kept"}',
+        '{"u":"https://h.example","next":"kept"}'
+      ],
+      [
+        '{\\"u\\":\\"https://h.example/p?a=1\\",\\"next\\":\\"kept\\"}',
+        '{\\"u\\":\\"https://h.example\\",\\"next\\":\\"kept\\"}'
+      ]
+    ])
+      expect(redactSecrets(text), text).to.equal(expected)
+  })
+
+  it('shows no part of a URL token split by an invisible character (D28)', () => {
+    const token = FAKE.rpcPathToken
+    const [head, tail] = [token.slice(0, 15), token.slice(15)]
+    const failures: string[] = []
+    for (const code of INVISIBLE_CODES) {
+      const c = String.fromCharCode(code)
+      for (const text of [
+        `see https://${c}rpc.example.org/v3/${token} now`,
+        `see https:/${c}/rpc.example.org/v3/${token} now`,
+        `see https://rpc.example.org/v3/${c}${token} now`,
+        `see https://rpc.example.org/v3/${head}${c}${tail} now`
+      ]) {
+        const shown = sanitize(text, 200, null)
+        if ([token, head, tail].some((part) => shown.includes(part)))
+          failures.push(`U+${code.toString(16)}: ${JSON.stringify(shown)}`)
+      }
+    }
+    // A BOM is whitespace to `\s`: it used to end the URL, and once deleted, joined the
+    // token to the origin (`https://rpc.example.org<token>`).
+    expect(failures).to.deep.equal([])
+    expect(
+      sanitize(`see https://rpc.example.org/v3/\ufeff${token} now`)
+    ).to.equal('see https://rpc.example.org now')
+  })
+
+  it('keeps only the host and port of a URL without a scheme on an IP address, localhost or [IPv6] (D28)', () => {
+    const token = FAKE.rpcPathToken
+    for (const [text, expected] of [
+      [`rpc 127.0.0.1:8545/v3/${token} down`, 'rpc 127.0.0.1:8545 down'],
+      [`rpc localhost:8545/${token}.`, 'rpc localhost:8545.'],
+      [`rpc [::1]:8545/${token}, retry`, 'rpc [::1]:8545, retry'],
+      [`rpc LOCALHOST:8545/${token}`, 'rpc LOCALHOST:8545'],
+      [`rpc 10.0.0.7/v3/${token}?apikey=1`, 'rpc 10.0.0.7'],
+      [`(rpc http://10.0.0.7:8545/v3/${token})`, '(rpc http://10.0.0.7:8545)'],
+      // ethers' "could not detect network" names the URL as it was configured.
+      [
+        `connect ECONNREFUSED 10.0.0.7:8545`,
+        'connect ECONNREFUSED 10.0.0.7:8545'
+      ]
+    ])
+      expect(sanitize(text), text).to.equal(expected)
+
+    // Prose with a colon and a slash, and host names without a scheme, are left alone.
+    for (const prose of [
+      'ratio a:b/c is fine',
+      'see note:12/3',
+      'time 10:30/11:00',
+      'path c:/x/y',
+      'version 4.2.2:8080/x',
+      'v1.2.3.4/x',
+      'node.example.org:8000/api'
+    ])
+      expect(redactSecrets(prose), prose).to.equal(prose)
+  })
+
+  it('keeps the punctuation after a URL in linear time (security regression)', async () => {
+    // Text built to be slow: a run of punctuation inside a URL, which a regular expression
+    // anchored at its end used to rescan from each character (about 150 ms at 16,000).
+    for (const text of [
+      `https://h.example/${';'.repeat(15_000)}a`,
+      `127.0.0.1:1/${')'.repeat(15_000)}a`
+    ]) {
+      let clean = ''
+      const elapsed = await cpuTime(() => {
+        clean = redactMessage(text)
+      })
+      expect(elapsed, text.slice(0, 12)).to.be.below(cpuBudget(30))
+      expect(clean).to.match(/^(https:\/\/h\.example|127\.0\.0\.1:1)$/)
+    }
+  })
+
+  it('reads a long backslash run in linear time, at every tier (security regression)', async () => {
+    // A run of backslashes followed by neither an escape nor a quote: the JSON-escape decoder
+    // and the escaped-key form were retried from each backslash (about 650 ms at 40,000), at
+    // the log window and in the sensitive tier's unbounded mask.
+    const marker = 'api-key-marker-7c41'
+    const runs = [
+      `api\\u004bey=${marker} ${'\\'.repeat(40_000)}x`,
+      `${'\\'.repeat(40_000)}"apiKey"`
+    ]
+    for (const text of runs) {
+      let clean = ''
+      const elapsed = await cpuTime(() => {
+        clean = redactKeyValues(redactSecrets(text), SECRET_KEYS)
+      })
+      expect(elapsed).to.be.below(cpuBudget(50))
+      expect(clean).not.to.contain(marker)
+    }
+    // Still decoded and redacted at any depth.
+    expect(
+      redactSecrets('\\\\\\"api\\u004bey\\\\\\": \\\\\\"v4lue\\\\\\"')
+    ).to.equal('\\\\\\"apiKey\\\\\\": \\\\\\"<redacted>\\\\\\"')
+  })
+
+  it('redacts a megabyte of hostile text in no time (security regression)', async () => {
+    // Text built to be slow to redact: dotted words (the URL scheme pattern used to rescan
+    // from each one) and `0x` runs (the hex patterns). Only the start is read.
+    for (const text of ['a.'.repeat(500_000), '0x'.repeat(500_000)]) {
+      let clean = ''
+      const elapsed = await cpuTime(() => {
+        clean = sanitize(text, 1_000, null)
+      })
+      expect(elapsed, text.slice(0, 4)).to.be.below(cpuBudget(50))
+      expect(clean.length).to.be.at.most(1_001)
+    }
+  })
+
+  it('finds JWTs in linear time, also where one may be glued to a word (PR #219 review)', async () => {
+    // Runs a JWT rule without a word boundary in front would rescan from each `eyJ` or
+    // `ey` (about 70 ms each at the log window of 16,000, and in the square of the length).
+    const slow: string[] = []
+    for (const text of [
+      'eyJ'.repeat(5_333),
+      `${'eyJ'.repeat(2_666)}.${'eyJ'.repeat(2_666)}`,
+      `${'ey'.repeat(4_000)}.${'ey'.repeat(4_000)}.`,
+      'eyJa.'.repeat(3_200)
+    ]) {
+      const elapsed = await cpuTime(() => redactMessage(text))
+      if (elapsed >= cpuBudget(30))
+        slow.push(`${text.slice(0, 6)}: ${elapsed.toFixed(0)} ms`)
+    }
+    expect(slow).to.deep.equal([])
+  })
+
+  it('drops the word the read limit cuts in no time, also at the log window (security regression)', async () => {
+    // A run with no separator up to just before the read limit, then one: the word the cut
+    // splits used to be found by a regular expression that rescanned the run from each of
+    // its characters (about 60 ms at 8,192, 300 ms at 16,000). A run of `a` is hex too, as
+    // calldata is, so the hex patterns read it. Read windows: 8,192 for a node's text and a
+    // result list, 16,000 for a log message (bound 2,000). Redacting them takes about 8 and
+    // 15 ms.
+    const hostile = (limit: number) =>
+      `${'a'.repeat(limit - 2)} b${' c'.repeat(5_000)}`
+    const shapes = [
+      [
+        'node text',
+        8_192,
+        200,
+        35,
+        (text: string) => sanitize(text, 200, null)
+      ],
+      [
+        'result list',
+        8_192,
+        1_000,
+        35,
+        (text: string) => sanitize(text, 1_000, null)
+      ],
+      ['log message', 16_000, 2_000, 60, redactMessage]
+    ] as const
+    const slow: string[] = []
+    for (const [label, limit, maxLength, budget, clean] of shapes) {
+      const text = hostile(limit)
+      let result = ''
+      const elapsed = await cpuTime(() => {
+        result = clean(text)
+      })
+
+      if (elapsed >= cpuBudget(budget))
+        slow.push(`${label}: ${elapsed.toFixed(0)} ms`)
+      expect(result, label).to.equal(`${'a'.repeat(maxLength)}…`)
+    }
+    expect(slow).to.deep.equal([])
+  })
+
+  it('reads only the start of a long text, and drops the credential the cut splits', () => {
+    // A long URL shrinks to its origin, so what stood far beyond the bound moves into it:
+    // a JWT split by the cut would read as no JWT and be shown in part.
+    const prefix = `https://h.example/${'p'.repeat(8_150)} `
+    expect(prefix.length).to.be.below(8_192)
+    expect(prefix.length + FAKE.jwt.length).to.be.above(8_192)
+
+    const clean = sanitize(`${prefix}${FAKE.jwt} and more`, 1_000, null)
+
+    expect(clean).to.equal('https://h.example…')
+    // Within the read limit nothing changes: the JWT is whole and redacted.
+    expect(
+      sanitize(
+        `https://h.example/${'p'.repeat(5_000)} ${FAKE.jwt} and more`,
+        1_000,
+        null
+      )
+    ).to.equal('https://h.example <redacted> and more')
+  })
+
+  it('drops a URL the read limit cuts whole, so no user info is read as its host (security regression)', () => {
+    // `,`, `;` and brackets end a word but not a URL: cut at the one before the unseen `@`,
+    // what was left of the URL read `user:secret` as its host and kept it.
+    const secret = 'userinfo-secret-7Hq2Lm9Z'
+    const filler = 'x'.repeat(17_000)
+    for (const punctuation of [',', ';', '(', ')', '[', ']', '{', '}', "'"])
+      for (const url of [
+        `https://user:${secret}${punctuation}${filler}@rpc.example.org/path`,
+        `https:\\/\\/user:${secret}${punctuation}${filler}@rpc.example.org/path`
+      ]) {
+        for (const text of [url, `failed at ${url}`, `{"error":"${url}"}`]) {
+          const clean = sanitize(text, 200, null)
+          expect(clean, `${punctuation} ${text.slice(0, 40)}`).not.to.contain(
+            secret
+          )
+          expect(redactMessage(text)).not.to.contain(secret)
+          expect(nodeText(text)).not.to.contain(secret)
+        }
+      }
+    expect(
+      sanitize(`failed at https://user:${secret},${filler}@h/p`, 200, null)
+    ).to.equal('failed at…')
+    // A quote ends a URL, also in its user info: the user info is dropped up to its `@`.
+    for (const end of ["'", '"'])
+      expect(
+        sanitize(`at https://user:${secret}${end}x@rpc.example.org/path`)
+      ).to.equal('at https://rpc.example.org')
+    // A space ends it too, and what is left of the user info is no host and port.
+    expect(
+      sanitize(`at https://user:${secret} x@rpc.example.org/path`)
+    ).to.equal('at https://<redacted> x@rpc.example.org/path')
+    for (const url of [
+      'https://h.example',
+      'https://h.example:8545',
+      'http://[::1]:8545',
+      'http://127.0.0.1:'
+    ])
+      expect(sanitize(`at ${url}/path`)).to.equal(`at ${url}`)
+    // A URL that ends before the cut keeps its origin, as in a text read whole.
+    expect(
+      sanitize(`failed at https://h.example/p, then ${'y '.repeat(9_000)}`)
+    ).to.match(/^failed at https:\/\/h\.example, then y y .*…$/)
+  })
+
+  it('shows no part of user info a quote stands in, after a numeric prefix too (security regression)', () => {
+    // The URL pattern ends at the quote: `user:12345` read as a host and port and was kept,
+    // and the rest of the password after the quote, the path and the query with it.
+    const secret = 'userinfo-secret-7Hq2Lm9Z'
+    for (const quote of ["'", '"', '\\"', '<', '>'])
+      for (const prefix of ['user:12345', '12345', 'user:', 'user'])
+        for (const url of [
+          `https://${prefix}${quote}${secret}@rpc.example.org/p?key=${secret}`,
+          `https:\\/\\/${prefix}${quote}${secret}@rpc.example.org\\/p`
+        ])
+          for (const text of [url, `failed at ${url}`, `{"error":"${url}"}`]) {
+            const label = `${quote} ${text}`
+            expect(sanitize(text, 200, null), label).not.to.contain(secret)
+            expect(sanitize(text, 200, null), label).not.to.contain('12345')
+            expect(sanitize(text, 200, null), label).to.contain(
+              'https://rpc.example.org'
+            )
+            expect(redactMessage(text), label).not.to.contain(secret)
+            expect(nodeText(text), label).not.to.contain(secret)
+          }
+    expect(
+      sanitize(`https://user:12345'${secret}@rpc.example.org/p`, 200, null)
+    ).to.equal('https://rpc.example.org')
+    // Cut after the quote, before the `@`: the URL is dropped whole.
+    for (const quote of ["'", '"'])
+      for (const pad of ['x', `x${quote}`]) {
+        const text = `at https://user:12345${quote}${secret}${pad.repeat(17_000)}@h/p`
+        expect(sanitize(text, 200, null), `${quote}${pad}`).to.equal('at…')
+        expect(redactMessage(text)).not.to.contain('12345')
+      }
+    // A URL in quotes with an address after it stays as it was.
+    for (const prose of [
+      `connect "https://host.example:8545" failed, mail ops@example.org`,
+      `see 'https://localhost:8545' or 'ops@example.org'`
+    ])
+      expect(sanitize(prose, 200, null)).to.equal(prose)
+  })
+
+  it('reads user info with quotes in linear time (security regression)', async () => {
+    for (const text of [
+      `https://${"a'".repeat(100_000)}`,
+      `https://${'\\'.repeat(200_000)}x`,
+      `${'a'.repeat(50_000)}://${"'b".repeat(50_000)}`,
+      `https://x${"\\'".repeat(100_000)}`
+    ]) {
+      const elapsed = await cpuTime(() => {
+        redactMessage(text)
+        sanitize(text, 200, null)
+      })
+      expect(elapsed, text.slice(0, 12)).to.be.below(cpuBudget(100))
+    }
+  })
+
+  it('shows no part of user info a JSON-escaped quote stands in (security regression)', () => {
+    // `\u0027` is left escaped and the URL pattern reads the backslash as the end of the
+    // authority: `user:12345` read as a host and port and was kept.
+    const secret = 'userinfo-secret-7Hq2Lm9Z'
+    for (const quote of [
+      '\\u0027',
+      '\\u0022',
+      '\\u003c',
+      '\\u003E',
+      '\\\\u0027',
+      '\\\\\\u0022'
+    ])
+      for (const prefix of ['user:12345', '12345', 'user:'])
+        for (const url of [
+          `https://${prefix}${quote}${secret}@rpc.example.org/p?key=${secret}`,
+          `https:\\/\\/${prefix}${quote}${secret}@rpc.example.org\\/p`
+        ])
+          for (const text of [url, `failed at ${url}`, `{"error":"${url}"}`]) {
+            const label = `${quote} ${text}`
+            expect(sanitize(text, 200, null), label).not.to.contain(secret)
+            expect(sanitize(text, 200, null), label).not.to.contain('12345')
+            expect(sanitize(text, 200, null), label).to.contain(
+              'https://rpc.example.org'
+            )
+            expect(redactMessage(text), label).not.to.contain('12345')
+            expect(nodeText(text), label).not.to.contain(secret)
+          }
+    expect(
+      sanitize(
+        `https://user:12345\\u0027${secret}@rpc.example.org/p`,
+        200,
+        null
+      )
+    ).to.equal('https://rpc.example.org')
+    // Percent-encoded, a quote ends no URL: it keeps its origin.
+    for (const quote of ['%27', '%22', '%3C', '%3e', '%2527', '%5Cu0027'])
+      expect(
+        sanitize(`at https://user:12345${quote}${secret}@rpc.example.org/p`)
+      ).to.equal('at https://rpc.example.org')
+    // `encodeURIComponent` leaves a `'`: a URL it encoded into a query keeps no user info.
+    const encoded = encodeURIComponent(
+      `https://user:12345'${secret}@rpc.example.org/p`
+    )
+    for (const text of [
+      `failed https://h.example/cb?redirect=${encoded}`,
+      `failed ${encoded}`
+    ]) {
+      expect(sanitize(text, 200, null), text).not.to.contain(secret)
+      expect(sanitize(text, 200, null), text).not.to.contain('12345')
+    }
+    // Cut after the escaped quote, before the `@`: the URL is dropped whole.
+    const cut = `at https://user:12345\\u0027${secret}${'x'.repeat(17_000)}@h/p`
+    expect(sanitize(cut, 200, null)).to.equal('at…')
+    // An escaped quote with no `@` after it in the same word: the host stays, so does an
+    // address after it.
+    expect(
+      sanitize(
+        'see https://host.example:8545\\u0027 or ops@example.org',
+        200,
+        null
+      )
+    ).to.equal('see https://host.example:8545 or ops@example.org')
+  })
+
+  it('reads escaped quotes and backslash runs in URLs in linear time (security regression)', async () => {
+    for (const text of [
+      `https://user:1${'\\u0027'.repeat(50_000)}`,
+      `https://x${'\\'.repeat(200_000)}u`,
+      `https%3A%2F%2F${"a'".repeat(100_000)}`,
+      "a%3A%2F%2F'".repeat(50_000),
+      `a://x'%3A%2F%2F\\u0027%2F'\\\\"<`.repeat(10_000)
+    ]) {
+      const elapsed = await cpuTime(() => {
+        redactSecrets(text)
+        redactMessage(text)
+        sanitize(text, 200, null)
+      })
+      expect(elapsed, text.slice(0, 12)).to.be.below(cpuBudget(100))
+    }
   })
 })

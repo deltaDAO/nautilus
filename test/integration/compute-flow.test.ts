@@ -46,8 +46,9 @@ describe('compute', () => {
      * The wildcard does not depend on that, and says what this fixture means
      * anyway — any algorithm may run here.
      *
-     * Note `freeCompute` does *not* enforce any of this, so the free-compute
-     * tests pass either way. Only the paid path checks it.
+     * Free compute checks it too since ocean-node 4.2.2, for every dataset of
+     * the job (startCompute.ts, the free-compute handler), so every dataset
+     * the free-compute tests pass needs it as well.
      */
     const dataset = new AssetBuilder()
       .setType('dataset')
@@ -259,7 +260,12 @@ describe('compute', () => {
         .setDescription('A second input')
         .setProvidedBy('deltaDAO AG')
         .addService(
-          computeService(getNodeUri()).setPricing({ type: 'free' }).build()
+          // Trusted like the first one: ocean-node 4.2.2 checks the algorithm
+          // against every dataset of a free compute job, not only the first.
+          computeService(getNodeUri())
+            .setPricing({ type: 'free' })
+            .addTrustedAlgorithmPublisher('*')
+            .build()
         )
         .build()
 

@@ -10,15 +10,24 @@
  * The pre-transaction pass runs on a projection with stand-in addresses, so these tests
  * also pin the thing that makes it affordable: it costs no extra node round trip.
  */
-import { LoggerInstance, type StorageObject } from '@oceanprotocol/lib'
-import { Wallet } from 'ethers'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { StorageObject } from '@oceanprotocol/lib'
+import { FetchRequest, FetchResponse, makeError, Wallet } from 'ethers'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PublishedNotIndexed } from '../../src/@types/Publish.js'
 import { CredentialListTypes } from '../../src/ddo/types.js'
 import {
   addCredentialAddresses,
   addRequestCredentials
 } from '../../src/identity/policy.js'
+import { useAsyncContext } from '../../src/log/context.js'
+import { type DebugEvent, setDebug } from '../../src/log/debug.js'
+import {
+  createLogger,
+  type LogEvent,
+  type Logger,
+  type LoggingOptions
+} from '../../src/log/index.js'
+import { configureLogging } from '../../src/log/logger.js'
 import { AssetBuilder } from '../../src/Nautilus/Asset/AssetBuilder.js'
 import { PLACEHOLDER_ADDRESS } from '../../src/Nautilus/Asset/NautilusDDO.js'
 import {
@@ -35,6 +44,7 @@ import {
   OceanNodeError
 } from '../../src/node/OceanNodeClient.js'
 import {
+  expectedDid,
   maxDecryptableJwsLength,
   maxJwsLengthFor
 } from '../../src/publish/envelope.js'
@@ -50,9 +60,11 @@ import {
 import { readExistingPricing } from '../../src/publish/reuse.js'
 import { NodePersistentRemoteStore } from '../../src/remote/NodePersistentRemoteStore.js'
 import type { RemoteStore } from '../../src/remote/RemoteStore.js'
-import { setMetadataState } from '../../src/utils/contracts.js'
+import {
+  getMetadataEventsInBlock,
+  setMetadataState
+} from '../../src/utils/contracts.js'
 import { getPricingInfo } from '../../src/utils/pricing.js'
-import { resetWarnings } from '../../src/utils/warn.js'
 import {
   ASSET_DID,
   CHAIN_ID,
@@ -61,15 +73,19 @@ import {
   NFT_ADDRESS,
   OWNER_ADDRESS
 } from '../fixtures/Asset.js'
-import { expectThrowsAsync } from '../helpers.js'
+import { captureLog, expectThrowsAsync } from '../helpers.js'
 import {
   createNodeMock,
   type NodeMock,
   type NodeMockOptions
 } from '../mocks/node.js'
+import { FAKE } from '../secretScan.js'
 
 const PRIVATE_KEY =
   '0x0123456789012345678901234567890123456789012345678901234567890123'
+/** Another publisher's key (a fixture, as above). */
+const OTHER_PRIVATE_KEY =
+  '0x1123456789012345678901234567890123456789012345678901234567890123'
 
 /** The NFT as `completePublish()` and `edit()` read it from the chain. */
 const nftState = vi.hoisted(() => ({
@@ -256,12 +272,14 @@ async function createNautilus(
     remoteStore?: RemoteStore
     node?: NodeMockOptions
     config?: Record<string, unknown>
+    logger?: LoggingOptions | Logger
+    privateKey?: string
   } = {}
 ): Promise<{
   nautilus: Nautilus
   node: NodeMock
 }> {
-  const wallet = new Wallet(PRIVATE_KEY)
+  const wallet = new Wallet(options.privateKey ?? PRIVATE_KEY)
   const signer = wallet.connect({
     getNetwork: async () => ({ chainId: BigInt(CHAIN_ID) }),
     getTransactionCount: async (_address: string, tag: 'pending' | 'latest') =>
@@ -280,13 +298,19 @@ async function createNautilus(
       fixedRateExchangeAddress: DATATOKEN_ADDRESS,
       dispenserAddress: OWNER_ADDRESS,
       ...options.config
-    }
+    },
+    logger: options.logger
   })
 
   const node = createNodeMock(options.node)
   ;(nautilus as unknown as { node: OceanNodeClient }).node = node.client
 
   return { nautilus, node }
+}
+
+/** A spy on stderr, where the default logger prints. */
+function stderrSpy() {
+  return vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
 }
 
 function validAsset() {
@@ -302,14 +326,14 @@ function validAsset() {
 beforeEach(() => {
   vi.clearAllMocks()
   vi.restoreAllMocks()
-  resetWarnings()
   nftState.hasMetadata = false
   nftState.state = 0
   nftState.owner = SIGNER_ADDRESS
   nftState.factoryListed = ''
   nftState.datatokens = [DATATOKEN_ADDRESS]
   nftState.permissions = { updateMetadata: true, deployERC20: true }
-  nftState.blockEvents = undefined
+  // The metadata transaction is alone in its block, unless a test says otherwise.
+  nftState.blockEvents = []
   nftState.nonces = { pending: 4, latest: 4 }
   nftState.receipts = {}
   nftState.pendingTxs = []
@@ -763,18 +787,110 @@ describe('completePublish while an earlier metadata transaction may land', () =>
   })
 
   it('warns and goes on when the transaction counts cannot be read', async () => {
-    const warn = vi
-      .spyOn(LoggerInstance, 'warn')
-      .mockImplementation(() => undefined)
+    const log = captureLog()
     const { nautilus } = await createNautilus()
     nftState.nonces = undefined as never
 
     await nautilus.completePublish(NFT_ADDRESS, validAsset())
 
-    expect(String(warn.mock.calls[0]?.[0])).to.match(
+    const [warning] = log.named('publish.preflight.pending_unreadable')
+    expect(warning.msg).to.match(
       /could not read the signer's pending transaction count/
     )
+    expect(warning.fields.nftAddress).to.equal(NFT_ADDRESS)
     expect(vi.mocked(writeMetadata)).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('an RPC error in a warning (security regression)', () => {
+  /** The error ethers' JsonRpcProvider throws for a failed request to the RPC URL. */
+  function rpcError() {
+    const request = new FetchRequest(FAKE.rpcUrl)
+    return makeError(
+      'server response 500 Internal Server Error',
+      'SERVER_ERROR',
+      {
+        request,
+        info: {
+          requestUrl: FAKE.rpcUrl,
+          responseBody: '{"error":"backend down"}',
+          responseStatus: '500 Internal Server Error'
+        }
+      } as never
+    )
+  }
+
+  function failingNonces() {
+    const error = rpcError()
+    nftState.nonces = {
+      get pending(): number {
+        throw error
+      },
+      latest: 4
+    } as never
+  }
+
+  it('prints the RPC URL with its origin only, in both formats, on stderr', async () => {
+    for (const format of ['pretty', 'json'] as const) {
+      const stderr = stderrSpy()
+      configureLogging({ format })
+      failingNonces()
+      const { nautilus } = await createNautilus()
+
+      await nautilus.completePublish(NFT_ADDRESS, validAsset())
+
+      const printed = stderr.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.includes('publish.preflight.pending_unreadable'))
+      expect(printed, format).to.have.length(1)
+      expect(printed[0]).to.contain('https://rpc.example.org')
+      expect(printed[0]).to.contain('SERVER_ERROR')
+      for (const secret of [
+        FAKE.rpcPathToken,
+        FAKE.rpcQueryToken,
+        '/v3/',
+        'apikey='
+      ])
+        expect(printed[0], format).not.to.contain(secret)
+      stderr.mockRestore()
+      nftState.nonces = { pending: 4, latest: 4 }
+    }
+  })
+
+  it('hands what it removed to the debug channel: the path at sensitive, the token only at secrets', async () => {
+    const stderr = stderrSpy()
+    const debug: DebugEvent[] = []
+    const listen = (level: 'sensitive' | 'secrets') =>
+      setDebug({ level, topics: ['nonce'], sink: (event) => debug.push(event) })
+
+    listen('sensitive')
+    failingNonces()
+    const { nautilus } = await createNautilus()
+    await nautilus.completePublish(NFT_ADDRESS, validAsset())
+
+    const sensitive = JSON.stringify(debug.map((event) => event.data))
+    expect(debug.length).to.be.greaterThan(0)
+    expect(debug.every((event) => event.tier === 'sensitive')).to.equal(true)
+    expect(sensitive).to.contain('https://rpc.example.org/v3/')
+    expect(sensitive).to.contain('backend down')
+    expect(sensitive).not.to.contain(FAKE.rpcPathToken)
+    expect(sensitive).not.to.contain(FAKE.rpcQueryToken)
+
+    debug.length = 0
+    listen('secrets')
+    failingNonces()
+    await nautilus.completePublish(NFT_ADDRESS, validAsset())
+
+    const secrets = JSON.stringify(
+      debug
+        .filter((event) => event.tier === 'secrets')
+        .map((event) => event.data)
+    )
+    expect(secrets).to.contain(FAKE.rpcPathToken)
+    expect(secrets).to.contain(FAKE.rpcQueryToken)
+    // Never on stderr, whatever the channel holds.
+    const printed = stderr.mock.calls.map((call) => String(call[0])).join('\n')
+    expect(printed).not.to.contain(FAKE.rpcQueryToken)
   })
 })
 
@@ -1384,6 +1500,42 @@ describe('one asset, one metadata transaction at a time', () => {
 
     expect(response.setMetadataTxReceipt.hash).to.equal('0xsetmetadata')
   })
+
+  it('warns, with the RPC error redacted, and goes on when the block cannot be read', async () => {
+    const log = captureLog()
+    // The error ethers' JsonRpcProvider throws for a failed request: the URL with its
+    // token in `info` and in the message, and the ethers code in the message.
+    const request = new FetchRequest(FAKE.rpcUrl)
+    vi.mocked(getMetadataEventsInBlock).mockRejectedValueOnce(
+      makeError('server response 500 Internal Server Error', 'SERVER_ERROR', {
+        request,
+        response: new FetchResponse(
+          500,
+          'Internal Server Error',
+          {},
+          null,
+          request
+        ),
+        info: {
+          requestUrl: FAKE.rpcUrl,
+          responseBody: '',
+          responseStatus: '500 Internal Server Error'
+        }
+      })
+    )
+    const { nautilus } = await createNautilus()
+
+    const response = await nautilus.publish(validAsset())
+
+    expect(response.setMetadataTxReceipt.hash).to.equal('0xsetmetadata')
+    const [warning] = log.named('publish.metadata.events_unchecked')
+    expect(warning.level).to.equal('warn')
+    expect(warning.fields.blockNumber).to.equal(100)
+    expect(warning.fields.error).to.contain('https://rpc.example.org')
+    expect(warning.fields.error).to.contain('code=SERVER_ERROR')
+    expect(JSON.stringify(warning)).not.to.contain(FAKE.rpcPathToken)
+    expect(JSON.stringify(warning)).not.to.contain(FAKE.rpcQueryToken)
+  })
 })
 
 describe('setup', () => {
@@ -1413,7 +1565,7 @@ describe('setup', () => {
   })
 
   it("warns once when the publisher is the node's own key", async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const warn = stderrSpy()
     const { nautilus } = await createNautilus({
       node: { nodeAddress: SIGNER_ADDRESS }
     })
@@ -1421,21 +1573,75 @@ describe('setup', () => {
     await nautilus.publish(validAsset())
     await nautilus.publish(validAsset())
 
-    expect(warn).toHaveBeenCalledTimes(1)
-    expect(String(warn.mock.calls[0][0])).to.match(
+    const printed = warn.mock.calls
+      .map((call) => String(call[0]))
+      .filter((line) => line.includes('publish.preflight.publisher_is_node'))
+    expect(printed).to.have.length(1)
+    expect(printed[0]).to.match(
       /is the node's own address.*nonces collide.*401/
     )
   })
 
   it('does not warn for a different node key', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const warn = stderrSpy()
     const { nautilus } = await createNautilus({
       node: { nodeAddress: OWNER_ADDRESS }
     })
 
     await nautilus.publish(validAsset())
 
-    expect(warn).not.toHaveBeenCalled()
+    expect(
+      warn.mock.calls.filter((call) =>
+        String(call[0]).includes('publish.preflight.publisher_is_node')
+      )
+    ).to.deep.equal([])
+  })
+})
+
+describe('without AsyncLocalStorage (a browser), the warnings carry the opId', () => {
+  afterEach(() => {
+    useAsyncContext(true)
+  })
+
+  /** The opId of the call's `started` event, and of the events named. */
+  function opIds(log: ReturnType<typeof captureLog>, names: string[]) {
+    const [started] = log.events.filter((event) =>
+      event.event.endsWith('.operation.started')
+    )
+    expect(started.opId).to.match(/^[0-9a-f]{12}$/)
+    for (const name of names) {
+      const events = log.events.filter((event) => event.event === name)
+      expect(events, name).not.to.deep.equal([])
+      for (const event of events)
+        expect(event.opId, name).to.equal(started.opId)
+    }
+    return started.opId
+  }
+
+  it('of publish, edit and completePublish, and their metadata step', async () => {
+    useAsyncContext(false)
+    const { nautilus } = await createNautilus({ node: { policyServer: true } })
+
+    let log = captureLog({ level: 'trace' })
+    await nautilus.publish(validAsset())
+    let opId = opIds(log, ['publish.preflight.denies_all'])
+    // The metadata step gets the bound logger too.
+    const [{ logger }] = vi.mocked(writeMetadata).mock.calls[0]
+    logger?.emit('publish.metadata.sending', 'sending', {})
+    expect(log.named('publish.metadata.sending')[0].opId).to.equal(opId)
+
+    log = captureLog({ level: 'trace' })
+    const fixture = getAssetFixture()
+    fixture.credentialSubject.credentials = {} as never
+    await nautilus.edit(new AssetBuilder(fixture).build())
+    opId = opIds(log, ['publish.preflight.denies_all'])
+    expect(log.named('edit.operation.finished')[0].opId).to.equal(opId)
+
+    log = captureLog({ level: 'trace' })
+    nftState.nonces = undefined as never
+    await nautilus.completePublish(NFT_ADDRESS, validAsset())
+    // denies_all was said once for this node and asset, by the edit.
+    opIds(log, ['publish.preflight.pending_unreadable'])
   })
 })
 
@@ -1443,13 +1649,23 @@ describe('policy server that denies every consumer', () => {
   const DENIES_ALL =
     /has a policy server.*no address allow list.*denies every consumer/
 
-  function warnSpy() {
-    return vi.spyOn(LoggerInstance, 'warn').mockImplementation(() => undefined)
-  }
+  // What the user sees: the default logger's output on stderr, at the default level.
+  const warnSpy = stderrSpy
 
   function warnings(warn: ReturnType<typeof warnSpy>) {
     return warn.mock.calls.map((call) => String(call[0]))
   }
+
+  it('prints the warning on stderr at the default level, as a catalogued event', async () => {
+    const warn = warnSpy()
+    const { nautilus } = await createNautilus({ node: { policyServer: true } })
+
+    await nautilus.publish(validAsset())
+
+    const printed = warnings(warn).filter((text) => DENIES_ALL.test(text))
+    expect(printed).to.have.length(1)
+    expect(printed[0]).to.contain('publish.preflight.denies_all')
+  })
 
   it('warns on publish when the node has a policy server and credentials are {}', async () => {
     const warn = warnSpy()
@@ -1504,6 +1720,168 @@ describe('policy server that denies every consumer', () => {
     await nautilus.publish(asset)
 
     expect(warnings(warn).some((text) => DENIES_ALL.test(text))).to.equal(false)
+  })
+
+  it("goes to the instance's own logger when it has one, and to the process-wide one otherwise", async () => {
+    const global = captureLog()
+    const tenant: LogEvent[] = []
+    const { nautilus: own } = await createNautilus({
+      node: { policyServer: true },
+      logger: { level: 'debug', sink: (event) => tenant.push(event) }
+    })
+    const { nautilus: shared } = await createNautilus({
+      node: { policyServer: true }
+    })
+
+    await own.publish(validAsset())
+    await shared.publish(validAsset())
+
+    // The instance's level applies to it alone: its debug events, none in the global sink.
+    expect(tenant.map((event) => event.event)).to.include.members([
+      'chain.config.ready',
+      'publish.preflight.denies_all'
+    ])
+    expect(global.events.map((event) => event.event)).to.deep.equal([
+      'publish.preflight.denies_all'
+    ])
+  })
+
+  it('accepts a logger made with createLogger, which several instances can share', async () => {
+    const global = captureLog()
+    const tenant: LogEvent[] = []
+    const logger = createLogger({
+      level: 'debug',
+      sink: (event) => tenant.push(event)
+    })
+    const { nautilus: first } = await createNautilus({
+      node: { policyServer: true },
+      logger
+    })
+    const { nautilus: second } = await createNautilus({
+      node: { policyServer: true },
+      logger
+    })
+
+    const other = validAsset()
+    other.ddo.metadata.name = 'Another dataset'
+    await first.publish(validAsset())
+    await second.publish(other)
+    // The same asset again, through the other instance: the shared logger warned already.
+    await second.publish(validAsset())
+
+    expect(
+      tenant.filter((event) => event.event === 'publish.preflight.denies_all')
+    ).to.have.length(2)
+    expect(tenant.map((event) => event.event)).to.include('chain.config.ready')
+    expect(global.events).to.deep.equal([])
+  })
+
+  it('warns once per node and asset: the DID on an edit, the name before the mint', async () => {
+    const log = captureLog()
+    const { nautilus } = await createNautilus({ node: { policyServer: true } })
+    const named = (name: string) => {
+      const asset = validAsset()
+      asset.ddo.metadata.name = name
+      return asset
+    }
+    const edited = (name: string) => {
+      const fixture = getAssetFixture()
+      fixture.credentialSubject.metadata.name = name
+      fixture.credentialSubject.credentials = {} as never
+      return new AssetBuilder(fixture).build()
+    }
+
+    // Before the mint there is no DID: the same name warns once.
+    await nautilus.publish(named('Dataset A'))
+    await nautilus.publish(named('Dataset A'))
+    await nautilus.publish(named('Dataset B'))
+    // An edit has its DID, which the key uses, whatever the name.
+    await nautilus.edit(edited('Dataset A'))
+    await nautilus.edit(edited('Renamed'))
+    // completePublish has the NFT, so the DID the node will derive from it: here the
+    // edited asset's, so the same asset, not warned about again whatever its name.
+    expect(expectedDid(NFT_ADDRESS, CHAIN_ID)).to.equal(ASSET_DID)
+    await nautilus.completePublish(NFT_ADDRESS, named('Dataset C'))
+
+    const warnings = log.named('publish.preflight.denies_all')
+    expect(
+      warnings.map((event) => event.did ?? event.fields.name)
+    ).to.deep.equal(['Dataset A', 'Dataset B', ASSET_DID])
+    for (const warning of warnings) {
+      expect(warning.level).to.equal('warn')
+      expect(warning.msg).to.match(DENIES_ALL)
+    }
+  })
+
+  it('keys completePublish by the DID its NFT gives, not by the name', async () => {
+    const log = captureLog()
+    const { nautilus } = await createNautilus({ node: { policyServer: true } })
+
+    await nautilus.completePublish(NFT_ADDRESS, validAsset())
+
+    const [warning] = log.named('publish.preflight.denies_all')
+    expect(warning.did).to.equal(expectedDid(NFT_ADDRESS, CHAIN_ID))
+    expect(warning.fields.name).to.equal(undefined)
+  })
+
+  it("keys the name by the publisher, so another publisher's asset of the same name is warned about", async () => {
+    // Two tenants of one server, sharing the process-wide logger.
+    const log = captureLog()
+    const { nautilus: first } = await createNautilus({
+      node: { policyServer: true }
+    })
+    const { nautilus: second } = await createNautilus({
+      node: { policyServer: true },
+      privateKey: OTHER_PRIVATE_KEY
+    })
+
+    await first.publish(validAsset())
+    await second.publish(validAsset())
+    await second.publish(validAsset())
+
+    expect(log.named('publish.preflight.denies_all')).to.have.length(2)
+  })
+
+  it('takes an endpoint with a trailing slash for the same node', async () => {
+    const log = captureLog()
+    const { nautilus, node } = await createNautilus({
+      node: { policyServer: true }
+    })
+    const asset = validAsset()
+    asset.ddo.services[0].serviceEndpoint = 'https://node.test.invalid/'
+
+    await nautilus.publish(asset)
+
+    expect(
+      log
+        .named('publish.preflight.denies_all')
+        .map((event) => event.fields.endpoint)
+    ).to.deep.equal(['https://node.test.invalid'])
+    expect(node.calls.hasPolicyServer).to.have.length(1)
+  })
+
+  it('warns again for the same asset on another node', async () => {
+    const log = captureLog()
+    const { nautilus: first } = await createNautilus({
+      node: { policyServer: true }
+    })
+    const asset = validAsset()
+
+    await first.publish(asset)
+    // The same asset with its service on a second node (the configured one is asked too,
+    // and was warned about already).
+    const moved = validAsset()
+    moved.ddo.services[0].serviceEndpoint = 'https://second-node.example.org'
+    await first.publish(moved)
+
+    expect(
+      log
+        .named('publish.preflight.denies_all')
+        .map((event) => event.fields.endpoint)
+    ).to.deep.equal([
+      'https://node.test.invalid',
+      'https://second-node.example.org'
+    ])
   })
 
   it('does not warn when no node has a policy server, or says', async () => {
@@ -1731,20 +2109,40 @@ describe('indexer nonce preflight', () => {
   })
 
   it('warns when this publish would be the one that gets it stuck', async () => {
-    const warn = vi
-      .spyOn(LoggerInstance, 'warn')
-      .mockImplementation(() => undefined)
+    const log = captureLog()
     const { nautilus } = await createNautilus({
       node: { indexerNonce: oneAwayState() }
     })
 
     await nautilus.publish(validAsset())
+    // The nonce has not moved (the mock answers the same): the same warning, not again.
+    await nautilus.publish(validAsset())
 
-    expect(vi.mocked(writeMetadata)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(writeMetadata)).toHaveBeenCalledTimes(2)
+    const warnings = log.named('publish.preflight.indexer_nonce_will_stick')
+    expect(warnings).to.have.length(1)
+    expect(warnings[0].msg).to.match(/second decrypt call/)
+  })
+
+  it('reports at info, instead of warning, when the node says it is 4.2.2 or later (D9)', async () => {
+    // The version is self-reported and only the OE fork's 4.2.2 has the fix: the skip is
+    // an info event, not a debug line.
+    const log = captureLog({ level: 'info' })
+    const { nautilus } = await createNautilus({
+      node: { indexerNonce: { ...oneAwayState(), nodeVersion: '4.2.2' } }
+    })
+
+    await nautilus.publish(validAsset())
+
     expect(
-      warn.mock.calls.some((call) =>
-        /second decrypt call/.test(String(call[0]))
-      )
-    ).to.equal(true)
+      log.named('publish.preflight.indexer_nonce_will_stick')
+    ).to.deep.equal([])
+    const [skipped] = log.named('node.indexer_nonce.zero_byte_accepted')
+    expect(skipped.level).to.equal('info')
+    expect(skipped.msg).to.match(/self-reported.*OE fork/)
+
+    // The nonce has not moved: the same line, not again (code review round 2, n5).
+    await nautilus.publish(validAsset())
+    expect(log.named('node.indexer_nonce.zero_byte_accepted')).to.have.length(1)
   })
 })

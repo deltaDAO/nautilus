@@ -20,8 +20,16 @@ if (url) {
 
 - Type: `string | undefined`
 
-`undefined` — with a log line explaining which — when the node does not know the job, the
-job has not finished, or it has no `output` result and no `resultIndex` was given.
+`undefined`, with a log line explaining which, when the node does not know the job, the
+job has not finished, or it has no `output` result and no `resultIndex` was given. A job
+that will not get there (unknown, or finished without an `output`) is a warning
+(`compute.result.unavailable`), printed once per node, job and reason however often you ask:
+a job the node did not know and that later finished without an `output` is warned about
+twice. Its status text and the list of the job's results are cleaned of control characters,
+redacted, and cut at 1,000 characters; a cut list says how many results there are
+(`(12 results; getComputeStatus() lists them all)`). With the
+[debug channel](/docs/api/nautilus/setDebug) on, the full list goes there under the
+`compute` topic.
 
 A job has finished once the node sets its `dateFinished`, whatever its status: a failed job
 (`41`, `11`, …) has finished too, usually without an `output`, and its other results are

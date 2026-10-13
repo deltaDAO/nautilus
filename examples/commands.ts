@@ -15,6 +15,7 @@ import {
   accessSpecificService,
   accessWithUserdata,
   checkPrice,
+  type DownloadOptions,
   download
 } from './access'
 import {
@@ -57,7 +58,8 @@ import {
   publishPartiallyGatedDataset,
   publishWithDidIssuer,
   runGatedPublishAndConsume,
-  setupWithIdentity
+  setupWithIdentity,
+  trustedIssuers
 } from './identity'
 import { showIndexingState } from './indexing'
 import {
@@ -71,6 +73,7 @@ import {
   publishAccessDataset,
   publishComputeAlgorithm,
   publishComputeDataset,
+  publishInParallel,
   publishMultiServiceDataset,
   publishSaaSOffer,
   publishSession,
@@ -94,6 +97,8 @@ export type Command = {
   summary: string
   /** Positional argument names, for the usage line. Suffix `?` if optional. */
   args?: string[]
+  /** Optional `--flags` the command understands, for the usage line. */
+  flags?: string[]
   /**
    * What the command needs before it runs:
    *
@@ -112,6 +117,29 @@ export type Command = {
   /** `true` when the command builds its own Nautilus with an SSI wallet. */
   identity?: boolean
   run: (ctx: Context, ...args: string[]) => Promise<unknown>
+}
+
+/**
+ * Buy even when the previous order could not be checked on chain (`orderOnLookupFailure`):
+ * without it, a paid download stops with an `OrderCheckError` rather than risk paying twice.
+ */
+const ORDER_ON_LOOKUP_FAILURE = '--order-on-lookup-failure'
+
+/** The arguments that are not `--flags`. */
+export function positional(args: string[]): string[] {
+  return args.filter((arg) => !arg.startsWith('--'))
+}
+
+/** The download commands' options; a misspelt flag fails the command before anything runs. */
+function downloadOptions(args: string[]): DownloadOptions {
+  const unknown = args.filter(
+    (arg) => arg.startsWith('--') && arg !== ORDER_ON_LOOKUP_FAILURE
+  )
+  if (unknown.length)
+    throw new Error(
+      `Unknown option ${unknown.join(', ')}; the only one is ${ORDER_ON_LOOKUP_FAILURE}.`
+    )
+  return { orderOnLookupFailure: args.includes(ORDER_ON_LOOKUP_FAILURE) }
 }
 
 /** Publish helpers all take the same four arguments. */
@@ -183,6 +211,12 @@ export const COMMANDS: Record<string, Command> = {
     summary: 'Publish one NFT carrying two services',
     run: publishes(publishMultiServiceDataset)
   },
+  'publish:parallel': {
+    requires: 'store',
+    summary:
+      'Publish three datasets at once (Promise.all) from one key; the nonce guard keeps their nonces apart',
+    run: publishes(publishInParallel)
+  },
   'publish:resume': {
     usesStore: true,
     summary:
@@ -207,6 +241,7 @@ export const COMMANDS: Record<string, Command> = {
           publishCommand.startsWith('ssi:publish-')
         ) ||
         publishCommand === 'publish:resume' ||
+        publishCommand === 'publish:parallel' ||
         publishCommand === 'publish:validate'
       )
         throw new Error(
@@ -337,12 +372,14 @@ export const COMMANDS: Record<string, Command> = {
     run: (ctx, did, serviceId) => removeService(ctx.nautilus, did, serviceId)
   },
   'asset:unlist': {
-    summary: 'Hide an asset from listings',
+    summary:
+      'Unlist an asset: still resolvable and searchable, flagged for markets to hide',
     args: ['did'],
     run: (ctx, did) => unlistAsset(ctx.nautilus, did)
   },
   'asset:revoke': {
-    summary: 'Revoke an asset',
+    summary:
+      'Revoke an asset (one-way; ocean-node 4.2.x with Elasticsearch then drops the DDO)',
     args: ['did'],
     run: (ctx, did) => revokeAsset(ctx.nautilus, did)
   },
@@ -358,13 +395,21 @@ export const COMMANDS: Record<string, Command> = {
     role: 'consumer',
     summary: 'Order an asset and return the download URL',
     args: ['did'],
-    run: (ctx, did) => access(ctx.consumer, did)
+    flags: [ORDER_ON_LOOKUP_FAILURE],
+    run: (ctx, ...args) => {
+      const [did] = positional(args)
+      return access(ctx.consumer, did, undefined, downloadOptions(args))
+    }
   },
   'access:download': {
     role: 'consumer',
     summary: 'Order an asset and actually fetch the bytes',
     args: ['did'],
-    run: (ctx, did) => download(ctx.consumer, did)
+    flags: [ORDER_ON_LOOKUP_FAILURE],
+    run: (ctx, ...args) => {
+      const [did] = positional(args)
+      return download(ctx.consumer, did, downloadOptions(args))
+    }
   },
   'access:service': {
     role: 'consumer',
@@ -472,6 +517,8 @@ export const COMMANDS: Record<string, Command> = {
     requires: 'none',
     identity: true,
     run: async (_ctx, credentialType = 'VerifiableId') => {
+      // Before anything is sent: a gate with a malformed issuer would refuse everyone.
+      trustedIssuers()
       const identity = await setupWithIdentity({ withRemoteStore: true })
 
       return publishGatedDataset(
@@ -491,6 +538,8 @@ export const COMMANDS: Record<string, Command> = {
     requires: 'none',
     identity: true,
     run: async (_ctx, algorithmDid, credentialType = 'VerifiableId') => {
+      // Before anything is sent: a gate with a malformed issuer would refuse everyone.
+      trustedIssuers()
       const identity = await setupWithIdentity({ withRemoteStore: true })
 
       return publishGatedComputeDataset(
@@ -505,10 +554,13 @@ export const COMMANDS: Record<string, Command> = {
   },
   'ssi:publish-partial': {
     usesStore: true,
-    summary: 'Publish an asset with an open preview and a gated full service',
+    summary:
+      'Publish an asset with a credential-free preview (allow-listed accounts only) and a gated full service',
     requires: 'none',
     identity: true,
     run: async () => {
+      // Before anything is sent: a gate with a malformed issuer would refuse everyone.
+      trustedIssuers()
       const identity = await setupWithIdentity({ withRemoteStore: true })
 
       return publishPartiallyGatedDataset(
@@ -584,7 +636,11 @@ export const COMMANDS: Record<string, Command> = {
 
 /** The usage line of a command: its name and its arguments. */
 export function formatUsage(name: string, command: Command): string {
-  return [name, ...(command.args ?? []).map((a) => `<${a}>`)].join(' ')
+  return [
+    name,
+    ...(command.args ?? []).map((a) => `<${a}>`),
+    ...(command.flags ?? []).map((flag) => `[${flag}]`)
+  ].join(' ')
 }
 
 /** Arguments a command cannot run without (not `?`-optional, not `...` rest). */

@@ -130,7 +130,7 @@ usage and requirements without connecting to anything. The groups are:
 | --- | --- |
 | `check:` | Diagnostics. `check:node` is the one to run first. |
 | `store:` | `store:check` — the DDO store's preflight, without a transaction. `store:remove <cid\|objectKey> [force]` — unpin or delete one stored envelope: an intermediate version, a revoked asset's, or one a failed write left. Refuses the creation or latest envelope `PUBLISH_LOG` lists unless `force`. |
-| `publish:` | Datasets, algorithms, SaaS offers, multi-service assets, local validation, and `publish:resume` for a publish that stopped after the mint. |
+| `publish:` | Datasets, algorithms, SaaS offers, multi-service assets, local validation, `publish:parallel` (three publishes at once from one key), and `publish:resume` for a publish that stopped after the mint. |
 | `asset:` | Inspecting, unlisting and revoking a published asset, and `asset:indexing-state` — why the node did or did not index it. |
 | `edit:` | Metadata, descriptions, a service's name/description/timeout, files, endpoint and allowlist, prices, trusted algorithms. |
 | `access:` | Price checks, ordering, downloading, service selection, consumer parameters. |
@@ -165,6 +165,76 @@ npm start -- ssi:round-trip      # the credential-gated round trip
 | `compute.ts` | Environments, free and paid jobs, status, logs, results. |
 | `identity.ts` | Credential-gated publishing (access and compute) and consuming with walt.id. |
 | `scenarios/e2e.ts` | Runs every non-SSI command in order and reports what passed. |
+
+## Logging
+
+nautilus prints its own warnings to stderr, whatever the command prints on stdout: for
+example `publish.preflight.denies_all` when the node's policy server would refuse every
+consumer of the asset you publish. Every line names a stable event; secrets (RPC tokens,
+session ids, signatures, JWTs, S3 keys) are redacted at every level in nautilus's own lines.
+
+The warnings you may see while running these commands:
+
+- `publish.preflight.denies_all` (`publish:*`, `edit:*`): the node has a policy server and the
+  asset has no address allow list, so nobody can consume it. Printed once per node and
+  asset (by DID, or by publisher and name before the mint). The SSI commands add an allow
+  list, so they don't print it.
+- `publish.preflight.publisher_is_node`, `publish.preflight.indexer_nonce_will_stick`: the
+  asset would go on chain but not be indexed. The first is printed once per node, the second
+  once per node and nonce.
+- `compute.result.unavailable` (`compute:result`): the job is unknown, or finished without
+  an `output`. Printed once per node, job and reason. `compute.duration.capped`: the
+  requested duration was above the environment's limit.
+
+The paid commands (`access:order`, `access:download` on a fixed-price asset) no longer print
+ocean.js's `No config found for given network 'undefined'`.
+
+Each nautilus call (`publish`, `access`, `compute`, …) has its own `opId`, on every line it
+logs and on the error it throws. When a command fails, it prints the `opId` after the
+error; with `NAUTILUS_LOG_LEVEL=debug`, `grep <opId>` then picks that call's lines out of
+the output.
+
+| Variable | Values |
+| --- | --- |
+| `NAUTILUS_LOG_LEVEL` | `silent`, `error`, `warn` (the default), `info`, `debug`, `trace`. `VERBOSE=true` is `debug`. |
+| `NAUTILUS_LOG_FORMAT` | `pretty` (the default on a terminal) or `json` (one object per line, the default when stderr is redirected). |
+
+nautilus reads them when it is imported, so `index.ts` loads `.env` first (`import
+'dotenv/config'` is its first import); `setup()` in `nautilus.ts` only maps `VERBOSE`. An
+unknown value is ignored with a `config.env.invalid` warning. In your own code, call
+`Nautilus.configureLogging({ level, format, sink })`, or give one instance its own with
+`Nautilus.create(signer, { logger })`.
+
+ocean.js's own lines go through nautilus's logger too, redacted, as `oceanjs.logger.*`
+events: e.g. `compute:free` with an algorithm the dataset does not trust prints ocean.js's
+`Compute start failed` and `Payload was:` lines as two `[oceanjs] error` lines, with the
+request's nonce and the policy-server session ids `<redacted>`. In your own code,
+`Nautilus.configureLogging({ oceanjs: 'silent' })` drops them, and `'passthrough'` lets
+ocean.js print them itself, unredacted; see `configureLogging` in the docs.
+
+### Debugging a failure
+
+No log level prints unredacted data. When the redacted error does not say enough (a
+credential-gated download refused with `Presentation failed`, a node answer cut to one
+sentence), rerun the command with the sensitive debug channel on:
+
+```sh
+NAUTILUS_DEBUG=sensitive NAUTILUS_DEBUG_TOPICS=policy,wallet npm start -- ssi:consume <did> 2> debug.log
+```
+
+| Variable | Values |
+| --- | --- |
+| `NAUTILUS_DEBUG` | `off` (the default), `sensitive` (raw node, wallet, verifier and RPC answers, session ids, signatures, presented credentials), `secrets` (also credentials: the RPC URL's token, S3 secret keys, the IPFS JWT). |
+| `NAUTILUS_DEBUG_TOPICS` | a comma-separated list of `node`, `wallet`, `policy`, `rpc`, `order`, `nonce`, `store`, `compute`. Default: all. |
+
+Each event is one stderr line starting with `[nautilus:debug:sensitive]` or
+`[nautilus:debug:SECRETS]`; a warning says the channel is on. Errors and the command's own
+output stay redacted. Sharing rules: never use it in production; keep only the lines you
+need, scan them for secrets (`sensitive` hides credentials best effort, by name and shape)
+and replace session ids, signatures, JWTs (presented credentials carry personal data) and raw
+signed transactions (anyone can broadcast one that was never mined) before sharing; never
+share `secrets` output, and rotate every credential it printed. See the debugging guide in
+the docs.
 
 ## Choosing your nautilus
 
@@ -324,6 +394,23 @@ npm start -- asset:indexing-state 0xTxHash…   # failures are filed by transact
 npm start -- asset:indexing-state did:ope:…   # successes by DID
 ```
 
+### Several transactions at once from one key
+
+`npm start -- publish:parallel` publishes three datasets with `Promise.all` from one key and
+prints the nonce of each metadata transaction. `Nautilus.create` wraps your key in a nonce
+guard: its transactions go out one at a time with consecutive nonces, a transaction refused
+for its nonce is waited for when the chain already has it and sent again when that is
+provably safe, and a failed send says why instead of "ocean.js returned no transaction". An
+order that cannot be proven unsent stops with a `NonceGuardError` ("may have been sent"):
+check the account's transactions before you retry it. Proving that takes a second RPC:
+set `VERIFICATION_RPC_URL` in `.env` to another RPC than `RPC_URL` (passed as
+`verificationProvider`; the same URL is refused), else an order
+refused for its nonce is never sent again. The guard covers **one process**: give
+each process (a server, a script, a CI job) its own key. To watch its decisions, run with
+`NAUTILUS_DEBUG=sensitive NAUTILUS_DEBUG_TOPICS=nonce` (the output holds signed
+transactions: keep it to yourself). `nonceManagement: 'off'` in `Nautilus.create` turns the
+nonce choice off.
+
 Two rules on edits. ocean-node indexes only the **first** metadata event of an asset in a
 block: one `Nautilus` instance runs its writes to an asset one after the other, and when a
 write from another process lands in the same block, nautilus throws a
@@ -372,22 +459,70 @@ is one value — a policy-server session id — which it then carries into the d
 2. Run `npm start -- ssi:connect`. It authenticates with your **Ethereum** key — no separate
    walt.id password — and prints the wallets, keys and DIDs your account holds.
 3. Optionally pin them with `SSI_WALLET_ID`, `SSI_WALLET_KEY_ID` and `SSI_WALLET_DID`.
-4. Run `npm start -- ssi:round-trip` to publish a gated dataset and consume it in one go.
+4. Set `SSI_TRUSTED_ISSUERS` to the DIDs of the issuers whose credentials your gates accept,
+   comma-separated (e.g. `did:web:delta-dao.com`). The commands that publish a gate
+   (`ssi:publish-gated`, `ssi:publish-gated-compute`, `ssi:publish-partial`, `ssi:round-trip`)
+   refuse to run without it, or with an entry that is not a DID (`did:<method>:<id>`).
+5. Run `npm start -- ssi:round-trip` to publish a gated dataset and consume it in one go.
+   Against the local dev stack, also set `SSI_ALLOW_INSECURE_TRANSPORT=true`: its policy
+   server answers on plain http at `host.docker.internal`, which nautilus otherwise refuses.
+   Use it for a local stack only, never over a network others can read: a presentation is a
+   bearer token, and the verifier accepts one replayed from an earlier session.
 
 **On the publishing side**, declare what you require:
 
 ```ts
 assetBuilder
+  .addCredentialAddresses(CredentialListTypes.ALLOW, allowlist(owner))
   .addRequestCredentials(CredentialListTypes.ALLOW, [
-    { type: 'VerifiableId', format: 'jwt_vc_json' }
+    {
+      type: 'gx:LegalPerson',
+      format: 'jwt_vc_json',
+      // Issuer trust, per credential (SSI_TRUSTED_ISSUERS in the examples).
+      policies: [{ policy: 'allowed-issuer', args: ['did:web:delta-dao.com'] }]
+    }
   ])
-  .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'not-before'])
-  .setVpPolicies(CredentialListTypes.ALLOW, [{ policy: 'holder-binding' }])
+  .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'not-before', 'revoked-status-list'])
+  .setVpPolicies(CredentialListTypes.ALLOW, [
+    { policy: 'signature' },
+    { policy: 'minimum-credentials', args: '1' }
+  ])
 ```
 
-VC policies check each credential; VP policies check the presentation as a whole. Gating also
-works per service, so an asset can offer an open preview alongside a gated full dataset — see
-`npm start -- ssi:publish-partial`.
+VC policies check each credential; VP policies check the presentation as a whole. This is the
+set `identity.ts` uses, and why:
+
+- **Issuer trust goes on the credential.** The policy server drops the arguments of asset- and
+  service-level VC policies, and `allowed-issuer` without its issuers throws in walt.id, which
+  denies every consumer. Per-credential `policies` keep their arguments.
+- **`minimum-credentials` needs its argument** (`args: '1'`): a bare name fails in the verifier.
+- **`signature` checks the presentation's own signature.** walt.id runs only the VP policies
+  the session lists; whether the policy server adds `signature` itself is up to its operator
+  (`DEFAULT_VP_POLICIES`). It does not stop a presentation replayed from an earlier session.
+- **No `holder-binding`.** It binds a credential to its presenter only when the credential
+  JWT's `sub` is the presenter's DID (and the presentation's signature is verified), and it
+  fails (a NullPointerException in walt.id) for credentials without `sub` (common for VCDM 2.0
+  `vc+jwt`) and URL-subject credentials such as Gaia-X `gx:LegalPerson`. Without it a copied credential JWT can be presented from any wallet, so
+  the address allow list is what binds access to an account.
+- **No `presentation-definition` with `jwt_vc_json`.** The definition walt.id generates matches
+  the type at `$.vc.type`, which a VCDM 2.0 `vc+jwt` credential does not have, so it is refused.
+- **Known limitation:** walt.id applies per-credential policies by credential type (the last
+  entry of its `type` array). A presented credential of another type runs only the asset-level
+  VC policies, so it passes without issuer trust. Until the policy server enforces the
+  requested type, the credential check stops only consumers who use a normal wallet: anyone
+  who builds their own presentation passes it with a self-issued credential of another type.
+  The address allow list is the gate that holds, so list the allowed addresses explicitly; an
+  allow list containing `'*'` leaves no gate at all.
+
+Gating also works per service, so an asset can offer a preview that needs no credential
+(allow-listed accounts only) and a full service that also requires a credential — see
+`npm start -- ssi:publish-partial`. `ServiceBuilder.addRequestCredentials` takes no VC or VP
+policies today, so that service-level gate runs only with the policy server's
+`DEFAULT_VC_POLICIES`/`DEFAULT_VP_POLICIES` (set by its operator; a deployment's values are
+unknown). Don't add `setVcPolicies`/`setVpPolicies` to such an asset: an asset-level
+`SSIpolicy` without `request_credentials` makes the policy server refuse the preview ("SSIpolicy
+was found, but failed to fetch request credentials"). Per-service VC and VP policies are a
+planned SDK change.
 
 Gating applies to compute too: `npm start -- ssi:publish-gated-compute <algorithmDid>`
 publishes a gated compute dataset that trusts that algorithm, and
@@ -486,6 +621,17 @@ network's EURAU/OCEAN configs; without any fixed config they publish for free an
 
 To check what an asset costs before buying it, run `npm start -- access:price <did>`.
 
+If the RPC fails while nautilus looks for an order you already hold (a rate limit, no
+answer, an error), or the lookup cannot read back over the whole order window,
+`access:order` and `access:download` stop **before paying** for a paid service, with an
+`OrderCheckError`: buying without that check could pay twice. Nothing is spent; run the
+command again in a minute or with another `RPC_URL`. The message says when a retry would
+end the same way (a service whose orders never expire, past the lookup's 100 000 blocks).
+To buy anyway, add `--order-on-lookup-failure` (`orderOnLookupFailure: true`); any other
+`--` option fails the command. `NAUTILUS_DEBUG=sensitive`
+shows the RPC's unredacted answer (topic `order`). A free service is ordered anyway, with
+a warning.
+
 ## Checks
 
 ```sh
@@ -493,7 +639,11 @@ npm run typecheck              # tsc --noEmit, from this directory
 npm --prefix .. run lint       # biome, from the repo root — it covers examples/ too
 npm start -- help              # offline: no key, no chain, no node
 npm start -- <command> --help  # offline as well
+npm --prefix .. run examples:smoke  # runs a fixed set of commands against mocks, offline
 ```
 
-CI runs both on every pull request, building the library first so the examples typecheck
-against a real `_types` output.
+CI runs the typecheck, the lint and the smoke run on every pull request, building the
+library first so the examples typecheck against a real `_types` output. The smoke run
+(`smoke/smoke.test.ts`) runs a publish, a download, two compute commands, the gated SSI
+publish and a revoke in-process against the unit suite's node mock and chain stubs; it does
+not replace a run on a real stack.

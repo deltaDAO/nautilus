@@ -14,10 +14,11 @@ import {
 } from '@oceanprotocol/lib'
 import {
   getAddress,
-  getBytes,
   hexlify,
+  id,
   type Signer,
   solidityPackedKeccak256,
+  toBeArray,
   toUtf8Bytes,
   verifyMessage,
   Wallet
@@ -56,7 +57,7 @@ import {
   SERVICE_ID
 } from '../fixtures/Asset.js'
 import { signedProviderFee } from '../fixtures/ProviderFee.js'
-import { expectThrowsAsync } from '../helpers.js'
+import { captureLog, expectThrowsAsync } from '../helpers.js'
 
 // Orders run against the chain. Stubbed, so a test can see whether one was placed at all.
 vi.mock('../../src/access/settlement.js', () => ({
@@ -349,7 +350,7 @@ describe('OceanNodeClient policy server', () => {
     status(true)
     const fetch = vi.fn(async () => new Response('', { status: 404 }))
     vi.stubGlobal('fetch', fetch)
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const log = captureLog()
     const node = client('a-session-token')
     await node.hasPolicyServer()
 
@@ -359,8 +360,10 @@ describe('OceanNodeClient policy server', () => {
     // A policy server behind a proxy that failed for a moment opens sessions again.
     expect(await node.hasPolicyServer()).to.equal(true)
     expect(fetch).toHaveBeenCalledTimes(2)
-    expect(warn).toHaveBeenCalledOnce()
-    expect(String(warn.mock.calls[0]?.[0])).to.match(
+    const warnings = log.named('node.policy_server.empty_url')
+    expect(warnings).to.have.length(1)
+    expect(warnings[0].level).to.equal('warn')
+    expect(warnings[0].msg).to.match(
       /POLICY_SERVER_URL is likely set but empty/
     )
   })
@@ -497,6 +500,37 @@ describe('OceanNodeClient policy server', () => {
     expect(thrown.reason).to.match(/^denied forged line x+…$/)
     // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting they are gone
     expect(thrown.message).not.to.match(/[\u0000-\u001f]/)
+  })
+
+  it('ends the reason with one period: no "..", and one added where it has none', () => {
+    const denied = (reason: string) =>
+      new PolicyDeniedError({
+        nodeUri: 'https://node.example.org',
+        did: ASSET_DID,
+        serviceId: SERVICE_ID,
+        consumerAddress: CONSUMER,
+        code: 403,
+        reason
+      }).message
+
+    // The policy server's own wording, as on the beta.2 run.
+    const message = denied('Access denied: Address not allowed at asset level.')
+    expect(message).not.to.contain('..')
+    expect(message).to.contain(
+      ': Access denied: Address not allowed at asset level. Nothing was ordered or paid.'
+    )
+
+    expect(denied('Address not allowed')).to.contain(
+      ': Address not allowed. Nothing was ordered'
+    )
+    for (const end of ['!', '?', '…'])
+      expect(denied(`Address not allowed${end}`)).to.contain(
+        `: Address not allowed${end} Nothing was ordered`
+      )
+    // A reason cut to its bound ends in an ellipsis: no period after it either.
+    expect(denied(`denied ${'x'.repeat(500)}`)).to.match(
+      /x… Nothing was ordered/
+    )
   })
 
   it('retries once when the node rejects the nonce, with a Signer', async () => {
@@ -709,33 +743,42 @@ describe('OceanNodeClient policy server', () => {
 
   it('signs consumerAddress + (stored nonce + 1) + PolicyServerInitialize, as ocean.js does', async () => {
     status(true)
-    const wallet = Wallet.createRandom()
     vi.spyOn(ProviderInstance, 'getNonce').mockResolvedValue(6)
-    const fetch = answer(200, initiated())
+    // Fixed wallets, not random ones: for 1 in 256 addresses the digest starts with a zero
+    // byte, which ocean.js drops (`toBeArray`), so a random wallet failed by chance. Seed
+    // 278's digest is such a one.
+    for (const seed of ['signer 0', 'signer 278']) {
+      const wallet = new Wallet(id(seed))
+      const fetch = answer(200, initiated())
 
-    await client(wallet).initializePolicyVerification({
-      ...request,
-      consumerAddress: wallet.address
-    })
+      await client(wallet).initializePolicyVerification({
+        ...request,
+        consumerAddress: wallet.address
+      })
 
-    const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit]
-    const body = JSON.parse(String(init.body))
-    const message = `${wallet.address}7PolicyServerInitialize`
-    const digest = solidityPackedKeccak256(
-      ['bytes'],
-      [hexlify(toUtf8Bytes(message))]
-    )
+      const [url, init] = fetch.mock.calls[0] as unknown as [
+        string,
+        RequestInit
+      ]
+      const body = JSON.parse(String(init.body))
+      const message = `${wallet.address}7PolicyServerInitialize`
+      const digest = solidityPackedKeccak256(
+        ['bytes'],
+        [hexlify(toUtf8Bytes(message))]
+      )
 
-    expect(url).to.equal(`${NODE}/api/services/initializePSVerification`)
-    expect(body).to.include({
-      documentId: ASSET_DID,
-      serviceId: SERVICE_ID,
-      consumerAddress: wallet.address,
-      nonce: '7'
-    })
-    expect(verifyMessage(getBytes(digest), body.signature)).to.equal(
-      wallet.address
-    )
+      expect(url).to.equal(`${NODE}/api/services/initializePSVerification`)
+      expect(body).to.include({
+        documentId: ASSET_DID,
+        serviceId: SERVICE_ID,
+        consumerAddress: wallet.address,
+        nonce: '7'
+      })
+      // Signed as the bytes of the digest's number, so without leading zero bytes.
+      expect(verifyMessage(toBeArray(digest), body.signature), seed).to.equal(
+        wallet.address
+      )
+    }
   })
 
   it('sends a JWT as Authorization, with no nonce or signature', async () => {
@@ -1173,7 +1216,7 @@ describe('PolicySessionResolver', () => {
     }
 
     for (const persistPresentedSessions of [false, true]) {
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const log = captureLog()
       const { client, calls } = policyNode({
         initiate: async () => initiatedWithPresentation()
       })
@@ -1192,7 +1235,9 @@ describe('PolicySessionResolver', () => {
       )
       // Reused from memory either way.
       expect(calls.filter((call) => call === 'initiate')).to.have.length(1)
-      warn.mockRestore()
+      expect(
+        log.named('identity.sessions.presented_persisted').length
+      ).to.equal(persistPresentedSessions ? 1 : 0)
     }
   })
 

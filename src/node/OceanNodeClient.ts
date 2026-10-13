@@ -36,7 +36,6 @@ import {
   type ComputeResultStream,
   type DownloadResponse,
   type FileInfo,
-  LoggerInstance,
   type NodeComputeJob,
   type NodeStatus,
   type PersistentStorageFileEntry,
@@ -64,6 +63,8 @@ import {
   withQualifiedJobId
 } from '../compute/jobs.js'
 import type { PolicyServerPayload } from '../ddo/types.js'
+import { debugEnabled, debugRaw } from '../log/debug.js'
+import { type Logger, log } from '../log/logger.js'
 import {
   errorMessage,
   type FetchedResponse,
@@ -74,7 +75,6 @@ import {
   RequestTimeoutError
 } from '../utils/http.js'
 import { assertSecureTransport, parseHttpUrl } from '../utils/transport.js'
-import { warnOnce } from '../utils/warn.js'
 import {
   authTokenAddress,
   isAuthToken,
@@ -87,7 +87,10 @@ import {
   boundedNodeMessage,
   describeAnswer,
   describeError,
-  sanitizedError
+  endSentence,
+  sanitize,
+  sanitizedError,
+  sessionIdRemover
 } from './messages.js'
 
 /** Payload accepted by the `policyServer` slots: one entry, or one per compute asset. */
@@ -127,6 +130,12 @@ export interface OceanNodeClientOptions {
    * clients.
    */
   requestTimeoutMs?: number
+  /**
+   * Where this client's log events go. Default: the process-wide logger
+   * (`configureLogging`); `Nautilus` passes its instance's. Carried over to `forEndpoint`
+   * clients.
+   */
+  logger?: Logger
 }
 
 /** The default of `OceanNodeClientOptions.requestTimeoutMs`. */
@@ -170,7 +179,8 @@ export class OceanNodeError extends Error {
     return new OceanNodeError(
       operation,
       describeError(error),
-      sanitizedError(error)
+      // describeError handed the raw error to the debug channel already.
+      sanitizedError(error, null)
     )
   }
 }
@@ -244,7 +254,7 @@ export interface PolicyCheckResult {
   /** The policy's name, e.g. `signature` or `holder-binding`. */
   policy: string
   success: boolean
-  /** Why it failed, as the verifier said it, bounded. */
+  /** Why it failed, as the verifier said it: its first line, at most 100 characters. */
   error?: string
 }
 
@@ -273,11 +283,18 @@ export class PolicyDeniedError extends Error {
   /** The policy server's reason, bounded and without control characters. */
   readonly reason: string
   /**
-   * The verifier's per-policy results, when the presentation was not verified. Only the
-   * policy names, outcomes and errors: never the presentation or its token.
+   * The verifier's per-policy results, when the presentation was not verified, as the node
+   * reports them. Only the policy names, outcomes and errors, bounded and without control
+   * characters: never the presentation or its token. A policy's error can quote a value of
+   * the presented credential, so don't send these to a central log.
    */
   readonly policyResults?: PolicyCheckResult[]
 
+  /**
+   * `cause`: the error of the presentation, when the wallet's `present()` failed and the
+   * verifier's record named the failed policies (a `CredentialPresentationError`, for
+   * example).
+   */
   constructor(params: {
     nodeUri: string
     did: string
@@ -286,11 +303,14 @@ export class PolicyDeniedError extends Error {
     code?: number
     reason: string
     policyResults?: PolicyCheckResult[]
+    cause?: unknown
   }) {
-    const reason = boundedNodeMessage(params.reason) || 'no reason given'
+    const reason =
+      boundedNodeMessage(params.reason, 'policy') || 'no reason given'
 
     super(
-      `The policy server of ${params.nodeUri} refused service ${params.serviceId} of ${params.did} for ${params.consumerAddress}${params.code ? ` (${params.code})` : ''}: ${reason}. Nothing was ordered or paid. Check the asset's credentials (its address allow list and SSIpolicy) with the publisher.`
+      `The policy server of ${params.nodeUri} refused service ${params.serviceId} of ${params.did} for ${params.consumerAddress}${params.code ? ` (${params.code})` : ''}: ${endSentence(reason)} Nothing was ordered or paid. Check the asset's credentials (its address allow list and SSIpolicy) with the publisher.`,
+      params.cause === undefined ? undefined : { cause: params.cause }
     )
     this.name = 'PolicyDeniedError'
     this.did = params.did
@@ -348,14 +368,46 @@ const STUCK_INDEXER_NONCE_HINT =
   "If the node logs 'consumer address and nonce signature mismatch' for its own address, its indexer nonce is stuck and later assets fail the same way until the operator advances the stored nonce of the node's address; OceanNodeClient.getIndexerNonceState() reports it"
 
 /**
- * Whether the node accepts its indexer's decrypt call signed with `nonce`, i.e. whether
- * `keccak256(address + nonce + "decryptDDO")` does not start with a zero byte. See
- * `STUCK_INDEXER_NONCE_HINT`. The address is the checksummed form the node signs with.
+ * Whether an ocean-node of this version accepts a decrypt call whose signed message hash
+ * starts with a zero byte: 4.2.2 and later of the OE fork (`oe-ocean-node`, commit
+ * c69ddd4e, `nonceHandler.ts`) verify that signature form too. An unknown or unparsable
+ * version, and a pre-release of 4.2.2, count as older; build metadata (`4.2.2+abc`) is
+ * ignored.
+ *
+ * Two limits: the version is what the node says about itself in `GET /`, and it is the OE
+ * fork's numbering. Upstream `oceanprotocol/ocean-node` uses the same 4.x numbers without
+ * the fix, so such a node at 4.2.2 or later is wrongly taken to accept the nonce: its
+ * asset is not indexed and its indexer nonce sticks. That costs no funds (the node simply
+ * does not index), and the preflight reports each such skip as
+ * `node.indexer_nonce.zero_byte_accepted` at `info`.
+ */
+export function nodeAcceptsZeroByteNonce(version: string | undefined): boolean {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(-[^\s+]*)?(\+\S*)?$/.exec(
+    version?.trim() ?? ''
+  )
+  if (!match) return false
+
+  const [major, minor, patch] = match.slice(1, 4).map(Number)
+  const prerelease = Boolean(match[4])
+  const compared = major !== 4 ? major - 4 : minor !== 2 ? minor - 2 : patch - 2
+
+  return compared > 0 || (compared === 0 && !prerelease)
+}
+
+/**
+ * Whether the node accepts its indexer's decrypt call signed with `nonce`. Before 4.2.2 it
+ * does not when `keccak256(address + nonce + "decryptDDO")` starts with a zero byte (see
+ * `STUCK_INDEXER_NONCE_HINT`); a node of 4.2.2 or later (`nodeVersion`, the `version` of
+ * `GET /`) accepts every nonce. Without a version the zero-byte rule applies. The address
+ * is the checksummed form the node signs with.
  */
 export function isIndexerNonceSignable(
   nodeAddress: string,
-  nonce: number | bigint | string
+  nonce: number | bigint | string,
+  nodeVersion?: string
 ): boolean {
+  if (nodeAcceptsZeroByteNonce(nodeVersion)) return true
+
   const message = `${getAddress(nodeAddress)}${String(nonce)}decryptDDO`
 
   return !keccak256(toUtf8Bytes(message)).startsWith('0x00')
@@ -369,6 +421,11 @@ export interface IndexerNonceState {
   storedNonce: number
   /** The nonce the indexer signs its next decrypt call with: `storedNonce + 1`. */
   nextNonce: number
+  /**
+   * The node's software version (`version` in `GET /`), when it reports one. From 4.2.2 a
+   * zero-byte nonce hash no longer sticks the indexer (`isIndexerNonceSignable`).
+   */
+  nodeVersion?: string
   /**
    * `true` when the node will not accept that call (`401 consumer address and nonce
    * signature mismatch`). Since the stored nonce only advances on success, encrypted DDOs
@@ -511,7 +568,8 @@ function assertDuration(operation: string, name: string, value: unknown): void {
  * beta.0's 30 s polls, so the wait is as long as it was; the polls themselves stay 7 s apart.
  */
 function resolveIndexerOptions(
-  options: WaitForIndexerOptions
+  options: WaitForIndexerOptions,
+  logger: Logger
 ): WaitForIndexerOptions {
   const legacy = options as WaitForIndexerOptions & {
     interval?: unknown
@@ -521,9 +579,11 @@ function resolveIndexerOptions(
   if (legacy.interval === undefined && legacy.maxRetries === undefined)
     return options
 
-  warnOnce(
-    'waitForIndexer-legacy-options',
-    "waitForIndexer: the options `interval` and `maxRetries` were replaced by `intervalMs` and `timeoutMs` in 2.0.0-beta.1. They are mapped for now (intervalMs = interval, timeoutMs = interval × maxRetries, with beta.0's 30 s when interval is absent) but will be removed; rename them."
+  logger.emit(
+    'node.indexer_wait.legacy_options',
+    "waitForIndexer: the options `interval` and `maxRetries` were replaced by `intervalMs` and `timeoutMs` in 2.0.0-beta.1. They are mapped for now (intervalMs = interval, timeoutMs = interval × maxRetries, with beta.0's 30 s when interval is absent) but will be removed; rename them.",
+    undefined,
+    { once: 'waitForIndexer-legacy-options' }
   )
 
   const interval =
@@ -722,6 +782,17 @@ const POLICY_SERVER_INITIALIZE = 'PolicyServerInitialize'
  */
 const MAX_POLICY_REPLY_BYTES = 256 * 1024
 
+/**
+ * How many per-policy results `checkPolicySession` keeps, and how long a policy or
+ * credential type name, and a policy's error, may be. A presentation runs a few policies
+ * per credential; the node relays the record and may be the publisher's. A policy's error
+ * can quote the credential (walt.id's `allowed-issuer`: "No issuer found in credential:
+ * <the credential>"), so it is kept short.
+ */
+const MAX_POLICY_RESULTS = 50
+const MAX_POLICY_NAME_LENGTH = 100
+const MAX_POLICY_ERROR_LENGTH = 100
+
 /** What ocean.js puts before the node's message when a P2P command fails. */
 const P2P_ERROR_PREFIX = /^P2P command error: /
 
@@ -836,8 +907,19 @@ function isSessionRecord(value: unknown): boolean {
  * (`policyResults.results[].policyResults[]`), reduced to name, outcome and error. Each
  * policy's `result` and `args`, and everything else in the record (`tokenResponse` with the
  * `vp_token`, the presentation definition), are dropped.
+ *
+ * The record comes through the node, so every text in it is treated as the node's: the
+ * policy and credential names and the first line of each error are stripped of control
+ * characters, redacted and bounded (100 characters each), and at most `MAX_POLICY_RESULTS` results are kept, in
+ * their order, failures before successes when some must go. The session id the record was
+ * read for is removed from each, whatever its shape (`withoutSession`): walt.id quotes it in
+ * an error (`Id parameter <id> expired`). The whole record goes to the debug channel (topic
+ * `policy`) in `checkPolicySession`.
  */
-function readPolicyResults(record: unknown): PolicyCheckResult[] {
+function readPolicyResults(
+  record: unknown,
+  sessionId: string
+): PolicyCheckResult[] {
   const results = (
     record as {
       policyResults?: { results?: unknown }
@@ -845,7 +927,12 @@ function readPolicyResults(record: unknown): PolicyCheckResult[] {
   )?.policyResults?.results
   if (!Array.isArray(results)) return []
 
-  const read: PolicyCheckResult[] = []
+  const found: {
+    credential: unknown
+    policy: string
+    success: boolean
+    error: unknown
+  }[] = []
 
   for (const entry of results) {
     const { credential, policyResults } = (entry ?? {}) as {
@@ -860,27 +947,130 @@ function readPolicyResults(record: unknown): PolicyCheckResult[] {
         is_success?: unknown
         error?: unknown
       }
-      if (typeof policy !== 'string') continue
-
-      const reason =
-        error === undefined || error === null
-          ? undefined
-          : boundedNodeMessage(
-              typeof error === 'string'
-                ? error.split('\n')[0]
-                : ((error as { message?: unknown }).message ?? error)
-            )
-
-      read.push({
-        ...(typeof credential === 'string' ? { credential } : {}),
-        policy,
-        success: is_success === true,
-        ...(reason ? { error: reason } : {})
-      })
+      if (typeof policy === 'string')
+        found.push({ credential, policy, success: is_success === true, error })
     }
   }
 
+  // Over the cap, the failures are kept first: they are what a refusal names.
+  let kept = found
+  if (found.length > MAX_POLICY_RESULTS) {
+    const failures = found.filter((result) => !result.success).length
+    let successes = Math.max(0, MAX_POLICY_RESULTS - failures)
+    let failuresLeft = MAX_POLICY_RESULTS
+    kept = found.filter((result) =>
+      result.success ? successes-- > 0 : failuresLeft-- > 0
+    )
+    // The whole record went to the debug channel already (`checkPolicySession`).
+    if (debugEnabled('sensitive', 'policy'))
+      debugRaw('policy', 'per-policy results dropped over the cap', {
+        found: found.length,
+        kept: kept.length
+      })
+  }
+
+  const read: PolicyCheckResult[] = []
+  const remove = sessionIdRemover(sessionId)
+
+  for (const { credential, policy, success, error } of kept) {
+    const name = withoutSession(policy, remove, (text) =>
+      sanitize(text as string, MAX_POLICY_NAME_LENGTH, 'policy')
+    )
+    if (!name) continue
+
+    const type =
+      typeof credential === 'string'
+        ? withoutSession(credential, remove, (text) =>
+            sanitize(text as string, MAX_POLICY_NAME_LENGTH, 'policy')
+          )
+        : ''
+    const reason =
+      error === undefined || error === null
+        ? undefined
+        : withoutSession(
+            typeof error === 'string'
+              ? error.split('\n')[0]
+              : ((error as { message?: unknown }).message ?? error),
+            remove,
+            (text) =>
+              boundedNodeMessage(text, 'policy', MAX_POLICY_ERROR_LENGTH)
+          )
+
+    read.push({
+      ...(type ? { credential: type } : {}),
+      policy: name,
+      success,
+      ...(reason ? { error: reason } : {})
+    })
+  }
+
   return read
+}
+
+/**
+ * A text of the node's answer to `checkSessionId`, as `clean` sanitises and bounds it,
+ * without the session id (`remove`, a `sessionIdRemover`). The id is removed before, so no
+ * redaction or cut splits it, and again after: deleting a control character
+ * (`custom-\u0007session-…`) or decoding a JSON escape can join it, and a cut can leave its
+ * start before the closing `…`. That can make the text a few characters longer than the
+ * bound.
+ */
+function withoutSession(
+  value: unknown,
+  remove: (text: string) => string,
+  clean: (value: unknown) => string
+): string {
+  return remove(clean(typeof value === 'string' ? remove(value) : value))
+}
+
+/**
+ * The verifier's session record on the debug channel: one event naming each policy and its
+ * outcome with the first line of its error (`holder-binding: failed
+ * (java.lang.NullPointerException)`), then the whole reply, raw, stack traces included.
+ */
+function debugPolicySession(
+  sessionId: string,
+  failed: string | undefined,
+  reply: PolicyServerReply | undefined
+): void {
+  const record = reply?.message
+  const results = (
+    record as { policyResults?: { results?: unknown } } | null | undefined
+  )?.policyResults?.results
+  const summary: string[] = []
+
+  if (Array.isArray(results))
+    for (const entry of results) {
+      const { credential, policyResults } = (entry ?? {}) as {
+        credential?: unknown
+        policyResults?: unknown
+      }
+      if (!Array.isArray(policyResults)) continue
+      for (const raw of policyResults) {
+        const { policy, is_success, error } = (raw ?? {}) as {
+          policy?: unknown
+          is_success?: unknown
+          error?: unknown
+        }
+        // The first line; the whole error, its stack trace included, is in the record.
+        const why =
+          error === undefined || error === null
+            ? ''
+            : ` (${(typeof error === 'string' ? error : JSON.stringify(error)).split('\n')[0]})`
+        summary.push(
+          `${typeof credential === 'string' ? `${credential} ` : ''}${String(policy)}: ${is_success === true ? 'ok' : `failed${why}`}`
+        )
+      }
+    }
+
+  debugRaw('policy', 'verifier per-policy results (checkSessionId)', {
+    sessionId,
+    verificationResult: (record as { verificationResult?: unknown } | null)
+      ?.verificationResult,
+    ...(failed ? { answer: failed } : {}),
+    policies: summary
+  })
+  debugRaw('policy', 'verifier session record (checkSessionId), raw', reply)
 }
 
 /** Resolves once `promise` settles; rejects with `signal.reason` if `signal` aborts first. */
@@ -949,6 +1139,7 @@ export class OceanNodeClient {
   private consumerAddressOverride?: string
   private readonly allowInsecureTransport: boolean
   private readonly requestTimeoutMs: number
+  private readonly log: Logger
 
   /**
    * Tail of this client's signed commands, see `serializeSigned`. One client has one auth,
@@ -993,6 +1184,7 @@ export class OceanNodeClient {
 
     this.nodeUri = options.nodeUri
     this.chainId = options.chainId
+    this.log = options.logger ?? log
     this.auth = options.auth
     this.consumerAddressOverride = options.consumerAddress
     this.aquarius = new Aquarius(options.nodeUri)
@@ -1036,7 +1228,8 @@ export class OceanNodeClient {
       auth: this.auth,
       consumerAddress: this.consumerAddressOverride,
       allowInsecureTransport: this.allowInsecureTransport,
-      requestTimeoutMs: this.requestTimeoutMs
+      requestTimeoutMs: this.requestTimeoutMs,
+      logger: this.log
     })
     client.endpoints = this.endpoints
     this.endpoints.set(key, client)
@@ -1299,7 +1492,7 @@ export class OceanNodeClient {
     txid?: string,
     options: WaitForIndexerOptions = {}
   ): Promise<AssetV5> {
-    const resolved = resolveIndexerOptions(options)
+    const resolved = resolveIndexerOptions(options, this.log)
     const { signal } = resolved
 
     for (const name of [
@@ -1358,7 +1551,7 @@ export class OceanNodeClient {
         if (failures >= maxFailures)
           throw new OceanNodeError(
             'waitForIndexer',
-            `${failures} lookups of ${what} in a row failed; the last one: ${errorMessage(lookup.error)}. Check the node URI and that the node is up.`,
+            `${failures} lookups of ${what} in a row failed; the last one: ${endSentence(errorMessage(lookup.error))} Check the node URI and that the node is up.`,
             lookup.error
           )
       } else if (lookup.kind === 'pending') {
@@ -1405,8 +1598,10 @@ export class OceanNodeClient {
               : 0
           )
         )
-        LoggerInstance.debug(
-          `[waitForIndexer] ${this.nodeUri} rate-limited the lookup of ${what}; next try in ${Math.round(delay / 1000)}s`
+        this.log.emit(
+          'node.indexer_wait.rate_limited',
+          `${this.nodeUri} rate-limited the lookup of ${what}; next try in ${Math.round(delay / 1000)}s.`,
+          { nodeUri: this.nodeUri, what, delayMs: delay }
         )
       } else rateLimits = 0
 
@@ -1561,6 +1756,17 @@ export class OceanNodeClient {
    * status) or the body is not JSON. Rejects with the signal's reason when `signal` aborts.
    */
   async getNodeAddress(signal?: AbortSignal): Promise<string | undefined> {
+    return (await this.readNodeRoot(signal))?.address
+  }
+
+  /**
+   * The node's address and software version from `GET /` (`providerAddress`, `version`),
+   * each `undefined` when the node does not report it; `undefined` over P2P. Throws like
+   * `getNodeAddress()`.
+   */
+  private async readNodeRoot(
+    signal?: AbortSignal
+  ): Promise<{ address?: string; version?: string } | undefined> {
     if (!isHttpUri(this.nodeUri)) return undefined
 
     const response = await this.get('getNodeAddress', '/', { signal })
@@ -1584,14 +1790,22 @@ export class OceanNodeClient {
       )
     }
 
-    const address =
+    const { providerAddress: address, version } =
       info && typeof info === 'object'
-        ? (info as { providerAddress?: unknown }).providerAddress
-        : undefined
+        ? (info as { providerAddress?: unknown; version?: unknown })
+        : {}
 
-    return typeof address === 'string' && isAddress(address)
-      ? getAddress(address)
-      : undefined
+    return {
+      address:
+        typeof address === 'string' && isAddress(address)
+          ? getAddress(address)
+          : undefined,
+      // Node-supplied: shown in messages, so control characters and secrets are removed.
+      version:
+        typeof version === 'string' && version.length <= 64
+          ? sanitize(version, 64) || undefined
+          : undefined
+    }
   }
 
   /**
@@ -1605,7 +1819,8 @@ export class OceanNodeClient {
   async getIndexerNonceState(
     signal?: AbortSignal
   ): Promise<IndexerNonceState | undefined> {
-    const nodeAddress = await this.getNodeAddress(signal)
+    const root = await this.readNodeRoot(signal)
+    const nodeAddress = root?.address
     if (!nodeAddress) return undefined
 
     const response = await this.get(
@@ -1644,12 +1859,26 @@ export class OceanNodeClient {
       )
 
     const nextNonce = storedNonce + 1
+    const nodeVersion = root.version
+
+    if (
+      nodeAcceptsZeroByteNonce(nodeVersion) &&
+      !isIndexerNonceSignable(nodeAddress, nextNonce)
+    )
+      this.log.emit(
+        'node.indexer_nonce.zero_byte_accepted',
+        `The next indexer nonce ${nextNonce} of ${this.nodeUri} hashes to a zero byte, which ocean-node before 4.2.2 refuses; the node reports version ${nodeVersion} (self-reported; the fix is in the OE fork), so it is not reported as stuck. If assets stop being indexed, check the node's logs for 'consumer address and nonce signature mismatch'.`,
+        { nodeUri: this.nodeUri, nodeVersion, nonce: nextNonce },
+        // Until the nonce moves, every read of this node would say the same.
+        { once: `${this.nodeUri}:${nextNonce}` }
+      )
 
     return {
       nodeAddress,
       storedNonce,
       nextNonce,
-      stuck: !isIndexerNonceSignable(nodeAddress, nextNonce)
+      ...(nodeVersion ? { nodeVersion } : {}),
+      stuck: !isIndexerNonceSignable(nodeAddress, nextNonce, nodeVersion)
     }
   }
 
@@ -2525,8 +2754,10 @@ export class OceanNodeClient {
       status = await this.getNodeStatus(signal)
     } catch (error) {
       if (signal?.aborted) throw signal.reason
-      LoggerInstance.debug(
-        `[ocean-node] could not read the status of ${this.nodeUri}: ${errorMessage(error)}`
+      this.log.emit(
+        'node.status.unreadable',
+        `Could not read the status of ${this.nodeUri}.`,
+        { nodeUri: this.nodeUri, error }
       )
       return undefined
     }
@@ -2582,9 +2813,11 @@ export class OceanNodeClient {
       return null
     }
 
-    warnOnce(
-      `empty-policy-server-url:${normalizeNodeUri(this.nodeUri)}`,
-      `${this.nodeUri} reported a policy server but answers as a node without one: its POLICY_SERVER_URL is likely set but empty, and it then checks no credentials at all.`
+    this.log.emit(
+      'node.policy_server.empty_url',
+      `${this.nodeUri} reported a policy server but answers as a node without one: its POLICY_SERVER_URL is likely set but empty, and it then checks no credentials at all.`,
+      { nodeUri: this.nodeUri },
+      { once: normalizeNodeUri(this.nodeUri) }
     )
 
     return null
@@ -2816,6 +3049,14 @@ export class OceanNodeClient {
       reply = parsePolicyServerReply(response.body)
       if (!response.ok)
         failed = `${response.status} ${response.statusText}`.trim()
+      // Not the policy server's envelope (a proxy's 502 page, a plain-text diagnostic): the
+      // error names the status only, so the answer goes to the channel as it came.
+      if (!reply && debugEnabled('sensitive', 'policy'))
+        debugRaw('policy', 'checkSessionId answer, not a policy-server reply', {
+          status: response.status,
+          statusText: response.statusText,
+          body: response.body
+        })
     } else {
       try {
         reply = (await ProviderInstance.PolicyServerPassthrough(
@@ -2827,16 +3068,30 @@ export class OceanNodeClient {
         if (signal?.aborted) throw signal.reason
 
         reply = policyServerReplyIn(error)
+        if (!reply && debugEnabled('sensitive', 'policy'))
+          debugRaw(
+            'policy',
+            'checkSessionId failed, not a policy-server reply',
+            error
+          )
         if (!reply)
           throw new OceanNodeError(
             operation,
-            boundedNodeMessage(errorMessage(error))
+            withoutSession(
+              errorMessage(error),
+              sessionIdRemover(sessionId),
+              boundedNodeMessage
+            )
           )
         failed = 'the policy server refused'
       }
     }
 
     const record = reply?.message
+    // The verifier's whole record (per-policy results with their full errors, the
+    // presentation): what `readPolicyResults` drops, for the debug channel.
+    if (debugEnabled('sensitive', 'policy'))
+      debugPolicySession(sessionId, failed, reply)
 
     if (isSessionRecord(record))
       return {
@@ -2844,14 +3099,17 @@ export class OceanNodeClient {
           !failed &&
           (record as { verificationResult?: unknown }).verificationResult ===
             true,
-        policyResults: readPolicyResults(record)
+        policyResults: readPolicyResults(record, sessionId)
       }
 
+    // walt.id's answer for an unknown or expired session quotes its id.
     if (failed || reply?.success !== true)
       throw new OceanNodeError(
         operation,
-        boundedNodeMessage(
-          `${failed ?? ''} ${reply ? policyServerReason(reply) : 'the answer is not a policy-server reply'}`
+        withoutSession(
+          `${failed ?? ''} ${reply ? policyServerReason(reply) : 'the answer is not a policy-server reply'}`,
+          sessionIdRemover(sessionId),
+          boundedNodeMessage
         )
       )
 

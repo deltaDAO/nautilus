@@ -15,16 +15,15 @@ import type { AssetV5 } from '@oceanprotocol/ddo-js'
  *   - **Output is `{remoteStorage, encryption}`.** The old hardcoded
  *     `publishAlgorithmLog`/`publishOutput` flags are gone.
  */
-import {
-  type ComputeAlgorithm,
-  type ComputeAsset,
-  type ComputeEnvironment,
-  type ComputeJob,
-  type ComputeResourceRequest,
-  type Config,
-  LoggerInstance,
-  type ProviderComputeInitialize,
-  type ProviderComputeInitializeResults
+import type {
+  ComputeAlgorithm,
+  ComputeAsset,
+  ComputeEnvironment,
+  ComputeJob,
+  ComputeResourceRequest,
+  Config,
+  ProviderComputeInitialize,
+  ProviderComputeInitializeResults
 } from '@oceanprotocol/lib'
 import type { Signer } from 'ethers'
 import type {
@@ -48,6 +47,7 @@ import {
 } from '../ddo/read.js'
 import type { PolicyServerComputePayload } from '../ddo/types.js'
 import { PolicySessionResolver } from '../identity/PolicySessionResolver.js'
+import { type Logger, log } from '../log/logger.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
 import {
   assertConsumerParameters,
@@ -104,6 +104,8 @@ export interface ComputeContext {
    * other locks are not covered.
    */
   escrowLock?: KeyedLock
+  /** Where this call's log events go. Default: the process-wide logger. */
+  logger?: Logger
 }
 
 /**
@@ -131,12 +133,13 @@ export async function compute(
   context: ComputeContext
 ): Promise<ComputeResult> {
   const { node, signer, chainConfig } = context
+  const logger = context.logger ?? log
   // Resolved first, so a malformed explicit escrow fails before any node call.
   const escrowPin = resolveEscrowPin(chainConfig.chainId, context.escrow)
   const consumerAddress = await signer.getAddress()
 
   const inputs = await resolveInputs(node, config)
-  const environment = await selectEnvironment(node, config.computeEnv)
+  const environment = await selectEnvironment(node, config.computeEnv, logger)
 
   const paymentToken = resolvePaymentToken(
     environment,
@@ -146,7 +149,9 @@ export async function compute(
   const resources = resolveResources(environment, config.resources)
   const maxJobDuration = resolveMaxJobDuration(
     environment,
-    config.maxJobDuration
+    config.maxJobDuration,
+    logger,
+    node.nodeUri
   )
 
   // 1. Open every input's policy session, the algorithm's included, before any escrow,
@@ -157,7 +162,7 @@ export async function compute(
     node,
     inputs,
     consumerAddress,
-    context.policySessions
+    context.policySessions ?? new PolicySessionResolver({ logger })
   )
 
   const validUntil = Math.floor(Date.now() / 1000) + maxJobDuration
@@ -225,7 +230,8 @@ export async function compute(
     environment,
     initializeResults,
     paymentToken,
-    config
+    config,
+    logger
   })
 
   // 4. Plan every order: read each input's pricing and refuse one that cannot be ordered,
@@ -237,7 +243,8 @@ export async function compute(
     initializeResults,
     signer,
     chainConfig,
-    consumer: environment.consumerAddress
+    consumer: environment.consumerAddress,
+    logger
   })
 
   // 5-7. Fund escrow, order, start. One job at a time per payer, token and payee within
@@ -249,7 +256,8 @@ export async function compute(
       await fundEscrow(
         signer,
         chainConfig,
-        await planEscrow(signer, chainConfig, escrowQuote)
+        await planEscrow(signer, chainConfig, escrowQuote),
+        logger
       )
 
     // 6. Send every order, and record the transfer ids.
@@ -288,10 +296,9 @@ export async function compute(
       ? await context.escrowLock(await escrowLockKey(signer, escrowQuote), run)
       : await run()
 
-  LoggerInstance.debug(
-    '[compute] started',
-    jobs.map((job) => job.jobId)
-  )
+  logger.emit('compute.job.started', 'Started the compute job.', () => ({
+    jobIds: jobs.map((job) => job.jobId)
+  }))
 
   return {
     jobs,
@@ -312,10 +319,11 @@ export async function freeCompute(
   context: ComputeContext
 ): Promise<Omit<ComputeResult, 'initializeResults' | 'orders'>> {
   const { node, signer } = context
+  const logger = context.logger ?? log
   const consumerAddress = await signer.getAddress()
 
   const inputs = await resolveInputs(node, config)
-  const environment = await selectEnvironment(node, config.computeEnv)
+  const environment = await selectEnvironment(node, config.computeEnv, logger)
 
   if (!environment.free)
     throw new Error(
@@ -326,7 +334,7 @@ export async function freeCompute(
     node,
     inputs,
     consumerAddress,
-    context.policySessions
+    context.policySessions ?? new PolicySessionResolver({ logger })
   )
 
   const jobs = await node.freeComputeStart({
@@ -458,7 +466,8 @@ function toComputeAlgorithm(input: ResolvedInput): ComputeAlgorithm {
  */
 export async function selectEnvironment(
   node: OceanNodeClient,
-  computeEnv?: string
+  computeEnv?: string,
+  logger: Logger = log
 ): Promise<ComputeEnvironment> {
   const environments = await node.getComputeEnvironments()
 
@@ -466,8 +475,10 @@ export async function selectEnvironment(
     throw new Error(`Node ${node.nodeUri} advertises no compute environments.`)
 
   if (!computeEnv) {
-    LoggerInstance.debug(
-      `[compute] no environment given, using '${environments[0].id}' of ${environments.length}`
+    logger.emit(
+      'compute.environment.defaulted',
+      `No compute environment given; using the node's first, '${environments[0].id}', of ${environments.length}.`,
+      { environmentId: environments[0].id, count: environments.length }
     )
     return environments[0]
   }
@@ -562,15 +573,24 @@ function resolveResources(
 
 function resolveMaxJobDuration(
   environment: ComputeEnvironment,
-  requested?: number
+  requested: number | undefined,
+  logger: Logger,
+  nodeUri: string
 ): number {
   const ceiling = environment.maxJobDuration
 
   if (!requested) return ceiling || 3600
 
   if (ceiling && requested > ceiling) {
-    LoggerInstance.warn(
-      `[compute] requested maxJobDuration ${requested}s exceeds the environment limit ${ceiling}s; capping.`
+    logger.emit(
+      'compute.duration.capped',
+      `The requested maxJobDuration ${requested}s exceeds the environment limit ${ceiling}s; capping.`,
+      { requested, ceiling },
+      // A server starting many jobs with the same duration is told once per environment
+      // (of a node: two nodes can name theirs alike).
+      {
+        once: JSON.stringify([nodeUri, environment.id, requested, ceiling])
+      }
     )
     return ceiling
   }
@@ -595,7 +615,7 @@ async function resolvePolicies(
   node: OceanNodeClient,
   inputs: ResolvedInput[],
   consumerAddress: string,
-  policySessions: PolicySessionResolver = new PolicySessionResolver()
+  policySessions: PolicySessionResolver
 ): Promise<PolicyServerComputePayload[] | undefined> {
   const payloads: PolicyServerComputePayload[] = []
 
@@ -639,13 +659,16 @@ async function checkEscrowPayment(params: {
   initializeResults: ProviderComputeInitializeResults
   paymentToken: string
   config: ComputeConfig
+  logger: Logger
 }): Promise<EscrowPaymentQuote | undefined> {
-  const { chainConfig, escrowPin, environment, paymentToken, config } = params
+  const { chainConfig, escrowPin, environment, paymentToken, config, logger } =
+    params
   const payment = params.initializeResults.payment
 
   if (!payment) {
-    LoggerInstance.debug(
-      '[compute] node quoted no escrow payment; skipping funding'
+    logger.emit(
+      'compute.escrow.not_quoted',
+      'The node quoted no escrow payment; skipping funding.'
     )
     return undefined
   }
@@ -658,7 +681,10 @@ async function checkEscrowPayment(params: {
   })
 
   if (!quote) {
-    LoggerInstance.debug('[compute] node quoted a zero escrow payment')
+    logger.emit(
+      'compute.escrow.zero_quote',
+      'The node quoted an escrow payment of zero; skipping funding.'
+    )
     return undefined
   }
 
@@ -695,9 +721,17 @@ async function planOrders(params: {
   signer: Signer
   chainConfig: Config
   consumer: string
+  logger: Logger
 }): Promise<{ key: string; plan: SettlementPlan }[]> {
-  const { inputs, fees, initializeResults, signer, chainConfig, consumer } =
-    params
+  const {
+    inputs,
+    fees,
+    initializeResults,
+    signer,
+    chainConfig,
+    consumer,
+    logger
+  } = params
   const settlements: { key: string; plan: SettlementPlan }[] = []
 
   for (const [index, input] of inputs.entries()) {
@@ -716,7 +750,8 @@ async function planOrders(params: {
       serviceIndex: getServiceIndex(input.asset, input.serviceId),
       initialized,
       consumer,
-      maxProviderFee: ceilingFor([fees[index]])
+      maxProviderFee: ceilingFor([fees[index]]),
+      logger
     })
 
     settlements.push({ key: orderKey(input.asset.id, input.serviceId), plan })

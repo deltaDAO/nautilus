@@ -17,6 +17,7 @@ import {
 } from '@oceanprotocol/lib'
 import { Decimal } from 'decimal.js'
 import type { Signer } from 'ethers'
+import { getChainId } from './index.js'
 
 export type PricingSchema = 'fixed' | 'free' | 'none'
 
@@ -89,13 +90,23 @@ export interface OrderPrice {
  * `getFixedRates()` is a history rather than a shortlist, so only an *active* exchange
  * counts as fixed-rate pricing; a datatoken whose exchanges are all deactivated falls
  * through to its dispenser.
+ *
+ * @param config the chain config, as `Nautilus.getOceanConfig()` returns it. Without it,
+ * the chain id is read from the signer, and a datatoken with fixed rates is reported as
+ * `fixed` without its exchange being checked.
  */
 export async function getPricingInfo(
   signer: Signer,
   datatokenAddress: string,
   config?: Config
 ): Promise<PricingInfo> {
-  const datatoken = new Datatoken(signer, config?.chainId, config)
+  // Without a config, the chain id is read from the signer (the datatoken reads need no
+  // contract address from it): ocean.js is given the chain either way, so it does not look
+  // a config up for an undefined network, which it reports as an error ("No config found
+  // for given network 'undefined'").
+  const chainConfig =
+    config ?? ({ chainId: await getChainId(signer) } as Config)
+  const datatoken = new Datatoken(signer, chainConfig.chainId, chainConfig)
 
   const [templateId, fixedRates, dispensers, publishMarketFee] =
     await Promise.all([
@@ -181,7 +192,9 @@ export async function getOrderPrice(
 
   const exchange = new FixedRateExchange(
     config.fixedRateExchangeAddress as string,
-    signer
+    signer,
+    config.chainId,
+    config
   )
 
   const priceAndFees = await exchange.calcBaseInGivenDatatokensOut(
@@ -229,7 +242,9 @@ async function findActiveExchange(
 ): Promise<{ exchangeId: string; exchange: FixedPriceExchange } | undefined> {
   const contract = new FixedRateExchange(
     config.fixedRateExchangeAddress as string,
-    signer
+    signer,
+    config.chainId,
+    config
   )
 
   for (const row of rows) {

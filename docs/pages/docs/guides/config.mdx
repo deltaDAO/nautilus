@@ -88,6 +88,151 @@ const customConfig: Partial<Config> = {
 }
 ```
 
+## Concurrency and nonces
+
+:::note
+Two limits of this release concern parallel work: buying the same service in parallel from one
+key, and requesting a second download URL for the same consumer and node before the first is
+fetched. See [known limitations](/docs/known-limitations).
+:::
+
+Every transaction nautilus sends goes through a **nonce guard** that `Nautilus.create` wraps
+around your signer. It exists because ocean.js swallows a failed send and returns `null`,
+and because each send used to read its nonce from the RPC on its own: two publishes, a
+publish and an order, or two orders of one key running at once could read the same nonce,
+and one of them failed with only "ocean.js returned no transaction"; so did a send after a
+stale nonce read from the RPC.
+
+With the default `nonceManagement: 'auto'` and a signer that signs locally (an ethers
+`Wallet`):
+
+- **One send at a time per chain and address**, in this process: building the transaction
+  and broadcasting it are serialised, waiting for it to be mined is not. Concurrent calls
+  of one instance, and of several instances with the same key, get consecutive nonces.
+- **The nonce is `max(nautilus's counter, the RPC's pending count)`**: a pending count the
+  RPC answers from stale state is masked once nautilus has sent with the key. The counter
+  advances only after a successful broadcast, so a refused send leaves no gap. A send takes
+  the pending count instead (`chain.nonce.counter_reset`) only when the earliest of
+  nautilus's transactions that the pending count does not cover was dropped from the pool:
+  sent more than a minute ago, unknown by hash on two reads, and the account has not mined
+  past its nonce. That fills the gap a dropped transaction leaves before the ones still
+  waiting behind it; the send after it skips those. A send that fails to fill the gap
+  leaves it to the next send. An RPC that merely lags right after a
+  broadcast does not trigger it.
+- **Recovery from nonce refusals only** (`NONCE_EXPIRED` / "nonce too low",
+  `REPLACEMENT_UNDERPRICED`, "already known"), and only for a refused transaction that is
+  provably this send's (same sender, recipient and data):
+  - the chain already has it by hash: nautilus waits for that one and **never sends it
+    again** (`chain.nonce.already_sent`);
+  - it does not: the same transaction is sent again with a fresh nonce, the next one the
+    RPC names, else the highest of the counter, `pending` and `latest`; at most three
+    attempts, 0.5 to 2 seconds apart (`chain.nonce.resending`);
+  - an **order, purchase, approval or escrow payment** (any call not known to move no
+    value) is sent again only with proof from **two RPCs** that the first one can never be
+    mined: the account's mined count past its nonce on both, its hash unknown on both, and,
+    in the blocks since the send **on each RPC**, another transaction of the account
+    holding that nonce in a **finalized** block. One RPC's blocks are not enough (it may be
+    on another fork); a holder only in the unfinalized tip is not either (a reorganisation
+    can drop it and mine the order in its slot); a block either RPC does not return, an RPC
+    without a `finalized` block, a read that fails, or the transaction itself in a block,
+    is no proof. Nor is a slot holder that makes **the same call** (same contract, same
+    function): it may be this order sped up in a wallet or retried by another process, so
+    sending it again could pay twice. nautilus does not wait for finality: on a chain that
+    finalizes in minutes (an OP Stack chain), a collision of a moment ago stops with "may
+    have been sent" too.
+    Without a [`verificationProvider`](/docs/api/nautilus/create#verificationprovider) it
+    is never sent again. Otherwise nautilus stops with a `NonceGuardError` whose `reason`
+    is `'may-have-been-sent'`: check the account's transactions before retrying. A nonce
+    another transaction took before the send (a stale `pending` read, the common case) is
+    not in those blocks, so such an order stops too: a false "may have been sent" costs a
+    manual check, a false "never sent" a second payment.
+- **Never a retry** after a timeout, a network error or any other refusal: the transaction
+  may have landed.
+- **The cause is named.** When ocean.js returns no transaction, the error says why
+  (`startOrder failed: …REPLACEMENT_UNDERPRICED…`), with the guard's error or the RPC's
+  refusal as `cause`, and adds "It may have been sent" unless the send was refused before
+  its broadcast. The cause is the failure of the call's own contract: when two sends to one
+  contract are on record (two orders of one asset in `Promise.all`; a broadcast stays on
+  record until it is mined, a failure for a minute), nautilus cannot tell which call failed
+  and keeps the generic "ocean.js returned no transaction" for both. The `cause` is the
+  guard's `NonceGuardError`, or a sanitised copy of the wallet's or RPC's error (`name`,
+  `code`, `shortMessage` and its message, redacted). The error a send throws is redacted
+  too: no signed transaction (an unmined one can be broadcast by anyone who reads it), no
+  RPC URL path or query (it may hold the RPC's API key), no HTTP request or response body.
+  It is redacted in place; an error that does not let its fields be changed (a frozen
+  error, a read-only field) is thrown as a sanitised copy instead, with its `name`, `code`,
+  `reason`, the transaction hashes and its messages, redacted. The raw values go to the
+  debug channel (topic `nonce`).
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus, NonceGuardError, type NautilusAsset } from '@deltadao/nautilus'
+const signer = new Wallet('0x1234', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+declare const assets: NautilusAsset[]
+// ---cut---
+const nautilus = await Nautilus.create(signer, {
+  nonceManagement: 'auto', // the default // [!code focus]
+  verificationProvider: new JsonRpcProvider('https://rpc2.example.org') // [!code focus]
+})
+
+// Safe from one key in one process: nonces come out consecutive.
+const results = await Promise.allSettled(assets.map((asset) => nautilus.publish(asset)))
+
+for (const result of results)
+  if (
+    result.status === 'rejected' &&
+    result.reason?.cause instanceof NonceGuardError &&
+    result.reason.cause.reason === 'may-have-been-sent'
+  )
+    console.warn('check the account before retrying:', result.reason.cause.attempts)
+```
+
+**Set `verificationProvider` for paid flows.** It must be an independent RPC for the same
+chain: `create` checks the chain id, and refuses the signer's own provider object or a
+provider with the same URL (one RPC read twice proves nothing a second RPC would). The proofs above trust that "unknown by hash" means
+"not sent"; a single, possibly load-balanced RPC whose transaction index lags its state can
+answer that for a transaction it already mined. That is why a transaction that moves value
+is never sent again without a second RPC, and why the metadata cleanup reads both when one
+is set.
+
+**Wallet-managed signers** (`JsonRpcSigner`, a browser wallet through `BrowserProvider`)
+assign nonces themselves: nautilus sets none and sends nothing again, but still returns a
+refused transaction the chain already has and names the cause of a failed send. So does
+`nonceManagement: 'off'`, for any signer.
+
+:::warning[One key per process]
+The guard serialises sends in **this process** only. Two processes (two servers, a server
+and a script, two CI jobs) that send with the same key can still collide; the recovery
+covers the occasional collision, but an order that collides and cannot be proven unsent
+stops with "may have been sent". Give each process its own key, or send through one
+process.
+:::
+
+The lock is held while a transaction is built and broadcast, not while it is mined. A
+broadcast that hangs holds it until the transport gives up (ethers' `JsonRpcProvider`
+after 5 minutes): later sends of the same key wait for it. An EIP-1193 or custom provider
+without a timeout can hold it indefinitely; give such a provider a request timeout.
+
+### `NonceGuardError`
+
+What the guard throws when it stops after a nonce refusal. On the ocean.js path (an order,
+a datatoken, pricing) it is the `cause` of the operation's error; for the metadata
+transaction it is the error itself (inside a `PublishIncompleteError` on publish).
+
+| Field | Meaning |
+| --- | --- |
+| `reason` | `'may-have-been-sent'`: not provably unsent, it may still be mined (also when a resend failed for another reason, e.g. a timeout); `'attempts-exhausted'`: refused three times; `'unverifiable'`: the refusal carries no signed transaction of this send; `'not-managed'`: the nonce was set by the caller, by the wallet, or `nonceManagement` is `'off'` |
+| `code` | the ethers code of the last failure, e.g. `NONCE_EXPIRED` |
+| `attempts` | `{ hash, nonce }` of each refused signed transaction, to look up before retrying |
+| `attemptsComplete` | whether `attempts` lists every transaction the send may have broadcast; `false` after an unverifiable refusal or a resend that may have gone out (look the account's transactions up by nonce then) |
+| `moneySend` | whether the transaction moves value |
+
+To see the guard's decisions, set `NAUTILUS_DEBUG=sensitive` (optionally
+`NAUTILUS_DEBUG_TOPICS=nonce`): it prints the nonce reads, the signed transactions of
+refused sends and each recovery decision. Signed transactions are sensitive, see
+[Debugging](/docs/guides/debugging). The `chain.nonce.*` warnings print at the default log
+level.
+
 ## An unsupported network
 
 ocean.js's `ConfigHelper` ships defaults for a set of chains, among them

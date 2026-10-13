@@ -18,7 +18,6 @@ import {
   type DispenserCreationParams,
   type FreCreationParams,
   getEventFromTx,
-  LoggerInstance,
   Nft,
   type NftCreateData,
   NftFactory,
@@ -29,21 +28,35 @@ import {
   isError,
   parseUnits,
   type Signer,
+  Transaction,
   type TransactionReceipt,
   type TransactionResponse,
   toBeHex
 } from 'ethers'
 import type { PublishResponse, StoredBeforeFailure } from '../@types/Publish.js'
+import { type Logger, log } from '../log/logger.js'
 import type {
   FileTypes,
   NautilusService,
   ServiceTypes
 } from '../Nautilus/Asset/Service/NautilusService.js'
+import { endSentence } from '../node/messages.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
 import type { RemoteStore, toRemotePointer } from '../remote/RemoteStore.js'
 import { redactPointer } from '../remote/redact.js'
 import type { DdoSigner } from '../signing/vc.js'
+import { METADATA_EVENT_TOPICS } from '../utils/contracts.js'
 import { errorMessage } from '../utils/http.js'
+import {
+  guardOf,
+  NonceGuardError,
+  nonceRefusalOf,
+  provenNeverSent,
+  type SentAttempt,
+  signedTransactionOf,
+  withoutSignedTransaction,
+  withSendFailure
+} from '../utils/nonceGuard.js'
 import { confirmTransaction } from '../utils/order.js'
 import {
   assertCiphertextOf,
@@ -79,6 +92,8 @@ export async function createNftWithService(params: {
   nftParams: NftCreateData
   service: NautilusService<ServiceTypes, FileTypes>
   owner: string
+  /** Where this call's log events go. Default: the process-wide logger. */
+  logger?: Logger
 }): Promise<CreatedTokens> {
   const { signer, chainConfig, nftParams, service, owner } = params
 
@@ -137,7 +152,12 @@ export async function createNftWithService(params: {
     )
   }
 
-  const tx = await confirmTransaction('createNftWithDatatoken', response)
+  const tx = await confirmTransaction(
+    'createNftWithDatatoken',
+    response,
+    signer,
+    chainConfig.nftFactoryAddress
+  )
 
   const nftCreated = getEventFromTx(tx, 'NFTCreated')
   const tokenCreated = getEventFromTx(tx, 'TokenCreated')
@@ -150,10 +170,11 @@ export async function createNftWithService(params: {
       'The bundle transaction confirmed but emitted no NFTCreated/TokenCreated events. Check that nftFactoryAddress points at a current ERC721Factory.'
     )
 
-  LoggerInstance.debug('[publish] created NFT and datatoken', {
-    nftAddress,
-    datatokenAddress
-  })
+  ;(params.logger ?? log).emit(
+    'publish.tokens.created',
+    'Created the NFT and its datatoken.',
+    { nftAddress, datatokenAddress, txHash: tx.hash }
+  )
 
   return { nftAddress, datatokenAddress, tx }
 }
@@ -184,19 +205,26 @@ export async function createDatatokenForService(params: {
   const nft = new Nft(signer, chainConfig.chainId, chainConfig)
   const datatokenParams = service.datatokenCreateParams
 
-  const datatokenAddress = await nft.createDatatoken(
-    nftAddress,
-    owner,
-    owner,
-    owner,
-    datatokenParams.mpFeeAddress,
-    datatokenParams.feeToken,
-    datatokenParams.feeAmount,
-    datatokenParams.cap,
-    datatokenParams.name,
-    datatokenParams.symbol,
-    datatokenParams.templateIndex
-  )
+  let datatokenAddress: unknown
+  try {
+    datatokenAddress = await nft.createDatatoken(
+      nftAddress,
+      owner,
+      owner,
+      owner,
+      datatokenParams.mpFeeAddress,
+      datatokenParams.feeToken,
+      datatokenParams.feeAmount,
+      datatokenParams.cap,
+      datatokenParams.name,
+      datatokenParams.symbol,
+      datatokenParams.templateIndex
+    )
+  } catch (error) {
+    // ocean.js says only "Failed to send createDatatoken transaction"; the nonce guard
+    // recorded why.
+    throw withSendFailure(signer, error, nftAddress)
+  }
 
   if (typeof datatokenAddress !== 'string')
     throw new Error('createDatatoken did not return a datatoken address.')
@@ -286,7 +314,7 @@ export async function createPricingForDatatoken(params: {
     )
   }
 
-  return confirmTransaction('createPricing', response)
+  return confirmTransaction('createPricing', response, signer, datatokenAddress)
 }
 
 /**
@@ -314,8 +342,8 @@ export class PublishIncompleteError extends Error {
 
     super(
       stored?.cleanup === 'kept'
-        ? `Publishing NFT ${nftAddress} failed after its metadata transaction${stored.txHash ? ` ${stored.txHash}` : ''} was sent: ${reason}. The transaction may still be mined. Wait until it is mined or dropped before calling completePublish() with this nftAddress and the same asset${stored.txHash ? ' (pass { metadataTxHash: error.stored.txHash })' : ''}: it refuses an NFT that already has metadata, and while that transaction or any other transaction of the signer is still pending.`
-        : `Publishing stopped after NFT ${nftAddress} was created, so it has no metadata yet: ${reason}. Call completePublish() with this nftAddress and the same asset to finish it.`,
+        ? `Publishing NFT ${nftAddress} failed after its metadata transaction${stored.txHash ? ` ${stored.txHash}` : ''} was sent: ${endSentence(reason)} The transaction may still be mined. Wait until it is mined or dropped before calling completePublish() with this nftAddress and the same asset${stored.txHash ? ' (pass { metadataTxHash: error.stored.txHash })' : ''}: it refuses an NFT that already has metadata, and while that transaction or any other transaction of the signer is still pending.`
+        : `Publishing stopped after NFT ${nftAddress} was created, so it has no metadata yet: ${endSentence(reason)} Call completePublish() with this nftAddress and the same asset to finish it.`,
       { cause }
     )
     this.name = 'PublishIncompleteError'
@@ -560,14 +588,17 @@ export async function prepareMetadataForWrite(params: {
     })
   }
 
+  // Redacted once (one debug event), and copied, so the two fields stay independent.
+  const redacted = redactPointer(pointer.remote)
+
   return {
     written: {
       metadata,
       metadataHash,
       flags: ENCRYPTED_METADATA_FLAGS,
       credential,
-      pointer: { remote: redactPointer(pointer.remote) },
-      stored: { pointer: redactPointer(pointer.remote), metadataHash },
+      pointer: { remote: redacted },
+      stored: { pointer: structuredClone(redacted), metadataHash },
       encryptedBy: node.nodeUri
     },
     // The snapshot that was validated and encrypted, not the store's live object.
@@ -589,12 +620,13 @@ export type MetadataWriteProgress = 'sent' | 'reverted'
  * ethers error codes that mean the transaction was never broadcast: the wallet refused to
  * sign it, or the signer or the RPC refused it before accepting it. Any other failure of
  * the send (a timeout, a network or server error, a custom signer's own error) may come
- * after the broadcast, so it counts as sent.
+ * after the broadcast, so it counts as sent. A refusal for the nonce
+ * (`REPLACEMENT_UNDERPRICED`, `NONCE_EXPIRED`, "already known") is none of them: the same
+ * transaction may be the one already on chain, which only `provenNotWritten()` rules out.
  */
 const NOT_BROADCAST_CODES = [
   'ACTION_REJECTED',
   'INSUFFICIENT_FUNDS',
-  'REPLACEMENT_UNDERPRICED',
   'INVALID_ARGUMENT',
   'UNSUPPORTED_OPERATION'
 ] as const
@@ -676,6 +708,8 @@ export async function writeMetadata(params: {
   lifecycleState: number
   prepared: PreparedWrite
   onProgress?: (progress: MetadataWriteProgress, txHash?: string) => void
+  /** Where this call's log events go. Default: the process-wide logger. */
+  logger?: Logger
 }): Promise<TransactionReceipt> {
   const { signer, chainConfig, nftAddress, nodeUri, lifecycleState } = params
   const prepared = params.prepared.written
@@ -695,7 +729,8 @@ export async function writeMetadata(params: {
     `NFT ${nftAddress}`
   )
 
-  LoggerInstance.debug('[publish] writing metadata', {
+  const logger = params.logger ?? log
+  logger.emit('publish.metadata.sending', 'Sending the metadata transaction.', {
     nftAddress,
     lifecycleState,
     flags: prepared.flags
@@ -720,21 +755,55 @@ export async function writeMetadata(params: {
     const response = await nft.setMetadata(...args)
     params.onProgress?.('sent', hashOf(response))
 
-    return confirmTransaction('setMetadata', response)
+    return confirmTransaction('setMetadata', response, signer, nftAddress)
   }
 
   // Throws before anything is sent: the permission read or the gas estimate failed.
   const request = await nft.setMetadataTx(...args)
 
+  // Where to look for this write's metadata event, should the send be refused for its nonce.
+  const fromBlock = await currentBlock(signer)
+
   let response: TransactionResponse
   try {
     response = await signer.sendTransaction(request)
   } catch (error) {
-    if (!neverBroadcast(error))
+    // Thrown straight to here, not swallowed by ocean.js: nothing else reads the record.
+    guardOf(signer)?.sends.forget(error)
+
+    const refused = refusedAttempts(error)
+    if (refused) {
+      const { attempts } = refused
+      // A send whose transactions are not all known cannot be proven unsent.
+      const proven =
+        refused.complete &&
+        (await provenNotWritten({
+          signer,
+          publisher,
+          attempts,
+          nftAddress,
+          metadataHash: prepared.metadataHash,
+          fromBlock
+        }))
+      logger.emit(
+        'publish.metadata.nonce_refused',
+        proven
+          ? 'The metadata transaction was refused for its nonce and is proven never mined: the stored envelope can go.'
+          : 'The metadata transaction was refused for its nonce, and it cannot be proven that it was never mined: the stored envelope is kept.',
+        {
+          nftAddress,
+          attempts: attempts.map((attempt) => attempt.hash),
+          proven
+        }
+      )
+      if (!proven) params.onProgress?.('sent', attempts.at(-1)?.hash)
+    } else if (!neverBroadcast(error))
       params.onProgress?.('sent', sentTransactionHash(error))
-    throw error
+
+    throw withoutSignedTransaction(error)
   }
   params.onProgress?.('sent', response.hash)
+  guardOf(signer)?.sends.settle(response.hash)
 
   let receipt: TransactionReceipt | null
   let sped: TransactionReceipt | undefined
@@ -744,10 +813,11 @@ export async function writeMetadata(params: {
     sped = repricedReceipt(error)
 
     if (sped) {
-      LoggerInstance.debug('[publish] metadata transaction was sped up', {
-        sent: response.hash,
-        mined: sped.hash
-      })
+      logger.emit(
+        'publish.metadata.replaced',
+        'The metadata transaction was replaced in the wallet; the replacement was mined.',
+        { sent: response.hash, mined: sped.hash, txHash: sped.hash }
+      )
       receipt = sped
     } else {
       const unchanged = unchangedBy(error)
@@ -779,6 +849,108 @@ export async function writeMetadata(params: {
   }
 
   return receipt
+}
+
+/**
+ * The signed transactions of a send refused for its nonce: the nonce guard's attempts, or
+ * the one an ethers refusal carries (none when it carries none), and whether they are all
+ * the transactions the send may have broadcast (`complete`). `undefined` when the failure
+ * is not a refusal for the nonce.
+ */
+function refusedAttempts(
+  error: unknown
+): { attempts: SentAttempt[]; complete: boolean } | undefined {
+  if (error instanceof NonceGuardError)
+    return { attempts: error.attempts, complete: error.attemptsComplete }
+  if (!nonceRefusalOf(error)) return undefined
+
+  const raw = signedTransactionOf(error)
+  try {
+    const decoded = raw ? Transaction.from(raw) : undefined
+    return decoded?.hash
+      ? {
+          attempts: [{ hash: decoded.hash, nonce: decoded.nonce }],
+          complete: true
+        }
+      : { attempts: [], complete: false }
+  } catch {
+    return { attempts: [], complete: false }
+  }
+}
+
+/**
+ * Whether a metadata write refused for its nonce provably changed nothing, so its envelope
+ * can be removed: (a) none of its transactions known on two reads (the second through the
+ * `verificationProvider` when configured), (b) the publisher's mined count at each
+ * provider's finalized block past their nonces, so other transactions used them for good
+ * (a nonce used only in unfinalized blocks can come free again in a reorg; an RPC without
+ * a `finalized` block proves nothing), and (c) no `MetadataCreated`/`MetadataUpdated` of
+ * the NFT carrying this `metadataHash` since just before the send. (c) is read from each
+ * provider up to a block it names (`toBlock` its head, not `'latest'`, which a
+ * load-balanced RPC may answer from a backend further behind), at or above its finalized
+ * block: so the logs cover the block that used each nonce. Anything not proven, including
+ * a read that fails, keeps the envelope.
+ */
+async function provenNotWritten(params: {
+  signer: Signer
+  publisher: string
+  attempts: SentAttempt[]
+  nftAddress: string
+  metadataHash: string
+  fromBlock?: number
+}): Promise<boolean> {
+  const provider = params.signer.provider
+  const { fromBlock, attempts, publisher } = params
+  if (!provider || fromBlock === undefined || !attempts.length) return false
+
+  const second = guardOf(params.signer)?.verificationProvider
+
+  if (
+    !(await provenNeverSent({
+      provider,
+      second,
+      address: publisher,
+      attempts
+    }))
+  )
+    return false
+
+  const highest = Math.max(...attempts.map((attempt) => attempt.nonce))
+  const hash = params.metadataHash.replace(/^0x/i, '').toLowerCase()
+
+  try {
+    for (const each of new Set([provider, second ?? provider])) {
+      // Read first: a block at or below it, read afterwards, is final. A nonce used only
+      // above it can come free again in a reorg, and the metadata transaction mine.
+      const finalized = (await each.getBlock('finalized'))?.number
+      if (typeof finalized !== 'number') return false
+      const head = await each.getBlockNumber()
+      if (head < fromBlock || head < finalized) return false
+      if ((await each.getTransactionCount(publisher, finalized)) <= highest)
+        return false
+
+      const logs = await each.getLogs({
+        address: params.nftAddress,
+        fromBlock,
+        toBlock: head,
+        topics: [METADATA_EVENT_TOPICS]
+      })
+      if (logs.some((entry) => entry.data.toLowerCase().includes(hash)))
+        return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** The latest block number, or `undefined` when it cannot be read. */
+async function currentBlock(signer: Signer): Promise<number | undefined> {
+  try {
+    return await signer.provider?.getBlockNumber()
+  } catch {
+    return undefined
+  }
 }
 
 /** A transaction hash on whatever a send returned, if it has one. */

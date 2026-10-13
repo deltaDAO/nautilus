@@ -28,6 +28,8 @@ import {
   getService,
   getServiceCredentials
 } from '../ddo/read.js'
+import { debugEnabled, debugRaw } from '../log/debug.js'
+import { sanitize, sessionIdRemover } from '../node/messages.js'
 import {
   type OceanNodeClient,
   PolicyServerAction
@@ -45,6 +47,9 @@ import {
   type WaltIdSession,
   type WaltIdWallet
 } from './waltid/client.js'
+
+/** How much of the wallet's rejection goes into a `CredentialPresentationError`. */
+const MAX_PRESENTATION_ERROR_LENGTH = 500
 
 export interface WaltIdCredentialProviderOptions {
   /** Base URL of the walt.id wallet API. Ignored if `wallet` is supplied. */
@@ -80,13 +85,59 @@ export interface WaltIdCredentialProviderOptions {
   onSelectDid?: (dids: WaltIdDidRef[]) => Promise<string>
 }
 
-/** Raised when the wallet could not answer the presentation request, carrying the reason where known. */
+/**
+ * Why a presentation failed, as `CredentialPresentationError.reason`:
+ *
+ * - `verifier-rejected`: the wallet posted the presentation and the verifier refused it
+ *   (`details.errorMessage` says what the wallet reported);
+ * - `wallet-failed`: the wallet answered the presentation with an error of its own, before
+ *   the verifier (`details.errorMessage`);
+ * - `no-matching-credential`: the wallet holds no credential of the requested types that
+ *   satisfies the presentation definition;
+ * - `none-selected`: `onSelectCredentials` chose none of the matches;
+ * - `wallet-setup`: no wallet session, wallet or DID, or the wallet is another account's;
+ * - `request-invalid`: the presentation request or definition was refused before anything
+ *   was presented (not an `openid4vp://` URL, an insecure or link-local URI, a credential
+ *   type the asset does not ask for, no definition).
+ */
+export type CredentialPresentationReason =
+  | 'verifier-rejected'
+  | 'wallet-failed'
+  | 'no-matching-credential'
+  | 'none-selected'
+  | 'wallet-setup'
+  | 'request-invalid'
+
+/**
+ * Raised when the wallet could not answer the presentation request. `reason` says which step
+ * failed; `details` carries what is known, never the presentation, the wallet's redirect URI
+ * or the policy-server session id.
+ *
+ * When the verifier refused the presentation, `PolicySessionResolver` asks the node for the
+ * verifier's per-policy results and, when they name failed policies, throws a
+ * `PolicyDeniedError` with this error as its `cause`.
+ */
 export class CredentialPresentationError extends Error {
+  /**
+   * Which step failed. A custom provider that does not say is `'wallet-failed'`: a step
+   * before the verifier, so `PolicySessionResolver` does not ask the verifier which policy
+   * failed. Pass `'verifier-rejected'` when the verifier refused the presentation.
+   */
+  readonly reason: CredentialPresentationReason
+  /**
+   * For `verifier-rejected` and `wallet-failed`: `{ errorMessage }`, the wallet's message,
+   * redacted and bounded. For `no-matching-credential`: what the wallet reports missing.
+   */
   readonly details?: unknown
 
-  constructor(message: string, details?: unknown) {
+  constructor(
+    message: string,
+    details?: unknown,
+    reason: CredentialPresentationReason = 'wallet-failed'
+  ) {
     super(message)
     this.name = 'CredentialPresentationError'
+    this.reason = reason
     this.details = details
   }
 }
@@ -122,7 +173,9 @@ export class WaltIdCredentialProvider implements CredentialProvider {
 
     if (signerAddress.toLowerCase() !== challenge.consumerAddress.toLowerCase())
       throw new CredentialPresentationError(
-        `The wallet belongs to ${signerAddress}, but the session is bound to ${challenge.consumerAddress}. Use a provider whose signer is the consumer's.`
+        `The wallet belongs to ${signerAddress}, but the session is bound to ${challenge.consumerAddress}. Use a provider whose signer is the consumer's.`,
+        undefined,
+        'wallet-setup'
       )
 
     const service = getService(challenge.asset, challenge.serviceId)
@@ -133,7 +186,9 @@ export class WaltIdCredentialProvider implements CredentialProvider {
 
     if (!requestedTypes.size)
       throw new CredentialPresentationError(
-        `Service ${challenge.serviceId} of ${challenge.asset.id} asks for no credential type, so there is nothing to present.`
+        `Service ${challenge.serviceId} of ${challenge.asset.id} asks for no credential type, so there is nothing to present.`,
+        undefined,
+        'request-invalid'
       )
 
     assertPresentationRequest(
@@ -154,7 +209,8 @@ export class WaltIdCredentialProvider implements CredentialProvider {
       signer,
       presentationDefinition,
       challenge.redirectUri,
-      requestedTypes
+      requestedTypes,
+      challenge.sessionId
     )
   }
 
@@ -171,7 +227,9 @@ export class WaltIdCredentialProvider implements CredentialProvider {
 
     if (!definition)
       throw new CredentialPresentationError(
-        'The policy server returned no presentation definition.'
+        'The policy server returned no presentation definition.',
+        undefined,
+        'request-invalid'
       )
 
     return definition
@@ -181,7 +239,8 @@ export class WaltIdCredentialProvider implements CredentialProvider {
     signer: Signer,
     presentationDefinition: unknown,
     presentationRequest: string,
-    requestedTypes: Set<string>
+    requestedTypes: Set<string>,
+    sessionId: string
   ): Promise<void> {
     const { token } = await this.getWalletSession(signer)
     const walletId = await this.getWalletId(token)
@@ -203,7 +262,8 @@ export class WaltIdCredentialProvider implements CredentialProvider {
 
       throw new CredentialPresentationError(
         `The wallet holds no credential of the requested types (${[...requestedTypes].join(', ')}) satisfying the presentation definition.`,
-        missing
+        missing,
+        'no-matching-credential'
       )
     }
 
@@ -219,7 +279,9 @@ export class WaltIdCredentialProvider implements CredentialProvider {
 
     if (!selected.length)
       throw new CredentialPresentationError(
-        'No credentials were selected to present.'
+        'No credentials were selected to present.',
+        undefined,
+        'none-selected'
       )
 
     const did = await this.getDid(walletId, token)
@@ -230,6 +292,9 @@ export class WaltIdCredentialProvider implements CredentialProvider {
       token
     )
 
+    if (debugEnabled('sensitive', 'wallet'))
+      debugRaw('wallet', 'resolved presentation request', resolved)
+
     const result = await this.wallet.usePresentationRequest(
       walletId,
       did,
@@ -238,11 +303,43 @@ export class WaltIdCredentialProvider implements CredentialProvider {
       token
     )
 
-    if (result.errorMessage || result.redirectUri?.includes('error'))
+    if (debugEnabled('sensitive', 'wallet'))
+      debugRaw('wallet', 'presentation answer', result)
+
+    if (
+      result.rejectedBy ||
+      result.errorMessage ||
+      result.redirectUri?.includes('error')
+    ) {
+      // The raw answer went to the debug channel. The error keeps the wallet's message only,
+      // redacted: an error redirect carries the policy-server session id, and so does the
+      // verifier's text for an expired or unknown session, which the wallet passes on. The
+      // id is removed before sanitising, so no redaction or cut splits it, and again after:
+      // deleting a control character (`custom-\u0007session-…`) or decoding a JSON escape
+      // can join it, and the cut can leave its start before the closing `…`.
+      const remove = sessionIdRemover(sessionId)
+      const errorMessage = result.errorMessage
+        ? remove(
+            sanitize(
+              remove(result.errorMessage),
+              MAX_PRESENTATION_ERROR_LENGTH,
+              null
+            )
+          )
+        : undefined
+      const reason =
+        result.rejectedBy === 'wallet' ? 'wallet-failed' : 'verifier-rejected'
+      const what =
+        reason === 'wallet-failed'
+          ? 'The wallet could not present the credentials'
+          : 'The verifier rejected the presentation'
+
       throw new CredentialPresentationError(
-        result.errorMessage || 'The verifier rejected the presentation.',
-        result
+        errorMessage ? `${what}: ${errorMessage}` : `${what}.`,
+        errorMessage ? { errorMessage } : undefined,
+        reason
       )
+    }
   }
 
   private async getWalletSession(signer: Signer): Promise<WaltIdSession> {
@@ -253,7 +350,9 @@ export class WaltIdCredentialProvider implements CredentialProvider {
 
     if (!this.session?.token)
       throw new CredentialPresentationError(
-        'walt.id did not return a session token for this account.'
+        'walt.id did not return a session token for this account.',
+        undefined,
+        'wallet-setup'
       )
 
     return this.session
@@ -267,7 +366,9 @@ export class WaltIdCredentialProvider implements CredentialProvider {
 
     if (!wallets.length)
       throw new CredentialPresentationError(
-        'This walt.id account owns no wallet.'
+        'This walt.id account owns no wallet.',
+        undefined,
+        'wallet-setup'
       )
 
     this.resolvedWalletId = wallets[0].id
@@ -281,7 +382,11 @@ export class WaltIdCredentialProvider implements CredentialProvider {
     const dids = await this.wallet.listDids(walletId, token)
 
     if (!dids.length)
-      throw new CredentialPresentationError('This walt.id wallet holds no DID.')
+      throw new CredentialPresentationError(
+        'This walt.id wallet holds no DID.',
+        undefined,
+        'wallet-setup'
+      )
 
     if (this.options.onSelectDid) return this.options.onSelectDid(dids)
 
@@ -325,13 +430,17 @@ function assertPresentationRequest(
     request = new URL(redirectUri)
   } catch {
     throw new CredentialPresentationError(
-      'The presentation request is not a URL.'
+      'The presentation request is not a URL.',
+      undefined,
+      'request-invalid'
     )
   }
 
   if (request.protocol !== 'openid4vp:')
     throw new CredentialPresentationError(
-      `The presentation request must be an openid4vp:// URL, not ${request.protocol}`
+      `The presentation request must be an openid4vp:// URL, not ${request.protocol}`,
+      undefined,
+      'request-invalid'
     )
 
   for (const param of PRESENTATION_URI_PARAMS) {
@@ -343,7 +452,9 @@ function assertPresentationRequest(
       url = new URL(value)
     } catch {
       throw new CredentialPresentationError(
-        `The presentation request's ${param} is not a URL.`
+        `The presentation request's ${param} is not a URL.`,
+        undefined,
+        'request-invalid'
       )
     }
 
@@ -358,12 +469,16 @@ function assertPresentationRequest(
 
     if (!allowedScheme)
       throw new CredentialPresentationError(
-        `The presentation request's ${param} must be https:// (http:// only on a loopback host, or with allowInsecureTransport), not ${url.protocol}//${host}.`
+        `The presentation request's ${param} must be https:// (http:// only on a loopback host, or with allowInsecureTransport), not ${url.protocol}//${host}.`,
+        undefined,
+        'request-invalid'
       )
 
     if (METADATA_HOSTS.has(host) || isLinkLocal(host))
       throw new CredentialPresentationError(
-        `The presentation request's ${param} points at a link-local or metadata address (${host}).`
+        `The presentation request's ${param} points at a link-local or metadata address (${host}).`,
+        undefined,
+        'request-invalid'
       )
   }
 }
@@ -390,7 +505,9 @@ function assertDefinitionRequests(
 
   if (!Array.isArray(descriptors) || !descriptors.length)
     throw new CredentialPresentationError(
-      'The presentation definition has no input descriptors.'
+      'The presentation definition has no input descriptors.',
+      undefined,
+      'request-invalid'
     )
 
   for (const descriptor of descriptors) {
@@ -412,7 +529,9 @@ function assertDefinitionRequests(
 
     if (unrequested !== undefined)
       throw new CredentialPresentationError(
-        `The presentation definition asks for ${JSON.stringify(unrequested)?.slice(0, 100)}, which the service does not request (it requests ${[...requestedTypes].join(', ')}).`
+        `The presentation definition asks for ${JSON.stringify(unrequested)?.slice(0, 100)}, which the service does not request (it requests ${[...requestedTypes].join(', ')}).`,
+        undefined,
+        'request-invalid'
       )
   }
 }

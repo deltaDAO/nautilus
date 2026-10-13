@@ -318,7 +318,16 @@ export class AssetBuilder implements IAssetBuilder {
     return this
   }
 
-  /** Presentation-level checks, e.g. `holder-binding`, `minimum-credentials`. */
+  /**
+   * Presentation-level checks. The safe set is
+   * `[{ policy: 'signature' }, { policy: 'minimum-credentials', args: '1' }]`: `signature`
+   * checks the presentation's own signature (walt.id runs only the VP policies listed), and
+   * `minimum-credentials` needs its argument (a bare one fails every presentation).
+   *
+   * Leave out `holder-binding` for `vc+jwt` and URL-subject credentials such as Gaia-X
+   * `gx:LegalPerson`: it reads the credential's `sub` and fails (`NullPointerException`) when
+   * there is none. A refusal names the failed policies (`PolicyDeniedError.policyResults`).
+   */
   setVpPolicies(list: CredentialListTypes, policies: VpPolicy[]) {
     this.asset.ddo.credentials = setVpPolicies(
       this.asset.ddo.credentials,

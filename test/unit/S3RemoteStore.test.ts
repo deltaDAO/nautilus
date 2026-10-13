@@ -11,9 +11,8 @@ import {
   type S3RemoteStoreOptions
 } from '../../src/remote/S3RemoteStore.js'
 import { signS3Request } from '../../src/remote/sigv4.js'
-import { resetWarnings } from '../../src/utils/warn.js'
 import { ASSET_DID } from '../fixtures/Asset.js'
-import { expectThrowsAsync } from '../helpers.js'
+import { captureLog, expectThrowsAsync } from '../helpers.js'
 import { createNodeMock } from '../mocks/node.js'
 
 const AWS_EXAMPLE = {
@@ -439,24 +438,23 @@ describe('S3RemoteStore', () => {
     })
 
     it('refuses one key for read and write unless allowed, and warns once when allowed', () => {
-      resetWarnings()
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const log = captureLog()
       const bucket = fakeBucket()
 
       expect(() => store(bucket, { readCredentials: WRITE })).to.throw(
         /same key.*allowSharedCredentials/
       )
-      expect(warn).not.toHaveBeenCalled()
+      expect(log.events).to.deep.equal([])
 
       store(bucket, { readCredentials: WRITE, allowSharedCredentials: true })
       store(bucket, { readCredentials: WRITE, allowSharedCredentials: true })
 
-      expect(warn).toHaveBeenCalledTimes(1)
-      expect(String(warn.mock.calls[0][0])).to.match(
+      expect(log.events).to.have.length(1)
+      expect(log.events[0].event).to.equal('store.s3.shared_credentials')
+      expect(log.events[0].msg).to.match(
         /allowSharedCredentials is set, so the WRITE key WRITEKEY is written, node-encrypted, into every on-chain pointer, permanently/
       )
-      expect(String(warn.mock.calls[0][0])).not.to.contain('write-secret')
-      warn.mockRestore()
+      expect(JSON.stringify(log.events)).not.to.contain('write-secret')
     })
 
     it('requires https for the upload endpoint, except on loopback hosts', () => {
@@ -782,8 +780,7 @@ describe('S3RemoteStore', () => {
     })
 
     it('counts a probe that is already gone (404) as cleaned up', async () => {
-      resetWarnings()
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const log = captureLog()
       // The read key deletes the probe, so the write key's cleanup DELETE gets 404 NoSuchKey.
       const bucket = fakeBucket({
         readKeyCanDelete: true,
@@ -796,10 +793,9 @@ describe('S3RemoteStore', () => {
         method: 'DELETE',
         key: 'WRITEKEY'
       })
-      expect(String(warn.mock.calls[0][0])).to.match(
+      expect(log.named('store.s3.writable_read_key')[0].msg).to.match(
         /read credentials can delete/
       )
-      warn.mockRestore()
     })
 
     it('fails when the read key reads back different content', async () => {
@@ -810,17 +806,15 @@ describe('S3RemoteStore', () => {
     })
 
     it('accepts a writable read key when told to, with a warning', async () => {
-      resetWarnings()
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const log = captureLog()
       const bucket = fakeBucket({ readKeyCanWrite: true })
 
       await store(bucket, { allowWritableReadKey: true }).check()
 
       expect(bucket.objects.size).to.equal(0)
-      expect(String(warn.mock.calls[0][0])).to.match(
+      expect(log.named('store.s3.writable_read_key')[0].msg).to.match(
         /read credentials can write/
       )
-      warn.mockRestore()
     })
 
     it('names the missing bucket', async () => {

@@ -6,6 +6,46 @@ Provider, and DDO v5 instead of v4.1.0.
 
 This is a call-by-call map. If something is not listed, it did not change.
 
+## Upgrading from 2.0.0-beta.2
+
+### The signer is wrapped in a nonce guard
+
+`Nautilus.create` wraps your signer in a nonce guard that serialises sends per address and
+recovers from nonce collisions (see [Concurrency and nonces](/docs/guides/config#concurrency-and-nonces)).
+`getSigner()` returns that wrapper, not the object you passed in:
+
+```ts
+// before
+const wallet = nautilus.getSigner() as Wallet
+wallet.privateKey
+
+// after: keep your own reference
+const wallet = new Wallet(key, provider)
+const nautilus = await Nautilus.create(wallet, { config })
+```
+
+`confirmTransaction(operation, response)` takes the signer and the contract the call went
+to as optional third and fourth arguments, so its error can name why the send failed. To
+keep nautilus from setting nonces, pass `nonceManagement: 'off'`. For paid flows, also pass
+`verificationProvider` (a second RPC for the same chain, not the signer's own provider or
+URL, which `create` refuses): without it, an order refused for its nonce is never sent
+again.
+
+### ocean.js's log lines go through nautilus's logger
+
+ocean.js's own lines (its `LoggerInstance`) are captured by default: they print as redacted
+`oceanjs.logger.*` events on stderr (or to your `sink`), not on the console, and follow
+nautilus's level. ocean.js's payload dump after a refused compute start no longer shows the
+request's nonce and session ids. Code that read ocean.js's lines from `console.error` (e.g. a
+test spy) reads them from a `sink`, or spies on `LoggerInstance.error` itself; to keep the
+old output, unredacted:
+
+```ts
+Nautilus.configureLogging({ oceanjs: 'passthrough' })
+```
+
+See [`configureLogging`](/docs/api/nautilus/configureLogging#oceanjs).
+
 ## Upgrading from 2.0.0-beta.1
 
 ### VP policies
@@ -20,10 +60,23 @@ name with an object, so publish such an asset again.
  builder.setVpPolicies(CredentialListTypes.ALLOW, [
 -  'holder-binding',
 -  { policy: 'minimum-credentials', args: 1 }
-+  { policy: 'holder-binding' },
++  { policy: 'signature' },
 +  { policy: 'minimum-credentials', args: '1' }
  ])
 ```
+
+`minimum-credentials` needs its argument: without one it fails in the walt.id verifier for
+every presentation. Add `{ policy: 'signature' }`: walt.id checks the presentation's own
+signature only when a VP policy asks for it, and whether the policy server adds it is up to
+its operator.
+
+**Leave out `holder-binding` for `vc+jwt` credentials.** The beta.1 docs and examples required
+it. walt.id's `holder-binding` reads the credential JWT's `sub` and fails for credentials
+without `sub` (common for VCDM 2.0 `vc+jwt`) and URL-subject credentials such as Gaia-X
+`gx:LegalPerson`, so an asset that requires it refuses every holder of such a credential.
+Edit such assets with `setVpPolicies()`, and put issuer trust on the credential
+(`{ policy: 'allowed-issuer', args: [...] }` in the `policies` of a requested credential).
+See [publishing a gated asset](https://nautilus.delta-dao.com/docs/guides/identity#publishing-a-gated-asset).
 
 **Stored request credentials hold JSON strings.** `SsiPolicyValue.request_credentials` is
 now `StoredRequestCredential[]`, whose `policies` are JSON-encoded (`'signature'` is stored
@@ -80,7 +133,13 @@ status; `undefined` for a presentation), `reason` (its message, bounded) and, fo
 presentation, `policyResults` (each policy's name, outcome and error; never the presentation).
 It is not an `OceanNodeError`. Everything the node says itself still is, with the status: a
 rejected nonce or signature (401), an asset it has not indexed (404), a policy server it
-cannot reach (400), as are a network error, a timeout and a 5xx.
+cannot reach (400), as are a network error, a timeout and a 5xx. When the wallet reports the
+failure itself, nautilus asks the verifier which policies failed and throws the
+`PolicyDeniedError` with the wallet's error as its `cause`. A failure before the verifier (the
+wallet holds no matching credential, for example), or a refusal whose record names no failed
+policy, is the wallet's `CredentialPresentationError`, with a `reason` and, for a rejection,
+`details.errorMessage`. Don't send `policyResults` to a central log: a policy's error can
+quote a credential value.
 
 ```ts
 import { PolicyDeniedError } from '@deltadao/nautilus'
@@ -261,6 +320,41 @@ longer required: the address is read from the token's `address` claim, as ocean.
 
 **`PolicyDeniedError.consumerAddress` is the address sent**, which for a `Signer` is its own
 address, not the one in the request.
+
+### Access: no silent second payment
+
+**`access()` throws an `OrderCheckError` instead of ordering anew when it cannot check for
+an order you already hold.** When the on-chain lookup of a previous order fails (the RPC
+rate-limits it, does not answer, answers with an error, or answers without the data the
+check needs) or stops short (it cannot read
+back over the whole order window) and the service costs anything, nothing is bought:
+buying without the check could pay twice. Nothing was ordered or paid; the
+same call can be made again. "No previous order found" still orders, as before.
+
+A paid service whose orders never expire (`timeout: 0`), or whose timeout is longer than
+100 000 blocks, now needs `orderOnLookupFailure: true` for a purchase when no order is
+found in the last 100 000 blocks: an older one may still be in force.
+
+```ts
+// beta.1: a failed lookup ordered anew, silently
+const { url } = await nautilus.access({ assetDid })
+
+// now
+try {
+  const { url } = await nautilus.access({ assetDid })
+} catch (error) {
+  if (!(error instanceof OrderCheckError)) throw error
+  // Nothing was paid. Don't buy anyway on your own: that is the second payment this
+  // prevents. Show the message (cost, cause, what to do) and let the user decide; retrying
+  // later or with another RPC is the safe first step.
+  const costs = error.costs.map((c) => `${c.amount} ${c.symbol}`).join(' + ')
+  if (costs && (await askUser(`${error.message}\n\nBuy anyway, maybe paying ${costs} twice?`)))
+    await nautilus.access({ assetDid, orderOnLookupFailure: true })
+}
+```
+
+A free service is still ordered, now with a warning. Only `true` opts in. `compute()` makes
+no such lookup and is unchanged. See [`OrderCheckError`](https://nautilus.delta-dao.com/docs/api/nautilus/access#ordercheckerror).
 
 ## Upgrading from 2.0.0-beta.0
 
@@ -569,9 +663,11 @@ asset that should stay indexed. A node reindex replays the asset from its creati
 drops it from the index when that envelope is gone. See
 [cleaning up](https://nautilus.delta-dao.com/docs/guides/remote-stores#cleaning-up).
 
-**Know:** `DEPRECATED` and `REVOKED_BY_PUBLISHER` are one-way on ocean-node — the indexer
-replaces the DDO with a stub — so `publish()` and `edit()` refuse to write metadata in either
-state. See
+**Know:** `DEPRECATED` and `REVOKED_BY_PUBLISHER` are one-way, so `publish()` and `edit()`
+refuse to write metadata in either state. What the node serves afterwards depends on the
+node's version and database: ocean-node 4.2.x with Elasticsearch drops the DDO (`getAsset`
+answers 404); with Typesense it keeps a short document holding only the NFT state. Either
+way, read the state from the chain, not from the node. See
 [lifecycle states](https://nautilus.delta-dao.com/docs/api/nautilus/setAssetLifecycleState#states).
 
 ## 1. Dependencies
@@ -724,7 +820,10 @@ builder
     { type: 'VerifiableId', format: 'jwt_vc_json' }
   ])
   .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'not-before'])
-  .setVpPolicies(CredentialListTypes.ALLOW, [{ policy: 'minimum-credentials', args: '1' }])
+  .setVpPolicies(CredentialListTypes.ALLOW, [
+    { policy: 'signature' },
+    { policy: 'minimum-credentials', args: '1' }
+  ])
   .setCredentialMatchRules({ match_allow: 'all', match_deny: 'any' })
 ```
 

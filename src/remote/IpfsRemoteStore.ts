@@ -35,10 +35,13 @@
  * credentials (pass those in `headers`). Only the `gatewayUrl` read in `verify()` follows
  * redirects; every other request carries credentials or the envelope, so a redirect fails
  * it. Upstream error bodies are cut to 300 characters and scrubbed of the configured header
- * values and anything that looks like a token before they reach an error message; network
- * errors are rethrown without fetch's raw error as `cause`.
+ * values, of credentials in the configured URLs (a gateway token in the query) and of
+ * anything that looks like a token before they reach an error message; network errors are
+ * rethrown without fetch's raw error as `cause`.
  */
 import type { StorageObject } from '@oceanprotocol/lib'
+import { credentialsInUrl } from '../log/credentials.js'
+import { debugEnabled, debugRaw } from '../log/debug.js'
 import {
   errorMessage,
   fetchText,
@@ -145,6 +148,8 @@ export class IpfsRemoteStore implements RemoteStore {
   private readonly options: IpfsRemoteStoreOptions
   private readonly fetchImpl: typeof fetch
   private readonly requestTimeoutMs: number
+  /** Credentials in the configured URLs (a gateway token in the query, a key in the path). */
+  private readonly urlSecrets: string[]
 
   constructor(options: IpfsRemoteStoreOptions) {
     if (!options?.uploadUrl?.trim())
@@ -205,6 +210,12 @@ export class IpfsRemoteStore implements RemoteStore {
 
     this.options = options
     this.fetchImpl = options.fetchImpl || fetch
+    this.urlSecrets = [
+      options.uploadUrl,
+      options.gatewayUrl,
+      typeof options.probe === 'object' ? options.probe.url : undefined,
+      options.unpin ? options.unpin.url : undefined
+    ].flatMap(credentialsInUrl)
   }
 
   /**
@@ -473,13 +484,31 @@ export class IpfsRemoteStore implements RemoteStore {
     }
   }
 
-  /** An upstream body, cut short and without anything that could be a credential. */
+  /**
+   * An upstream body, cut short and without anything that could be a credential. The raw
+   * text goes to the sensitive debug channel (topic `store`), with the configured header
+   * values hidden below the `secrets` tier.
+   */
   private scrub(
     text: string,
     secrets: (Record<string, string> | undefined)[] = [],
     maxLength = MAX_BODY_IN_ERROR
   ): string {
-    return scrubSecrets(text, [this.options.headers, ...secrets], maxLength)
+    const headerSets = [this.options.headers, ...secrets]
+    const scrubbed = scrubSecrets(text, headerSets, maxLength, this.urlSecrets)
+    if (debugEnabled('sensitive', 'store') && scrubbed !== text)
+      debugRaw('store', 'IPFS answer before redaction', text, [
+        ...headerSets.flatMap((headers) =>
+          Object.values(headers ?? {}).flatMap((value) => [
+            String(value),
+            String(value)
+              .replace(/^(Bearer|Basic|Token)\s+/i, '')
+              .trim()
+          ])
+        ),
+        ...this.urlSecrets
+      ])
+    return scrubbed
   }
 }
 
@@ -494,9 +523,13 @@ export class IpfsRemoteStore implements RemoteStore {
 function scrubSecrets(
   text: string,
   headerSets: (Record<string, string> | undefined)[] = [],
-  maxLength = MAX_BODY_IN_ERROR
+  maxLength = MAX_BODY_IN_ERROR,
+  urlSecrets: readonly string[] = []
 ): string {
   let scrubbed = text
+
+  for (const secret of urlSecrets)
+    if (secret.length >= 4) scrubbed = scrubbed.split(secret).join('<redacted>')
 
   for (const headers of headerSets)
     for (const value of Object.values(headers ?? {})) {

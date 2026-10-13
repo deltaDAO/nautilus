@@ -18,7 +18,6 @@ import {
   Dispenser,
   FixedRateExchange,
   type FreOrderParams,
-  LoggerInstance,
   type OrderParams,
   type ProviderFees,
   ZERO_ADDRESS
@@ -30,6 +29,8 @@ import {
   type TransactionReceipt,
   type TransactionResponse
 } from 'ethers'
+import { type Logger, log } from '../log/logger.js'
+import { failureText, guardOf, withSendFailure } from './nonceGuard.js'
 import {
   assertProviderFeesAllowed,
   type ProviderFeeLimits,
@@ -82,6 +83,8 @@ export interface OrderRequest extends ProviderFeeLimits {
    * no other account can pay.
    */
   payer?: string
+  /** Where this call's log events go. Default: the process-wide logger. */
+  logger?: Logger
 }
 
 export interface OrderResult {
@@ -150,7 +153,12 @@ export async function reuseOrder(
     params.providerFees
   )
 
-  const receipt = await confirm('reuseOrder', response)
+  const receipt = await confirm(
+    'reuseOrder',
+    response,
+    params.signer,
+    params.datatokenAddress
+  )
 
   return { transferTxId: receipt.hash, reused: true }
 }
@@ -185,12 +193,16 @@ export async function order(request: OrderRequest): Promise<OrderResult> {
     _consumeMarketFee: NO_CONSUME_MARKET_FEE
   }
 
-  LoggerInstance.debug('[order] ordering', {
-    schema: pricing.schema,
-    templateId: pricing.templateId,
-    datatoken: pricing.datatokenAddress,
-    total: price.total
-  })
+  ;(request.logger ?? log).emit(
+    'access.order.sending',
+    'Sending the datatoken order.',
+    () => ({
+      schema: pricing.schema,
+      templateId: pricing.templateId,
+      datatokenAddress: pricing.datatokenAddress,
+      total: price.total
+    })
+  )
 
   // 2. One approval per (token, spender), covering every amount it pulls.
   for (const allowance of allowances)
@@ -490,13 +502,20 @@ async function orderFixed(
         pricing.datatokenAddress,
         orderParams,
         freParams
-      )
+      ),
+      signer,
+      pricing.datatokenAddress
     )
 
     return { transferTxId: receipt.hash, reused: false }
   }
 
-  const exchange = new FixedRateExchange(route.exchangeAddress, signer)
+  const exchange = new FixedRateExchange(
+    route.exchangeAddress,
+    signer,
+    request.config.chainId,
+    request.config
+  )
 
   await confirm(
     'buyDatatokens',
@@ -506,7 +525,9 @@ async function orderFixed(
       price.total,
       route.consumeMarket.address,
       route.consumeMarket.fee
-    )
+    ),
+    signer,
+    route.exchangeAddress
   )
 
   return startOrder(datatoken, pricing.datatokenAddress, orderParams)
@@ -529,17 +550,26 @@ async function orderFree(
         pricing.datatokenAddress,
         orderParams,
         route.dispenserAddress
-      )
+      ),
+      signer,
+      pricing.datatokenAddress
     )
 
     return { transferTxId: receipt.hash, reused: false }
   }
 
-  const dispenser = new Dispenser(route.dispenserAddress, signer)
+  const dispenser = new Dispenser(
+    route.dispenserAddress,
+    signer,
+    request.config.chainId,
+    request.config
+  )
 
   await confirm(
     'dispense',
-    await dispenser.dispense(pricing.datatokenAddress, '1', payer)
+    await dispenser.dispense(pricing.datatokenAddress, '1', payer),
+    signer,
+    route.dispenserAddress
   )
 
   return startOrder(datatoken, pricing.datatokenAddress, orderParams)
@@ -578,7 +608,9 @@ async function startOrder(
       orderParams.serviceIndex,
       orderParams._providerFee,
       orderParams._consumeMarketFee
-    )
+    ),
+    datatoken.signer,
+    datatokenAddress
   )
 
   return { transferTxId: receipt.hash, reused: false }
@@ -626,8 +658,12 @@ export async function approveFeeWei(params: {
   // ocean.js waits for the approval itself but swallows a failed send and returns null;
   // surface that here rather than letting the order revert on a missing allowance.
   if (!response)
-    throw new Error(
-      `Could not approve the ${params.what} of ${amount} wei on token ${token} for ${spender}.`
+    throw withSendFailure(
+      signer,
+      new Error(
+        `Could not approve the ${params.what} of ${amount} wei on token ${token} for ${spender}.`
+      ),
+      token
     )
 }
 
@@ -719,7 +755,12 @@ async function approveSpend(params: {
   // `approve` returns a number when the existing allowance already suffices.
   if (typeof response === 'number') return
 
-  await confirm('approve', response as unknown as TransactionResponse)
+  await confirm(
+    'approve',
+    response as unknown as TransactionResponse,
+    params.signer,
+    params.token
+  )
 }
 
 /**
@@ -729,15 +770,39 @@ async function approveSpend(params: {
  * without this a failed transaction looks like a successful call returning nothing. It
  * awaits the receipt inside the same `try`, so `null` can also mean the transaction was
  * broadcast and then reverted or timed out.
+ *
+ * With the signer the transaction was sent with, and when that is the nonce guard
+ * `Nautilus.create()` installs, a `null` names the send failure the guard recorded (the
+ * wallet's or RPC's refusal, or the guard's `NonceGuardError`), which is also the error's
+ * `cause` (a sanitised copy of a wallet's or RPC's error: no URL, request or signed
+ * transaction); with `to`, the contract the call went to, only a failure of a send to that
+ * contract, and only when it is the only send there on record (concurrent calls to one
+ * contract cannot be told apart, and keep the generic message).
  */
 async function confirm(
   operation: string,
-  response: TransactionResponse | unknown
+  response: TransactionResponse | unknown,
+  signer?: Signer,
+  to?: string
 ): Promise<TransactionReceipt> {
-  if (!response)
+  const guard = guardOf(signer)
+
+  if (!response) {
+    const failure = guard?.takeFailure(to)
+
+    if (failure)
+      throw new Error(`${operation} failed: ${failureText(failure)}`, {
+        cause: failure.error
+      })
+
     throw new Error(
       `${operation} failed: ocean.js returned no transaction. The wallet or RPC rejected it, or it was sent and then reverted or timed out; ocean.js does not say which, so check the account's latest transactions before retrying.`
     )
+  }
+
+  // This send's record no longer competes with another call's failure.
+  const sentHash = (response as { hash?: unknown }).hash
+  if (guard && typeof sentHash === 'string') guard.sends.settle(sentHash)
 
   const tx = response as TransactionResponse
 

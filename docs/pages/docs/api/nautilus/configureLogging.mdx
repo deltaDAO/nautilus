@@ -1,0 +1,373 @@
+# configureLogging
+
+Configures nautilus's logging for the whole process: how much is printed, in which format,
+and where it goes.
+
+## Usage
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+
+Nautilus.configureLogging({ level: 'debug', format: 'json' }) // [!code focus]
+```
+
+nautilus has its own logger. It prints **structured, catalogued events**: each has a stable
+name such as `publish.preflight.denies_all`, a level, a component and a message, and its data
+is redacted before it is printed or handed to you. ocean.js's `LoggerInstance` is no longer
+used for nautilus's own lines, and ocean.js's own lines are routed through nautilus's logger
+too (the [`oceanjs`](#oceanjs) option).
+
+By default only warnings and errors print, to stderr: a readable line on a terminal, one JSON
+object per line otherwise.
+
+```
+[nautilus] [publish] warn: https://node.example.org has a policy server, and this asset's credentials have no address allow list … (publish.preflight.denies_all endpoint=https://node.example.org)
+```
+
+:::info
+Up to 2.0.0-beta.2, nautilus's warnings went to ocean.js's logger, whose default level is
+errors only, so most of them were never printed. They now print by default. To silence
+them, set `level: 'silent'` or `'error'`.
+:::
+
+## Returns
+
+`void`
+
+## Parameters
+
+### options
+
+- Type: `LoggingConfig`
+
+Only the options you pass change; an option passed as `undefined` goes back to its default.
+An unknown level, format or component throws a `TypeError`. An instance created with its own
+[`logger`](/docs/api/nautilus/create#logger) uses those options over these.
+
+#### level
+
+- Type: `'silent' | 'error' | 'warn' | 'info' | 'debug' | 'trace'`
+- Default: `'warn'`, or `NAUTILUS_LOG_LEVEL`
+
+The lowest level that prints.
+
+| Level | What it prints |
+|-------|----------------|
+| `error` | A failure that is not thrown to you, e.g. in a background task. |
+| `warn` | Something you must act on or know about: an asset nobody can consume, a node that checks no credentials, a capped job duration, an order lookup that failed. |
+| `info` | One line per operation milestone, with tx hashes, DIDs and durations. |
+| `debug` | Step detail: requests, retries, decisions, the transactions sent. |
+| `trace` | Per-request detail. |
+| `silent` | Nothing. |
+
+#### format
+
+- Type: `'pretty' | 'json'`
+- Default: `'pretty'` when stderr is a terminal, `'json'` otherwise, or `NAUTILUS_LOG_FORMAT`
+
+How the default stderr output is written. Ignored when a `sink` is set. In a browser,
+events go to the console (`console.warn`, `console.error`, …) as pretty lines.
+
+#### components
+
+- Type: `LogComponent[]`, of `'publish' | 'edit' | 'access' | 'compute' | 'lifecycle' | 'node' | 'chain' | 'store' | 'identity' | 'config' | 'oceanjs'`
+- Default: all, or `NAUTILUS_LOG_COMPONENTS`
+
+Only these components print their `info`, `debug` and `trace` events. Warnings and errors of
+every component always print.
+
+#### sink
+
+- Type: `(event: LogEvent) => void`
+
+Receives every event that passes the level and component filters, instead of stderr. Use
+it to hand nautilus's events to your own logger. A sink that throws is ignored.
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+declare const appLogger: Record<string, (data: object, msg: string) => void>
+// ---cut---
+Nautilus.configureLogging({
+  level: 'info',
+  sink: ({ level, event, msg, fields }) => // [!code focus]
+    appLogger[level]({ event, ...fields }, msg) // [!code focus]
+})
+```
+
+Each event is a `LogEvent`:
+
+| Property | Type | |
+|----------|------|-|
+| `time` | `string` | ISO 8601 timestamp. |
+| `level` | `'error' \| 'warn' \| 'info' \| 'debug' \| 'trace'` | |
+| `event` | `string` | The catalogued name, `component.step.outcome`. Stable: filter and alert on it, not on `msg`. |
+| `component` | `LogComponent` | |
+| `msg` | `string` | A readable sentence. It may change between versions. |
+| `opId` | `string` | The [operation](#telling-operations-apart) the event belongs to: 12 random hex characters, the same on every event of one call. Unset outside one. |
+| `operation` | `string` | The call `opId` belongs to, e.g. `publish` or `getComputeResult`. |
+| `did`, `txHash`, `durationMs` | | Set when the event is about an asset, a transaction or a timed step. |
+| `fields` | `Record<string, unknown>` | The event's own data. |
+
+The catalogue of every event, with its level, component and fields, is exported as
+`LOG_EVENTS`.
+
+**Redaction.** Before any sink or stderr sees an event, its fields are redacted by key, in
+nested objects and class instances too. Keys are compared without case, `-`, `_`,
+whitespace or invisible characters, and matched whole, however long, so `session_id`,
+`Session-Id` and `sessionId` are one key:
+
+- the keys `nonce`, `sid`, `auth`, `bearer`, `seed`, `pk`, `privkey`, `otp`, `pin`, `hmac`,
+  `dkey`, `sig`, `pass`, `pwd` and `requestUri`, any key holding `privateKey` or `privKey`
+  (`privateKeyHex`), any key ending in the word `pass` (`DB_PASS`, `dbPass`, but not
+  `bypass`), and any key ending in a credential name (`secret`, `secretAccessKey`,
+  `password`, `passphrase`, `mnemonic`, `seedPhrase`, `apiKey`, `privateKey`, `sessionId`,
+  `signature`, `cookie`, `jwt`, `authorization`, `basicAuth`, `authorizationCode`,
+  `preAuthorizedCode`, `credentials`, `presentation`, `signedTx`, `rawTx`, …) become
+  `<redacted>`. The first group matches only as the whole key, so `decryptNonce` stays
+  readable;
+- any key ending in `key` or `auth` (`accessKey`, `encryptionKey`, `AccountKey`, `apiAuth`,
+  `x-auth`) becomes `<redacted>`, except `key`, `publicKey` and `objectKey`. Every key the
+  `sensitive` debug tier hides is redacted here too;
+- any key ending in `token` (`token`, `accessToken`, `sessionToken`, `X-Amz-Security-Token`,
+  `csrfToken`, …) becomes `<redacted>` unless its value is an EVM address, so
+  `paymentToken` stays readable;
+- `code` and the keys of one-time codes (`otpCode`, `recoveryCode`, `verificationCode`,
+  `userCode`, `txCode`, …) become `<redacted>` unless the value reads as an error code: an
+  upper-case constant with an underscore (`SERVER_ERROR`), a Node system error
+  (`ECONNREFUSED`), a negative JSON-RPC code (`-32005`) or ethers' `TIMEOUT` and `CANCELLED`.
+  An OAuth or openid4vp authorization code is redacted; other `…code` keys (`exitCode`,
+  `bytecode`, `statusCode`, `errorCode`) stay readable;
+- any `url` or `uri` (and `endpoint`, `nodeUri`, …) is reduced to its origin;
+- an `error` is reduced to its name and message, followed by up to two levels of its
+  `cause` (`… (cause: …)`), each with control characters stripped and credentials redacted;
+- a byte array (`Uint8Array`, `Buffer`, `ArrayBuffer`) is shown as `[N bytes]`.
+
+Every other text, the message and error messages included, has URLs reduced to their origin,
+and the value of every key the rules above redact is redacted there too when the text gives
+it as `key=value`, `key: value`, `'key': 'value'`, a JSON field `"key": value` or a JSON
+field inside a JSON string (`\"key\":\"value\"`, as ethers quotes a response body, and
+deeper), a `Cookie` header to the end of its line, and a URL also with JSON-escaped slashes
+(`https:\/\/…`); a key or a URL behind JSON escapes is read decoded, so `"session\u0049d"`
+is `sessionId`. The text is also read with up to eight levels of escaping undone: JSON
+escaping (a body quoted inside JSON several times, `\u0022` and `\'` quotes included) and
+percent-encoding (`apiToken%3D…`, `%22apiToken%22%3A…`, `https%3A%2F%2F…`). The levels are
+read one at a time, so a quote escaped inside a value (`%22prefix%5C%22…%22`) stays part of
+it and the whole value is redacted. Deeper escaping
+is flattened and read once more: every escape is undone, and so is every escape that undoing
+makes, until none is left (a run of backslashes becomes the character it escapes, a chain of
+encoded percent signs (`%25253D`) the character it encodes, and a chain of escaped backslashes
+(`\u005cu005cu003d`) the character at its end). So a credential under JSON escaping or
+percent-encoding of any depth, or both mixed, is still redacted. Flattened text no longer shows
+where a value ends, so when that read finds a credential, the text from the credential on reads
+`<redacted>…`.
+When this finds a credential that the text as written hid, the message or field shows the text
+with those escapes undone (`"apiToken":"<redacted>"` where the error had
+`\u0022apiToken\u0022:…`), so it can read with fewer backslashes or `%` escapes than the raw
+error; text that hides nothing keeps its escapes, and a key quoted by backslashes at any depth
+(`\\\"apiToken\\\":…`) is redacted where it stands, its escapes kept. A URL without a scheme
+on an IP address, `localhost` or an IPv6 address in brackets (`127.0.0.1:8545/v3/<key>`)
+keeps its host and port only;
+`Bearer` and `Basic` credentials, JWTs, 65-byte hex signatures and raw signed transactions
+are redacted wherever they stand. Text is redacted before and after control characters are
+stripped, so a key split by one is still caught. Free text is matched by pattern, not
+parsed: a credential in prose without a key in front of it (`my password is hunter2`) is
+not recognised. No level of nautilus's own events prints an RPC token, a session id, a
+signature or a JWT.
+When a failure needs the raw values, turn on the separate debug channel with
+[`setDebug`](/docs/api/nautilus/setDebug) or `NAUTILUS_DEBUG` (see the
+[debugging guide](/docs/guides/debugging)); it leaves these events as they are.
+
+This covers ocean.js's own lines too, which nautilus captures by default (the
+[`oceanjs`](#oceanjs) option): among them the request payload ocean.js logs after a refused
+compute start, whose nonce and policy-server session ids are redacted like any other.
+
+#### oceanjs
+
+- Type: `'capture' | 'passthrough' | 'silent'`
+- Default: `'capture'`
+
+What to do with ocean.js's own log output, the lines ocean.js prints through its
+process-wide `LoggerInstance`:
+
+| Mode | ocean.js's lines |
+|------|------------------|
+| `'capture'` (default) | become nautilus events of the component `oceanjs`, redacted like every other event, printed at nautilus's level, in its format and to its sink |
+| `'passthrough'` | print as ocean.js prints them, to the console, **unredacted** |
+| `'silent'` | are dropped |
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+
+Nautilus.configureLogging({ oceanjs: 'silent' }) // [!code focus]
+```
+
+A captured line is one of four events, by ocean.js's method: `oceanjs.logger.error`
+(`error`), `oceanjs.logger.warn` (`warn`), `oceanjs.logger.log` (`info`; ocean.js's `log` and
+`bypass`) and `oceanjs.logger.debug` (`debug`). Its message is ocean.js's text; the objects
+ocean.js logged after it are in `fields.args` (a JSON string holding an object is read as
+the object, up to 64 KB; a longer one stays text there), with `fields.method` naming the
+method. Each argument is redacted as an event's own fields are, nested objects as deep. The
+arguments of one line hold at most 2,000 values in all, so a node's large answer body can't
+make a line huge or slow: where they stop, an object ends with `"…": "N more"` and a list with
+`"… N more"`. For example, a compute start the node refuses:
+
+```
+[nautilus] [oceanjs] error: Compute start failed: 400 Bad Request (oceanjs.logger.error method=error args=[{"error":"Algorithm did:ope:… not allowed to run on the dataset: did:ope:…"}])
+[nautilus] [oceanjs] error: Payload was: (oceanjs.logger.error method=error args=[{"consumerAddress":"0x…","signature":"<redacted>","nonce":"<redacted>",…,"policyServer":[{"sessionId":"<redacted>",…}]}])
+```
+
+ocean.js's own level still decides first which lines it emits: errors only by default. To see
+its warnings, log and debug lines too, raise it with `LoggerInstance.setLevel` from
+`@oceanprotocol/lib` (or [`setLogLevel`](/docs/api/nautilus/setLogLevel)), and set
+nautilus's `level` to match. The raw lines, unredacted, reach only the debug channel (topic
+`node`), and only when the event prints: its `sensitive` tier, or its `secrets` tier for a
+credential (an RPC key, a Bearer token); see
+[`setDebug`](/docs/api/nautilus/setDebug).
+
+:::warning[`'passthrough'` prints ocean.js's payload dump unredacted]
+After a refused compute start or initialize, ocean.js logs the request payload at error
+level, its default: the request's nonce and the policy-server session ids as they are (and
+the signature, where ocean.js does not replace it itself). A logged signature with an unspent
+nonce can be replayed. Use `'passthrough'` only where ocean.js's output is not kept or shared.
+:::
+
+Notes:
+
+- `LoggerInstance` is one object for the whole process, so the mode applies to every ocean.js
+  user in it, not only to nautilus's calls. nautilus replaces that object's five logging
+  methods (`error`, `warn`, `log`, `debug`, `bypass`) when it is imported; `console` and
+  ocean.js's level are left alone. With `'passthrough'`, each call goes to ocean.js's own
+  method unchanged.
+- If your app replaced a `LoggerInstance` method itself (`LoggerInstance.error = …`) before
+  nautilus is imported, `'capture'` and `'silent'` bypass your replacement, and
+  `'passthrough'` calls it instead of ocean.js's method. To keep receiving ocean.js's lines in
+  your own logger, use `'passthrough'`, or (redacted) a `sink`. A replacement made after
+  nautilus is imported replaces nautilus's too, whatever the mode.
+- Captured lines go to the process-wide configuration set here, not to an instance's own
+  [`logger`](/docs/api/nautilus/create#logger): its level, format and sink, for every
+  instance. A line ocean.js logs during a nautilus call still carries that call's
+  [`opId`](#telling-operations-apart) and `operation`, also when the call runs on an
+  instance's own logger, so you can match it to the call's other events. Where the operation
+  can't follow the call (a browser, Node before 22.3), captured lines have no `opId`, never a
+  wrong one.
+- Several copies of nautilus in one process (e.g. one bundled into a plugin) share one mode,
+  as they share ocean.js's logger: a copy loaded later keeps the mode in force, whichever copy
+  set it. The lines go to the logger of the copy that last passed `oceanjs` to
+  `configureLogging`, else to the first copy loaded. When another copy does that, e.g. a
+  plugin that sets `'passthrough'` for itself, which makes ocean.js print unredacted for the
+  whole process, the copy that received the lines until then logs an
+  `oceanjs.capture.moved` warning with the new `mode`. The copies share the operation too:
+  a line ocean.js logs during a call made through one copy carries that call's `opId`,
+  whichever copy receives the line.
+- A line ocean.js logs while nautilus captures another, e.g. from a `sink` or a debug sink
+  that logs through `LoggerInstance`, is dropped, never printed: through ocean.js it would
+  print unredacted. One `oceanjs.capture.nested_dropped` warning says so. Hand a sink's
+  output to a logger other than ocean.js's.
+- If `LoggerInstance` is frozen, sealed or not extensible (or one of its methods is read-only)
+  when nautilus is imported, nautilus can't replace its methods: ocean.js prints its lines
+  itself, unredacted, whatever the mode, and an `oceanjs.capture.unavailable` warning says so
+  once. To silence ocean.js then, call `LoggerInstance.setLevel(LogLevel.None)`. A frozen
+  `LoggerInstance`'s level can't change either (`setLevel` and `setLogLevel` throw): call
+  `setLevel` before freezing it, or don't freeze it.
+- A few ocean.js functions write to `console` directly, not through `LoggerInstance`, and
+  print as before whatever the mode (e.g. the legacy-signing note on chain 8996, or errors of
+  ocean.js's own NFT and access-list helpers, which nautilus does not call).
+- An app that loads ocean.js through `require` gets ocean.js's other bundle, with a logger of
+  its own: its lines are not captured.
+
+## Environment variables
+
+Read once, when nautilus is imported. `configureLogging` overrides them. In a browser there is
+no environment; use `configureLogging`.
+
+| Variable | Values |
+|----------|--------|
+| `NAUTILUS_LOG_LEVEL` | `silent`, `error`, `warn`, `info`, `debug`, `trace` |
+| `NAUTILUS_LOG_FORMAT` | `pretty`, `json` |
+| `NAUTILUS_LOG_COMPONENTS` | a comma-separated list, e.g. `publish,access` |
+
+Case does not matter. An unknown value is ignored, and a `config.env.invalid` warning says so.
+
+```bash
+NAUTILUS_LOG_LEVEL=debug NAUTILUS_LOG_FORMAT=json node publish.js 2> nautilus.log
+```
+
+## One logger per instance
+
+Pass [`logger`](/docs/api/nautilus/create#logger) to `Nautilus.create` to give one instance
+its own level, components or sink, e.g. one sink per tenant in a multi-tenant server. Pass
+options, or a logger made with `createLogger(options)` to share one between instances.
+Warnings of an [`S3RemoteStore`](/docs/api/remote/S3RemoteStore) and ocean.js's
+[captured lines](#oceanjs) always go to the process-wide configuration set here.
+
+## Telling operations apart
+
+Each call of `publish`, `completePublish`, `edit`, `setServicePrice`,
+`setAssetLifecycleState`, `access`, `compute`, `freeCompute`, `stopCompute`,
+`getComputeStatus`, `getComputeResult`, `streamComputeResult`, `getComputeLogs`,
+`waitForIndexer`, and of the reads `getAsset`, `getAssets`, `query`,
+`getComputeEnvironments` and `getComputeEnvironment` is an **operation** with its own
+`opId`. Every event the call causes carries it, with the call's name as `operation`, so the
+lines of calls that run at the same time (a `Promise.all`, a server handling several
+requests) can be told apart:
+
+```
+[nautilus] [compute] info: compute finished in 4210 ms. (compute.operation.finished opId=3f9a2c1b07e4 operation=compute durationMs=4210)
+```
+
+The error a call throws carries the same id as `error.opId`, so an error in a bug report
+leads straight to its log lines:
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+declare const nautilus: Nautilus
+// ---cut---
+try {
+  await nautilus.access({ assetDid: 'did:ope:…' })
+} catch (error) {
+  console.error((error as { opId?: string }).opId, error) // [!code focus]
+}
+```
+
+`error.opId` is not enumerable: the error compares, prints and serialises as before. One
+error object can be thrown by several calls, e.g. a rejection your code caches, or the
+`reason` of one `AbortSignal` passed to several calls. Its `opId` is then the latest call's,
+and `error.opIds` (not enumerable either) lists every call's, the first one first: the first
+and the latest 15 of more than 16. An error whose own `opId` nautilus did not set keeps it,
+and a frozen error, a thrown value that is not an object or a `Proxy` that refuses the
+property gets none; each is rethrown as it was.
+
+Each operation starts with a `…started` event (`debug`) and ends with `…finished` or
+`…failed`, with its `durationMs`; `failed` also has the redacted `error`. They are `info`
+(`publish.operation.*`, `edit.operation.*`, `lifecycle.operation.*`, `access.operation.*`,
+`compute.operation.*`, `node.operation.*` for `waitForIndexer`), except for the job reads,
+`getComputeStatus` and `getComputeResult` (which apps poll), `streamComputeResult` and
+`getComputeLogs`, and the environment reads, whose `compute.query.*` events are all `debug`,
+and the metadata reads `getAsset`, `getAssets` and `query`, whose `node.query.*` events are
+all `debug` too. A stream call finishes once the stream is open; reading it is not part of
+the operation.
+
+In Node 22.3 or newer, a call made from inside another call of the same logger, e.g. from a
+`confirmProviderFees` callback, joins that operation: it has no events or `opId` of its own,
+and its error carries the outer `opId`. Only a call that is still running is joined. Work a
+call leaves behind, such as a timer or an event listener it started, starts an operation of
+its own when it calls nautilus after the call has ended, and so does a call on an instance
+with another logger (another tenant's). In a browser, and in Node 22.0 to 22.2, each call is
+an operation of its own (see below).
+
+The `opId` is random and the operation one of the names above: neither carries data of
+yours, of the node or of the chain. Both go through the same redaction as every other field.
+
+In Node 22.3 or newer, the operation follows the call through every `await`, timer and
+callback (`AsyncLocalStorage`, read through `process.getBuiltinModule`), so the node
+client's events, an instance logger's, the process-wide logger's and the
+[debug channel](/docs/api/nautilus/setDebug)'s all carry it. A browser has no
+`AsyncLocalStorage`, and Node 22.0 to 22.2 has no `process.getBuiltinModule`: there the call
+hands its logger, bound to the operation, to the steps it runs (orders, escrow, the NFT
+mint, price changes, compute start, publish's and edit's checks and metadata transaction),
+and their events carry the `opId`. Events of code that is not handed that logger (the node
+client, the policy-session resolver, the signer's nonce guard, an `S3RemoteStore`, ocean.js's
+captured lines) and the
+debug channel's have none, never a wrong one. `error.opId` is set everywhere. The `opId`s
+are 12 random hex characters: among millions of calls two can share one, so when you
+correlate over a long time, go by the `opId` and the time.

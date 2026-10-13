@@ -1,6 +1,7 @@
 # getSigner
 
-The ethers `Signer` the instance was created with.
+The ethers `Signer` the instance sends with: the one it was created with, wrapped in the
+nonce guard.
 
 ## Usage
 
@@ -18,6 +19,13 @@ const address = await signer.getAddress()
 
 - Type: `Signer`
 
-The same signer instance passed to [`create`](/docs/api/nautilus/create) — useful for the
-handful of helpers that take a signer directly, such as
-[`getPricingInfo`](/docs/api/pricing/getPricingInfo).
+The signer passed to [`create`](/docs/api/nautilus/create), wrapped in the nonce guard
+(see [`nonceManagement`](/docs/api/nautilus/create#noncemanagement)): it signs and reads
+through your signer, and transactions sent through it share the guard's per-address order
+and nonce counter with nautilus's own. Useful for the handful of helpers that take a signer
+directly, such as [`getPricingInfo`](/docs/api/pricing/getPricingInfo). It is not the same
+object, so `getSigner() instanceof Wallet` is `false`; keep your own reference for that.
+
+Passed to `create` for another instance, it is not wrapped twice: the new instance guards
+the signer underneath it with its own `nonceManagement` and `verificationProvider`, and
+both instances share the per-address order and nonce counter.

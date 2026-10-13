@@ -14,13 +14,14 @@ import {
   hexlify,
   Interface,
   type Log,
+  makeError,
   type Provider,
   type Signer,
   toUtf8Bytes,
   ZeroHash
 } from 'ethers'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { access, settleOrder } from '../../src/access/index.js'
+import { access, OrderCheckError, settleOrder } from '../../src/access/index.js'
 import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
 import { order, reuseOrder } from '../../src/utils/order.js'
 import {
@@ -29,6 +30,8 @@ import {
 } from '../../src/utils/paymentLimits.js'
 import {
   findPreviousOrder,
+  IncompleteOrderLookupError,
+  InconsistentRpcAnswerError,
   type PreviousOrderQuery
 } from '../../src/utils/previousOrder.js'
 import {
@@ -42,6 +45,8 @@ import {
   PROVIDER_FEE_WALLET,
   signedProviderFee
 } from '../fixtures/ProviderFee.js'
+import { captureLog } from '../helpers.js'
+import { FAKE } from '../secretScan.js'
 
 vi.mock('../../src/utils/order.js', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -57,7 +62,12 @@ vi.mock('../../src/utils/pricing.js', async (importOriginal) => ({
     datatokenAddress,
     publishMarketFee: {}
   })),
-  getOrderPrice: vi.fn(async () => ({ total: '0', consumeMarketFee: '0' }))
+  // As `getOrderPrice` returns it: a missing fee no longer reads as zero.
+  getOrderPrice: vi.fn(async () => ({
+    total: '0',
+    publishMarketFee: '0',
+    consumeMarketFee: '0'
+  }))
 }))
 
 const CONSUMER = '0x0000000000000000000000000000000000c05e5a'
@@ -263,6 +273,36 @@ const ranges = () =>
     .filter((_, i) => i % 2 === 0)
     .map(([filter]) => [filter.fromBlock, filter.toBlock])
 
+/**
+ * The error ethers throws when the RPC keeps answering HTTP 429: after its own retries it
+ * reports a 599 whose status text keeps the 429, and a message ("exceeded maximum retry
+ * limit") that reads like a range refusal.
+ */
+const rateLimited = () =>
+  makeError('exceeded maximum retry limit', 'SERVER_ERROR', {
+    info: {
+      requestUrl: FAKE.rpcUrl,
+      responseStatus:
+        '599 CLIENT ESCALATED SERVER ERROR (429 Too Many Requests; exceeded maximum retry limit)'
+    }
+  } as never)
+
+/** A JSON-RPC error answer, as ethers wraps it. */
+const rpcError = (code: number, message: string) =>
+  Object.assign(
+    new Error(
+      `could not coalesce error (error={ "code": ${code}, "message": "${message}" })`
+    ),
+    { code: 'UNKNOWN_ERROR', error: { code, message } }
+  )
+
+/** What `find()` threw (or found). */
+const failure = (overrides: Partial<PreviousOrderQuery> = {}) =>
+  find(overrides).then(
+    (found) => found as unknown as IncompleteOrderLookupError,
+    (error: IncompleteOrderLookupError) => error
+  )
+
 beforeEach(() => {
   vi.clearAllMocks()
   chain = new Chain()
@@ -400,10 +440,70 @@ describe('findPreviousOrder', () => {
 
   it('follows only the first reuse in a transaction, as the node does', async () => {
     chain.started(tx(1), 3_600, { fee: { address: OTHER } })
-    // A bogus reuse ahead of the valid one: the node follows it and refuses the download.
-    chain.tx(tx(2), 100).reused(tx(9)).reused(tx(1)).fee()
+    chain.started(tx(3), 7_200, { serviceIndex: 1 })
+    // A reuse of another service's order ahead of the valid one: the node follows it and
+    // refuses the download.
+    chain.tx(tx(2), 100).reused(tx(3)).reused(tx(1)).fee()
 
     expect(await find()).to.deep.equal({ orderTxId: tx(1) })
+  })
+
+  // An RPC answer without what the logs promise (a lagging backend behind a load balancer)
+  // is a failed lookup, not "no order": read as one, it bought a valid order again.
+  it('throws when the RPC has no receipt for a transaction its logs list', async () => {
+    chain.started(tx(1), 3_600)
+    chain.getTransactionReceipt.mockResolvedValue(null)
+
+    await expect(find()).rejects.toThrow(InconsistentRpcAnswerError)
+  })
+
+  it('throws when a receipt lacks the order event the logs list', async () => {
+    chain.started(tx(1), 3_600)
+    const read = chain.getTransactionReceipt.getMockImplementation()
+    chain.getTransactionReceipt.mockImplementation(async (txId: string) => {
+      const receipt = (await read?.(txId)) ?? null
+      return receipt && { ...receipt, logs: [] }
+    })
+
+    await expect(find()).rejects.toThrow(InconsistentRpcAnswerError)
+  })
+
+  // A receipt that holds another of the account's events of the same transaction but not
+  // the one the logs list: the node takes that missing one first, so "no order" bought again.
+  it('throws when a receipt lacks one of the order events the logs list', async () => {
+    chain.tx(tx(1), 3_600).fee().started().started({ serviceIndex: 1 })
+    const read = chain.getTransactionReceipt.getMockImplementation()
+    const partial = async (txId: string) => {
+      const receipt = (await read?.(txId)) ?? null
+      return (
+        receipt && {
+          ...receipt,
+          logs: receipt.logs.filter(
+            (log) => EVENTS.parseLog(log)?.args.serviceIndex !== 0n
+          )
+        }
+      )
+    }
+
+    // Control: with the whole receipt, the order is found.
+    expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(1) })
+
+    chain.getTransactionReceipt.mockImplementation(partial)
+    await expect(find()).rejects.toThrow(InconsistentRpcAnswerError)
+  })
+
+  it('throws when the RPC has no receipt for the order a reuse of the account names', async () => {
+    chain.started(tx(1), 3_600, { fee: { address: OTHER } })
+    chain.tx(tx(2), 100).reused(tx(9)).reused(tx(1)).fee()
+
+    await expect(find()).rejects.toThrow(InconsistentRpcAnswerError)
+  })
+
+  it('throws when the RPC has no newest block', async () => {
+    chain.started(tx(1), 3_600)
+    chain.getBlock.mockResolvedValue(null as never)
+
+    await expect(find()).rejects.toThrow(InconsistentRpcAnswerError)
   })
 
   it('refuses a transaction whose first reuse was made by another caller', async () => {
@@ -478,12 +578,95 @@ describe('findPreviousOrder', () => {
     })
   })
 
-  it('stops at the read depth for timeout 0', async () => {
+  it('reports an incomplete lookup at the read depth for timeout 0, not "not found"', async () => {
     chain.started(tx(1), 2 * 100_000 + 10, { fee: { validUntil: 0 } })
 
-    expect(await find({ timeout: 0 })).to.equal(undefined)
+    const thrown = await failure({ timeout: 0 })
+
+    // Orders of the service never expire: one older than the read depth may be in force.
+    expect(thrown).to.be.instanceOf(IncompleteOrderLookupError)
+    expect(thrown).to.include({
+      windowHours: Number.POSITIVE_INFINITY,
+      limit: 'depth'
+    })
+    expect(thrown.checkedHours).to.be.closeTo(
+      ((100_000 + 2) * BLOCK_TIME) / 3_600,
+      0.01
+    )
     expect(ranges()).to.have.length(100_000 / CHUNK)
-    expect(chain.getBlock).toHaveBeenCalledOnce()
+  })
+
+  it('reports an incomplete lookup when the timeout reaches past the read depth', async () => {
+    const thrown = await failure({ timeout: 7 * DAY })
+
+    expect(thrown).to.be.instanceOf(IncompleteOrderLookupError)
+    expect(thrown).to.include({ windowHours: 7 * 24, limit: 'depth' })
+    expect(thrown.checkedHours).to.be.closeTo(55.6, 0.1)
+  })
+
+  it('finds nothing on a chain shorter than the read depth, for timeout 0', async () => {
+    chain.getBlock.mockImplementation(async (tag: number | 'latest') => {
+      const number = tag === 'latest' ? 50_000 : tag
+      return { number, timestamp: NOW - (50_000 - number) * BLOCK_TIME }
+    })
+
+    expect(await find({ timeout: 0 })).to.equal(undefined)
+    expect(Math.min(...ranges().map(([from]) => from))).to.equal(0)
+  })
+
+  it('throws a rate limit instead of reading the range again in halves', async () => {
+    chain.getLogs.mockRejectedValueOnce(rateLimited())
+    chain.started(tx(1), 3_600)
+
+    const thrown = await failure()
+
+    // Halving on a 429 ran the reads out and ended in "not found" (then a paid re-order).
+    expect(thrown).to.have.property('code', 'SERVER_ERROR')
+    expect(ranges()).to.have.length(1)
+  })
+
+  it('throws a JSON-RPC -32005 rate limit, and halves a -32005 range refusal', async () => {
+    chain.getLogs.mockRejectedValue(
+      rpcError(-32005, 'daily request count exceeded, request rate limited')
+    )
+    expect(await failure()).to.have.property('code', 'UNKNOWN_ERROR')
+    expect(ranges()).to.have.length(1)
+
+    chain = new Chain()
+    const read = chain.getLogs.getMockImplementation()
+    chain.getLogs.mockImplementation(async (filter: LogFilter) => {
+      if (filter.toBlock - filter.fromBlock >= 500)
+        throw rpcError(-32005, 'query returned more than 10000 results')
+      return read?.(filter) ?? []
+    })
+    chain.started(tx(1), 3_600)
+
+    expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(1) })
+  })
+
+  it('reports an incomplete lookup when the reads run out before the window ends', async () => {
+    // An RPC that serves one block per call: 100 rounds cannot cover a day.
+    const read = chain.getLogs.getMockImplementation()
+    chain.getLogs.mockImplementation(async (filter: LogFilter) => {
+      if (filter.toBlock > filter.fromBlock)
+        throw rpcError(-32600, 'block range limit exceeded, max 1')
+      return read?.(filter) ?? []
+    })
+
+    const thrown = await failure()
+
+    expect(thrown).to.be.instanceOf(IncompleteOrderLookupError)
+    expect(thrown).to.include({ windowHours: 24, limit: 'reads' })
+    const oldest = Math.min(
+      ...chain.getLogs.mock.calls
+        .filter(([filter]) => filter.toBlock === filter.fromBlock)
+        .map(([filter]) => filter.fromBlock)
+    )
+    expect(thrown.checkedHours).to.be.closeTo(
+      ((LATEST - oldest) * BLOCK_TIME) / 3_600,
+      0.01
+    )
+    expect(thrown.checkedHours).to.be.below(1)
   })
 
   it('keeps a fee the way the node does: the time since its block against validUntil', async () => {
@@ -584,13 +767,15 @@ describe('findPreviousOrder', () => {
     expect(await find()).to.deep.equal({ orderTxId: tx(1), usableTxId: tx(1) })
   })
 
-  it('checks at most 50 candidates', async () => {
+  it('checks at most 50 candidates, and reports the lookup incomplete with none found', async () => {
     // Orders anyone can place for the account, none usable or extendable; each costs one
-    // receipt read.
+    // receipt read. An older order past the cap may still be in force.
     for (let n = 1; n <= 80; n++)
       chain.started(tx(n), 100 + n * BLOCK_TIME, { serviceIndex: 1 })
 
-    expect(await find()).to.equal(undefined)
+    const thrown = await failure()
+    expect(thrown).to.be.instanceOf(IncompleteOrderLookupError)
+    expect(thrown).to.include({ windowHours: 24, limit: 'candidates' })
     expect(chain.getTransactionReceipt).toHaveBeenCalledTimes(50)
     expect(chain.getTransactionReceipt).toHaveBeenCalledWith(tx(50))
     expect(chain.getTransactionReceipt).not.toHaveBeenCalledWith(tx(51))
@@ -703,14 +888,134 @@ describe('settleOrder with an order on chain', () => {
     expect(result).to.deep.equal({ transferTxId: '0xfresh', reused: false })
   })
 
-  it('orders anew when the lookup fails', async () => {
-    chain.getLogs.mockRejectedValueOnce(new Error('connection refused'))
+  it('orders a free service anew when the lookup fails, and warns', async () => {
+    const log = captureLog()
+    chain.getLogs.mockRejectedValueOnce(
+      new Error(`connection refused (requestUrl="${FAKE.rpcUrl}")`)
+    )
 
     const result = await settle({
       providerFee: signedProviderFee({ providerData, providerFeeAmount: '0' })
     })
 
     expect(result.reused).to.equal(false)
+    const [warning] = log.named('access.order.lookup_failed')
+    expect(warning.level).to.equal('warn')
+    expect(warning.msg).to.match(
+      /Could not check whether .* already holds an order .*: the RPC did not answer\. A new order will be placed\. The service is free: this costs only gas\./
+    )
+    expect(warning.fields).to.include({ reason: 'unreachable', free: true })
+    expect(warning.fields.error).to.match(/connection refused/)
+    expect(JSON.stringify(warning)).not.to.contain(FAKE.rpcPathToken)
+  })
+
+  it('does not order when the lookup fails and a provider fee is due, naming settleOrder()', async () => {
+    chain.getLogs.mockRejectedValueOnce(
+      new Error(`connection refused (requestUrl="${FAKE.rpcUrl}")`)
+    )
+
+    const thrown = await settle({
+      providerFee: signedProviderFee({ providerData, providerFeeAmount: '30' })
+    }).catch((caught) => caught)
+
+    expect(thrown).to.be.instanceOf(OrderCheckError)
+    expect(thrown).to.include({ reason: 'unreachable', retryable: true })
+    expect(thrown.message).to.match(/^settleOrder\(\) stopped before paying/)
+    expect(thrown.message).not.to.contain(FAKE.rpcPathToken)
+    expect(vi.mocked(order)).not.toHaveBeenCalled()
+    expect(vi.mocked(reuseOrder)).not.toHaveBeenCalled()
+  })
+
+  it('does not order a paid service when the RPC rate-limits the scan', async () => {
+    // The account holds a valid order. Ten rounds of 429s used to halve the range down to
+    // one block, so the reads ran out before reaching it: "not found", and a second order.
+    chain.started(tx(1), 3_600)
+    const read = chain.getLogs.getMockImplementation()
+    let calls = 0
+    chain.getLogs.mockImplementation(async (filter: LogFilter) => {
+      if (calls++ < 20) throw rateLimited()
+      return read?.(filter) ?? []
+    })
+
+    const thrown = await settle({
+      providerFee: signedProviderFee({ providerData, providerFeeAmount: '30' })
+    }).catch((caught) => caught)
+
+    expect(thrown).to.be.instanceOf(OrderCheckError)
+    expect(thrown.reason).to.equal('rate-limited')
+    expect(thrown.message).to.contain(
+      'Cause: the RPC rate-limited the check (HTTP 429).'
+    )
+    expect(vi.mocked(order)).not.toHaveBeenCalled()
+    expect(vi.mocked(reuseOrder)).not.toHaveBeenCalled()
+  })
+
+  // Probes of round-2 security review M1: a valid order on chain, a paid service, and an
+  // RPC answer without what its logs promise. Each used to be "not found": a second order.
+  for (const [name, lag] of [
+    [
+      'has no receipt for the order its logs list',
+      () => chain.getTransactionReceipt.mockResolvedValue(null)
+    ],
+    [
+      'returns the order’s receipt without its events',
+      () => {
+        const read = chain.getTransactionReceipt.getMockImplementation()
+        chain.getTransactionReceipt.mockImplementation(async (txId: string) => {
+          const receipt = (await read?.(txId)) ?? null
+          return receipt && { ...receipt, logs: [] }
+        })
+      }
+    ],
+    [
+      'has no newest block',
+      () => chain.getBlock.mockResolvedValue(null as never)
+    ]
+  ] as const)
+    it(`does not order a paid service when the RPC ${name}`, async () => {
+      chain.started(tx(1), 3_600)
+      lag()
+
+      const thrown = await settle({
+        providerFee: signedProviderFee({
+          providerData,
+          providerFeeAmount: '30'
+        })
+      }).catch((caught) => caught)
+
+      expect(thrown).to.be.instanceOf(OrderCheckError)
+      expect(thrown.reason).to.equal('rpc-error')
+      expect(thrown.message).to.contain(
+        "Cause: the RPC's answer lacked data the check needs ("
+      )
+      expect(thrown.message).to.contain('Retry in a minute or use another RPC.')
+      expect(vi.mocked(order)).not.toHaveBeenCalled()
+      expect(vi.mocked(reuseOrder)).not.toHaveBeenCalled()
+    })
+
+  it('does not order a paid service whose orders never expire, past the read depth', async () => {
+    const thrown = await settle(
+      {
+        providerFee: signedProviderFee({
+          providerData,
+          providerFeeAmount: '30'
+        })
+      },
+      { id: SERVICE_ID, timeout: 0 }
+    ).catch((caught) => caught)
+
+    expect(thrown).to.be.instanceOf(OrderCheckError)
+    expect(thrown).to.include({
+      reason: 'incomplete',
+      windowHours: Number.POSITIVE_INFINITY
+    })
+    expect(thrown.message).to.contain(
+      'Cause: the check covered only the last 55 hours, and orders of this service never expire.'
+    )
+    expect(thrown.message).to.contain(
+      'A retry ends the same way. If this account never bought this service, buying is safe.'
+    )
+    expect(vi.mocked(order)).not.toHaveBeenCalled()
   })
 
   it('follows the node’s validOrder without reading the chain', async () => {

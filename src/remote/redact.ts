@@ -9,9 +9,15 @@
  *   - every header value of a `url` pointer;
  *   - in a pointer's `url`, everything that can carry a credential (see `redactUrl`).
  *
+ * The unredacted pointer goes to the sensitive debug channel (topic `store`) when it is on:
+ * at `sensitive` without its credentials (the S3 secret key, header values but plain ones
+ * such as `Content-Type`, credentials in the URL), at `secrets` whole.
+ *
  * Kept out of the package's exports.
  */
 import type { StorageObject } from '@oceanprotocol/lib'
+import { credentialsInUrl } from '../log/credentials.js'
+import { debugEnabled, debugRaw } from '../log/debug.js'
 
 export const REDACTED = '<redacted>'
 
@@ -20,6 +26,17 @@ const REDACTED_IN_URL = encodeURIComponent(REDACTED)
 
 export function redactPointer<T extends StorageObject>(pointer: T): T {
   if (!pointer || typeof pointer !== 'object') return pointer
+
+  if (debugEnabled('sensitive', 'store'))
+    debugRaw('store', 'storage pointer before redaction', pointer, [
+      ...headerValues((pointer as { headers?: unknown }).headers),
+      ...credentialsInUrl(
+        typeof (pointer as { url?: unknown }).url === 'string'
+          ? (pointer as { url: string }).url
+          : undefined
+      ),
+      ...s3Secret(pointer)
+    ])
 
   const copy = JSON.parse(JSON.stringify(pointer)) as Record<string, unknown>
 
@@ -30,9 +47,46 @@ export function redactPointer<T extends StorageObject>(pointer: T): T {
   if (copy.headers && typeof copy.headers === 'object')
     copy.headers = redactHeaders(copy.headers)
 
-  if (typeof copy.url === 'string') copy.url = redactUrl(copy.url)
+  if (typeof copy.url === 'string') copy.url = redactUrlQuietly(copy.url)
 
   return copy as T
+}
+
+/** Headers whose value is no credential, shown at the `sensitive` tier. */
+const PLAIN_HEADERS = new Set([
+  'accept',
+  'acceptencoding',
+  'acceptlanguage',
+  'cachecontrol',
+  'contentencoding',
+  'contentlanguage',
+  'contentlength',
+  'contenttype',
+  'range',
+  'useragent'
+])
+
+/**
+ * The header values of a pointer that may be credentials, hidden below the `secrets` tier:
+ * the string value of every header but the plain ones (`Content-Type`, `Accept`, …), also
+ * without its scheme (`Bearer `).
+ */
+function headerValues(headers: unknown): string[] {
+  if (Array.isArray(headers)) return headers.flatMap(headerValues)
+  if (!headers || typeof headers !== 'object') return []
+  return Object.entries(headers).flatMap(([name, value]) =>
+    typeof value === 'string' &&
+    !PLAIN_HEADERS.has(name.toLowerCase().replace(/[-_\s]/g, ''))
+      ? [value, value.replace(/^(?:Bearer|Basic|Token)\s+/i, '').trim()]
+      : []
+  )
+}
+
+/** The S3 secret key of a pointer, hidden below the `secrets` tier wherever it appears. */
+function s3Secret(pointer: object): string[] {
+  const secret = (pointer as { s3Access?: { secretAccessKey?: unknown } })
+    .s3Access?.secretAccessKey
+  return typeof secret === 'string' ? [secret] : []
 }
 
 function redactHeaders(headers: unknown): unknown {
@@ -60,6 +114,14 @@ function redactHeaders(headers: unknown): unknown {
  * a string that does not parse as a URL is replaced whole.
  */
 export function redactUrl(url: string): string {
+  const redacted = redactUrlQuietly(url)
+  if (debugEnabled('sensitive', 'store') && redacted !== url)
+    debugRaw('store', 'URL before redaction', url)
+  return redacted
+}
+
+/** `redactUrl` without the debug output: `redactPointer` hands over the whole pointer. */
+function redactUrlQuietly(url: string): string {
   let parsed: URL
   try {
     parsed = new URL(url)

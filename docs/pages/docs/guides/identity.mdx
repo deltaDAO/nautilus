@@ -117,7 +117,10 @@ sequenceDiagram
 4. If the asset or service carries an `SSIpolicy` that asks for credentials, the credential
    provider answers the openid4vp request from your wallet, and nautilus checks with the
    policy server (`checkSessionId`) that the verifier accepted it. A presentation that was not
-   accepted is a `PolicyDeniedError` naming the failed policies.
+   accepted is a `PolicyDeniedError` naming the failed policies. When the wallet itself
+   reports that the verifier refused it (walt.id answers a refused presentation with an
+   error), nautilus still asks the verifier's record which policies failed, and names them the
+   same way.
 5. The session id is carried into the download URL, or into `initializeCompute` and
    `computeStart`: one session per compute input, the algorithm included.
 
@@ -156,6 +159,62 @@ policy server (400), a network error, a timeout or a 5xx.
 
 If the wallet holds nothing that matches, the provider's error carries the credentials you are
 *missing*, rather than just reporting no match.
+
+### What a rejection looks like
+
+When the verifier refuses a presentation, the refusal names the policies that failed, as the
+node reports them (the node relays the verifier's record, and for a download it is the
+publisher's choice of node):
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus, PolicyDeniedError } from '@deltadao/nautilus'
+const signer = new Wallet('0x1234', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const nautilus = await Nautilus.create(signer, {
+  config: { oceanNodeUri: 'https://node.example.org' }
+})
+// ---cut---
+try {
+  await nautilus.access({ assetDid: 'did:ope:1234abcd...' })
+} catch (error) {
+  if (!(error instanceof PolicyDeniedError)) throw error
+
+  console.log(error.reason) // [!code focus]
+  // @log: 'the node reports that the verifier did not accept the presentation (holder-binding: java.lang.NullPointerException)'
+  for (const { credential, policy, success, error: why } of error.policyResults ?? []) // [!code focus]
+    if (!success) console.log(credential, policy, why) // [!code focus]
+  // @log: VerifiablePresentation holder-binding java.lang.NullPointerException
+}
+```
+
+- `reason` lists what fits of the failed policies (`policy: error`, each cut at 80
+  characters) and counts the rest (`; 2 more in policyResults`); it always ends in `)`.
+  `policyResults` has all of them, at most 50, failures first, each name and error at most
+  100 characters and stripped of control characters.
+- `cause` is the wallet's error when the wallet reported the failure: a
+  `CredentialPresentationError` with `reason: 'verifier-rejected'` and
+  `details.errorMessage` (walt.id's message, e.g. `Presentation failed - redirecting to error
+  page`).
+- When the wallet failed before the verifier, nautilus does not ask the verifier: the
+  wallet's own error is thrown, a `CredentialPresentationError` whose `reason` says which
+  step failed (`no-matching-credential`, `none-selected`, `wallet-setup`, `request-invalid`
+  or `wallet-failed`). So is a `verifier-rejected` one whose session record names no failed
+  policy (the session expired, for example) or cannot be read within 15 seconds.
+- Neither error carries the policy-server session id or the wallet's redirect URI: the
+  session id is a credential (see `PolicySessionResolver`), and the wallet's answer to a
+  refused presentation is the verifier's error page with the session id in it. The redirect
+  URI is dropped, and the session id is redacted wherever the wallet's text quotes it (walt.id
+  does, for an expired session). A URL quoted in the text keeps its origin (scheme, host and
+  port), so the message can still name the verifier's host. To see the wallet's whole answer
+  and the verifier's full record, turn on `NAUTILUS_DEBUG=sensitive` with
+  `NAUTILUS_DEBUG_TOPICS=policy,wallet` ([debugging](/docs/guides/debugging)), on your
+  machine only.
+
+:::warning[Don't log `policyResults` centrally]
+A policy's error can quote a value of the presented credential (an attribute a `schema`
+policy checked, an issuer, a status-list entry). Show `policyResults` to the user who
+presented, and keep them out of shared or central logs, the same as the credential itself.
+:::
 
 ### What the wallet trusts
 
@@ -236,7 +295,9 @@ address (`OceanNodeClient.policySessionAddress`).
 
 ## Publishing a gated asset
 
-Declare which credentials you require, and the checks they must pass:
+Declare which credentials you require, who must have issued them, and the checks they must
+pass. This is the set to start from: it works through nautilus, ocean-node, the policy server
+and the walt.id verifier as they are deployed today.
 
 ```ts twoslash
 import { AssetBuilder, CredentialListTypes } from '@deltadao/nautilus'
@@ -244,8 +305,17 @@ import { AssetBuilder, CredentialListTypes } from '@deltadao/nautilus'
 const assetBuilder = new AssetBuilder()
 // ---cut---
 assetBuilder
+  // The gate that holds: list addresses explicitly, never '*' (see the limitation below).
+  .addCredentialAddresses(CredentialListTypes.ALLOW, ['0x0DB823218e337a...'])
   .addRequestCredentials(CredentialListTypes.ALLOW, [ // [!code focus]
-    { type: 'VerifiableId', format: 'jwt_vc_json' } // [!code focus]
+    { // [!code focus]
+      type: 'gx:LegalPerson', // [!code focus]
+      format: 'jwt_vc_json', // [!code focus]
+      policies: [ // [!code focus]
+        // Issuer trust, per credential: only credentials from these issuers count. // [!code focus]
+        { policy: 'allowed-issuer', args: ['did:web:delta-dao.com'] } // [!code focus]
+      ] // [!code focus]
+    } // [!code focus]
   ]) // [!code focus]
   .setVcPolicies(CredentialListTypes.ALLOW, [ // [!code focus]
     'signature', // [!code focus]
@@ -253,24 +323,114 @@ assetBuilder
     'revoked-status-list' // [!code focus]
   ]) // [!code focus]
   .setVpPolicies(CredentialListTypes.ALLOW, [ // [!code focus]
-    { policy: 'holder-binding' }, // [!code focus]
+    { policy: 'signature' }, // [!code focus]
     { policy: 'minimum-credentials', args: '1' } // [!code focus]
   ]) // [!code focus]
 ```
 
 **VC policies** check each presented credential; **VP policies** check the presentation as a
-whole. The policy server's defaults are `signature`, `not-before` and
-`revoked-status-list`. Valid names can be listed from the verifier's
-`/openid4vc/policy-list` endpoint.
+whole. The policy server puts its own `DEFAULT_VC_POLICIES` and `DEFAULT_VP_POLICIES` in
+front of the asset's lists. Its operator sets them: the local dev stack uses
+`signature,not-before,revoked-status-list`, the policy server's shipped `.env.example` lists
+`expired,signature,revoked-status-list,not-before`, and the values of a deployed policy server
+are unknown. So write every policy you rely on into the asset. Valid names can be listed from
+the verifier's `/openid4vc/policy-list` endpoint.
 
 VC policies are names, while every VP policy is an object, `{ policy }` or
 `{ policy, args }` with `args` as a string, as the enterprise market writes them: an asset
 whose list mixed names and objects was published but not indexed by ocean-node 4.2.x. The policy server parses `args` as JSON when it can, so `'1'` reaches the
 verifier as the number `1`; pass structured arguments through `JSON.stringify`.
+`minimum-credentials` needs its argument: walt.id reads it as a number, and a bare
+`{ policy: 'minimum-credentials' }` fails in the verifier for every presentation.
+
+**Check the presentation's own signature** with `{ policy: 'signature' }` among the VP
+policies. walt.id runs only the VP policies the session lists, so without it nothing checks
+that the presentation was signed by the DID it names, unless the policy server's operator adds
+it through `DEFAULT_VP_POLICIES`, which nautilus cannot see. Listed on the asset, the check
+holds whatever that setting is; when the policy server adds it too, it simply runs twice. It
+does not bind the credential to the presenter, which is `holder-binding`'s job, and it does not
+stop a presentation replayed from an earlier session: the verifier accepts it.
+
+**Put policies that take arguments on the credential.** The policy server keeps only the
+*name* of an asset- or service-level VC policy and drops its arguments. `allowed-issuer`
+without its list of issuers throws "Invalid argument" in walt.id, which fails the
+presentation and so **denies every consumer**. Per-credential `policies` (the `policies` of a
+`request_credentials` entry) and VP policies keep their arguments, so issuer trust and other
+argument-bearing checks such as walt.id's `schema` go on the credential, as above.
+
+:::warning[Leave out `holder-binding` for Gaia-X and other `vc+jwt` credentials]
+`holder-binding` checks that the presenter is the subject of every credential in the
+presentation. What it gives and what it costs:
+
+- It binds a credential to its presenter **only** when the credential JWT's `sub` is the
+  presenter's DID, and only when the presentation's signature is verified as well (the VP
+  policy `signature`, part of the set above): it compares `sub` with the DID the presentation
+  claims, which proves nothing unless that presentation's signature is checked. walt.id reads
+  `sub` and nothing else.
+- It fails, with a `NullPointerException` in the verifier, for credentials without `sub`
+  (common for VCDM 2.0 `vc+jwt`) and URL-subject credentials such as the Gaia-X
+  `gx:LegalPerson` credential. An asset that requires it refuses every holder of such a
+  credential.
+- Without it, a copied credential JWT can be presented from any wallet: the credential is a
+  bearer credential. Assets that need access bound to an account must rely on the address
+  allow list, which is the gate that binds access to the consumer's Ethereum account.
+
+Require it only when every credential the asset accepts carries the holder's DID in `sub`.
+:::
+
+:::warning[No `presentation-definition` with `jwt_vc_json`, for now]
+The policy server does not forward a presentation definition of the asset's own: walt.id
+generates one from `request_credentials`, and for `jwt_vc_json` it matches the credential's
+type at `$.vc.type`. A VCDM 2.0 `vc+jwt` credential such as `gx:LegalPerson` carries its
+`type` at the top level and has no `vc` claim, so nothing matches and
+`presentation-definition` refuses it. Only VCDM 1.1 credentials (`vc`-wrapped) pass. Leave it
+out of `vp_policies` until the policy server forwards a definition that matches VCDM 2.0
+credentials.
+:::
+
+### Known limitation: credentials of another type
+
+walt.id applies per-credential policies by the type of the presented credential, matched on
+the **last** entry of its `type` array against `request_credentials`. A presented credential
+of any other type runs only the asset-level VC policies, and `minimum-credentials` counts it.
+So a presentation holding a self-issued credential of another type passes a gate whose issuer
+trust is per credential: any credential that passes `signature` will do.
+
+Put plainly: until the policy server enforces the requested credential type, the credential
+check stops only consumers who use a normal wallet, which presents a credential of the
+requested type or nothing. Anyone who builds their own presentation passes it with a
+self-issued credential of another type. nautilus cannot close that on its own.
+
+What holds is the address allow list: the consumer signs the download with their Ethereum key,
+and the policy server checks that address independently of the credential.
+
+| Address allow list | Against a consumer with a normal wallet | Against a consumer who builds their own presentation |
+| --- | --- | --- |
+| Explicit addresses | Address **and** credential required | Address only |
+| Contains `'*'` | Credential required | **No gate at all** |
+
+So **list the allowed addresses explicitly**, and never combine a credential gate with `'*'`
+in the allow list: the policy server lets every address through it, which leaves no gate at
+all. Treat issuer trust and attribute checks as a filter for honest consumers, not as the only
+protection.
+
+A normal wallet is no guarantee either: in this release, the credential type alone is not a
+reliable gate. Trust is enforced by the issuer check together with the address allow list, so
+use both. See
+[known limitations](/docs/known-limitations#the-credential-type-alone-is-not-a-reliable-gate).
 
 Gating also works per service, via
 [`ServiceBuilder.addRequestCredentials`](/docs/api/servicebuilder/addRequestCredentials) —
-useful when an asset offers both an open preview and a restricted full dataset.
+useful when an asset offers both a preview that needs no credential (allow-listed accounts
+only) and a full service that also requires a credential. Two limits apply today:
+
+- `ServiceBuilder.addRequestCredentials` takes no VC or VP policies, so a service-level gate
+  runs only with the policy server's `DEFAULT_VC_POLICIES` and `DEFAULT_VP_POLICIES`, which
+  its operator sets and whose deployed values are unknown. The presentation's own `signature`,
+  for one, may not be checked. Per-service VC and VP policies are a planned SDK change.
+- Don't add `setVcPolicies` or `setVpPolicies` to such an asset. They write an asset-level
+  `SSIpolicy` without `request_credentials`, and the policy server then refuses every service
+  that needs no credential ("SSIpolicy was found, but failed to fetch request credentials").
 
 ### Issuing from a real DID
 
@@ -356,7 +516,7 @@ with the `wallet` option.
 ## Try it
 
 The [examples](/docs/examples) cover both halves of the exchange. Set `SSI_WALLET_API` in
-`.env` first:
+`.env` first, and `SSI_TRUSTED_ISSUERS` (the issuer DIDs your gates accept) to publish a gate:
 
 ```sh
 npm start -- ssi:connect                 # authenticate, list your wallets, keys and DIDs

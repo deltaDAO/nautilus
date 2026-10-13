@@ -2,7 +2,6 @@ import {
   type CredentialProvider,
   type DdoSigner,
   IpfsRemoteStore,
-  LogLevel,
   Nautilus,
   type RemoteStore,
   S3RemoteStore,
@@ -438,8 +437,28 @@ export async function removeStoredEnvelope(
   console.log(`  ✓ removed ${value}`)
 }
 
+/**
+ * nautilus prints warnings to stderr by default, and reads `NAUTILUS_LOG_LEVEL`,
+ * `NAUTILUS_LOG_FORMAT` and `NAUTILUS_LOG_COMPONENTS` itself when it is imported; the entry
+ * points (`index.ts`, `scenarios/e2e.ts`) load `.env` before that, with
+ * `import 'dotenv/config'`. `VERBOSE=true` is the `debug` level, unless `NAUTILUS_LOG_LEVEL`
+ * sets a valid one (nautilus ignores an invalid one, with a warning).
+ */
+function configureLogging(verbose?: boolean): void {
+  const level = process.env.NAUTILUS_LOG_LEVEL?.trim().toLowerCase() ?? ''
+  const levelSet = [
+    'silent',
+    'error',
+    'warn',
+    'info',
+    'debug',
+    'trace'
+  ].includes(level)
+  if (verbose && !levelSet) Nautilus.configureLogging({ level: 'debug' })
+}
+
 export interface SetupOptions {
-  /** Show nautilus's internal logs. */
+  /** Show nautilus's step-by-step (`debug`) log events. */
   verbose?: boolean
   /** Satisfies credential-gated assets. See identity.ts. */
   credentials?: CredentialProvider
@@ -475,6 +494,16 @@ async function assertChain(signer: Signer, networkConfig: NetworkConfig) {
     )
 }
 
+/**
+ * The second RPC from `VERIFICATION_RPC_URL`, if set: the nonce guard reads it before it
+ * sends an order or payment again after a nonce refusal, and never sends one again
+ * without it (see "Concurrency and nonces" in the config guide).
+ */
+function verificationProvider(): JsonRpcProvider | undefined {
+  const url = process.env.VERIFICATION_RPC_URL?.trim()
+  return url ? new JsonRpcProvider(url) : undefined
+}
+
 /** Builds ready-to-use nautilus instances for the network named in `.env`. */
 export async function setup(options: SetupOptions = {}): Promise<Setup> {
   const { name, networkConfig, pricingConfig } = resolveNetwork()
@@ -485,7 +514,7 @@ export async function setup(options: SetupOptions = {}): Promise<Setup> {
   console.log(`RPC:        ${networkConfig.nodeUri}`)
   console.log(`ocean-node: ${networkConfig.oceanNodeUri}`)
 
-  if (options.verbose) Nautilus.setLogLevel(LogLevel.Verbose)
+  configureLogging(options.verbose)
 
   const signer = getSigner(networkConfig)
   const owner = await signer.getAddress()
@@ -495,6 +524,9 @@ export async function setup(options: SetupOptions = {}): Promise<Setup> {
   console.log(`Publisher:  ${owner}`)
 
   const remoteStore = options.withRemoteStore ? getRemoteStore() : undefined
+  const verifier = verificationProvider()
+
+  if (verifier) console.log('Second RPC: VERIFICATION_RPC_URL (nonce proofs)')
 
   if (remoteStore) console.log(`DDO store:  ${describeRemoteStore()}`)
 
@@ -506,6 +538,7 @@ export async function setup(options: SetupOptions = {}): Promise<Setup> {
     remoteStore,
     credentials: options.credentials,
     ddoSigner: options.ddoSigner,
+    verificationProvider: verifier,
     ...paymentLimits()
   })
 
@@ -528,6 +561,7 @@ export async function setup(options: SetupOptions = {}): Promise<Setup> {
   const consumer = await Nautilus.create(consumerSigner, {
     config: networkConfig,
     credentials: options.credentials,
+    verificationProvider: verifier,
     ...paymentLimits()
   })
 

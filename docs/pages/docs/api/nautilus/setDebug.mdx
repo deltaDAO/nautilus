@@ -1,0 +1,155 @@
+# setDebug
+
+Turns the sensitive debug channel on or off for the whole process: the raw data nautilus
+redacts everywhere else, for diagnosing a failure the redacted error does not explain. See
+the [debugging guide](/docs/guides/debugging) for what each tier prints and how to share its
+output safely.
+
+:::danger
+The output contains session ids, signatures, nonces, request payloads and presented
+credentials (at `secrets`, also credentials such as the RPC URL's token). Never turn it on in
+production, and never share the output unchecked.
+:::
+
+## Usage
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+
+Nautilus.setDebug({ level: 'sensitive' }) // [!code focus]
+```
+
+Without a code change, in Node: `NAUTILUS_DEBUG=sensitive node app.js`. See
+[environment variables](#environment-variables).
+
+## Returns
+
+`void`
+
+## Parameters
+
+### options
+
+- Type: `DebugOptions`
+
+Replaces the whole setting (options left out go back to their defaults) and overrides the
+environment variables. An unknown level or topic throws a `TypeError`.
+
+#### level
+
+- Type: `'off' | 'sensitive' | 'secrets'`
+
+| Level | Adds to the debug channel |
+|-------|---------------------------|
+| `off` (default) | Nothing. |
+| `sensitive` | Raw node, wallet, verifier and RPC answers; policy-server session ids and verifier redirect URIs; the verifier's per-policy results with their full errors; request payloads (download URLs with `signature`, `nonce` and the session id); raw signed transactions; presented VP/VC JWTs; storage pointers without their credentials. |
+| `secrets` | Everything in `sensitive`, plus long-lived credentials: the RPC URL with its token, S3 secret keys, IPFS (Pinata) JWTs, `Authorization` headers. |
+
+`sensitive` hides long-lived credentials best effort, by name and shape (see the
+[debugging guide](/docs/guides/debugging#the-two-tiers)): scan its output before sharing it.
+
+The signer's private key or mnemonic is never printed, at any tier: nautilus never holds
+them, the signer does.
+
+#### topics
+
+- Type: `DebugTopic[]`, of `'node' | 'wallet' | 'policy' | 'rpc' | 'order' | 'nonce' | 'store' | 'compute'`
+- Default: all
+
+Only events about these topics print. Every topic also carries the raw fields of
+nautilus's own [log events](/docs/api/nautilus/configureLogging) of its component, but only of
+events printed at the current log level: pair the channel with `NAUTILUS_LOG_LEVEL=debug` (or
+`configureLogging({ level: 'debug' })`) to see them all. The raw `error` of an operation's
+`…operation.failed` (or `…query.failed`) event goes to the topic of where the error
+came from when nautilus knows it: a `PolicyDeniedError` or `CredentialPresentationError` to
+`policy`, a `WaltIdWalletError` to `wallet`, a `NonceGuardError` or `IndexerNonceStuckError`
+to `nonce`, also as the `cause` of another error. Any other error goes to the operation's
+topic (`access.operation.failed` to `order`, `publish.operation.failed` to `rpc`).
+
+| Topic | Events |
+|-------|--------|
+| `node` | ocean-node answers and errors, and the raw arguments of ocean.js's captured lines (`oceanjs.logger.*`, e.g. the request payload of a refused compute start). |
+| `wallet` | The walt.id wallet: its error answers, the resolved presentation request, the presentation result. |
+| `policy` | Policy-server sessions (the `initiate` reply), the verifier's session record and per-policy results, and a `checkSessionId` answer that is not the policy server's envelope (a proxy's 502 page), as it came. |
+| `rpc` | The chain RPC: errors with their request URL and response. |
+| `order` | The raw fields of the access log events, and the errors of the previous-order lookup and of the price read before redaction. Events of their own for orders: not emitted yet (from PRs 7 and 10d). |
+| `nonce` | The raw fields of the publish preflight's nonce warnings; nonce reads, the nonce guard's decisions (nonce chosen, refusal, resync, proof) and the signed transactions of refused sends. |
+| `store` | Remote stores: storage pointers, store answers. |
+| `compute` | The raw fields of the compute log events. Events of their own for compute jobs: not emitted yet (from PR 10d). |
+
+#### sink
+
+- Type: `(event: DebugEvent) => void`
+
+Receives each event instead of stderr, e.g. to write a local file. A sink that throws is
+ignored.
+
+```ts twoslash
+import { appendFileSync } from 'node:fs'
+import { Nautilus } from '@deltadao/nautilus'
+// ---cut---
+Nautilus.setDebug({
+  level: 'sensitive',
+  topics: ['policy', 'wallet'],
+  sink: (event) => // [!code focus]
+    appendFileSync('nautilus-debug.jsonl', `${JSON.stringify(event)}\n`, { mode: 0o600 }) // [!code focus]
+})
+```
+
+Each event is a `DebugEvent`:
+
+| Property | Type | |
+|----------|------|-|
+| `time` | `string` | ISO 8601 timestamp. |
+| `tier` | `'sensitive' \| 'secrets'` | `secrets` when the data holds a long-lived credential (only with `level: 'secrets'`). |
+| `topic` | `DebugTopic` | |
+| `message` | `string` | What the data is, e.g. `answer HTTP 400 Bad Request`. |
+| `opId`, `operation` | `string` | The [operation](/docs/api/nautilus/configureLogging#telling-operations-apart) the event belongs to, as on the log events. In Node 22.3 or newer only; unset outside an operation. |
+| `data` | `unknown` | The raw value as plain data. An error becomes `{ name, message, …, cause }`. After masking, strings are cut at 32,768 characters and the event at about 256 KB. A string longer than 65,536 characters, or past the event's size, is read only up to the last word before that point, so no credential is shown in part. Each cut ends in ` …(cut: N of M characters shown)`, M being the length as given. |
+
+## Output
+
+Without a sink, each event is **one line** on stderr (`console.info` in a browser), prefixed
+with its tier and topic, and within an operation its name and `opId` after the time
+(`… 2026-10-10T13:36:58.772Z [access 3f9a2c1b07e4] verifier per-policy results …`). Line breaks and control characters in the data are written as JSON
+escapes, so an event never spans two lines:
+
+```
+[nautilus:debug:sensitive] [policy] 2026-10-10T13:36:58.772Z [access 3f9a2c1b07e4] verifier per-policy results (checkSessionId) {"sessionId":"…","verificationResult":false,"policies":["VerifiablePresentation holder-binding: failed (java.lang.NullPointerException)", …]}
+[nautilus:debug:SECRETS] [rpc] 2026-10-10T13:37:02.104Z [publish 8c41d07e5a19] log event publish.metadata.events_unchecked before redaction {…}
+```
+
+## What does not change
+
+Errors, return values (e.g. `PublishResponse.stored`), `PolicyDeniedError` and log events
+stay exactly as redacted as with the channel off. Apps log, store and return those, so
+nautilus never un-redacts them; the raw values go to this channel only.
+
+Nothing in what nautilus sends changes either. After a presentation the verifier refused,
+nautilus reads the verifier's record (`checkSessionId`) with the channel on or off, to name the
+failed policies in the `PolicyDeniedError`; with the `policy` topic on, the whole record also
+reaches the channel.
+
+## Warning on enabling
+
+Turning a tier on prints a warning on stderr that no log level or sink suppresses, once per
+tier per process. Under `NODE_ENV=production` it is stronger and says how to turn it off.
+
+## Environment variables
+
+Read once, when nautilus is imported. `setDebug` overrides them. In a browser there is no
+environment; use `setDebug`.
+
+| Variable | Values |
+|----------|--------|
+| `NAUTILUS_DEBUG` | `off`, `sensitive`, `secrets` |
+| `NAUTILUS_DEBUG_TOPICS` | a comma-separated list, e.g. `policy,wallet` |
+
+Case does not matter. Only the tier names count: `NAUTILUS_DEBUG=1` or `true` turns nothing on,
+so `secrets` is reached only by naming it, and `NAUTILUS_DEBUG_TOPICS` alone turns nothing on.
+An unknown value is ignored, and a `config.env.invalid` warning says so. An unknown topic is
+dropped from the list; a list with no known topic turns on no topic, never all of them.
+
+```bash
+NAUTILUS_DEBUG=sensitive NAUTILUS_DEBUG_TOPICS=policy,wallet node download.js 2> debug.log
+```

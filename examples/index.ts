@@ -1,9 +1,13 @@
-import * as dotenv from 'dotenv'
+// Loads .env first, before nautilus is imported, so nautilus reads NAUTILUS_LOG_* from it.
+// Variables already exported into the environment win, so a locally sourced env file
+// overrides the file.
+import 'dotenv/config'
 import {
   COMMANDS,
   formatCommandHelp,
   formatHelp,
   formatUsage,
+  positional,
   requiredArgs,
   runCommand
 } from './commands'
@@ -30,10 +34,6 @@ import {
  * to anything.
  */
 
-// Loads .env if present. Variables already exported into the environment win,
-// so a locally sourced env file overrides the file.
-dotenv.config()
-
 async function main() {
   const [name, ...args] = process.argv.slice(2)
 
@@ -56,7 +56,7 @@ async function main() {
     return
   }
 
-  if (args.length < requiredArgs(command).length) {
+  if (positional(args).length < requiredArgs(command).length) {
     console.error(`Usage: npm start -- ${formatUsage(name, command)}`)
     console.error(`       npm start -- ${name} --help`)
     process.exitCode = 1
@@ -90,6 +90,11 @@ main().catch((error) => {
 
   if (reason && !String(error?.message).includes(reason))
     console.error('  cause:', reason)
+
+  // The call that failed: the same id is on each of its log lines (`opId=` at info or
+  // debug), so `grep <opId>` finds them.
+  const opId = (error as { opId?: unknown } | undefined)?.opId
+  if (typeof opId === 'string') console.error('  opId:', opId)
 
   process.exitCode = 1
 })

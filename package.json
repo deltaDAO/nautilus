@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build": "npm run clean && npm run build:esm && npm run build:types",
-    "build:esm": "tsc --project ./tsconfig.build.json --module nodenext --outDir ./src/_esm --declaration false --declarationMap false --sourceMap false && printf '{\"type\": \"module\",\"sideEffects\":false}' > ./src/_esm/package.json",
+    "build:esm": "tsc --project ./tsconfig.build.json --module nodenext --outDir ./src/_esm --declaration false --declarationMap false --sourceMap false && printf '{\"type\": \"module\",\"sideEffects\":[\"./log/logger.js\",\"./log/oceanjs.js\"]}' > ./src/_esm/package.json",
     "build:types": "tsc --project ./tsconfig.build.json --module nodenext --declarationDir ./src/_types --emitDeclarationOnly --declaration --declarationMap false",
     "changeset": "changeset",
     "changeset:publish": "npm run build && changeset publish",
@@ -20,6 +20,7 @@
     "docs:build": "cd docs && npm run build",
     "docs:dev": "cd docs && npm run dev",
     "docs:preview": "cd docs && npm run preview",
+    "examples:smoke": "tsc --noEmit -p examples/smoke && vitest run --config examples/smoke/vitest.config.ts",
     "format": "biome format . --write",
     "lint": "biome check .",
     "lint:fix": "biome check . --fix",

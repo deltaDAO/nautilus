@@ -12,6 +12,7 @@ export const sidebar = {
         { text: 'Examples', link: '/docs/examples' },
         { text: 'TypeScript', link: '/docs/typescript' },
         { text: 'FAQ', link: '/docs/faq' },
+        { text: 'Known limitations', link: '/docs/known-limitations' },
         {
           text: 'Migrating from v1',
           link: '/docs/migration',
@@ -122,6 +123,11 @@ export const sidebar = {
           text: 'Static',
           items: [
             { text: 'create', link: '/docs/api/nautilus/create' },
+            {
+              text: 'configureLogging',
+              link: '/docs/api/nautilus/configureLogging'
+            },
+            { text: 'setDebug', link: '/docs/api/nautilus/setDebug' },
             { text: 'setLogLevel', link: '/docs/api/nautilus/setLogLevel' }
           ]
         },
@@ -534,7 +540,10 @@ export const sidebar = {
     },
     {
       text: 'Advanced',
-      items: [{ text: 'Custom configuration', link: '/docs/guides/config' }]
+      items: [
+        { text: 'Custom configuration', link: '/docs/guides/config' },
+        { text: 'Debugging', link: '/docs/guides/debugging' }
+      ]
     },
     {
       text: 'Legal',

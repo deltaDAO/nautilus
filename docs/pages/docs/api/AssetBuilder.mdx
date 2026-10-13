@@ -123,12 +123,28 @@ const gated = new AssetBuilder()
 gated
   // Only these addresses may access it.
   .addCredentialAddresses(CredentialListTypes.ALLOW, ['0x0DB823218e337a...'])
-  // Or: anyone holding a credential of this type.
+  // And: a credential of this type, from an issuer you trust.
   .addRequestCredentials(CredentialListTypes.ALLOW, [ // [!code focus]
-    { type: 'VerifiableId', format: 'jwt_vc_json' } // [!code focus]
+    { // [!code focus]
+      type: 'VerifiableId', // [!code focus]
+      format: 'jwt_vc_json', // [!code focus]
+      policies: [{ policy: 'allowed-issuer', args: ['did:web:issuer.example'] }] // [!code focus]
+    } // [!code focus]
   ]) // [!code focus]
   .setVcPolicies(CredentialListTypes.ALLOW, ['signature', 'not-before']) // [!code focus]
+  // And: a presentation signed by the DID it names, holding at least one credential.
+  .setVpPolicies(CredentialListTypes.ALLOW, [ // [!code focus]
+    { policy: 'signature' }, // [!code focus]
+    { policy: 'minimum-credentials', args: '1' } // [!code focus]
+  ]) // [!code focus]
 ```
+
+On a node with a policy server the address allow list is required, and it is the check that
+holds. Until the policy server enforces the requested credential type, the credential check
+stops only consumers who use a normal wallet: anyone who builds their own presentation passes
+it with a self-issued credential of another type. An allow list containing `'*'` therefore
+leaves no gate at all, so list the allowed addresses explicitly.
+See the [known limitation](/docs/guides/identity#known-limitation-credentials-of-another-type).
 
 See [Credential-gated assets](/docs/guides/identity) for the whole picture, including the
 consumer side.
