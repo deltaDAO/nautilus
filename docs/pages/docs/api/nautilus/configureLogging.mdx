@@ -304,8 +304,9 @@ Warnings of an [`S3RemoteStore`](/docs/api/remote/S3RemoteStore) and ocean.js's
 
 Each call of `publish`, `completePublish`, `edit`, `setServicePrice`,
 `setAssetLifecycleState`, `access`, `compute`, `freeCompute`, `stopCompute`,
-`getComputeStatus`, `getComputeResult`, `streamComputeResult`, `getComputeLogs` and
-`waitForIndexer` is an **operation** with its own
+`getComputeStatus`, `getComputeResult`, `streamComputeResult`, `getComputeLogs`,
+`waitForIndexer`, and of the reads `getAsset`, `getAssets`, `query`,
+`getComputeEnvironments` and `getComputeEnvironment` is an **operation** with its own
 `opId`. Every event the call causes carries it, with the call's name as `operation`, so the
 lines of calls that run at the same time (a `Promise.all`, a server handling several
 requests) can be told apart:
@@ -341,8 +342,10 @@ Each operation starts with a `…started` event (`debug`) and ends with `…fini
 (`publish.operation.*`, `edit.operation.*`, `lifecycle.operation.*`, `access.operation.*`,
 `compute.operation.*`, `node.operation.*` for `waitForIndexer`), except for the job reads,
 `getComputeStatus` and `getComputeResult` (which apps poll), `streamComputeResult` and
-`getComputeLogs`, whose `compute.query.*` events are all `debug`. A stream call finishes once
-the stream is open; reading it is not part of the operation.
+`getComputeLogs`, and the environment reads, whose `compute.query.*` events are all `debug`,
+and the metadata reads `getAsset`, `getAssets` and `query`, whose `node.query.*` events are
+all `debug` too. A stream call finishes once the stream is open; reading it is not part of
+the operation.
 
 In Node 22.3 or newer, a call made from inside another call of the same logger, e.g. from a
 `confirmProviderFees` callback, joins that operation: it has no events or `opId` of its own,

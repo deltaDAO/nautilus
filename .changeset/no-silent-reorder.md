@@ -59,8 +59,9 @@ whole order window.
   pays: price, publish-market fee, provider fee), `checkedHours` and `windowHours` (for
   `incomplete`; `windowHours` is `Infinity` for orders that never expire), and `cause`, the
   RPC's error redacted (first line, credentials also under JSON escaping, so a key spelt
-  `"api\u004bey"` is redacted too, no URL, long hex shortened, at most 200 characters). The
-  unredacted error goes to the debug channel (`NAUTILUS_DEBUG=sensitive`, topic `order`).
+  `"api\u004bey"` is redacted too and a value with an escaped quote or delimiter in it is
+  redacted whole, no URL, long hex shortened, at most 200 characters). The unredacted error
+  goes to the debug channel (`NAUTILUS_DEBUG=sensitive`, topic `order`).
 - **`access({ orderOnLookupFailure: true })`** (also on `settleOrder()`) orders anyway, with a
   warning that it may pay twice. Only `true` opts in. When the price cannot be read either,
   nothing can be bought and `OrderCheckError` is thrown regardless.

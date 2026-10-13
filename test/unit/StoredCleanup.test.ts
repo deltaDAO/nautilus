@@ -678,7 +678,16 @@ describe('writeMetadata', () => {
       logsThrow?: boolean
       /** How the broadcasts after the first fail: a refusal for the nonce by default. */
       resendError?: 'INSUFFICIENT_FUNDS' | 'TIMEOUT'
+      /** The head block (100 by default). */
+      head?: number
+      /** The finalized block (the head by default); `null`: the RPC has none. */
+      finalized?: number | null
+      /** The mined count at the finalized block and below (`latest` by default). */
+      finalizedLatest?: number
     }) {
+      const head = options.head ?? 100
+      const finalized =
+        options.finalized === undefined ? head : options.finalized
       let metadataHash = ''
       let signedHash = ''
       let broadcasts = 0
@@ -688,11 +697,23 @@ describe('writeMetadata', () => {
       }
       const provider = {
         getNetwork: async () => ({ chainId: 32456n }),
-        getBlockNumber: async () => 100,
+        getBlockNumber: async () => head,
+        getBlock: vi.fn(async (tag: unknown) =>
+          tag === 'finalized'
+            ? finalized === null
+              ? null
+              : { number: finalized }
+            : null
+        ),
         getTransactionCount: async (_address: string, tag: unknown) =>
           tag === 'pending'
             ? (options.pending ?? options.latest ?? 818)
-            : (options.latest ?? 818),
+            : typeof tag === 'number' &&
+                finalized !== null &&
+                tag <= finalized &&
+                options.finalizedLatest !== undefined
+              ? options.finalizedLatest
+              : (options.latest ?? 818),
         getTransaction: async (hash: string) =>
           options.known && hash === signedHash ? { hash } : null,
         getTransactionReceipt: async () => null,
@@ -784,6 +805,34 @@ describe('writeMetadata', () => {
       expect(provider.getLogs).toHaveBeenCalledWith(
         expect.objectContaining({ fromBlock: 100, toBlock: 100 })
       )
+    })
+
+    it('keeps it when the nonce was used only above the finalized block (PR #217 review, 4255862798)', async () => {
+      // Another transaction took nonce 765 in block 101, finalized is 100: a reorg can drop
+      // it and mine the metadata transaction, whose pointer would then name nothing.
+      const { signer } = refusingChain({
+        head: 101,
+        finalized: 100,
+        finalizedLatest: 765
+      })
+
+      expect((await writeWith(signer)).progress).to.deep.equal(['sent'])
+    })
+
+    it('keeps it when the RPC has no finalized block', async () => {
+      const { signer } = refusingChain({ finalized: null })
+
+      expect((await writeWith(signer)).progress).to.deep.equal(['sent'])
+    })
+
+    it('removes it when the nonce was used at or below the finalized block (control)', async () => {
+      const { signer } = refusingChain({
+        head: 101,
+        finalized: 100,
+        finalizedLatest: 766
+      })
+
+      expect((await writeWith(signer)).progress).to.deep.equal([])
     })
 
     /** The same chain behind the nonce guard: a stale pending count, so it resends once. */

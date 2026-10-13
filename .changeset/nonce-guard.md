@@ -39,7 +39,8 @@ after 128 blocks: it stops with "may have been sent".
 - **The counter survives a lagging RPC.** A send takes the RPC's pending count instead only
   when the earliest transaction the pending count does not cover was dropped from the pool
   (sent over a minute ago, unknown on two reads, and the account not mined past its nonce),
-  so a dropped transaction no longer leaves a gap that later ones wait behind for ever.
+  so a dropped transaction no longer leaves a gap that later ones wait behind for ever. A
+  send that fails to fill the gap leaves it to the next send.
 - **New options on `Nautilus.create`:** `nonceManagement: 'auto' | 'off'` (default `'auto'`;
   `'off'` never sets a nonce or resends) and `verificationProvider`, a second RPC on the
   same chain for the "never sent" proofs, recommended for paid flows; `create` checks its
@@ -70,10 +71,11 @@ after 128 blocks: it stops with "may have been sent".
   its host), with ANSI escapes and control characters removed, so a huge error body from an
   RPC is redacted in bounded time. The raw error is in the debug channel (topic `nonce`).
 - **A metadata transaction refused for its nonce** keeps its stored envelope unless it is
-  proven never mined (hash unknown on two reads, the account past its nonce, and no metadata
-  event with this `metadataHash` up to a block each RPC names): `cleanup: 'removed'` only
-  then (`'not-removed'` if the store cannot remove it), else `'kept'`. On a confidential
-  chain it is always kept.
+  proven never mined (hash unknown on two reads, the account past its nonce at each RPC's
+  finalized block, and no metadata event with this `metadataHash` up to a block each RPC
+  names): `cleanup: 'removed'` only then (`'not-removed'` if the store cannot remove it),
+  else `'kept'`. A nonce taken only in blocks not yet finalized keeps the envelope, as a
+  reorg could still mine the metadata transaction. On a confidential chain it is always kept.
   `REPLACEMENT_UNDERPRICED` no longer counts as "never broadcast" by itself.
 - **New log events:** `chain.nonce.resending`, `chain.nonce.already_sent`,
   `chain.nonce.gave_up`, `chain.nonce.counter_reset`, `chain.send.failed`,
