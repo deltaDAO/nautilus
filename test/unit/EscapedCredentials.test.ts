@@ -457,7 +457,7 @@ describe('how deep escaping is undone (security regression)', () => {
       let passes = 0
       withEscapesUndone(text, (read) => {
         passes++
-        return `${read}.`
+        return read
       })
       expect(passes, label).to.equal(3)
 
@@ -565,10 +565,107 @@ describe('how deep escaping is undone (security regression)', () => {
       text.replace(/KEY/g, '<r>').replace(/"x"/g, '<x>')
     expect(withEscapesUndone('KEY \\"y\\"', pass)).to.equal('<r> \\"y\\"')
     expect(withEscapesUndone('KEY \\"x\\"', pass)).to.equal('<r> <x>')
-    // Past the limit, the flattened text is read too.
+    // Past the limit, the flattened text is read too, and what follows the first thing it
+    // redacted is dropped: flattening loses where a value ends.
     expect(
       withEscapesUndone(`KEY ${'\\'.repeat(1023)}"x${'\\'.repeat(1023)}"`, pass)
-    ).to.equal('<r> <x>')
+    ).to.equal('<r> <redacted>…')
+  })
+})
+
+/** The end of a fake password, after a quote it escapes: `prefix"<tail>`. */
+const TAIL = 'fakeCredentialTail12345'
+
+describe('a quote escaped inside a value (security regression)', () => {
+  // PR #221 review: undoing several levels before the redaction read the text turned the
+  // value's own escaped quote into the one that ends it, and left the rest shown.
+  const quoted = JSON.stringify({ password: `prefix"${TAIL}` })
+  const shapes: [string, string][] = [
+    ['percent-encoded JSON', encodeURIComponent(quoted)],
+    ...[2, 7, 8, 9, 12].map((levels): [string, string] => [
+      `JSON percent-encoded ${levels} times`,
+      percentEncoded(quoted, levels)
+    ]),
+    [
+      'JSON quoted twice, then percent-encoded',
+      encodeURIComponent(stringified(quoted, 2))
+    ],
+    [
+      'single quotes, percent-encoded',
+      encodeURIComponent(`{'password': 'prefix\\'${TAIL}'}`)
+    ],
+    [
+      'a bracketed value, percent-encoded twice',
+      percentEncoded(`{"password":["prefix]${TAIL}"]}`, 2)
+    ]
+  ]
+
+  for (const [label, text] of shapes)
+    it(`keeps the value whole: ${label}, on every path`, () => {
+      for (const [path, shown] of everyPath(`upstream failed: ${text}`))
+        expect(shown, path).not.to.contain(TAIL)
+    })
+
+  it('keeps the value whole in a real ethers error, on every path', async () => {
+    for (const status of [200, 500]) {
+      const error = await rpcError(status, encodeURIComponent(quoted))
+      // The control: ethers' message holds it.
+      expect(error.message).to.contain(TAIL)
+
+      expect(
+        JSON.stringify(redactFields({ error })),
+        `field, HTTP ${status}`
+      ).not.to.contain(TAIL)
+      const nodeError = OceanNodeError.from('initialize', error)
+      expect(
+        `${nodeError.message} ${(nodeError.cause as Error).message}`,
+        `OceanNodeError.from, HTTP ${status}`
+      ).not.to.contain(TAIL)
+
+      const captured = captureLog({ level: 'trace' })
+      await runOperation(log, 'access', async () => {
+        throw error
+      }).catch(() => undefined)
+      const [failed] = captured.named('access.operation.failed')
+      expect(
+        `${formatJson(failed)}\n${formatPretty(failed)}`,
+        `access.operation.failed, HTTP ${status}`
+      ).not.to.contain(TAIL)
+
+      const send = Object.assign(new Error(error.message), {
+        shortMessage: error.message
+      })
+      withoutSignedTransaction(send)
+      expect(
+        `${send.message} ${send.shortMessage}`,
+        `nonce guard, HTTP ${status}`
+      ).not.to.contain(TAIL)
+
+      const events: DebugEvent[] = []
+      setDebug({
+        level: 'sensitive',
+        topics: ['node'],
+        sink: (event) => events.push(event)
+      })
+      OceanNodeError.from('initialize', error)
+      setDebug({ level: 'off' })
+      expect(events.length).to.be.greaterThan(0)
+      expect(
+        JSON.stringify(events.map((event) => event.data)),
+        `sensitive tier, HTTP ${status}`
+      ).not.to.contain(TAIL)
+    }
+  })
+
+  it('reads each level before the one that makes a delimiter', () => {
+    // A toy pass that redacts a double-quoted value, escaped quotes inside it included.
+    const pass = (text: string) =>
+      text.replace(/"((?:[^"\\]|\\.)*)"/g, (match, value: string) =>
+        value === 'r' ? match : '"r"'
+      )
+    expect(withEscapesUndone('%22a%5C%22b%22', pass)).to.equal('"r"')
+    // Nothing found: the text keeps its escapes.
+    expect(withEscapesUndone('%2541', pass)).to.equal('%2541')
   })
 })
 

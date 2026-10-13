@@ -66,6 +66,35 @@ function fromHex(code: string): string {
 }
 
 /**
+ * What undoing an escape may make and still end no value: a backslash or a percent sign
+ * (which only start another escape), a letter or a digit.
+ */
+const ENDS_NO_VALUE = /[\\%0-9A-Za-z]/
+
+/**
+ * `text` with one level of escaping undone (`ESCAPE`), and whether that made a character
+ * that may end a value (`ENDS_NO_VALUE`): a quote, a bracket, a space, `=`, `,`, ….
+ * Linear in the length of `text`.
+ */
+function undoEscape(text: string): [string, boolean] {
+  let delimiter = false
+  const undone = text.replace(
+    ESCAPE,
+    (
+      _match,
+      char: string | undefined,
+      json: string | undefined,
+      percent: string | undefined
+    ) => {
+      const undone = char ?? fromHex(json ?? percent ?? '')
+      delimiter ||= !ENDS_NO_VALUE.test(undone)
+      return undone
+    }
+  )
+  return [undone, delimiter]
+}
+
+/**
  * `text` with up to `MAX_UNESCAPE_LEVELS` levels of escaping undone (`ESCAPE`): a body
  * quoted in JSON inside JSON (an RPC's answer inside an ethers error message) hides a key
  * (`\\\"apiToken\\\"`) or a URL from the patterns, and so does percent-encoding
@@ -74,15 +103,7 @@ function fromHex(code: string): string {
 export function undoEscapes(text: string): string {
   let current = text
   for (let level = 0; level < MAX_UNESCAPE_LEVELS; level++) {
-    const next = current.replace(
-      ESCAPE,
-      (
-        _match,
-        char: string | undefined,
-        json: string | undefined,
-        percent: string | undefined
-      ) => char ?? fromHex(json ?? percent ?? '')
-    )
+    const [next] = undoEscape(current)
     if (next === current) break
     current = next
   }
@@ -179,27 +200,59 @@ function flattenEscapes(text: string): string {
  * `text` through `pass` (a redaction), as it is and with its escapes undone: the pass runs
  * on `text`, then again on its own output with up to `MAX_UNESCAPE_LEVELS` levels of
  * escaping undone (`undoEscapes`), so what the first pass redacted stays redacted. When
- * escapes are still left after that (deeper escaping), the output is read once more with
- * them all flattened (`flattenEscapes`), so a credential deeper than the limit is still
- * redacted rather than shown. The first pass's output, with its escapes kept, is returned
- * unless a later pass redacts more; then that pass's output, with its escapes undone, is.
- * Linear: at most three passes, `MAX_UNESCAPE_LEVELS` replacements and one flatten.
+ * that finds more, the levels are undone again one by one from the first pass's output,
+ * and the pass reads the text before each level that makes a delimiter (`undoEscape`) and
+ * after the last: undoing them all at once can make a quote escaped inside a value
+ * (`"prefix\"tail"`, `%22prefix%5C%22tail%22`) end it, and leave `tail` shown. When
+ * escapes are still left after the levels (deeper escaping), the output is read once more
+ * with them all flattened (`flattenEscapes`), which cannot tell such a quote from the one
+ * that ends the value: when that read redacts more, only the text before the first thing it
+ * redacted is kept, and `<redacted>…` stands for the rest. The first pass's output, with
+ * its escapes kept, is returned unless a later pass redacts more; then that pass's output,
+ * with its escapes undone, is. Linear: at most `MAX_UNESCAPE_LEVELS` + 3 passes, 3 ×
+ * `MAX_UNESCAPE_LEVELS` replacements and one flatten.
  */
 export function withEscapesUndone(
   text: string,
   pass: (text: string) => string
 ): string {
   const once = pass(text)
-  const unescaped = undoEscapes(once)
-  if (unescaped === once) return once
+  let current = undoEscapes(once)
+  if (current === once) return once
 
-  const deep = pass(unescaped)
-  const found = deep !== unescaped
-  // Escapes left after `MAX_UNESCAPE_LEVELS`: escaping deeper than the limit.
-  if (HAS_ESCAPE.test(unescaped)) {
-    const flat = flattenEscapes(deep)
-    const deeper = pass(flat)
-    if (deeper !== flat) return deeper
+  const found = pass(current) !== current
+  if (found) {
+    current = once
+    // Whether `current` is the pass's output, with no escape undone since.
+    let read = true
+    for (let level = 0; level < MAX_UNESCAPE_LEVELS; level++) {
+      const [unescaped, delimiter] = undoEscape(current)
+      if (unescaped === current) break
+      if (delimiter && !read) {
+        // Read before this level makes a delimiter, then undo it again.
+        current = pass(current)
+        read = true
+        level--
+        continue
+      }
+      current = unescaped
+      read = false
+    }
+    if (!read) current = pass(current)
   }
-  return found ? deep : once
+  // Escapes left after `MAX_UNESCAPE_LEVELS`: escaping deeper than the limit.
+  if (HAS_ESCAPE.test(current)) {
+    const flat = flattenEscapes(current)
+    const deeper = pass(flat)
+    if (deeper !== flat) return `${commonStart(flat, deeper)}<redacted>…`
+  }
+  return found ? current : once
+}
+
+/** The longest start `a` and `b` have in common. */
+function commonStart(a: string, b: string): string {
+  let length = 0
+  while (length < a.length && length < b.length && a[length] === b[length])
+    length++
+  return a.slice(0, length)
 }

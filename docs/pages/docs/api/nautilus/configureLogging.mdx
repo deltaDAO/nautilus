@@ -150,12 +150,16 @@ deeper), a `Cookie` header to the end of its line, and a URL also with JSON-esca
 (`https:\/\/…`); a key or a URL behind JSON escapes is read decoded, so `"session\u0049d"`
 is `sessionId`. The text is also read with up to eight levels of escaping undone: JSON
 escaping (a body quoted inside JSON several times, `\u0022` and `\'` quotes included) and
-percent-encoding (`apiToken%3D…`, `%22apiToken%22%3A…`, `https%3A%2F%2F…`). Deeper escaping
+percent-encoding (`apiToken%3D…`, `%22apiToken%22%3A…`, `https%3A%2F%2F…`). The levels are
+read one at a time, so a quote escaped inside a value (`%22prefix%5C%22…%22`) stays part of
+it and the whole value is redacted. Deeper escaping
 is flattened and read once more: every escape is undone, and so is every escape that undoing
 makes, until none is left (a run of backslashes becomes the character it escapes, a chain of
 encoded percent signs (`%25253D`) the character it encodes, and a chain of escaped backslashes
 (`\u005cu005cu003d`) the character at its end). So a credential under JSON escaping or
-percent-encoding of any depth, or both mixed, is still redacted.
+percent-encoding of any depth, or both mixed, is still redacted. Flattened text no longer shows
+where a value ends, so when that read finds a credential, the text from the credential on reads
+`<redacted>…`.
 When this finds a credential that the text as written hid, the message or field shows the text
 with those escapes undone (`"apiToken":"<redacted>"` where the error had
 `\u0022apiToken\u0022:…`), so it can read with fewer backslashes or `%` escapes than the raw

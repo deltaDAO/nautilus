@@ -15,10 +15,11 @@ release are documented on one page.
   encoded RPC URL) reached the `error` field of a log event, an operation's
   `…operation.failed` event, an `OceanNodeError` and the message of a failed send, because
   the redaction did not look under the escapes. It now reads the text with up to eight levels
-  of JSON escaping and percent-encoding undone, and flattens deeper JSON escaping and
-  percent-encoding of any depth (also mixed, and chains where undoing one escape makes the
-  next, such as `\u005cu005c…u003d`) for one more read, and redacts what it finds
-  there. Text that hides nothing keeps its escapes. The raw value is still in the debug
+  of JSON escaping and percent-encoding undone, one level at a time, so a quote escaped inside
+  a value stays part of it, and flattens deeper JSON escaping and percent-encoding of any
+  depth (also mixed, and chains where undoing one escape makes the next, such as
+  `\u005cu005c…u003d`) for one more read; what it finds there is redacted with the rest of
+  the text after it. Text that hides nothing keeps its escapes. The raw value is still in the debug
   channel: at `NAUTILUS_DEBUG=secrets`, not at `sensitive`, which now reads the same escapes,
   JSON-escaped URLs included.
 - **A download URL can be replaced by a newer one.** The URL `access()` returns carries a
