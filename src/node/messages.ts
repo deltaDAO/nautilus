@@ -17,8 +17,10 @@ import { isErrorCode, SECRET_KEYS } from '../log/keys.js'
 import { redactKeyValues } from '../log/keyValues.js'
 import {
   INVISIBLE_CHARACTERS,
+  QUOTED_USER_INFO,
   SCHEMELESS_URL,
-  trailingPunctuation
+  trailingPunctuation,
+  URL_AUTHORITY
 } from '../log/textShapes.js'
 
 /** A non-2xx answer of the node. A `FetchedText` is one. */
@@ -137,6 +139,8 @@ const ANSI_ESCAPE =
 export function redactSecrets(text: string): string {
   return redactKeyValues(
     decodeJsonEscapes(text)
+      // User info a quote stands in is dropped up to its `@`, so the URL reads its host.
+      .replace(QUOTED_USER_INFO, '$1@')
       .replace(URL_PATTERN, originOnly)
       .replace(SCHEMELESS_URL, hostOnly),
     SECRET_KEYS
@@ -318,11 +322,12 @@ function readLimit(maxLength: number): number {
  * quote ends a word but may stand in a URL's user info (`https://user:secret,…@host`), so
  * dropping the last word alone could leave `https://user:secret` and the redaction read
  * the credential as the host. A URL that runs up to the cut, with a scheme or without
- * (`URL_PATTERN`, `SCHEMELESS_URL`), is dropped whole. Both are scanned in linear time.
+ * (`URL_PATTERN`, `SCHEMELESS_URL`), or whose authority does (`URL_AUTHORITY`), is
+ * dropped whole. All three are scanned in linear time.
  */
 function beforeOpenUrl(text: string): string {
   let end = text.length
-  for (const pattern of [URL_PATTERN, SCHEMELESS_URL])
+  for (const pattern of [URL_PATTERN, SCHEMELESS_URL, URL_AUTHORITY])
     for (const match of text.matchAll(pattern))
       if (match.index + match[0].length === text.length)
         end = Math.min(end, match.index)
