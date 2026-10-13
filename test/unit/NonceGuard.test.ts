@@ -31,8 +31,9 @@ import {
   Wallet
 } from 'ethers'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { Nautilus } from '../../src/index.js'
+import { createLogger, Nautilus } from '../../src/index.js'
 import {
+  guardSigner,
   isMoneySend,
   NonceGuardError,
   NonceGuardSigner,
@@ -1932,5 +1933,103 @@ describe('Nautilus.create: the verification provider', () => {
     } finally {
       for (const provider of [own, sameUrl, other]) provider.destroy()
     }
+  })
+})
+
+describe("a guarded signer given again: another instance's getSigner() (PR #217 review, 4257526759)", () => {
+  it("honours 'off': no resend from the new guard", async () => {
+    const chain = fakeChain({
+      latest: 818,
+      stale: 53,
+      broadcast: refuseFirst(1, 'NONCE_EXPIRED', 'nonce too low')
+    })
+    const first = guard(chain)
+
+    const reused = guardSigner(first, { nonceManagement: 'off' })
+
+    expect(reused).not.to.equal(first)
+    expect(reused.nonceManagement).to.equal('off')
+    expect(reused.managesNonces).to.equal(false)
+    expect(first.nonceManagement).to.equal('auto')
+    await failure(reused.sendTransaction(request()))
+    expect(chain.broadcasts.map((tx) => tx.nonce)).to.deep.equal([765])
+  })
+
+  it('uses the new verificationProvider in the proof that an order was never sent', async () => {
+    const chain = fakeChain({ latest: 10, head: 100 })
+    const other = await otherTx(10)
+    chain.provider.broadcastTransaction.mockImplementationOnce(
+      async (raw: string) => {
+        chain.broadcasts.push(Transaction.from(raw))
+        chain.mineBlock(other)
+        chain.setLatest(11)
+        throw refusal('NONCE_EXPIRED', 'nonce too low', raw)
+      }
+    )
+    const first = guard(chain)
+    const verificationProvider = secondRpc(11, undefined, chain.provider)
+
+    const reused = guardSigner(first, {
+      verificationProvider: verificationProvider as never
+    })
+
+    expect(reused.verificationProvider).to.equal(verificationProvider)
+    expect(first.verificationProvider).to.equal(undefined)
+    await reused.sendTransaction(request(ORDER_CALL))
+    expect(chain.broadcasts.map((tx) => tx.nonce)).to.deep.equal([10, 11])
+  })
+
+  it('shares the nonce state and the send record with the first guard', async () => {
+    const chain = fakeChain({ latest: 10 })
+    const first = guard(chain)
+
+    const reused = guardSigner(first, {
+      logger: createLogger({ level: 'silent' })
+    })
+
+    expect(reused.signer).to.equal(first.signer)
+    expect(reused.sends).to.equal(first.sends)
+    await Promise.all([
+      first.sendTransaction(request()),
+      reused.sendTransaction(request()),
+      first.sendTransaction(request()),
+      reused.sendTransaction(request())
+    ])
+    expect(chain.broadcasts.map((tx) => tx.nonce)).to.deep.equal([
+      10, 11, 12, 13
+    ])
+  })
+
+  it('Nautilus.create applies its own options to a guarded signer', async () => {
+    const config = {
+      oceanNodeUri: 'https://ocean-node.example.com',
+      nftFactoryAddress: '0x0000000000000000000000000000000000000001',
+      fixedRateExchangeAddress: '0x0000000000000000000000000000000000000001',
+      dispenserAddress: '0x0000000000000000000000000000000000000001'
+    }
+    const wallet = new Wallet(PRIVATE_KEY).connect({
+      getNetwork: async () => ({ chainId: BigInt(CHAIN_ID) })
+    } as never)
+    const verificationProvider = {
+      getNetwork: async () => ({ chainId: BigInt(CHAIN_ID) })
+    }
+    const first = await Nautilus.create(wallet, { config })
+
+    const second = await Nautilus.create(first.getSigner(), {
+      nonceManagement: 'off',
+      verificationProvider: verificationProvider as never,
+      config
+    })
+
+    const [guard1, guard2] = [first, second].map(
+      (nautilus) => nautilus.getSigner() as NonceGuardSigner
+    )
+    expect(guard2.nonceManagement).to.equal('off')
+    expect(guard2.verificationProvider).to.equal(verificationProvider)
+    expect(guard1.nonceManagement).to.equal('auto')
+    expect(guard1.verificationProvider).to.equal(undefined)
+    // Over the wallet itself, not a guard inside a guard.
+    expect(guard2.signer).to.equal(wallet)
+    expect(guard2.sends).to.equal(guard1.sends)
   })
 })

@@ -25,3 +25,7 @@ through your signer, and transactions sent through it share the guard's per-addr
 and nonce counter with nautilus's own. Useful for the handful of helpers that take a signer
 directly, such as [`getPricingInfo`](/docs/api/pricing/getPricingInfo). It is not the same
 object, so `getSigner() instanceof Wallet` is `false`; keep your own reference for that.
+
+Passed to `create` for another instance, it is not wrapped twice: the new instance guards
+the signer underneath it with its own `nonceManagement` and `verificationProvider`, and
+both instances share the per-address order and nonce counter.
