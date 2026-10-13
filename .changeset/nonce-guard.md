@@ -57,9 +57,10 @@ why instead of "ocean.js returned no transaction".
   the raw values go to the debug channel (`NAUTILUS_DEBUG=sensitive`, topic `nonce`), with
   the nonce reads and the guard's decisions.
 - **A metadata transaction refused for its nonce** keeps its stored envelope unless it is
-  proven never mined (hash unknown on two reads, the account past its nonce, and no metadata
-  event with this `metadataHash` up to a block each RPC names): `cleanup: 'removed'` only
-  then, else `'kept'`.
+  proven never mined (hash unknown on two reads, the account past its nonce at each RPC's
+  finalized block, and no metadata event with this `metadataHash` up to a block each RPC
+  names): `cleanup: 'removed'` only then, else `'kept'`. A nonce taken only in blocks not
+  yet finalized keeps the envelope, as a reorg could still mine the metadata transaction.
   `REPLACEMENT_UNDERPRICED` no longer counts as "never broadcast" by itself.
 - **New log events:** `chain.nonce.resending`, `chain.nonce.already_sent`,
   `chain.nonce.gave_up`, `chain.nonce.counter_reset`, `chain.send.failed`,
