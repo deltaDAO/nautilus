@@ -110,7 +110,8 @@ With the default `nonceManagement: 'auto'` and a signer that signs locally (an e
   nautilus's transactions that the pending count does not cover was dropped from the pool:
   sent more than a minute ago, unknown by hash on two reads, and the account has not mined
   past its nonce. That fills the gap a dropped transaction leaves before the ones still
-  waiting behind it; the send after it skips those. An RPC that merely lags right after a
+  waiting behind it; the send after it skips those. A send that fails to fill the gap
+  leaves it to the next send. An RPC that merely lags right after a
   broadcast does not trigger it.
 - **Recovery from nonce refusals only** (`NONCE_EXPIRED` / "nonce too low",
   `REPLACEMENT_UNDERPRICED`, "already known"), and only for a refused transaction that is
