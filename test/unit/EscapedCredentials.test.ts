@@ -764,3 +764,45 @@ describe('the nonce guard and hostile RPC text (security regression)', () => {
     expect(send.message).to.equal('nonce too low again')
   })
 })
+
+describe('user info an escaped quote stands in, through every decoding (security regression)', () => {
+  it('drops it in messages and masks it in the sensitive tier', () => {
+    // `'` stays escaped at each level the redaction undoes (JSON, percent-encoding):
+    // the URL pattern read the backslash as the end of the authority, so `user:12345` read
+    // as a host and port.
+    const secret = 'userinfo-secret-7Hq2Lm9Z'
+    const url = (quote: string) =>
+      `https://user:12345${quote}${secret}@rpc.example.org/p`
+    const forms: [string, (text: string) => string][] = [
+      ['plain', (text) => `failed ${text}`],
+      ['JSON', (text) => JSON.stringify({ e: `failed ${text}` })],
+      ['JSON twice', (text) => JSON.stringify(JSON.stringify({ e: text }))],
+      ['percent', (text) => `failed ${encodeURIComponent(text)}`],
+      [
+        'percent twice',
+        (text) => `failed ${encodeURIComponent(encodeURIComponent(text))}`
+      ],
+      [
+        'percent JSON',
+        (text) => encodeURIComponent(JSON.stringify({ e: text }))
+      ],
+      ['escaped slashes', (text) => `failed ${text.replace(/\//g, '\\/')}`]
+    ]
+    for (const quote of ['\\u0027', '\\u0022', '\\u003c', '\\\\u003E'])
+      for (const [form, wrap] of forms) {
+        const text = wrap(url(quote))
+        const label = `${quote} ${form}`
+        for (const shown of [
+          sanitize(text, 200, null),
+          sanitize(text, 2_000, null),
+          redactSecrets(text)
+        ]) {
+          expect(shown, label).not.to.contain(secret)
+          expect(shown, label).not.to.contain('12345')
+          expect(shown, label).to.contain('https://rpc.example.org')
+        }
+        expect(maskText(text), label).not.to.contain(secret)
+        expect(maskText(text), label).not.to.contain('12345')
+      }
+  })
+})
