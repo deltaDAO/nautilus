@@ -24,7 +24,11 @@ import {
   Wallet
 } from 'ethers'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { redactError, redactMessage } from '../../src/log/redact.js'
+import {
+  redactError,
+  redactFields,
+  redactMessage
+} from '../../src/log/redact.js'
 import type { NodeAuth } from '../../src/node/auth.js'
 import { nodeText, redactSecrets, sanitize } from '../../src/node/messages.js'
 import {
@@ -1005,6 +1009,32 @@ describe("the node's text in a message", () => {
     }
   })
 
+  it('redacts every cookie of a header whose values are quoted, inside JSON too (round 2)', () => {
+    const session = 'quoted-cookie-session-x9'
+    for (const [text, kept] of [
+      [`Cookie: theme="dark"; session=${session}`, 'Cookie: <redacted>'],
+      [`Cookie: theme='dark'; session=${session}`, 'Cookie: <redacted>'],
+      [`Cookie: a=1; theme="dark"; session=${session}\nnext`, '<redacted>'],
+      [
+        `{"msg":"Cookie: theme=\\"dark\\"; session=${session}","other":"keep"}`,
+        '{"msg":"Cookie: <redacted>","other":"keep"}'
+      ]
+    ]) {
+      for (const out of [
+        sanitize(text, 2000, null),
+        redactSecrets(text),
+        String(redactFields({ error: text }).error)
+      ]) {
+        expect(out, text).to.contain(kept)
+        expect(out, text).not.to.contain(session)
+      }
+    }
+    // A quote after `=` that is no cookie value still ends the JSON string around it.
+    expect(redactSecrets('{"msg":"Cookie: a=","other":"keep"}')).to.equal(
+      '{"msg":"Cookie: <redacted>","other":"keep"}'
+    )
+  })
+
   it('redacts Basic credentials, and an authorization value after its scheme', () => {
     for (const [text, kept] of [
       ['Authorization: Basic dXNlcjpwYXNz', 'Authorization: Basic <redacted>'],
@@ -1449,12 +1479,15 @@ describe("the node's text in a message", () => {
     expect(
       sanitize(`failed at https://user:${secret},${filler}@h/p`, 200, null)
     ).to.equal('failed at…')
-    // A quote or a space ends a URL, also in its user info, cut or not: what is left is no
-    // host and port, and is not shown either.
-    for (const end of ["'", '"', ' '])
+    // A quote ends a URL, also in its user info: the user info is dropped up to its `@`.
+    for (const end of ["'", '"'])
       expect(
         sanitize(`at https://user:${secret}${end}x@rpc.example.org/path`)
-      ).to.equal(`at https://<redacted>${end}x@rpc.example.org/path`)
+      ).to.equal('at https://rpc.example.org')
+    // A space ends it too, and what is left of the user info is no host and port.
+    expect(
+      sanitize(`at https://user:${secret} x@rpc.example.org/path`)
+    ).to.equal('at https://<redacted> x@rpc.example.org/path')
     for (const url of [
       'https://h.example',
       'https://h.example:8545',
@@ -1466,5 +1499,58 @@ describe("the node's text in a message", () => {
     expect(
       sanitize(`failed at https://h.example/p, then ${'y '.repeat(9_000)}`)
     ).to.match(/^failed at https:\/\/h\.example, then y y .*…$/)
+  })
+
+  it('shows no part of user info a quote stands in, after a numeric prefix too (security regression)', () => {
+    // The URL pattern ends at the quote: `user:12345` read as a host and port and was kept,
+    // and the rest of the password after the quote, the path and the query with it.
+    const secret = 'userinfo-secret-7Hq2Lm9Z'
+    for (const quote of ["'", '"', '\\"', '<', '>'])
+      for (const prefix of ['user:12345', '12345', 'user:', 'user'])
+        for (const url of [
+          `https://${prefix}${quote}${secret}@rpc.example.org/p?key=${secret}`,
+          `https:\\/\\/${prefix}${quote}${secret}@rpc.example.org\\/p`
+        ])
+          for (const text of [url, `failed at ${url}`, `{"error":"${url}"}`]) {
+            const label = `${quote} ${text}`
+            expect(sanitize(text, 200, null), label).not.to.contain(secret)
+            expect(sanitize(text, 200, null), label).not.to.contain('12345')
+            expect(sanitize(text, 200, null), label).to.contain(
+              'https://rpc.example.org'
+            )
+            expect(redactMessage(text), label).not.to.contain(secret)
+            expect(nodeText(text), label).not.to.contain(secret)
+          }
+    expect(
+      sanitize(`https://user:12345'${secret}@rpc.example.org/p`, 200, null)
+    ).to.equal('https://rpc.example.org')
+    // Cut after the quote, before the `@`: the URL is dropped whole.
+    for (const quote of ["'", '"'])
+      for (const pad of ['x', `x${quote}`]) {
+        const text = `at https://user:12345${quote}${secret}${pad.repeat(17_000)}@h/p`
+        expect(sanitize(text, 200, null), `${quote}${pad}`).to.equal('at…')
+        expect(redactMessage(text)).not.to.contain('12345')
+      }
+    // A URL in quotes with an address after it stays as it was.
+    for (const prose of [
+      `connect "https://host.example:8545" failed, mail ops@example.org`,
+      `see 'https://localhost:8545' or 'ops@example.org'`
+    ])
+      expect(sanitize(prose, 200, null)).to.equal(prose)
+  })
+
+  it('reads user info with quotes in linear time (security regression)', async () => {
+    for (const text of [
+      `https://${"a'".repeat(100_000)}`,
+      `https://${'\\'.repeat(200_000)}x`,
+      `${'a'.repeat(50_000)}://${"'b".repeat(50_000)}`,
+      `https://x${"\\'".repeat(100_000)}`
+    ]) {
+      const elapsed = await cpuTime(() => {
+        redactMessage(text)
+        sanitize(text, 200, null)
+      })
+      expect(elapsed, text.slice(0, 12)).to.be.below(cpuBudget(100))
+    }
   })
 })

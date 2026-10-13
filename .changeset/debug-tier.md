@@ -54,5 +54,5 @@ the redacted error does not explain can be diagnosed without out-of-band queries
 - **More credentials are redacted in error texts, warnings and log events:** a URL whose
   slashes are JSON-escaped (`https:\/\/host\/v3\/<key>`, as a JSON body quoted in JSON has
   it) is reduced to its origin like any other, and a `Cookie` header is redacted to the end
-  of its line, every cookie of it. A log field holding a list with `null` in it no longer
+  of its line, every cookie of it (a quoted cookie value included). A log field holding a list with `null` in it no longer
   makes the event lose its fields.

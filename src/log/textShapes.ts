@@ -26,6 +26,33 @@ export const INVISIBLE_CHARACTERS =
 export const SCHEMELESS_URL =
   /(?<![\w.:/@[-])((?:\d{1,3}(?:\.\d{1,3}){3}|localhost|\[[0-9a-f:.]{2,45}\])(?::\d{1,5})?)(?=[/?#\\])(?:[^\s"'<>\\]|﻿|\\+(?!["'\s<>\\]))*/gi
 
+/**
+ * A URL's scheme and user info where a quote or `<`/`>` stands in the user info
+ * (`https://user:12345'secret@host`, also escaped, `\"`): the URL patterns end at it, so
+ * they would read the user info before it as the host and port, and leave the rest of it
+ * after the URL. Group 1 is the scheme and its `//`. No whitespace, `/`, `?`, `#` or
+ * backslash but before a quote, so prose with a URL in quotes and an address after it is
+ * not read as one. Each part ends at the next one's first character, so the scan is linear.
+ */
+export const QUOTED_USER_INFO =
+  /([a-z][a-z0-9+.-]{0,31}:(?:\\*\/){2})[^\s"'<>\\/?#@]*(?:\\*["'<>][^\s"'<>\\/?#@]*)+@/gi
+
+/**
+ * A URL's scheme and authority read on past a quote or a comma, as `QUOTED_USER_INFO`
+ * reads user info: a cut in `https://user:12345'secret…` leaves no `@`, so a URL pattern
+ * ends at the quote and the user info before it would read as the host and port. A text
+ * cut inside one drops it whole. One class after the scheme, so the scan is linear.
+ */
+export const URL_AUTHORITY = /[a-z][a-z0-9+.-]{0,31}:(?:\\*\/){2}[^\s/?#@]*/gi
+
+/** `text` without the URL whose authority (`URL_AUTHORITY`) runs up to its end. */
+export function beforeOpenAuthority(text: string): string {
+  for (const match of text.matchAll(URL_AUTHORITY))
+    if (match.index + match[0].length === text.length)
+      return text.slice(0, match.index)
+  return text
+}
+
 /** What ends a sentence after a URL, and is not part of it. */
 const TRAILING_PUNCTUATION = /[.,;:!?)\]}]/
 
