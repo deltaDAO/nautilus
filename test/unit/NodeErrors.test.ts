@@ -24,7 +24,11 @@ import {
   Wallet
 } from 'ethers'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { redactError, redactFields, redactMessage } from '../../src/log/redact.js'
+import {
+  redactError,
+  redactFields,
+  redactMessage
+} from '../../src/log/redact.js'
 import type { NodeAuth } from '../../src/node/auth.js'
 import { nodeText, redactSecrets, sanitize } from '../../src/node/messages.js'
 import {
