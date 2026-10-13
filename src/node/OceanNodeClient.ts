@@ -89,7 +89,8 @@ import {
   describeError,
   endSentence,
   sanitize,
-  sanitizedError
+  sanitizedError,
+  sessionIdRemover
 } from './messages.js'
 
 /** Payload accepted by the `policyServer` slots: one entry, or one per compute asset. */
@@ -873,10 +874,15 @@ function isSessionRecord(value: unknown): boolean {
  * The record comes through the node, so every text in it is treated as the node's: the
  * policy and credential names and the first line of each error are stripped of control
  * characters, redacted and bounded (100 characters each), and at most `MAX_POLICY_RESULTS` results are kept, in
- * their order, failures before successes when some must go. The whole record goes to the
- * debug channel (topic `policy`) in `checkPolicySession`.
+ * their order, failures before successes when some must go. The session id the record was
+ * read for is removed from each, whatever its shape (`withoutSession`): walt.id quotes it in
+ * an error (`Id parameter <id> expired`). The whole record goes to the debug channel (topic
+ * `policy`) in `checkPolicySession`.
  */
-function readPolicyResults(record: unknown): PolicyCheckResult[] {
+function readPolicyResults(
+  record: unknown,
+  sessionId: string
+): PolicyCheckResult[] {
   const results = (
     record as {
       policyResults?: { results?: unknown }
@@ -927,24 +933,30 @@ function readPolicyResults(record: unknown): PolicyCheckResult[] {
   }
 
   const read: PolicyCheckResult[] = []
+  const remove = sessionIdRemover(sessionId)
 
   for (const { credential, policy, success, error } of kept) {
-    const name = sanitize(policy, MAX_POLICY_NAME_LENGTH, 'policy')
+    const name = withoutSession(policy, remove, (text) =>
+      sanitize(text as string, MAX_POLICY_NAME_LENGTH, 'policy')
+    )
     if (!name) continue
 
     const type =
       typeof credential === 'string'
-        ? sanitize(credential, MAX_POLICY_NAME_LENGTH, 'policy')
+        ? withoutSession(credential, remove, (text) =>
+            sanitize(text as string, MAX_POLICY_NAME_LENGTH, 'policy')
+          )
         : ''
     const reason =
       error === undefined || error === null
         ? undefined
-        : boundedNodeMessage(
+        : withoutSession(
             typeof error === 'string'
               ? error.split('\n')[0]
               : ((error as { message?: unknown }).message ?? error),
-            'policy',
-            MAX_POLICY_ERROR_LENGTH
+            remove,
+            (text) =>
+              boundedNodeMessage(text, 'policy', MAX_POLICY_ERROR_LENGTH)
           )
 
     read.push({
@@ -956,6 +968,22 @@ function readPolicyResults(record: unknown): PolicyCheckResult[] {
   }
 
   return read
+}
+
+/**
+ * A text of the node's answer to `checkSessionId`, as `clean` sanitises and bounds it,
+ * without the session id (`remove`, a `sessionIdRemover`). The id is removed before, so no
+ * redaction or cut splits it, and again after: deleting a control character
+ * (`custom-\u0007session-…`) or decoding a JSON escape can join it, and a cut can leave its
+ * start before the closing `…`. That can make the text a few characters longer than the
+ * bound.
+ */
+function withoutSession(
+  value: unknown,
+  remove: (text: string) => string,
+  clean: (value: unknown) => string
+): string {
+  return remove(clean(typeof value === 'string' ? remove(value) : value))
 }
 
 /**
@@ -2978,7 +3006,11 @@ export class OceanNodeClient {
         if (!reply)
           throw new OceanNodeError(
             operation,
-            boundedNodeMessage(errorMessage(error))
+            withoutSession(
+              errorMessage(error),
+              sessionIdRemover(sessionId),
+              boundedNodeMessage
+            )
           )
         failed = 'the policy server refused'
       }
@@ -2996,14 +3028,17 @@ export class OceanNodeClient {
           !failed &&
           (record as { verificationResult?: unknown }).verificationResult ===
             true,
-        policyResults: readPolicyResults(record)
+        policyResults: readPolicyResults(record, sessionId)
       }
 
+    // walt.id's answer for an unknown or expired session quotes its id.
     if (failed || reply?.success !== true)
       throw new OceanNodeError(
         operation,
-        boundedNodeMessage(
-          `${failed ?? ''} ${reply ? policyServerReason(reply) : 'the answer is not a policy-server reply'}`
+        withoutSession(
+          `${failed ?? ''} ${reply ? policyServerReason(reply) : 'the answer is not a policy-server reply'}`,
+          sessionIdRemover(sessionId),
+          boundedNodeMessage
         )
       )
 

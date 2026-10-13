@@ -420,3 +420,99 @@ export function sanitizedError(
 
   return copy
 }
+
+/**
+ * `text` without the policy-server session id `sessionId` (8 characters or more), nor any
+ * part of it of 32 characters or more (the policy server's id is two SHA-256 hashes joined
+ * by `-`, the second the secret one), wherever they stand: also inside a URL,
+ * percent-encoded or JSON-escaped text, and in any letter case (A to Z). Found as literal
+ * text, not by a regular expression built from the id: the node chooses it, and one of
+ * 33 KB or more made too large a pattern, which threw a `SyntaxError` quoting it.
+ */
+export function withoutSessionId(text: string, sessionId: string): string {
+  return sessionIdRemover(sessionId)(text)
+}
+
+/**
+ * `withoutSessionId` for one session id and many texts: the id is prepared once, and each
+ * text then costs time in proportion to its own length, not the id's, so a huge id the node
+ * chose costs little across a record of many texts.
+ */
+export function sessionIdRemover(sessionId: string): (text: string) => string {
+  const parts = [
+    ...(sessionId.length >= 8 ? [sessionId] : []),
+    ...sessionId.split('-').filter((part) => part.length >= 32)
+  ].map(asciiLowerCase)
+
+  return (text) =>
+    withoutCutStart(
+      parts.reduce((current, part) => withoutText(current, part), text),
+      parts
+    )
+}
+
+/**
+ * `text` without the start of one of `parts` (lower case) that a cut left at its end,
+ * before the `…` that marks the cut: `WaltIdHttpWallet` bounds the wallet's message before
+ * the provider sees it, and a cut inside the session id kept its first characters, which
+ * no longer read as the id. The longest such start goes; its length is found in linear
+ * time.
+ */
+function withoutCutStart(text: string, parts: string[]): string {
+  if (!text.endsWith('…')) return text
+
+  const kept = text.slice(0, -1)
+  const folded = asciiLowerCase(kept)
+  const cut = Math.max(0, ...parts.map((part) => cutStartLength(folded, part)))
+
+  return cut ? `${kept.slice(0, kept.length - cut)}<redacted>…` : text
+}
+
+/**
+ * The length of the longest end of `text` that is a start of `part`, shorter than `part`
+ * (a whole one is redacted already): the prefix function of `part`, then `text`. Only as
+ * much of `part` as `text` is long can match, so only that much is read.
+ */
+function cutStartLength(text: string, part: string): number {
+  const start = part.slice(0, Math.min(part.length - 1, text.length))
+  if (!start) return 0
+
+  const prefix = new Array<number>(start.length).fill(0)
+  for (let at = 1, length = 0; at < start.length; at++) {
+    while (length && start[at] !== start[length]) length = prefix[length - 1]
+    if (start[at] === start[length]) length++
+    prefix[at] = length
+  }
+
+  let length = 0
+  const from = Math.max(0, text.length - start.length)
+  for (let at = from; at < text.length; at++) {
+    if (length === start.length) length = prefix[length - 1]
+    while (length && text[at] !== start[length]) length = prefix[length - 1]
+    if (text[at] === start[length]) length++
+  }
+
+  return length
+}
+
+/** `text` with every occurrence of `part` (lower case), in any letter case, redacted. */
+function withoutText(text: string, part: string): string {
+  const folded = asciiLowerCase(text)
+  let kept = ''
+  let from = 0
+  for (
+    let at = folded.indexOf(part);
+    at !== -1;
+    at = folded.indexOf(part, from)
+  ) {
+    kept += `${text.slice(from, at)}<redacted>`
+    from = at + part.length
+  }
+
+  return kept + text.slice(from)
+}
+
+/** `text` with A to Z in lower case only, so it keeps its length and indexes. */
+function asciiLowerCase(text: string): string {
+  return text.replace(/[A-Z]+/g, (letters) => letters.toLowerCase())
+}
