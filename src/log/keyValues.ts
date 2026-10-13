@@ -67,6 +67,14 @@ const LINE_VALUE = /[^\r\n"'\\]+/y
  * cookie-octets), then the same run of backslashes and the same quote.
  */
 const QUOTED_COOKIE_VALUE = /(\\*)(?:"[^\s"\\,;]*\1"|'[^\s'\\,;]*\1')/y
+/**
+ * An apostrophe inside an unquoted cookie value (`theme=it'sdark`, an RFC 6265
+ * cookie-octet), escaped or not (`it\'s` in `util.inspect`): one followed by another
+ * cookie-octet or a `;`. One followed by a space, `,`, a quote, a backslash, a control
+ * character or the end of the text closes a string around the header
+ * (`{ msg: 'Cookie: a=1', other: … }`) and ends the value.
+ */
+const COOKIE_APOSTROPHE = /\\*'(?=[^\s",\\\p{Cc}])/uy
 /** A value redacted already, by an earlier pass. */
 const ALREADY_REDACTED = '<redacted>'
 
@@ -150,8 +158,9 @@ function valueEnd(
 /**
  * Where a value that runs to the end of its line ends (`Cookie: a=1; session=…`, every
  * cookie of it): a quoted one at its closing quote, any other at a line break, a quote or
- * a backslash, past the quoted value of a cookie (`theme="dark"; session=…`), so the
- * cookies after it are redacted too. One redacted already stays as it is, so a second pass
+ * a backslash, past the quoted value of a cookie (`theme="dark"; session=…`) and an
+ * apostrophe inside an unquoted one (`theme=it'sdark; session=…`), so the cookies after
+ * it are redacted too. One redacted already stays as it is, so a second pass
  * over the same text (after control characters are stripped) does not swallow the lines
  * after it.
  */
@@ -175,10 +184,18 @@ function lineValueEnd(
   for (;;) {
     LINE_VALUE.lastIndex = end
     if (LINE_VALUE.test(text)) end = LINE_VALUE.lastIndex
-    if (end === start || text[end - 1] !== '=') return end
     QUOTED_COOKIE_VALUE.lastIndex = end
-    if (!QUOTED_COOKIE_VALUE.test(text)) return end
-    end = QUOTED_COOKIE_VALUE.lastIndex
+    if (
+      end > start &&
+      text[end - 1] === '=' &&
+      QUOTED_COOKIE_VALUE.test(text)
+    ) {
+      end = QUOTED_COOKIE_VALUE.lastIndex
+      continue
+    }
+    COOKIE_APOSTROPHE.lastIndex = end
+    if (!COOKIE_APOSTROPHE.test(text)) return end
+    end = COOKIE_APOSTROPHE.lastIndex
   }
 }
 

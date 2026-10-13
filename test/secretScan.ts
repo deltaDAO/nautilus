@@ -49,6 +49,7 @@ export const CREDENTIAL_SHAPES = [
   `PINATA_JWT=${FAKE.pinataJwt}\nS3_SECRET_KEY=${FAKE.envSecretKey}`,
   `Cookie: theme=dark; session=${FAKE.cookie}`,
   `Cookie: theme="dark"; session=${FAKE.cookie}`,
+  `Cookie: theme=it'sdark; session=${FAKE.cookie}`,
   JSON.stringify({
     body: JSON.stringify({
       apiToken: FAKE.nestedApiToken,
