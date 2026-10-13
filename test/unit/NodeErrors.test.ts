@@ -1553,4 +1553,85 @@ describe("the node's text in a message", () => {
       expect(elapsed, text.slice(0, 12)).to.be.below(cpuBudget(100))
     }
   })
+
+  it('shows no part of user info a JSON-escaped quote stands in (security regression)', () => {
+    // `\u0027` is left escaped and the URL pattern reads the backslash as the end of the
+    // authority: `user:12345` read as a host and port and was kept.
+    const secret = 'userinfo-secret-7Hq2Lm9Z'
+    for (const quote of [
+      '\\u0027',
+      '\\u0022',
+      '\\u003c',
+      '\\u003E',
+      '\\\\u0027',
+      '\\\\\\u0022'
+    ])
+      for (const prefix of ['user:12345', '12345', 'user:'])
+        for (const url of [
+          `https://${prefix}${quote}${secret}@rpc.example.org/p?key=${secret}`,
+          `https:\\/\\/${prefix}${quote}${secret}@rpc.example.org\\/p`
+        ])
+          for (const text of [url, `failed at ${url}`, `{"error":"${url}"}`]) {
+            const label = `${quote} ${text}`
+            expect(sanitize(text, 200, null), label).not.to.contain(secret)
+            expect(sanitize(text, 200, null), label).not.to.contain('12345')
+            expect(sanitize(text, 200, null), label).to.contain(
+              'https://rpc.example.org'
+            )
+            expect(redactMessage(text), label).not.to.contain('12345')
+            expect(nodeText(text), label).not.to.contain(secret)
+          }
+    expect(
+      sanitize(
+        `https://user:12345\\u0027${secret}@rpc.example.org/p`,
+        200,
+        null
+      )
+    ).to.equal('https://rpc.example.org')
+    // Percent-encoded, a quote ends no URL: it keeps its origin.
+    for (const quote of ['%27', '%22', '%3C', '%3e', '%2527', '%5Cu0027'])
+      expect(
+        sanitize(`at https://user:12345${quote}${secret}@rpc.example.org/p`)
+      ).to.equal('at https://rpc.example.org')
+    // `encodeURIComponent` leaves a `'`: a URL it encoded into a query keeps no user info.
+    const encoded = encodeURIComponent(
+      `https://user:12345'${secret}@rpc.example.org/p`
+    )
+    for (const text of [
+      `failed https://h.example/cb?redirect=${encoded}`,
+      `failed ${encoded}`
+    ]) {
+      expect(sanitize(text, 200, null), text).not.to.contain(secret)
+      expect(sanitize(text, 200, null), text).not.to.contain('12345')
+    }
+    // Cut after the escaped quote, before the `@`: the URL is dropped whole.
+    const cut = `at https://user:12345\\u0027${secret}${'x'.repeat(17_000)}@h/p`
+    expect(sanitize(cut, 200, null)).to.equal('at…')
+    // An escaped quote with no `@` after it in the same word: the host stays, so does an
+    // address after it.
+    expect(
+      sanitize(
+        'see https://host.example:8545\\u0027 or ops@example.org',
+        200,
+        null
+      )
+    ).to.equal('see https://host.example:8545 or ops@example.org')
+  })
+
+  it('reads escaped quotes and backslash runs in URLs in linear time (security regression)', async () => {
+    for (const text of [
+      `https://user:1${'\\u0027'.repeat(50_000)}`,
+      `https://x${'\\'.repeat(200_000)}u`,
+      `https%3A%2F%2F${"a'".repeat(100_000)}`,
+      "a%3A%2F%2F'".repeat(50_000),
+      `a://x'%3A%2F%2F\\u0027%2F'\\\\"<`.repeat(10_000)
+    ]) {
+      const elapsed = await cpuTime(() => {
+        redactSecrets(text)
+        redactMessage(text)
+        sanitize(text, 200, null)
+      })
+      expect(elapsed, text.slice(0, 12)).to.be.below(cpuBudget(100))
+    }
+  })
 })

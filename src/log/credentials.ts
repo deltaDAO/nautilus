@@ -290,7 +290,10 @@ export function credentialsInUrl(url: string | undefined): string[] {
 export function maskUrl(url: string, nesting = 0): string {
   // Punctuation that ended the sentence is not part of the URL.
   const trailing = trailingPunctuation(url)
-  const core = url.slice(0, url.length - trailing.length)
+  // User info a quote stands in is dropped up to its `@`, and marked below.
+  const core = url
+    .slice(0, url.length - trailing.length)
+    .replace(QUOTED_USER_INFO, '$1@')
 
   // A backslash ends the authority and splits the path, as a URL parser reads it.
   const match =
@@ -336,9 +339,10 @@ function maskParameters(part: string, nesting: number): string {
       if (value && isLongLivedCredential(decodePart(rawName), value, 'query'))
         return `${rawName}=${REDACTED}`
       if (value.includes('://') && nesting < MAX_URL_NESTING) {
-        const masked = value.replace(URL_PATTERN, (url) =>
-          maskUrl(url, nesting + 1)
-        )
+        // Decoded, a quote may stand in its user info (`%27`, `%5Cu0027`).
+        const masked = value
+          .replace(QUOTED_USER_INFO, '$1@')
+          .replace(URL_PATTERN, (url) => maskUrl(url, nesting + 1))
         if (masked !== value) return `${rawName}=${masked}`
       }
       return pair
