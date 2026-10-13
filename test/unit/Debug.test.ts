@@ -911,6 +911,25 @@ describe('what the sensitive tier still hides', () => {
       expect(maskUrl(url)).to.equal(url)
   })
 
+  it('masks user info a quote stands in, after a numeric prefix too (security regression)', () => {
+    // `user:12345` before the quote read as a host and port: the whole URL was kept.
+    const secret = 'userinfo-secret-7Hq2Lm9Z'
+    for (const quote of ["'", '"', '\\"', '<', '>'])
+      for (const prefix of ['user:12345', '12345', 'user:'])
+        for (const url of [
+          `https://${prefix}${quote}${secret}@rpc.example.org/p`,
+          `https:\\/\\/${prefix}${quote}${secret}@rpc.example.org\\/p`
+        ])
+          for (const text of [url, `at ${url}`, `{"error":"${url}"}`]) {
+            const masked = maskText(text)
+            expect(masked, text).not.to.contain(secret)
+            expect(masked, text).not.to.contain('12345')
+            expect(masked, text).to.contain('<redacted>@rpc.example.org')
+          }
+    const prose = `connect "https://host.example:8545" failed, mail ops@example.org`
+    expect(maskText(prose)).to.equal(prose)
+  })
+
   it('masks auth headers and credential fields in text, and keeps JWTs, signatures and session ids', () => {
     const text = `Authorization: Bearer ${FAKE.jwt}; {"secretAccessKey":"${FAKE.s3Secret}","vp_token":"${FAKE.jwt}","sessionId":"${SID}","signature":"${FAKE.signature}"} password=hunter2`
     const masked = maskText(text)
@@ -1439,6 +1458,27 @@ describe('round-2 fixes', () => {
         expect(marker.total).to.equal(text.length)
       }
     }
+  })
+
+  it('shows no user info of a URL the raw read cuts after a quote or a comma (security regression)', () => {
+    // Cut before the `@`, the word dropped back to the quote left `https://user:12345`,
+    // which reads as a host and port.
+    const events = captureDebug('sensitive')
+    const secret = 'userinfo-secret-7Hq2Lm9Z'
+    for (const mark of ["'", '"', ','])
+      for (const pad of ['x', `x${mark}`]) {
+        events.length = 0
+        debugRaw(
+          'rpc',
+          'cut',
+          `at https://user:12345${mark}${secret}${pad.repeat(70_000)}@h/p`
+        )
+        const data = events[0].data as string
+        // Booleans: a diff of 64 KB strings takes minutes.
+        expect(data.includes('12345'), `${mark}${pad}`).to.equal(false)
+        expect(data.includes(secret), `${mark}${pad}`).to.equal(false)
+        expect(cutMarker(data).text).to.equal('at ')
+      }
   })
 
   it('shows no part of a credential the event budget cuts, and sets the marker off (security N-m1)', () => {
