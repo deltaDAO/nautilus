@@ -952,6 +952,21 @@ export class NonceGuardSigner extends AbstractSigner {
     return new NonceGuardSigner(this.signer.connect(provider), this.options)
   }
 
+  /**
+   * A guard over the same signer with `options` in place of this guard's own, sharing its
+   * nonce state and send record, so the two still send one at a time per (chain, address):
+   * what `Nautilus.create()` makes of another instance's `getSigner()`.
+   */
+  withOptions(options: NonceGuardOptions): NonceGuardSigner {
+    return new NonceGuardSigner(this.signer, {
+      sleep: this.sleep,
+      now: this.now,
+      ...options,
+      state: this.state,
+      sends: this.sends
+    })
+  }
+
   getAddress(): Promise<string> {
     return this.signer.getAddress()
   }
@@ -1577,14 +1592,16 @@ export function guardOf(signer: unknown): NonceGuardSigner | undefined {
 }
 
 /**
- * Wraps `signer` in a `NonceGuardSigner`, unless it already is one. What
- * `Nautilus.create()` does with the signer it is given.
+ * Wraps `signer` in a `NonceGuardSigner` with `options`. What `Nautilus.create()` does
+ * with the signer it is given. A guard (another instance's `getSigner()`) is not wrapped
+ * again: the new guard is over its signer, with `options`, and shares its nonce state and
+ * send record (`withOptions`).
  */
 export function guardSigner(
   signer: Signer,
   options: NonceGuardOptions = {}
 ): NonceGuardSigner {
   return signer instanceof NonceGuardSigner
-    ? signer
+    ? signer.withOptions(options)
     : new NonceGuardSigner(signer, options)
 }

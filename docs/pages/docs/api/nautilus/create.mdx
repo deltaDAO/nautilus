@@ -267,6 +267,9 @@ been sent"). Wallet-managed signers
 sets a nonce and never resends. Either way a refused transaction the chain already has is
 returned, and the cause of a failed send is named. In-process only: use one key per
 process. See [Concurrency and nonces](/docs/guides/config#concurrency-and-nonces).
+Given another instance's [`getSigner`](/docs/api/nautilus/getSigner), the new instance
+applies its own `nonceManagement` and `verificationProvider` to the signer underneath, and
+shares the per-address order and nonce counter with the first.
 
 ##### verificationProvider
 

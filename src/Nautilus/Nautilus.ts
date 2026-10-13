@@ -340,6 +340,9 @@ export interface NautilusOptions
    * Either way, a transaction the chain already has is returned instead of failing, and a
    * failed send is named in the error (ocean.js itself reports only that it returned no
    * transaction). The guard covers this process only: use one key per process.
+   *
+   * Given another instance's `getSigner()`, `create()` guards the signer underneath it with
+   * this instance's options; the two guards share the per-address order and nonce counter.
    */
   nonceManagement?: NonceManagement
   /**

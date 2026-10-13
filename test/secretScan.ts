@@ -44,10 +44,10 @@ export const FAKE = {
 /**
  * The long-lived fixture credentials in the shapes the `sensitive` tier must still hide:
  * a drpc URL, a Pinata gateway token as a query parameter and as a key, `PINATA_JWT=` and
- * `S3_SECRET_KEY=` in an environment dump, a second cookie (after a plain and after a quoted
- * one), an RPC URL with a backslash in its path, a credential in JSON inside a JSON string
- * (with a JSON-escaped URL), and percent-encoded ones: an RPC URL, `apiToken%3D…` and a
- * JSON field.
+ * `S3_SECRET_KEY=` in an environment dump, a second cookie (after a plain one, a quoted one
+ * and one with an apostrophe in its value), an RPC URL with a backslash in its path, a
+ * credential in JSON inside a JSON string (with a JSON-escaped URL), and percent-encoded
+ * ones: an RPC URL, `apiToken%3D…` and a JSON field.
  */
 export const CREDENTIAL_SHAPES = [
   `https://lb.drpc.org/ogrpc?network=optimism-sepolia&dkey=${FAKE.drpcKey}`,
@@ -56,6 +56,7 @@ export const CREDENTIAL_SHAPES = [
   `PINATA_JWT=${FAKE.pinataJwt}\nS3_SECRET_KEY=${FAKE.envSecretKey}`,
   `Cookie: theme=dark; session=${FAKE.cookie}`,
   `Cookie: theme="dark"; session=${FAKE.cookie}`,
+  `Cookie: theme=it'sdark; session=${FAKE.cookie}`,
   // A backslash in the path must not end the URL before its token.
   `https://rpc.example.org/x\\y/v3/${FAKE.rpcPathToken}`,
   JSON.stringify({
