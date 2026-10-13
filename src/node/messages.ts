@@ -460,18 +460,28 @@ export function sessionIdRemover(sessionId: string): (text: string) => string {
 }
 
 /**
+ * The start of a `<redacted>` that a cut left at the end of a text: the id was removed
+ * before the cut, and the removal after it reads the cut marker as redacted, not as a
+ * start of the id (`<redac` ends in the `c` of `custom-…`).
+ */
+const CUT_MARKER = /<(?:r(?:e(?:d(?:a(?:c(?:t(?:e(?:d)?)?)?)?)?)?)?)?$/
+
+/**
  * `text` without the start of one of `parts` (lower case) that a cut left at its end,
  * before the `…` that marks the cut: `WaltIdHttpWallet` bounds the wallet's message before
  * the provider sees it, and a cut inside the session id kept its first characters, which
- * no longer read as the id. The longest such start goes; its length is found in linear
- * time.
+ * no longer read as the id. The longest such start goes, or a cut `<redacted>`
+ * (`CUT_MARKER`) if longer; its length is found in linear time.
  */
 function withoutCutStart(text: string, parts: string[]): string {
   if (!text.endsWith('…')) return text
 
   const kept = text.slice(0, -1)
   const folded = asciiLowerCase(kept)
-  const cut = Math.max(0, ...parts.map((part) => cutStartLength(folded, part)))
+  const cut = Math.max(
+    CUT_MARKER.exec(kept.slice(-9))?.[0].length ?? 0,
+    ...parts.map((part) => cutStartLength(folded, part))
+  )
 
   return cut ? `${kept.slice(0, kept.length - cut)}<redacted>…` : text
 }

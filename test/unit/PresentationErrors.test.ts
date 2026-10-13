@@ -961,6 +961,88 @@ describe("a policy-server session id in the wallet's text (D10)", () => {
     )
   })
 
+  it("is removed again after sanitisation from a custom wallet's message, whatever splits it (PR #216 review)", async () => {
+    const { node } = policyNode(HOLDER_BINDING_NPE)
+    const base = walletPresentingThrough(httpWallet(400, VERIFIER_400))
+    const sessionId = 'custom-policy-session-0123456789abcdef'
+    const presentWith = (errorMessage: string) =>
+      waltIdProvider(node, {
+        ...base,
+        // A custom wallet: nothing redacted before the provider.
+        usePresentationRequest: async () => ({ errorMessage })
+      })
+        .present(challengeFor(node, sessionId))
+        .catch((error) => error)
+    const leaks = (presented: CredentialPresentationError) => {
+      const text = [
+        presented.message,
+        (presented.details as { errorMessage: string }).errorMessage
+      ]
+        .join(' ')
+        .toLowerCase()
+      return Array.from({ length: sessionId.length - 3 }, (_, index) =>
+        sessionId.slice(0, index + 4)
+      ).filter((start) => text.includes(start))
+    }
+
+    // Split by what `sanitize` deletes or decodes: a control character, a zero-width
+    // character, an ANSI escape, a JSON escape of a character or of an invisible one; in
+    // either letter case.
+    const splits = [
+      'custom-\u0007policy-session-0123456789abcdef',
+      'custom-policy​-session-0123456789abcdef',
+      'custom-pol\u001b[31micy-session-0123456789abcdef',
+      'custom\\u002dpolicy-session-0123456789abcdef',
+      'custom-\\u200bpolicy-session-0123456789abcdef',
+      'CUSTOM-\u0007POLICY-SESSION-0123456789ABCDEF',
+      'Custom-Policy⁠-Session-0123456789AbCdEf'
+    ]
+    for (const split of splits) {
+      const presented = await presentWith(`Id parameter ${split} expired`)
+
+      expect(presented.reason, split).to.equal('verifier-rejected')
+      expect(presented.details, split).to.deep.equal({
+        errorMessage: 'Id parameter <redacted> expired'
+      })
+      expect(presented.message, split).to.equal(
+        'The verifier rejected the presentation: Id parameter <redacted> expired'
+      )
+    }
+
+    // The provider's 500-character bound cuts the joined id at every position: no start of
+    // it stays before the `…`.
+    for (const split of splits)
+      for (let cut = 0; cut <= sessionId.length; cut++) {
+        const presented = await presentWith(
+          `${'x'.repeat(500 - cut)}${split} expired`
+        )
+        expect(leaks(presented), `${split} cut after ${cut}`).to.deep.equal([])
+      }
+  })
+
+  it("removes a split session id from a long custom wallet's message in linear time (security regression)", async () => {
+    const { node } = policyNode(HOLDER_BINDING_NPE)
+    const base = walletPresentingThrough(httpWallet(400, VERIFIER_400))
+    const sessionId = `${'d'.repeat(50_000)}e`
+    // Split by control characters, so only the removal after `sanitize` finds it, and cut
+    // by the provider's bound: the cut start is matched against a 50 KB id.
+    const errorMessage = `session ${'d\u0007'.repeat(1_900)}`
+    let presented: CredentialPresentationError | undefined
+    const elapsed = await cpuTime(async () => {
+      presented = await waltIdProvider(node, {
+        ...base,
+        usePresentationRequest: async () => ({ errorMessage })
+      })
+        .present(challengeFor(node, sessionId))
+        .catch((error) => error)
+    })
+
+    expect(elapsed).to.be.below(cpuBudget(50))
+    expect(presented?.message).to.equal(
+      'The verifier rejected the presentation: session <redacted>…'
+    )
+  })
+
   it("keeps the refusal's reason with a huge session id the node chose (sec m1)", async () => {
     const { node } = policyNode(HOLDER_BINDING_NPE)
     const base = walletPresentingThrough(httpWallet(400, VERIFIER_400))

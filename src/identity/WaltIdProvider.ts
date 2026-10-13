@@ -29,7 +29,7 @@ import {
   getServiceCredentials
 } from '../ddo/read.js'
 import { debugEnabled, debugRaw } from '../log/debug.js'
-import { sanitize, withoutSessionId } from '../node/messages.js'
+import { sanitize, sessionIdRemover } from '../node/messages.js'
 import {
   type OceanNodeClient,
   PolicyServerAction
@@ -313,12 +313,18 @@ export class WaltIdCredentialProvider implements CredentialProvider {
     ) {
       // The raw answer went to the debug channel. The error keeps the wallet's message only,
       // redacted: an error redirect carries the policy-server session id, and so does the
-      // verifier's text for an expired or unknown session, which the wallet passes on.
+      // verifier's text for an expired or unknown session, which the wallet passes on. The
+      // id is removed before sanitising, so no redaction or cut splits it, and again after:
+      // deleting a control character (`custom-\u0007session-…`) or decoding a JSON escape
+      // can join it, and the cut can leave its start before the closing `…`.
+      const remove = sessionIdRemover(sessionId)
       const errorMessage = result.errorMessage
-        ? sanitize(
-            withoutSessionId(result.errorMessage, sessionId),
-            MAX_PRESENTATION_ERROR_LENGTH,
-            null
+        ? remove(
+            sanitize(
+              remove(result.errorMessage),
+              MAX_PRESENTATION_ERROR_LENGTH,
+              null
+            )
           )
         : undefined
       const reason =
