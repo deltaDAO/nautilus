@@ -40,7 +40,10 @@ why instead of "ocean.js returned no transaction".
   chain and refuses the signer's own provider (the same object or URL).
   Wallet-managed signers (`JsonRpcSigner`, browser wallets) keep choosing their nonces.
 - **`getSigner()` returns the guarded signer**, not the object you passed in, so
-  `getSigner() instanceof Wallet` is `false`. It signs through your signer.
+  `getSigner() instanceof Wallet` is `false`. It signs through your signer. Passed to
+  `Nautilus.create` again, it is not wrapped twice: the new instance applies its own
+  `nonceManagement` and `verificationProvider` to your signer, and shares the per-address
+  order and nonce counter with the first.
 - **Errors name the cause.** `confirmTransaction(operation, response, signer?, to?)` takes
   the signer and the contract the call went to and, when ocean.js returned no transaction,
   names that contract's recorded failure, with "It may have been sent" unless it was refused

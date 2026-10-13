@@ -8,6 +8,8 @@
  * have their message unwrapped. Whatever the node says is redacted, stripped of control
  * characters and bounded before it reaches a message.
  */
+
+import { inspect } from 'node:util'
 import {
   Aquarius,
   LoggerInstance,
@@ -1035,6 +1037,54 @@ describe("the node's text in a message", () => {
     expect(redactSecrets('{"msg":"Cookie: a=","other":"keep"}')).to.equal(
       '{"msg":"Cookie: <redacted>","other":"keep"}'
     )
+  })
+
+  it('redacts every cookie of a header with an apostrophe in a value, keeping the string around it (round 3)', () => {
+    const session = 'secret-cookie'
+    // The reviewer's case, and the other RFC 6265 cookie-octets around an apostrophe.
+    expect(
+      sanitize(`Cookie: theme=it'sdark; session=${session}`, 2000, null)
+    ).to.equal('Cookie: <redacted>')
+    expect(
+      redactFields({ error: `Cookie: theme=it'sdark; session=${session}` })
+    ).to.deep.equal({ error: 'Cookie: <redacted>' })
+    for (const text of [
+      `Cookie: a=x'; session=${session}`,
+      `Cookie: a=x''y; b=\`!#$%&*+-.^_|~'; session=${session}`,
+      `Cookie: theme='dark; session=${session}\nnext`,
+      `{"msg":"Cookie: theme=it'sdark; session=${session}","other":"keep"}`,
+      JSON.stringify({
+        body: JSON.stringify({
+          m: `Cookie: theme=it'sdark; session=${session}`
+        })
+      }),
+      inspect({ msg: `Cookie: theme=it'sdark; session=${session}`, o: 'keep' }),
+      // `util.inspect` escapes the apostrophe when the text holds both kinds of quote.
+      inspect({ msg: `Cookie: a=it's; session=${session} "q" \`b\`` })
+    ]) {
+      for (const out of [
+        sanitize(text, 2000, null),
+        redactSecrets(text),
+        String(redactFields({ error: text }).error)
+      ]) {
+        expect(out, text).to.contain('Cookie: <redacted>')
+        expect(out, text).not.to.contain(session)
+      }
+    }
+    // An apostrophe that closes the string around the header still ends the value.
+    for (const [text, expected] of [
+      [
+        "{ msg: 'Cookie: a=1', other: 'keep' }",
+        "{ msg: 'Cookie: <redacted>', other: 'keep' }"
+      ],
+      ["[ 'Cookie: a=1' ]", "[ 'Cookie: <redacted>' ]"],
+      [
+        "{ msg: 'Cookie: a=', other: 'keep' }",
+        "{ msg: 'Cookie: <redacted>', other: 'keep' }"
+      ],
+      ["'Cookie: a=1'", "'Cookie: <redacted>'"]
+    ])
+      expect(redactSecrets(text), text).to.equal(expected)
   })
 
   it('redacts Basic credentials, and an authorization value after its scheme', () => {
