@@ -1120,7 +1120,8 @@ export class NonceGuardSigner extends AbstractSigner {
    * (else the last one counted) was dropped (`wasDropped`): one that was dropped leaves a
    * gap no later transaction gets past, so this send takes the pending count, filling it.
    * The counter stays, so the send after it skips the transactions still waiting behind
-   * the gap.
+   * the gap. The dropped broadcast stays on record until one at its nonce succeeds, so a
+   * refill that fails leaves the gap to the next send.
    */
   private async nextNonce(key: string, address: string): Promise<number> {
     const provider = this.requireProvider()
@@ -1137,7 +1138,8 @@ export class NonceGuardSigner extends AbstractSigner {
       const gap =
         (uncounted.length && outstanding?.get(Math.min(...uncounted))) || local
       if (await this.wasDropped(gap, address)) {
-        outstanding?.delete(gap.nonce)
+        // The record stays until a broadcast at its nonce replaces it (`advance`): a send
+        // that fails here leaves the gap for the next one to fill.
         this.log.emit(
           'chain.nonce.counter_reset',
           `The RPC no longer knows transaction ${gap.hash} (nonce ${gap.nonce}) of ${address}, and the account has not mined past that nonce, so it was dropped: the next transaction takes the RPC's pending count ${pending}.`,

@@ -60,7 +60,7 @@ Only events about these topics print. Every topic also carries the raw fields of
 nautilus's own [log events](/docs/api/nautilus/configureLogging) of its component, but only of
 events printed at the current log level: pair the channel with `NAUTILUS_LOG_LEVEL=debug` (or
 `configureLogging({ level: 'debug' })`) to see them all. The raw `error` of an operation's
-`…operation.failed` (or `compute.query.failed`) event goes to the topic of where the error
+`…operation.failed` (or `…query.failed`) event goes to the topic of where the error
 came from when nautilus knows it: a `PolicyDeniedError` or `CredentialPresentationError` to
 `policy`, a `WaltIdWalletError` to `wallet`, a `NonceGuardError` or `IndexerNonceStuckError`
 to `nonce`, also as the `cause` of another error. Any other error goes to the operation's

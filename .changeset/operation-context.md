@@ -10,8 +10,8 @@ can be told apart, and a thrown error leads to its lines.
 - **`opId` and `operation` on every event of a call.** `publish`, `completePublish`, `edit`,
   `setServicePrice`, `setAssetLifecycleState`, `access`, `compute`, `freeCompute`,
   `stopCompute`, `getComputeStatus`, `getComputeResult`, `streamComputeResult`,
-  `getComputeLogs` and `waitForIndexer` each give their
-  call a random 12-hex-character `opId`. Every `LogEvent` the call causes carries it, with the
+  `getComputeLogs`, `waitForIndexer` and the reads `getAsset`, `getAssets`, `query`,
+  `getComputeEnvironments` and `getComputeEnvironment` each give their call a random 12-hex-character `opId`. Every `LogEvent` the call causes carries it, with the
   call's name as `operation`, in the JSON and the pretty format and in a `sink`. In Node 22.3
   or newer it follows the call through every `await`, timer and callback (`AsyncLocalStorage`, read
   through `process.getBuiltinModule`, so no bundle has to resolve `node:async_hooks`), and so
@@ -32,7 +32,8 @@ can be told apart, and a thrown error leads to its lines.
   redacted `error`) under its component: `publish`, `edit`, `lifecycle`, `access`, `compute`
   and `node` (`waitForIndexer`). The job reads, `getComputeStatus` and `getComputeResult`
   (which apps poll), `streamComputeResult` and `getComputeLogs` (which finish once the stream
-  is open), log `compute.query.*`, all at `debug`. Nothing new prints at the
+  is open), and the environment reads log `compute.query.*`; the metadata reads `getAsset`,
+  `getAssets` and `query` log `node.query.*`; all of these at `debug`. Nothing new prints at the
   default level (`warn`). In Node 22.3 or newer, a call made from inside another call of the
   same logger that is still running (from a `confirmProviderFees` callback, say) joins that
   one; a timer or listener a finished call left behind starts an operation of its own. With

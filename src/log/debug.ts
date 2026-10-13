@@ -35,6 +35,7 @@ import {
   readDebugEnv
 } from './env.js'
 import { writeLine } from './sinks.js'
+import { beforeOpenAuthority } from './textShapes.js'
 
 export type { DebugLevel, DebugTopic }
 
@@ -411,14 +412,18 @@ function cutString(text: string, budget: Budget, total?: number): string {
 
 /**
  * `value`, read up to what `budget` has left: whole, or as a `CutText` that ends at the
- * last space or punctuation before the cut. A credential the cut goes through is left out
+ * last space or punctuation before the cut, and before a URL whose authority the cut went
+ * through (`beforeOpenAuthority`: a quote in its user info is no end of it). A credential the cut goes through is left out
  * whole, so masking never sees (and so never misses) a part of one.
  */
 function readString(value: string, budget: Budget): string | CutText {
   const limit = Math.max(0, Math.min(budget.stringLength, budget.left))
   budget.left -= Math.min(value.length, limit)
   if (value.length <= limit) return value
-  return new CutText(beforeLastWord(value.slice(0, limit)), value.length)
+  return new CutText(
+    beforeLastWord(beforeOpenAuthority(value.slice(0, limit))),
+    value.length
+  )
 }
 
 /** What ends a word for `beforeLastWord`: whitespace, quotes, brackets, `,` and `;`. */

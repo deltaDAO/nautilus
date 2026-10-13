@@ -235,7 +235,8 @@ or handle them in your own `sink`.
   safely, send it again, or when a resend failed for another reason (see
   [Concurrency and nonces](/docs/guides/config#concurrency-and-nonces)), on `cause`. A
   metadata transaction refused for its nonce leaves the envelope only when it is proven
-  never mined (`cleanup: 'removed'`); otherwise `'kept'`.
+  never mined, with its nonce taken by another transaction in a finalized block
+  (`cleanup: 'removed'`); otherwise `'kept'`.
 - **`MetadataConflictError`**, when another metadata transaction for the NFT landed in the
   same block, and **`IndexingError`** / **`OceanNodeError`**, from `waitForIndexer`, when the
   node could not index the asset or did not within the timeout. These are not wrapped in a

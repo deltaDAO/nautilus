@@ -899,6 +899,21 @@ describe('the cause of a failed lookup', () => {
       ['TOKENSECRET1', 'T2SECRET']
     ],
     [
+      'a value with an escaped quote in it (security regression)',
+      'upstream {"password":"prefix\\u0022TOKENSECRET1"} failed',
+      ['TOKENSECRET1']
+    ],
+    [
+      'values with escaped delimiters in them (security regression)',
+      "upstream {'password':'a\\u0027TOKENSECRET1'} apikey=b\\u0026T2SECRET token=c\\u0020T3SECRET",
+      ['TOKENSECRET1', 'T2SECRET', 'T3SECRET']
+    ],
+    [
+      'a value with a quote escaped twice in it (security regression)',
+      'upstream {"password":"prefix\\u005cu0022TOKENSECRET1","apiKey":"d\\u005c\\u0022T2SECRET"} failed',
+      ['TOKENSECRET1', 'T2SECRET']
+    ],
+    [
       'a policy-server session id at character 2000, after a long URL',
       `failed at https://rpc.example.org/${'a'.repeat(1940)} id ${FAKE.policySessionId}`,
       ['5e555e555e55', '0dd50dd50dd5']
