@@ -44,10 +44,28 @@ import {
 
 const SHAPES = CREDENTIAL_SHAPES.split('\n')
 
+/**
+ * The one credential shape that starts with `start`: read by its start, not its place, so a
+ * shape added to `CREDENTIAL_SHAPES` does not swap the ones a test here hides.
+ */
+function shapeStarting(start: string): string {
+  const found = SHAPES.filter((shape) => shape.startsWith(start))
+  if (found.length !== 1)
+    throw new Error(`${found.length} credential shapes start with ${start}`)
+  return found[0]
+}
+
+/** An `apiToken` and a JSON-escaped RPC URL in JSON inside a JSON string. */
+const NESTED_JSON = shapeStarting('{"body":')
+
 /** The credential shapes an RPC's answer hid from the redaction, and the secret in each. */
 const HIDDEN: [string, string, string][] = [
-  ['a JSON `pinataGatewayToken`', SHAPES[2], FAKE.pinataGatewayToken],
-  ['an `apiToken` in JSON inside JSON', SHAPES[7], FAKE.nestedApiToken],
+  [
+    'a JSON `pinataGatewayToken`',
+    shapeStarting('{"pinataGatewayToken":'),
+    FAKE.pinataGatewayToken
+  ],
+  ['an `apiToken` in JSON inside JSON', NESTED_JSON, FAKE.nestedApiToken],
   [
     'an `apiToken` with `\\u0022` quotes',
     `{\\u0022apiToken\\u0022:\\u0022${FAKE.nestedApiToken}\\u0022}`,
@@ -62,10 +80,14 @@ const HIDDEN: [string, string, string][] = [
     ),
     FAKE.pinataGatewayToken
   ],
-  ['a percent-encoded RPC URL', SHAPES[8], FAKE.rpcPathToken],
+  [
+    'a percent-encoded RPC URL',
+    shapeStarting('{"redirect":'),
+    FAKE.rpcPathToken
+  ],
   [
     'a percent-encoded `apiToken=` and JSON field',
-    SHAPES[9],
+    shapeStarting('{"q":'),
     FAKE.nestedApiToken
   ],
   [
@@ -170,7 +192,7 @@ describe('a credential in an RPC answer quoted in an ethers error', () => {
       })
 
   it('goes to the secrets debug tier whole, and not to the sensitive one', async () => {
-    const error = await rpcError(500, SHAPES[7])
+    const error = await rpcError(500, NESTED_JSON)
 
     for (const level of ['sensitive', 'secrets'] as const) {
       const events: DebugEvent[] = []
@@ -678,7 +700,7 @@ describe('the sensitive tier and JSON-escaped URLs (security regression)', () =>
 
   for (const more of [2, 3])
     it(`masks the RPC key of a nested body quoted ${more} more times, HTTP 500`, async () => {
-      const error = await rpcError(500, stringified(SHAPES[7], more))
+      const error = await rpcError(500, stringified(NESTED_JSON, more))
       expect(error.message).to.contain(FAKE.rpcPathToken)
 
       const events: DebugEvent[] = []
