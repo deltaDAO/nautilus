@@ -66,7 +66,8 @@ after 128 blocks: it stops with "may have been sent".
   the nonce reads and the guard's decisions; credentials such as an RPC URL's token only at
   `NAUTILUS_DEBUG=secrets`.
 - **A failed send's error is bounded.** Each message of a failed send is cut to 16,000
-  characters, with ANSI escapes and control characters removed, so a huge error body from an
+  characters (a URL the cut runs through is dropped whole, so its user info cannot read as
+  its host), with ANSI escapes and control characters removed, so a huge error body from an
   RPC is redacted in bounded time. The raw error is in the debug channel (topic `nonce`).
 - **A metadata transaction refused for its nonce** keeps its stored envelope unless it is
   proven never mined (hash unknown on two reads, the account past its nonce, and no metadata

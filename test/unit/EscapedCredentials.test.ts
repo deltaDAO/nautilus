@@ -711,6 +711,23 @@ describe('the nonce guard and hostile RPC text (security regression)', () => {
     expect(error.message.length).to.be.below(40_000)
   })
 
+  it('drops a URL the cut runs through, so its user info cannot read as its host', () => {
+    // PR #221 review: cut back to the `,` in the user info, the URL read
+    // `https://<user>` and the redaction kept it as the origin.
+    const user = 'fakeRpcCredential123456'
+    const text = `failed https://${user},${'x'.repeat(17_000)}@rpc.example.org/path`
+    const send = Object.assign(new Error(text), {
+      shortMessage: text,
+      error: { message: text }
+    })
+    withoutSignedTransaction(send)
+    for (const shown of [send.message, send.shortMessage, send.error.message])
+      expect(shown).not.to.contain(user)
+    expect(send.message).to.equal('failed …')
+    // The control: `sanitize`, which cuts the same way, hides it too.
+    expect(sanitize(text, 500, null)).not.to.contain(user)
+  })
+
   it("strips the RPC's ANSI escapes and control characters from the messages", () => {
     const text = 'nonce too low\u001b[2J\u001b]0;title\u0007 again'
     const send = Object.assign(new Error(text), {

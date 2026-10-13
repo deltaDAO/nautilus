@@ -387,12 +387,16 @@ function readLimit(maxLength: number): number {
 }
 
 /**
- * The start of `text`, at most `limit` characters cut at a word end (`beforeLastWord`)
- * with `…` after it, or all of it when it is not longer: for a caller that redacts a text
- * of any length without `sanitize`'s bound, so hostile text costs little time.
+ * The start of `text`, at most `limit` characters cut as `sanitize` cuts (a URL that runs
+ * up to the cut dropped whole, `beforeOpenUrl`, then the word the cut split,
+ * `beforeLastWord`) with `…` after it, or all of it when it is not longer: for a caller
+ * that redacts a text of any length without `sanitize`'s bound, so hostile text costs
+ * little time.
  */
 export function startOf(text: string, limit: number): string {
-  return text.length > limit ? `${beforeLastWord(text.slice(0, limit))}…` : text
+  return text.length > limit
+    ? `${beforeLastWord(beforeOpenUrl(text.slice(0, limit)))}…`
+    : text
 }
 
 /**
