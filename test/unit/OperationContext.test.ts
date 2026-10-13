@@ -671,6 +671,115 @@ describe('a call that fails before it does anything (PR #219 review)', () => {
   })
 })
 
+describe('the public reads (PR #219 review, round 2)', () => {
+  const ENVIRONMENT = { id: 'env-1' } as never
+
+  async function readingNautilus() {
+    const nautilus = await createNautilus()
+    const node = nautilus.getNodeClient()
+    vi.spyOn(node, 'getComputeEnvironments').mockResolvedValue([ENVIRONMENT])
+    vi.spyOn(node, 'resolve').mockResolvedValue(getAssetFixture() as never)
+    vi.spyOn(node, 'resolveMany').mockResolvedValue({})
+    vi.spyOn(node, 'query').mockResolvedValue({ hits: [] })
+    return { nautilus, node }
+  }
+
+  for (const asyncContext of [true, false])
+    it(`getComputeEnvironment() stamps its events and tags its error${asyncContext ? '' : ', without AsyncLocalStorage'}`, async () => {
+      useAsyncContext(asyncContext)
+      const { nautilus } = await readingNautilus()
+      const captured = captureLog({ level: 'trace' })
+
+      await nautilus.getComputeEnvironment()
+      const thrown = await nautilus
+        .getComputeEnvironment('missing')
+        .catch((error) => error)
+
+      const [defaulted] = captured.named('compute.environment.defaulted')
+      const started = captured.named('compute.query.started')
+      const [failed] = captured.named('compute.query.failed')
+      expect(started).to.have.length(2)
+      expect(defaulted.operation).to.equal('getComputeEnvironment')
+      expect(defaulted.opId).to.match(OP_ID).and.equal(started[0].opId)
+      expect(captured.named('compute.query.finished')[0].durationMs).to.be.a(
+        'number'
+      )
+      expect(thrown.message).to.contain("No compute environment 'missing'")
+      expect(failed.operation).to.equal('getComputeEnvironment')
+      expect(failed.durationMs).to.be.a('number')
+      expect(thrown.opId).to.match(OP_ID).and.equal(failed.opId)
+      expect(thrown.opId).to.equal(started[1].opId)
+    })
+
+  it('getAsset, getAssets, query and getComputeEnvironments each open a debug operation', async () => {
+    const { nautilus } = await readingNautilus()
+    const captured = captureLog({ level: 'trace' })
+
+    await nautilus.getAsset('did:ope:1')
+    await nautilus.getAssets(['did:ope:1'])
+    await nautilus.query({ query: {} } as never)
+    await nautilus.getComputeEnvironments()
+
+    for (const [kind, operation] of [
+      ['node.query', 'getAsset'],
+      ['node.query', 'getAssets'],
+      ['node.query', 'query'],
+      ['compute.query', 'getComputeEnvironments']
+    ] as const) {
+      const ofCall = (end: string) =>
+        captured
+          .named(`${kind}.${end}` as never)
+          .filter((event) => event.operation === operation)
+      const [started] = ofCall('started')
+      const [finished] = ofCall('finished')
+      expect(started?.opId, operation).to.match(OP_ID)
+      expect(finished?.opId, operation).to.equal(started.opId)
+      expect(finished.durationMs, operation).to.be.a('number')
+      expect(started.level, operation).to.equal('debug')
+      expect(finished.level, operation).to.equal('debug')
+    }
+  })
+
+  it('a failing read tags its error and logs a debug failed event', async () => {
+    const { nautilus, node } = await readingNautilus()
+    const reason = new Error('node unreachable')
+    vi.mocked(node.resolve).mockRejectedValue(reason)
+    vi.mocked(node.query).mockRejectedValue(new Error('bad query'))
+    const captured = captureLog({ level: 'trace' })
+
+    const thrown = await nautilus.getAsset('did:ope:1').catch((error) => error)
+    const thrownQuery = await nautilus
+      .query({} as never)
+      .catch((error) => error)
+
+    const failed = captured.named('node.query.failed')
+    expect(thrown).to.equal(reason)
+    expect(failed.map((event) => event.operation)).to.deep.equal([
+      'getAsset',
+      'query'
+    ])
+    expect(thrown.opId).to.match(OP_ID).and.equal(failed[0].opId)
+    expect((thrownQuery as { opId?: string }).opId)
+      .to.match(OP_ID)
+      .and.equal(failed[1].opId)
+    expect(failed[0].level).to.equal('debug')
+    expect(Object.keys(thrown)).not.to.include('opId')
+  })
+
+  it('a read made inside another operation joins it', async () => {
+    const { nautilus } = await readingNautilus()
+    const captured = captureLog({ level: 'trace' })
+
+    const opId = await runOperation(log, 'access', async () => {
+      await nautilus.getAsset('did:ope:1')
+      return currentOperation()?.opId
+    })
+
+    expect(captured.named('node.query.started')).to.have.length(0)
+    expect(opId).to.match(OP_ID)
+  })
+})
+
 describe('the catalogue', () => {
   it('has the three events of every kind of operation', () => {
     for (const kind of [
@@ -680,13 +789,16 @@ describe('the catalogue', () => {
       'access.operation',
       'compute.operation',
       'compute.query',
-      'node.operation'
+      'node.operation',
+      'node.query'
     ])
       for (const end of ['started', 'finished', 'failed'])
         expect(isLogEventName(`${kind}.${end}`), `${kind}.${end}`).to.equal(
           true
         )
     expect(LOG_EVENTS['compute.query.finished'].level).to.equal('debug')
+    for (const end of ['started', 'finished', 'failed'] as const)
+      expect(LOG_EVENTS[`node.query.${end}`].level).to.equal('debug')
     expect(LOG_EVENTS['access.operation.finished'].level).to.equal('info')
   })
 })

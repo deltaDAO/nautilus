@@ -447,19 +447,19 @@ export const LOG_EVENTS = {
     level: 'debug',
     component: 'compute',
     description:
-      "A call of getComputeStatus() or getComputeResult(), which apps poll, or of streamComputeResult() or getComputeLogs(), started; the event's operation names the call, and its opId is on every event of the call."
+      "A call of getComputeStatus() or getComputeResult(), which apps poll, of streamComputeResult() or getComputeLogs(), or of getComputeEnvironments() or getComputeEnvironment(), started; the event's operation names the call, and its opId is on every event of the call."
   },
   'compute.query.finished': {
     level: 'debug',
     component: 'compute',
     description:
-      'A call of getComputeStatus() or getComputeResult(), which apps poll, returned after durationMs; streamComputeResult() and getComputeLogs() return once the stream is open.'
+      'A call of getComputeStatus(), getComputeResult(), getComputeEnvironments() or getComputeEnvironment() returned after durationMs; streamComputeResult() and getComputeLogs() return once the stream is open.'
   },
   'compute.query.failed': {
     level: 'debug',
     component: 'compute',
     description:
-      'A call of getComputeStatus(), getComputeResult(), streamComputeResult() or getComputeLogs() threw after durationMs; the error it threw carries the same opId (error.opId).',
+      'A call of getComputeStatus(), getComputeResult(), streamComputeResult(), getComputeLogs(), getComputeEnvironments() or getComputeEnvironment() threw after durationMs; the error it threw carries the same opId (error.opId).',
     fields: ['error']
   },
   'node.operation.started': {
@@ -478,6 +478,25 @@ export const LOG_EVENTS = {
     component: 'node',
     description:
       'A call of waitForIndexer() threw, after durationMs; the error it threw carries the same opId (error.opId).',
+    fields: ['error']
+  },
+  'node.query.started': {
+    level: 'debug',
+    component: 'node',
+    description:
+      "A call of getAsset(), getAssets() or query() started; the event's operation names the call, and its opId is on every event of the call."
+  },
+  'node.query.finished': {
+    level: 'debug',
+    component: 'node',
+    description:
+      'A call of getAsset(), getAssets() or query() returned, after durationMs.'
+  },
+  'node.query.failed': {
+    level: 'debug',
+    component: 'node',
+    description:
+      'A call of getAsset(), getAssets() or query() threw, after durationMs; the error it threw carries the same opId (error.opId).',
     fields: ['error']
   },
 

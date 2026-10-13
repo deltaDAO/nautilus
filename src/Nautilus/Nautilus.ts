@@ -755,17 +755,17 @@ export class Nautilus {
 
   /** Resolves an asset by DID. */
   async getAsset(did: string): Promise<AssetV5> {
-    return this.node.resolve(did)
+    return this.operation('getAsset', () => this.node.resolve(did))
   }
 
   /** Resolves several assets in one query, keyed by lower-cased DID. */
   async getAssets(dids: string[]): Promise<Record<string, AssetV5>> {
-    return this.node.resolveMany(dids)
+    return this.operation('getAssets', () => this.node.resolveMany(dids))
   }
 
   /** Raw metadata search against the node's index. */
   async query(query: SearchQuery): Promise<unknown> {
-    return this.node.query(query)
+    return this.operation('query', () => this.node.query(query))
   }
 
   /**
@@ -2008,14 +2008,18 @@ export class Nautilus {
 
   /** Lists the node's compute environments, with their resources, limits and fees. */
   async getComputeEnvironments(): Promise<ComputeEnvironment[]> {
-    return this.node.getComputeEnvironments()
+    return this.operation('getComputeEnvironments', () =>
+      this.node.getComputeEnvironments()
+    )
   }
 
   /** Resolves one environment by id, or the node's first. */
   async getComputeEnvironment(
     computeEnv?: string
   ): Promise<ComputeEnvironment> {
-    return selectEnvironment(this.node, computeEnv, this.log)
+    return this.operation('getComputeEnvironment', (log) =>
+      selectEnvironment(this.node, computeEnv, log)
+    )
   }
 
   /** Starts a paid compute job: orders inputs, funds escrow, then starts. */

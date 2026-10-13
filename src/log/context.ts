@@ -36,6 +36,11 @@ export type OperationName =
   | 'getComputeLogs'
   | 'stopCompute'
   | 'waitForIndexer'
+  | 'getAsset'
+  | 'getAssets'
+  | 'query'
+  | 'getComputeEnvironments'
+  | 'getComputeEnvironment'
 
 /** One running operation. */
 export interface OperationContext {
@@ -104,6 +109,7 @@ interface OperationEvents {
     | 'compute.operation.started'
     | 'compute.query.started'
     | 'node.operation.started'
+    | 'node.query.started'
   finished:
     | 'publish.operation.finished'
     | 'edit.operation.finished'
@@ -112,6 +118,7 @@ interface OperationEvents {
     | 'compute.operation.finished'
     | 'compute.query.finished'
     | 'node.operation.finished'
+    | 'node.query.finished'
   failed:
     | 'publish.operation.failed'
     | 'edit.operation.failed'
@@ -120,6 +127,7 @@ interface OperationEvents {
     | 'compute.operation.failed'
     | 'compute.query.failed'
     | 'node.operation.failed'
+    | 'node.query.failed'
 }
 
 const PUBLISH: OperationEvents = {
@@ -138,13 +146,21 @@ const COMPUTE: OperationEvents = {
   failed: 'compute.operation.failed'
 }
 /**
- * Reads of a job, which apps poll: their events are all `debug`. `streamComputeResult` and
- * `getComputeLogs` finish once the stream is open; reading it is the caller's.
+ * Reads of a job, which apps poll, and of the node's compute environments: their events
+ * are all `debug`. `streamComputeResult` and `getComputeLogs` finish once the stream is
+ * open; reading it is the caller's.
  */
 const COMPUTE_QUERY: OperationEvents = {
   started: 'compute.query.started',
   finished: 'compute.query.finished',
   failed: 'compute.query.failed'
+}
+
+/** Reads of the node's metadata index, which apps call often: their events are all `debug`. */
+const NODE_QUERY: OperationEvents = {
+  started: 'node.query.started',
+  finished: 'node.query.finished',
+  failed: 'node.query.failed'
 }
 
 const EVENTS: Record<OperationName, OperationEvents> = {
@@ -169,6 +185,11 @@ const EVENTS: Record<OperationName, OperationEvents> = {
   getComputeResult: COMPUTE_QUERY,
   streamComputeResult: COMPUTE_QUERY,
   getComputeLogs: COMPUTE_QUERY,
+  getComputeEnvironments: COMPUTE_QUERY,
+  getComputeEnvironment: COMPUTE_QUERY,
+  getAsset: NODE_QUERY,
+  getAssets: NODE_QUERY,
+  query: NODE_QUERY,
   waitForIndexer: {
     started: 'node.operation.started',
     finished: 'node.operation.finished',
