@@ -163,7 +163,10 @@ export { isErrorCode }
  */
 function originOnly(url: string): string {
   const trailing = trailingPunctuation(url)
-  const core = url.slice(0, url.length - trailing.length).replace(/\\+\//g, '/')
+  // From the start of a backslash run only, so a long run is read in linear time.
+  const core = url
+    .slice(0, url.length - trailing.length)
+    .replace(/(?<!\\)\\+\//g, '/')
   // A backslash ends the authority, as a URL parser reads `https://host\path`.
   const [, scheme, authority = ''] = /^([^:]+):\/\/([^/?#\\]*)/.exec(core) ?? []
   const host = authority.replace(/^.*@/, '')

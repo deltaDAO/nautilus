@@ -930,6 +930,40 @@ describe('what the sensitive tier still hides', () => {
     expect(maskText(prose)).to.equal(prose)
   })
 
+  it('masks user info a JSON-escaped or percent-encoded quote stands in (security regression)', () => {
+    // `\u0027` ended the authority at its backslash: `user:12345` read as a host and port,
+    // and a quote in a URL decoded from a query parameter ended that URL.
+    const secret = 'userinfo-secret-7Hq2Lm9Z'
+    const url = (quote: string) =>
+      `https://user:12345${quote}${secret}@rpc.example.org/p`
+    for (const quote of ['\\u0027', '\\u0022', '\\u003c', '\\\\u0027', '\\"'])
+      for (const text of [
+        url(quote),
+        `at ${url(quote)}`,
+        `{"error":"${url(quote)}"}`,
+        `https://h.example/cb?redirect=${url(quote)}`
+      ]) {
+        expect(maskText(text), text).not.to.contain(secret)
+        expect(maskText(text), text).not.to.contain('12345')
+        expect(maskText(text), text).to.contain('<redacted>@rpc.example.org')
+        expect(maskUrl(text), text).not.to.contain('12345')
+      }
+    for (const quote of ["'", '"', '<', '\\u0027', '\\"', '%27', '%22'])
+      for (const text of [
+        `https://h.example/cb?redirect=${encodeURIComponent(url(quote))}`,
+        `https://h.example/cb?redirect=${url(quote).replace(/'/g, '%27')}`
+      ]) {
+        expect(maskText(text), text).not.to.contain(secret)
+        expect(maskText(text), text).not.to.contain('12345')
+        expect(maskText(text), text).to.equal(
+          'https://h.example/cb?redirect=https://<redacted>@rpc.example.org/p'
+        )
+      }
+    expect(maskUrl(url('\\u0027'))).to.equal(
+      'https://<redacted>@rpc.example.org/p'
+    )
+  })
+
   it('masks auth headers and credential fields in text, and keeps JWTs, signatures and session ids', () => {
     const text = `Authorization: Bearer ${FAKE.jwt}; {"secretAccessKey":"${FAKE.s3Secret}","vp_token":"${FAKE.jwt}","sessionId":"${SID}","signature":"${FAKE.signature}"} password=hunter2`
     const masked = maskText(text)
@@ -1465,7 +1499,7 @@ describe('round-2 fixes', () => {
     // which reads as a host and port.
     const events = captureDebug('sensitive')
     const secret = 'userinfo-secret-7Hq2Lm9Z'
-    for (const mark of ["'", '"', ','])
+    for (const mark of ["'", '"', ',', '\\u0027'])
       for (const pad of ['x', `x${mark}`]) {
         events.length = 0
         debugRaw(
