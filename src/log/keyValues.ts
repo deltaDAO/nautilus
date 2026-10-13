@@ -61,6 +61,12 @@ const SCHEME = /(?:Bearer|Basic|Token|Digest|Negotiate|AWS4-HMAC-SHA256)\s+/iy
 const MAX_VALUE_LENGTH = 10_000
 /** A value that runs to the end of its line (a cookie header), unquoted. */
 const LINE_VALUE = /[^\r\n"'\\]+/y
+/**
+ * A quoted cookie value after its `=` (`theme="dark"`, or `theme=\"dark\"` in a JSON
+ * string): a quote, then text without a quote, a backslash, a space, `,` or `;` (RFC 6265's
+ * cookie-octets), then the same run of backslashes and the same quote.
+ */
+const QUOTED_COOKIE_VALUE = /(\\*)(?:"[^\s"\\,;]*\1"|'[^\s'\\,;]*\1')/y
 /** A value redacted already, by an earlier pass. */
 const ALREADY_REDACTED = '<redacted>'
 
@@ -144,8 +150,10 @@ function valueEnd(
 /**
  * Where a value that runs to the end of its line ends (`Cookie: a=1; session=…`, every
  * cookie of it): a quoted one at its closing quote, any other at a line break, a quote or
- * a backslash. One redacted already stays as it is, so a second pass over the same text
- * (after control characters are stripped) does not swallow the lines after it.
+ * a backslash, past the quoted value of a cookie (`theme="dark"; session=…`), so the
+ * cookies after it are redacted too. One redacted already stays as it is, so a second pass
+ * over the same text (after control characters are stripped) does not swallow the lines
+ * after it.
  */
 function lineValueEnd(
   text: string,
@@ -163,8 +171,15 @@ function lineValueEnd(
     first === "'"
   )
     return valueEnd(text, start, form, quoting)
-  LINE_VALUE.lastIndex = start
-  return LINE_VALUE.test(text) ? LINE_VALUE.lastIndex : start
+  let end = start
+  for (;;) {
+    LINE_VALUE.lastIndex = end
+    if (LINE_VALUE.test(text)) end = LINE_VALUE.lastIndex
+    if (end === start || text[end - 1] !== '=') return end
+    QUOTED_COOKIE_VALUE.lastIndex = end
+    if (!QUOTED_COOKIE_VALUE.test(text)) return end
+    end = QUOTED_COOKIE_VALUE.lastIndex
+  }
 }
 
 /** The end of the string quoted by `quote` at `start`, backslash escapes skipped. */
