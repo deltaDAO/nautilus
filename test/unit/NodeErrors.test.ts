@@ -23,7 +23,7 @@ import {
   Wallet
 } from 'ethers'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { redactError } from '../../src/log/redact.js'
+import { redactError, redactFields } from '../../src/log/redact.js'
 import type { NodeAuth } from '../../src/node/auth.js'
 import { nodeText, redactSecrets, sanitize } from '../../src/node/messages.js'
 import {
@@ -994,6 +994,32 @@ describe("the node's text in a message", () => {
         expect(out, text).to.contain('<redacted>')
       }
     }
+  })
+
+  it('redacts every cookie of a header whose values are quoted, inside JSON too (round 2)', () => {
+    const session = 'quoted-cookie-session-x9'
+    for (const [text, kept] of [
+      [`Cookie: theme="dark"; session=${session}`, 'Cookie: <redacted>'],
+      [`Cookie: theme='dark'; session=${session}`, 'Cookie: <redacted>'],
+      [`Cookie: a=1; theme="dark"; session=${session}\nnext`, '<redacted>'],
+      [
+        `{"msg":"Cookie: theme=\\"dark\\"; session=${session}","other":"keep"}`,
+        '{"msg":"Cookie: <redacted>","other":"keep"}'
+      ]
+    ]) {
+      for (const out of [
+        sanitize(text, 2000, null),
+        redactSecrets(text),
+        String(redactFields({ error: text }).error)
+      ]) {
+        expect(out, text).to.contain(kept)
+        expect(out, text).not.to.contain(session)
+      }
+    }
+    // A quote after `=` that is no cookie value still ends the JSON string around it.
+    expect(redactSecrets('{"msg":"Cookie: a=","other":"keep"}')).to.equal(
+      '{"msg":"Cookie: <redacted>","other":"keep"}'
+    )
   })
 
   it('redacts Basic credentials, and an authorization value after its scheme', () => {
