@@ -55,7 +55,9 @@ policy-server session id or the wallet's redirect URI any more.
   existing session`), and the wallet passes that on. `WaltIdCredentialProvider` now removes
   the session id (and each of its two halves) from the wallet's message, also the start of it
   that a cut left before the message's closing `…` (`WaltIdHttpWallet` bounds the message
-  before the provider sees it, so an id that crosses the 500th character is cut).
+  before the provider sees it, so an id that crosses the 500th character is cut), and again
+  after sanitising, where deleting a control or zero-width character or decoding a JSON
+  escape joins it.
   `checkPolicySession` removes the session id it read, whatever its shape, the same way from
   each per-policy name and error (also where deleting a control character joins it, or the
   100-character cut splits it) and from its own error, so neither
