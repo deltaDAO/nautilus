@@ -12,7 +12,7 @@
 
 /* ==========================================================================
    deltaDAO brand theme
-   Tokens follow the deltaDAO brand guide (BRAND_GUIDE.md): Hanken Grotesk,
+   Tokens follow the deltaDAO brand (as used on the deltaDAO marketplace): Hanken Grotesk,
    deck-blue as the primary, blue-to-cyan gradients only, hairline borders
    and soft blue-tinted shadows. Dark mode is the brand's navy "dark slide".
    ========================================================================== */
@@ -127,7 +127,8 @@
 
   --vocs-text-color-primary: light-dark(#161616, #dde3ec);
   --vocs-text-color-secondary: light-dark(#555555, #a3adbd);
-  --vocs-text-color-muted: light-dark(#767a82, #7d889b);
+  /* #64686f keeps small muted text at 4.5:1+ on white and both mist surfaces */
+  --vocs-text-color-muted: light-dark(#64686f, #7d889b);
   --vocs-text-color-heading: light-dark(#161616, #ffffff);
   --vocs-text-color-link: light-dark(#0073cd, #4fc8ec);
   --vocs-text-color-link-hover: light-dark(#2450ec, #8fdbe2);

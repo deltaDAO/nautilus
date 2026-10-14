@@ -15,10 +15,34 @@
 /* the top nav joins the navy hero */
 :root:has(.nl-home) [data-v-gutter-top] {
   background: var(--deck-navy);
-  color-scheme: dark;
-  /* re-resolve against the dark scheme; the mobile icons inherit body colour */
+  /* the mobile icons inherit the body colour */
   color: var(--vocs-text-color-primary);
   border-color: transparent;
+}
+
+/* Navy areas keep the dark theme whatever the page scheme. The production
+   build compiles light-dark() into variables that resolve once at :root, so
+   color-scheme alone does not reach them: flip Lightning CSS's switch for rules
+   using light-dark() directly, and pin the theme tokens to their dark values. */
+:root:has(.nl-home) [data-v-gutter-top],
+.nl-hero-aside {
+  color-scheme: dark;
+  --lightningcss-light: ;
+  --lightningcss-dark: initial;
+  --vocs-color-accent: #00b8e4;
+  --vocs-text-color-primary: #dde3ec;
+  --vocs-text-color-secondary: #a3adbd;
+  --vocs-text-color-muted: #7d889b;
+  --vocs-text-color-heading: #ffffff;
+  --vocs-text-color-link: #4fc8ec;
+  --vocs-text-color-link-hover: #8fdbe2;
+  --vocs-border-color-primary: #1f2c45;
+  --vocs-border-color-secondary: #1a263c;
+  --vocs-background-color-primary: #0b1322;
+  --vocs-background-color-surface: #111b2e;
+  --vocs-background-color-surfaceMuted: #0e1728;
+  --vocs-background-color-surfaceTint: #18243b;
+  --vocs-background-color-code-block: #0e1728;
 }
 
 /* the floating Ask AI bar crosses the navy hero, so it needs a solid surface;
@@ -375,9 +399,6 @@
   gap: 1rem;
   min-width: 0;
   padding-right: 1.5rem;
-  /* shiki and Vocs colours resolve with light-dark(), so this keeps the code
-     dark on navy whatever the page scheme */
-  color-scheme: dark;
 }
 
 .nl-glass {
