@@ -39,8 +39,21 @@ export default defineConfig({
     link: 'https://github.com/deltaDAO/nautilus/edit/main/docs/pages/:path',
     text: 'Suggest changes to this page'
   },
+  // Hanken Grotesk is self-hosted (see pages/_root.css); preload the latin
+  // subset every page renders with so text does not reflow on load.
+  head: {
+    link: [
+      {
+        rel: 'preload',
+        href: '/fonts/hanken-grotesk/hanken-grotesk-latin-wght-normal.woff2',
+        as: 'font',
+        type: 'font/woff2',
+        crossorigin: 'anonymous'
+      }
+    ]
+  },
   iconUrl: { light: '/favicons/light.png', dark: '/favicons/dark.png' },
-  logoUrl: { light: '/icon-light.png', dark: '/icon-dark.png' },
+  logoUrl: { light: '/icon-light.svg', dark: '/icon-dark.svg' },
   // Pages live in `docs/pages`, not the v2 default of `docs/src/pages`.
   srcDir: '.',
   renderStrategy: 'full-static',
@@ -52,7 +65,8 @@ export default defineConfig({
     }
   ],
   colorScheme: 'light dark',
-  accentColor: 'light-dark(#007599, #00caff)',
+  // deck-blue on light, brand cyan on the navy dark theme
+  accentColor: 'light-dark(#2450ec, #00b8e4)',
   topNav: [
     { text: 'Docs', link: '/docs/getting-started', match: '/docs' },
     { text: 'Examples', link: '/docs/examples' },

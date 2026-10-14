@@ -6,27 +6,34 @@ layout: minimal
 showLogo: false
 outline: false
 ---
-import { HomePage } from 'vocs'
 import pkg from '../../src/package.json'
 
-{/* HEADER */}
+{/* Styles for this page live in docs/styles/landing.css (deltaDAO brand guide). */}
 
-<div className="max-w-[1120px] mx-auto vp-doc relative px-[24px] mb-[96px] mt-[32px] md:px-0 md:mb-[64px]">
-  <div className="pt-[48px] max-sm:pt-0">
-    <div className="max-sm:px-0 flex justify-between z-0 max-md:justify-center">
-      <div className="space-y-8 max-w-[400px] flex flex-col items-start max-md:items-center">
-        <img className="h-[72px] dark:invert-[1] max-sm:h-[60px]" src="/logo-light.svg" alt="nautilus logo" />
-        <div className="font-regular text-[21px] max-sm:text-[18px] text-[#919193] max-md:text-center">Typescript <span className="text-black dark:text-white">data economy toolkit</span> - build accessible decentralized data pipelines.</div>
-        <div className="text-[15px] text-[#919193] max-md:text-center"><span className="inline-block rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-[1px] mr-2 text-[13px] font-medium text-amber-600 dark:text-amber-400 align-[1px]">2.0.0 beta</span>One ocean-node, DDO v5 credentials and Compute-to-Data v2. <a href="/docs/getting-started" className="underline">Take it for a spin</a>.</div>
-        <div className="flex justify-center space-x-2">
-          <HomePage.Button href="/docs/getting-started" variant="accent">Get started</HomePage.Button>
-          <HomePage.Button href="/docs/introduction">Why Nautilus?</HomePage.Button>
-          <HomePage.Button href="https://github.com/deltaDAO/nautilus">GitHub</HomePage.Button>
-        </div>
+<div className="nl-home">
+
+{/* HERO: navy slide with spotlights, top-right wave and a wave hand-over */}
+
+<section className="nl-hero">
+  <div className="nl-rays" aria-hidden="true"><i /><i /></div>
+  <div className="nl-container nl-hero-inner">
+    <div className="nl-hero-copy">
+      <img className="nl-logo" src="/logo-light.svg" alt="Nautilus" />
+      <a className="nl-pill" href="/docs/migration">
+        <span className="nl-pill-tag">v2 beta</span>
+        One ocean-node, DDO v5 and <span className="nl-nowrap">Compute-to-Data v2 <span aria-hidden="true">→</span></span>
+      </a>
+      <h1 className="nl-hero-title">The TypeScript toolkit <span className="nl-hero-title-muted">for the data economy.</span></h1>
+      <p className="nl-hero-subtitle">Publish, sell and compute on data across Ocean Protocol ecosystems. One typed client handles wallets, credentials and the ocean-node for you.</p>
+      <div className="nl-actions">
+        <a className="nl-btn nl-btn-primary" href="/docs/getting-started">Get started <span className="nl-arrow" aria-hidden="true">→</span></a>
+        <a className="nl-btn nl-btn-ghost-dark" href="/docs/introduction">Why Nautilus?</a>
+        <a className="nl-btn nl-btn-ghost-dark" href="https://github.com/deltaDAO/nautilus" rel="noreferrer noopener" target="_blank">GitHub</a>
       </div>
-      <div className="flex flex-col justify-between w-[440px] space-y-10 max-lg:w-[370px] max-md:hidden">
-        
-        <div id="home-install" className="h-full">
+    </div>
+    <div className="nl-hero-aside">
+      <div className="nl-glass" id="home-install">
+        <div className="nl-glass-label"><span>Install</span><span className="nl-dots" aria-hidden="true"><i /><i /><i /></span></div>
 
   :::code-group
 
@@ -44,127 +51,170 @@ import pkg from '../../src/package.json'
 
   :::
 
-        </div>
-    
-    <div className="flex justify-between space-x-4">
-    <a href="https://github.com/deltaDAO/nautilus/blob/main/LICENSE" className="cursor-pointer h-[36px] flex-1 relative rounded-lg overflow-hidden border border-black/10 dark:border-white/20" style={{ color: 'inherit' }} rel="noreferrer noopener" target="_blank">
-      <div className="absolute flex z-1 p-[6px] h-full w-full">
-        <div className="flex-1 bg-white/60 dark:bg-black/40 flex items-center w-full h-full rounded-md">
-          <span className="font-medium text-[15px] leading-none opacity-80 w-full text-center">license</span>
-        </div>
-        <div className="flex items-center h-full px-2">
-          <span className="font-medium text-[15px] leading-none text-center w-full text-black dark:text-white">Apache-2.0</span>
-        </div>
       </div>
-      
-      <div className="absolute left-0 right-0 top-0 bottom-0 bg-black/5 dark:bg-white/5 z-0" />
-      <div className="absolute left-0 right-0 top-0 bottom-0 backdrop-blur-[2px] backdrop-filter z-0" />
-    </a>
-    <a href="https://npmjs.com/package/@deltadao/nautilus" className="cursor-pointer h-[36px] flex-1 relative rounded-lg overflow-hidden border border-green-400/50" style={{ color: 'inherit' }} rel="noreferrer noopener" target="_blank">
-      <div className="absolute flex z-1 p-[6px] h-full w-full">
-        <div className="flex-1 bg-white/60 dark:bg-black/40 flex items-center w-full h-full rounded-md">
-          <span className="font-medium text-[15px] leading-none opacity-80 w-full text-center">version</span>
-        </div>
-        <div className="flex items-center h-full px-2">
-          <span className="font-medium text-[15px] leading-none text-center w-full text-lime-400">{pkg.version}</span>
-        </div>
-      </div>
-      <div className="absolute left-0 right-0 top-0 bottom-0 bg-lime-400 opacity-10 z-0" />
-      <div className="absolute left-0 right-0 top-0 bottom-0 backdrop-blur-[2px] backdrop-filter z-0" />
-    </a>
-    </div>
-    </div>
-    </div>
-    <div className="flex justify-between flex-wrap mt-16 max-sm:hidden">
-      <div className="pr-2 w-1/3 max-lg:pb-3 max-sm:px-0 max-lg:w-1/2 max-sm:w-full z-0">
-        <div className="relative w-full h-[168px] max-lg:h-[142px] overflow-hidden">
-          <div className="border-black/10 dark:border-white/10 border border-solid dark:border-opacity-10 rounded-lg h-full px-5 py-6 absolute z-10 flex flex-col justify-between w-full">
-            <div className="text-xl font-medium text-black dark:text-white">Easy to start</div>
-            <div className="text-[17px] text-[#919193]">The abstraction layer allows for more intuitive interactions with underlying DLT and decentralized infrastructure.</div>
-          </div>
-          <div className="absolute left-0 right-0 top-0 bottom-0 dark:bg-[#313136] opacity-20 z-0" />
-          <div className="absolute left-0 right-0 top-0 bottom-0 backdrop-filter backdrop-blur-[2px] z-0" />
-        </div>
-      </div>
-      <div className="pl-2 pr-2 max-sm:px-0 max-lg:pb-3 max-lg:pr-0 w-1/3 max-lg:w-1/2 max-sm:w-full z-0">
-        <div className="relative w-full h-[168px] max-lg:h-[142px]">
-          <div className="border-black/10 dark:border-white/10 border border-solid border-opacity-10 dark:border-opacity-10 rounded-lg h-full px-5 py-6 absolute z-10 flex flex-col justify-between w-full">
-            <div className="text-xl font-medium text-black dark:text-white">Documented</div>
-            <div>
-            <div className="text-[17px] text-[#919193]">An ever growing documentation aiming to enable both newcomers and advanced data economists alike.</div>
-            </div>
-          </div>
-          <div className="absolute left-0 right-0 top-0 bottom-0 dark:bg-[#313136] opacity-20 z-0" />
-          <div className="absolute left-0 right-0 top-0 bottom-0 backdrop-filter backdrop-blur-[2px] z-0" />
-        </div>
-      </div>
-      <div className="pl-2 w-1/3 max-lg:px-0 max-lg:w-full z-0">
-        <div className="relative w-full h-[168px] max-lg:h-[142px]">
-          <div className="border-black/10 dark:border-white/10 border border-solid border-opacity-10 dark:border-opacity-10 rounded-lg h-full px-5 py-6 absolute z-10 flex flex-col justify-between w-full">
-            <div className="text-xl font-medium text-black dark:text-white">Typed APIs</div>
-            <div className="text-[17px] text-[#919193]">A focus on flexible APIs, following well established patterns, that provide extensive TypeScript typings.</div>
-          </div>
-          <div className="absolute left-0 right-0 top-0 bottom-0 dark:bg-[#313136] opacity-20 z-0" />
-          <div className="absolute left-0 right-0 top-0 bottom-0 backdrop-filter backdrop-blur-[2px] z-0" />
-        </div>
+      <div className="nl-stats">
+        <a className="nl-stat" href="https://npmjs.com/package/@deltadao/nautilus" rel="noreferrer noopener" target="_blank">
+          <span className="nl-stat-label">Version</span>
+          <span className="nl-stat-value">{pkg.version}</span>
+        </a>
+        <a className="nl-stat" href="https://github.com/deltaDAO/nautilus/blob/main/LICENSE" rel="noreferrer noopener" target="_blank">
+          <span className="nl-stat-label">License</span>
+          <span className="nl-stat-value">Apache-2.0</span>
+        </a>
+        <a className="nl-stat" href="/docs/typescript">
+          <span className="nl-stat-label">Types</span>
+          <span className="nl-stat-value">Built-in</span>
+        </a>
       </div>
     </div>
   </div>
-</div>
+  <svg className="nl-hero-wave" viewBox="0 0 1440 140" preserveAspectRatio="none" aria-hidden="true">
+    <defs>
+      <linearGradient id="nl-hero-wave-0" x1="0" y1="0" x2="0" y2="1"><stop offset="0" className="nl-stop-navy" /><stop offset="1" className="nl-stop-blue" /></linearGradient>
+      <linearGradient id="nl-hero-wave-1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" className="nl-stop-blue" /><stop offset="1" className="nl-stop-highlight" /></linearGradient>
+      <linearGradient id="nl-hero-wave-2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" className="nl-stop-highlight" /><stop offset="1" className="nl-stop-cyan" /></linearGradient>
+      <linearGradient id="nl-hero-wave-3" x1="0" y1="0" x2="0" y2="1"><stop offset="0" className="nl-stop-mist" /><stop offset="1" className="nl-stop-end" /></linearGradient>
+    </defs>
+    {/* each layer is twice the viewBox wide with a 720-unit period, so a 1440-unit shift loops seamlessly */}
+    <path className="nl-hero-wave-layer" style={{ '--i': 0 }} fill="url(#nl-hero-wave-0)" d="M0 44 Q180 14 360 44 T720 44 T1080 44 T1440 44 T1800 44 T2160 44 T2520 44 T2880 44 L2880 141 L0 141 Z" />
+    <path className="nl-hero-wave-layer" style={{ '--i': 1 }} fill="url(#nl-hero-wave-1)" d="M0 62 Q180 36 360 62 T720 62 T1080 62 T1440 62 T1800 62 T2160 62 T2520 62 T2880 62 L2880 141 L0 141 Z" />
+    <path className="nl-hero-wave-layer" style={{ '--i': 2 }} fill="url(#nl-hero-wave-2)" d="M0 82 Q180 60 360 82 T720 82 T1080 82 T1440 82 T1800 82 T2160 82 T2520 82 T2880 82 L2880 141 L0 141 Z" />
+    <path fill="url(#nl-hero-wave-3)" d="M0 108 C240 78 480 134 720 110 C960 86 1200 128 1440 100 L1440 141 L0 141 Z" />
+  </svg>
+</section>
 
-<article className="max-w-4xl! mx-auto space-y-6">
+{/* QUICK START: steps next to the twoslash example */}
 
-# Overview
+<section className="nl-section">
+  <div className="nl-container nl-split">
+    <div className="nl-reveal">
+      <span className="nl-eyebrow">Overview</span>
+      <h2 className="nl-section-title">From wallet to data <span className="nl-title-muted">in three steps.</span></h2>
+      <ol className="nl-steps">
+        <li><span><span className="nl-step-title">Import the modules</span><span className="nl-step-text">Nautilus works with any ethers signer.</span></span></li>
+        <li><span><span className="nl-step-title">Create a client</span><span className="nl-step-text">One ocean-node serves metadata, provider services and the indexer.</span></span></li>
+        <li><span><span className="nl-step-title">Consume a service offering</span><span className="nl-step-text">Orders are placed or reused, and you get a URL back.</span></span></li>
+      </ol>
+    </div>
+    <div className="nl-code-card nl-reveal">
+      <div className="nl-code-card-bar"><span className="nl-dots" aria-hidden="true"><i /><i /><i /></span>access.ts</div>
 
 ```ts twoslash
 // 1. Import modules.
 import { Nautilus } from '@deltadao/nautilus'
 import { JsonRpcProvider, Wallet } from 'ethers'
 
-// 2. Set up your client. One ocean-node serves metadata, provider services and the indexer.
-const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+// 2. Set up your client.
+const provider = new JsonRpcProvider('https://rpc.dev.pontus-x.eu')
+const signer = new Wallet('0x...', provider)
 const nautilus = await Nautilus.create(signer, {
   config: { oceanNodeUri: 'https://ocean-node.dev.pontus-x.eu' }
 })
 
 // 3. Consume a service offering!
-const { url } = await nautilus.access({ assetDid: 'did:ope:1234abcd...' })
+const { url } = await nautilus.access({ assetDid: 'did:ope:...' })
 const response = await fetch(url)
 ```
 
-# Features
+    </div>
+  </div>
+</section>
 
-nautilus supports all these features out-of-the-box:
+{/* FEATURES: everything supported out of the box */}
 
-- [Publishing](/docs/guides/publish) of datasets, API endpoints and algorithms, as DDO v5 verifiable credentials
-- Feature complete [editing](/docs/guides/edit) for any of your assets, with structural merging so one field can change alone
-- [Download](/docs/guides/download) of any available access type assets, reusing your existing orders
-- [Compute to Data](/docs/guides/compute) with explicit resource requests, escrow payments and free jobs
-- [Credential-gated assets](/docs/guides/identity): nautilus drives the whole policy-server and walt.id presentation exchange for you
-- Local DDO validation, so a malformed asset fails before it costs gas
-- [Custom configurations](/docs/guides/config) to connect to additional networks and components of your choice
-- Abstraction layer over [ocean.js](https://docs.oceanprotocol.com/developers/ocean.js) and ocean-node to make your life easier
-- Native support of all [available networks](https://docs.oceanprotocol.com/discover/networks) OceanProtocol is deployed on
+<section className="nl-section nl-section-alt">
+  <div className="nl-container">
+    <header className="nl-section-header nl-reveal">
+      <div>
+        <span className="nl-eyebrow">Features</span>
+        <h2 className="nl-section-title">The whole protocol, <span className="nl-title-muted">out of the box.</span></h2>
+      </div>
+      <p className="nl-section-intro">Everything you need to publish, monetise and consume data and algorithms, on every network Ocean Protocol is deployed on.</p>
+    </header>
+    <div className="nl-features nl-reveal">
+      <a className="nl-feature" href="/docs/guides/publish">
+        <span className="nl-feature-num">01</span>
+        <span className="nl-feature-title">Publishing <span className="nl-arrow" aria-hidden="true">→</span></span>
+        <span className="nl-feature-text">Datasets, API endpoints and algorithms, published as DDO v5 verifiable credentials.</span>
+      </a>
+      <a className="nl-feature" href="/docs/guides/edit">
+        <span className="nl-feature-num">02</span>
+        <span className="nl-feature-title">Editing <span className="nl-arrow" aria-hidden="true">→</span></span>
+        <span className="nl-feature-text">Feature-complete edits for any of your assets, with structural merging so one field can change alone.</span>
+      </a>
+      <a className="nl-feature" href="/docs/guides/download">
+        <span className="nl-feature-num">03</span>
+        <span className="nl-feature-title">Download <span className="nl-arrow" aria-hidden="true">→</span></span>
+        <span className="nl-feature-text">Access any available access-type asset, reusing the orders you already hold.</span>
+      </a>
+      <a className="nl-feature" href="/docs/guides/compute">
+        <span className="nl-feature-num">04</span>
+        <span className="nl-feature-title">Compute-to-Data <span className="nl-arrow" aria-hidden="true">→</span></span>
+        <span className="nl-feature-text">Explicit resource requests, escrow payments and free jobs, without the data leaving its owner.</span>
+      </a>
+      <a className="nl-feature" href="/docs/guides/identity">
+        <span className="nl-feature-num">05</span>
+        <span className="nl-feature-title">Credential-gated assets <span className="nl-arrow" aria-hidden="true">→</span></span>
+        <span className="nl-feature-text">Nautilus drives the whole policy-server and walt.id presentation exchange for you.</span>
+      </a>
+      <a className="nl-feature" href="/docs/guides/validation">
+        <span className="nl-feature-num">06</span>
+        <span className="nl-feature-title">Local DDO validation <span className="nl-arrow" aria-hidden="true">→</span></span>
+        <span className="nl-feature-text">A malformed asset fails on your machine, before it costs gas.</span>
+      </a>
+      <a className="nl-feature" href="/docs/guides/config">
+        <span className="nl-feature-num">07</span>
+        <span className="nl-feature-title">Custom configurations <span className="nl-arrow" aria-hidden="true">→</span></span>
+        <span className="nl-feature-text">Connect to additional networks and the components of your choice.</span>
+      </a>
+      <a className="nl-feature" href="https://docs.oceanprotocol.com/developers/ocean.js" rel="noreferrer noopener" target="_blank">
+        <span className="nl-feature-num">08</span>
+        <span className="nl-feature-title">Built on ocean.js <span className="nl-arrow" aria-hidden="true">→</span></span>
+        <span className="nl-feature-text">An abstraction layer over ocean.js and the ocean-node to make your life easier.</span>
+      </a>
+      <a className="nl-feature" href="https://docs.oceanprotocol.com/discover/networks" rel="noreferrer noopener" target="_blank">
+        <span className="nl-feature-num">09</span>
+        <span className="nl-feature-title">Every Ocean network <span className="nl-arrow" aria-hidden="true">→</span></span>
+        <span className="nl-feature-text">Native support for all available networks Ocean Protocol is deployed on.</span>
+      </a>
+    </div>
+  </div>
+</section>
 
-# Community
+{/* COMMUNITY + SUPPORT: closing CTA card with the brand wave */}
 
-Check out the following places for more data-economy related content:
+<section className="nl-section nl-section-closing">
+  <div className="nl-container">
+    <div className="nl-cta nl-reveal">
+      <div>
+        <span className="nl-eyebrow">Community &amp; support</span>
+        <h2 className="nl-cta-title">Build the data economy <span className="nl-title-muted">with us.</span></h2>
+        <p className="nl-cta-text">We are committed to Nautilus as an open-source project. Reach out if you can support the effort or want to collaborate.</p>
+        <div className="nl-actions">
+          <a className="nl-btn nl-btn-primary" href="mailto:contact@delta-dao.com">Contact deltaDAO <span className="nl-arrow" aria-hidden="true">→</span></a>
+          <a className="nl-btn nl-btn-outline" href="https://github.com/deltaDAO/nautilus/issues" rel="noreferrer noopener" target="_blank">Join the discussion</a>
+        </div>
+      </div>
+      <ul className="nl-cta-links">
+        <li><a className="nl-link-row" href="https://newsletter.pontus-x.eu" rel="noreferrer noopener" target="_blank"><span><span className="nl-link-row-label">Pontus-X newsletter</span><span className="nl-link-row-sub">Regular ecosystem updates</span></span><span className="nl-link-row-tile" aria-hidden="true">→</span></a></li>
+        <li><a className="nl-link-row" href="https://linkedin.com/company/deltadao" rel="noreferrer noopener" target="_blank"><span><span className="nl-link-row-label">deltaDAO on LinkedIn</span><span className="nl-link-row-sub">Data-economy news</span></span><span className="nl-link-row-tile" aria-hidden="true">→</span></a></li>
+        <li><a className="nl-link-row" href="https://market.delta-dao.com/" rel="noreferrer noopener" target="_blank"><span><span className="nl-link-row-label">deltaDAO Marketplace</span><span className="nl-link-row-sub">Experience the data economy first hand</span></span><span className="nl-link-row-tile" aria-hidden="true">→</span></a></li>
+      </ul>
+    </div>
+  </div>
+</section>
 
-- Subscribe to the [Pontus-X newsletter](https://newsletter.pontus-x.eu) for regular ecosystem updates
-- Follow [deltaDAO AG](https://linkedin.com/company/deltadao) on LinkedIn for data-economy related news
-- Experience the data economy first hand at the [Pontus-X portal](https://pontus-x.eu)
-- Join the [discussions on GitHub](https://github.com/deltaDAO/nautilus/issues)
+<footer className="nl-footer">
+  <div className="nl-container nl-footer-inner">
+    <div className="nl-footer-brand">
+      <img src="/logo-light.svg" alt="Nautilus" />
+      <span>by deltaDAO AG</span>
+    </div>
+    <nav aria-label="Legal">
+      <a href="https://docs.pontus-x.eu/privacy">Privacy</a>
+      <a href="https://delta-dao.com/imprint">Imprint</a>
+    </nav>
+  </div>
+</footer>
 
-# Support
-
-We are committed to nautilus as an open-source project. Reach out if you are able to support the efforts or want to collaborate with us!
-
-- [deltaDAO contact](mailto:contact@delta-dao.com)
-
-</article>
-
-<center>
-  <a href="https://docs.pontus-x.eu/privacy">Privacy</a>
-  <span className="mx-2">|</span>
-  <a href="https://delta-dao.com/imprint">Imprint</a>
-</center>
+</div>
