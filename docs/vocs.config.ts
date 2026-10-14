@@ -29,11 +29,11 @@ export default defineConfig({
   title: 'Nautilus',
   titleTemplate: '%s · Nautilus',
   description:
-    'Navigate the data economy — a toolkit to interact with OceanProtocol ecosystems.',
-  // No `ogImageUrl`: the previous value called out to vocs.dev's OG service, and the
-  // home page pointed at a `/og-image.png` that was never added to `public/`. Nothing
-  // here should depend on a third-party host. To restore social previews, drop a
-  // 1200x630 image into `docs/public/` and set `ogImageUrl: '/og-image.png'`.
+    'The TypeScript toolkit for the data economy: publish, sell and compute on data across Ocean Enterprise ecosystems.',
+  // A static, self-hosted social card (docs/public/og-image.png, 1200x630). Crawlers
+  // need an absolute URL, so production prefixes the canonical origin; previews have
+  // no `baseUrl` and fall back to the relative path.
+  ogImageUrl: (_path, { baseUrl }) => `${baseUrl ?? ''}/og-image.png`,
   // `:path` is the page's path relative to the pages directory.
   editLink: {
     link: 'https://github.com/deltaDAO/nautilus/edit/main/docs/pages/:path',
@@ -41,18 +41,37 @@ export default defineConfig({
   },
   // Hanken Grotesk is self-hosted (see pages/_root.css); preload the latin
   // subset every page renders with so text does not reflow on load.
-  head: {
-    link: [
-      {
-        rel: 'preload',
-        href: '/fonts/hanken-grotesk/hanken-grotesk-latin-wght-normal.woff2',
-        as: 'font',
-        type: 'font/woff2',
-        crossorigin: 'anonymous'
+  head: (_path, { frontmatter }) => {
+    // Share cards use the bare page title by default ("Download"); brand it like
+    // the <title> so links read "Download · Nautilus" when shared.
+    const title = frontmatter?.title
+    const shareTitle =
+      title && !title.includes('Nautilus') ? `${title} · Nautilus` : undefined
+    return {
+      link: [
+        {
+          rel: 'preload',
+          href: '/fonts/hanken-grotesk/hanken-grotesk-latin-wght-normal.woff2',
+          as: 'font',
+          type: 'font/woff2',
+          crossorigin: 'anonymous'
+        },
+        { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' }
+      ],
+      meta: {
+        ...(shareTitle && { ogTitle: shareTitle, twitterTitle: shareTitle }),
+        themeColor: '#0b1322',
+        ogLocale: 'en_US',
+        ogImageType: 'image/png',
+        ogImageWidth: 1200,
+        ogImageHeight: 630,
+        ogImageAlt: 'Nautilus: the TypeScript toolkit for the data economy',
+        twitterImageAlt: 'Nautilus: the TypeScript toolkit for the data economy'
       }
-    ]
+    }
   },
-  iconUrl: { light: '/favicons/light.png', dark: '/favicons/dark.png' },
+  // One SVG that switches colour with the OS theme (see the file's media query).
+  iconUrl: '/favicon.svg',
   logoUrl: { light: '/icon-light.svg', dark: '/icon-dark.svg' },
   // Pages live in `docs/pages`, not the v2 default of `docs/src/pages`.
   srcDir: '.',
