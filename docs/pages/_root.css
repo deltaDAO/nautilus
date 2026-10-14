@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "../styles/landing.css";
 
 /* Vocs stores the active theme on the document's `color-scheme` rather than a
    `.dark` class, so the `dark:` variant has to follow that instead. */
@@ -9,25 +10,496 @@
   )
 );
 
-/* Landing-page hero: let the install snippet fill its column and match the
-   scale of the tagline beside it. Vocs v2 renders code groups as Base UI tabs,
-   so hook onto its `data-v-*` attributes rather than internal class names. */
-#home-install pre {
-  font-size: 18px;
+/* ==========================================================================
+   deltaDAO brand theme
+   Tokens follow the deltaDAO brand (as used on the deltaDAO marketplace): Hanken Grotesk,
+   deck-blue as the primary, blue-to-cyan gradients only, hairline borders
+   and soft blue-tinted shadows. Dark mode is the brand's navy "dark slide".
+   ========================================================================== */
+
+/* Hanken Grotesk (SIL OFL 1.1, see /fonts/hanken-grotesk/OFL.txt), self-hosted
+   as a variable font so no third-party font CDN is contacted. */
+@font-face {
+  font-family: "Hanken Grotesk";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("/fonts/hanken-grotesk/hanken-grotesk-latin-ext-wght-normal.woff2")
+    format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 
-#home-install [data-v-code-group] {
-  display: flex;
-  height: 100%;
-  flex-direction: column;
+@font-face {
+  font-family: "Hanken Grotesk";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("/fonts/hanken-grotesk/hanken-grotesk-latin-wght-normal.woff2")
+    format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
-/* The panel wrapper sits after the tab list and holds each tab's code block. */
-#home-install [data-v-code-group] > :last-child {
-  flex: 1;
+@font-face {
+  font-family: "Hanken Grotesk";
+  font-style: italic;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("/fonts/hanken-grotesk/hanken-grotesk-latin-ext-wght-italic.woff2")
+    format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 
-#home-install [data-v-code-group-panel],
-#home-install [data-v-code-group-panel] pre {
-  height: 100%;
+@font-face {
+  font-family: "Hanken Grotesk";
+  font-style: italic;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("/fonts/hanken-grotesk/hanken-grotesk-latin-wght-italic.woff2")
+    format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+  /* brand */
+  --deck-blue: #2450ec;
+  --deck-blue-hover: #1d42c9;
+  --brand-highlight: #0073cd;
+  --deck-cyan: #00b8e4;
+  --brand-accent-darker: #00708a;
+  --deck-navy: #0b1322;
+  --deck-navy-2: #111b2e;
+  --deck-surface: #e6edef;
+  --deck-surface-soft: #f3f6f7;
+  --headline-muted: #767a82;
+
+  --brand-hairline: linear-gradient(
+    to right,
+    var(--deck-blue),
+    var(--deck-cyan)
+  );
+  --button-hero-gradient: linear-gradient(
+    100deg,
+    var(--deck-blue) 0%,
+    var(--brand-highlight) 100%
+  );
+  --button-hero-shadow:
+    0 4px 14px rgba(0, 184, 228, 0.28), 0 1px 2px rgba(36, 80, 236, 0.2);
+  --button-hero-shadow-hover:
+    0 0 0 1px rgba(255, 255, 255, 0.12) inset, 0 0 22px rgba(0, 184, 228, 0.55),
+    0 8px 26px rgba(36, 80, 236, 0.35);
+  --shadow-card:
+    0 1px 2px rgba(11, 19, 34, 0.04), 0 24px 48px -32px rgba(11, 19, 34, 0.18);
+  --shadow-card-hover:
+    0 10px 25px -5px rgba(36, 80, 236, 0.1), 0 0 0 4px rgba(36, 80, 236, 0.04);
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-card: 22px;
+
+  /* three translucent brand waves (periwinkle, blue, teal) */
+  --wave-svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 900 320' preserveAspectRatio='none'%3E%3Cdefs%3E%3ClinearGradient id='p' x1='0' y1='0' x2='1' y2='0.4'%3E%3Cstop offset='0' stop-color='%234f7cf0'/%3E%3Cstop offset='1' stop-color='%232450ec'/%3E%3C/linearGradient%3E%3ClinearGradient id='b' x1='0' y1='0' x2='1' y2='0.4'%3E%3Cstop offset='0' stop-color='%232450ec'/%3E%3Cstop offset='1' stop-color='%2319b8f0'/%3E%3C/linearGradient%3E%3ClinearGradient id='t' x1='0' y1='0' x2='1' y2='0.4'%3E%3Cstop offset='0' stop-color='%2334b3c4'/%3E%3Cstop offset='1' stop-color='%238fdbe2'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M0 300 C200 170 390 310 570 215 C720 135 810 215 900 160 L900 0 L0 0 Z' fill='url(%23p)' opacity='0.1'/%3E%3Cpath d='M0 220 C170 110 340 250 520 165 C680 90 790 180 900 110 L900 0 L0 0 Z' fill='url(%23b)' opacity='0.16'/%3E%3Cpath d='M0 150 C140 60 300 200 460 130 C620 60 760 150 900 70 L900 0 L0 0 Z' fill='url(%23t)' opacity='0.26'/%3E%3C/svg%3E");
+
+  /* Vocs theme variables, mapped onto the brand. Light is mist + white cards,
+     dark is the navy slide. */
+  --vocs-font-family:
+    "Hanken Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, Arial, sans-serif;
+  --vocs-font-family-mono:
+    ui-monospace, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono",
+    monospace;
+
+  --vocs-background-color-primary: light-dark(#f3f6f7, #0b1322);
+  --vocs-background-color-surface: light-dark(#ffffff, #111b2e);
+  --vocs-background-color-surfaceMuted: light-dark(#e6edef, #0e1728);
+  --vocs-background-color-surfaceTint: light-dark(#f3f6f7, #18243b);
+
+  --vocs-text-color-primary: light-dark(#161616, #dde3ec);
+  --vocs-text-color-secondary: light-dark(#555555, #a3adbd);
+  /* #64686f keeps small muted text at 4.5:1+ on white and both mist surfaces */
+  --vocs-text-color-muted: light-dark(#64686f, #7d889b);
+  --vocs-text-color-heading: light-dark(#161616, #ffffff);
+  --vocs-text-color-link: light-dark(#0073cd, #4fc8ec);
+  --vocs-text-color-link-hover: light-dark(#2450ec, #8fdbe2);
+  --vocs-text-color-quote: light-dark(#555555, #a3adbd);
+
+  --vocs-border-color-primary: light-dark(#e5e5e5, #1f2c45);
+  --vocs-border-color-secondary: light-dark(#e5e5e5, #1a263c);
+
+  --vocs-background-color-code-block: light-dark(#f7f9fa, #0e1728);
+  --vocs-background-color-inline-code: light-dark(
+    rgba(36, 80, 236, 0.06),
+    rgba(0, 184, 228, 0.1)
+  );
+  --vocs-background-color-code-highlighted: light-dark(
+    rgba(36, 80, 236, 0.08),
+    rgba(0, 184, 228, 0.1)
+  );
+  --vocs-border-color-code-highlighted: light-dark(
+    rgba(36, 80, 236, 0.4),
+    rgba(0, 184, 228, 0.45)
+  );
+
+  /* semantic colours: brand success/warning/destructive, deck-blue for info
+     and the violet accent for tips */
+  --vocs-color-blue: light-dark(#2450ec, #7e9dff);
+  --vocs-color-green: light-dark(#047857, #34d399);
+  --vocs-color-yellow: light-dark(#b45309, #fbbf24);
+  --vocs-color-red: light-dark(#e40014, #f87171);
+  --vocs-color-iris: light-dark(#7c3aed, #b58cff);
+
+  /* callouts: 6% tint background, 28% tint border */
+  --vocs-background-color-info-tint: color-mix(
+    in srgb,
+    var(--vocs-color-blue) 6%,
+    var(--vocs-background-color-surface)
+  );
+  --vocs-border-color-info-tint: color-mix(
+    in srgb,
+    var(--vocs-color-blue) 28%,
+    var(--vocs-border-color-primary)
+  );
+  --vocs-background-color-tip-tint: color-mix(
+    in srgb,
+    var(--vocs-color-iris) 6%,
+    var(--vocs-background-color-surface)
+  );
+  --vocs-border-color-tip-tint: color-mix(
+    in srgb,
+    var(--vocs-color-iris) 28%,
+    var(--vocs-border-color-primary)
+  );
+  --vocs-background-color-success-tint: color-mix(
+    in srgb,
+    var(--vocs-color-green) 6%,
+    var(--vocs-background-color-surface)
+  );
+  --vocs-border-color-success-tint: color-mix(
+    in srgb,
+    var(--vocs-color-green) 28%,
+    var(--vocs-border-color-primary)
+  );
+  --vocs-background-color-warning-tint: color-mix(
+    in srgb,
+    var(--vocs-color-yellow) 6%,
+    var(--vocs-background-color-surface)
+  );
+  --vocs-border-color-warning-tint: color-mix(
+    in srgb,
+    var(--vocs-color-yellow) 28%,
+    var(--vocs-border-color-primary)
+  );
+  --vocs-color-destructive-tint: color-mix(
+    in srgb,
+    var(--vocs-color-red) 6%,
+    var(--vocs-background-color-surface)
+  );
+  --vocs-border-color-destructive-tint: color-mix(
+    in srgb,
+    var(--vocs-color-red) 28%,
+    var(--vocs-border-color-primary)
+  );
+  --vocs-background-color-note-tint: color-mix(
+    in srgb,
+    var(--headline-muted) 6%,
+    var(--vocs-background-color-surface)
+  );
+  --vocs-border-color-note-tint: color-mix(
+    in srgb,
+    var(--headline-muted) 28%,
+    var(--vocs-border-color-primary)
+  );
+
+  --vocs-text-h1: 2.75rem;
+  --vocs-text-h2: 1.75rem;
+  --vocs-text-h3: 1.35rem;
+}
+
+@media (width < 748px) {
+  :root {
+    --vocs-text-h1: 2.125rem;
+    --vocs-text-h2: 1.5rem;
+  }
+}
+
+::selection {
+  background: var(--deck-blue);
+  color: #fff;
+}
+
+:focus-visible {
+  outline: 2px solid light-dark(var(--deck-blue), var(--deck-cyan));
+  outline-offset: 2px;
+}
+
+/* --- Docs typography ----------------------------------------------------- */
+
+/* page titles: medium weight, tight tracking, brand blue */
+h1[data-v] {
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  color: light-dark(var(--deck-blue), #fff);
+  text-wrap: balance;
+}
+
+:is(h2, h3)[data-v] {
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+}
+
+:is(h4, h5, h6)[data-v] {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* links: no underline at rest, a thin one on hover */
+a[data-v],
+[data-v-link] {
+  font-weight: 500;
+  text-decoration-color: transparent;
+  text-underline-offset: 3px;
+  transition:
+    color 0.2s ease,
+    text-decoration-color 0.2s ease;
+
+  &:hover {
+    color: var(--vocs-text-color-link-hover);
+    text-decoration-color: currentColor;
+    text-decoration-style: solid;
+  }
+}
+
+/* --- Docs chrome ----------------------------------------------------------- */
+
+/* sidebar: the active page gets a deck-blue tint on light and a cyan tint on
+   navy. Vocs sets the text colour with an important utility, so the colour is
+   swapped through the accent variable it reads. */
+[data-v-sidebar-item][data-active] {
+  --vocs-color-accent8: light-dark(var(--deck-blue), #fff);
+  background-color: light-dark(
+    rgba(36, 80, 236, 0.08),
+    rgba(0, 184, 228, 0.12)
+  );
+  font-weight: 500;
+}
+
+[data-v-sidebar-item][data-link]:not([data-active]):hover {
+  background-color: light-dark(
+    rgba(36, 80, 236, 0.04),
+    rgba(255, 255, 255, 0.04)
+  );
+}
+
+[data-v-sidebar-section-header] {
+  font-weight: 600;
+}
+
+/* top nav: deck-blue text with the blue-to-cyan hairline under the active link */
+[data-v-gutter-top] nav [data-v-active] {
+  font-weight: 500;
+  transition: color 0.25s ease;
+}
+
+[data-v-gutter-top] nav [data-v-active="true"] {
+  color: light-dark(var(--deck-blue), #fff);
+  border-bottom-color: transparent;
+  background: var(--brand-hairline) bottom / 100% 2px no-repeat;
+}
+
+/* "on this page": the sliding marker uses the brand hairline */
+[data-v-outline-indicator] {
+  background: linear-gradient(to bottom, var(--deck-blue), var(--deck-cyan));
+}
+
+/* --- Code ------------------------------------------------------------------ */
+
+@media (width >= 748px) {
+  pre[data-v],
+  [data-v-code-header],
+  aside[data-v][data-v-callout] {
+    border-radius: var(--radius-xl);
+  }
+
+  /* a code header and the block under it read as one card */
+  [data-v-code-header]:has(+ *) {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+
+  [data-v-code-header] + pre[data-v],
+  [data-v-code-header] + * pre[data-v] {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
+}
+
+/* code-group tabs: the active tab is underlined with the brand hairline */
+[data-v-code-group-tab] {
+  font-weight: 500;
+  transition: color 0.25s ease;
+}
+
+[data-v-code-group-tab][data-active] {
+  border-bottom-color: transparent;
+  background: var(--brand-hairline) bottom / 100% 2px no-repeat;
+}
+
+/* inline code: brand-tinted chip, text stays at body contrast */
+:not(pre) > code[data-v]:not(.twoslash-popup-code) {
+  border-color: light-dark(rgba(36, 80, 236, 0.12), rgba(0, 184, 228, 0.18));
+  border-radius: var(--radius-sm, 6px);
+  color: light-dark(#1b2b5c, #cdeaf4);
+}
+
+/* code in a heading (API pages) takes the heading's colour, not a chip */
+:is(h1, h2, h3, h4, h5, h6)[data-v] > code[data-v] {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-weight: 500;
+}
+
+/* twoslash hovers and completions: a small white card with a soft blue drop */
+.twoslash-popup-container,
+.twoslash-completion-list {
+  border-radius: var(--radius-lg);
+  box-shadow: 0 10px 25px -5px
+    light-dark(rgba(36, 80, 236, 0.14), rgba(0, 0, 0, 0.55));
+}
+
+/* --- Content blocks ---------------------------------------------------------- */
+
+/* callouts: long copy is set in the darker "text on soft" shades from the
+   brand guide, the bright semantic colours stay on icons and borders */
+aside[data-v-callout] {
+  line-height: 1.6;
+
+  &[data-v-context="danger"] {
+    --vocs-color-destructive: light-dark(#b91c1c, #fca5a5);
+  }
+
+  &[data-v-context="warning"] {
+    --vocs-color-warning: light-dark(#92400e, #fcd34d);
+  }
+
+  &[data-v-context="note"] {
+    --vocs-color-note: var(--vocs-text-color-secondary);
+  }
+
+  & strong {
+    font-weight: 600;
+  }
+}
+
+/* tables: rounded card on wide screens, uppercase labels, quiet row hover */
+@media (width >= 748px) {
+  div[data-v-table-wrapper] {
+    border-radius: var(--radius-xl);
+  }
+}
+
+table[data-v] th {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--vocs-text-color-secondary);
+}
+
+table[data-v] td {
+  font-variant-numeric: tabular-nums;
+  vertical-align: top;
+}
+
+table[data-v] tbody tr {
+  transition: background-color 0.25s ease;
+
+  &:hover {
+    background-color: light-dark(#fafafa, rgba(255, 255, 255, 0.02));
+  }
+}
+
+/* blockquotes: a tinted hairline instead of a heavy grey bar */
+blockquote[data-v] {
+  border-left-color: light-dark(
+    rgba(36, 80, 236, 0.25),
+    rgba(0, 184, 228, 0.35)
+  );
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+}
+
+/* badges are pills */
+[data-v-badge] {
+  border-radius: 9999px;
+  font-weight: 600;
+}
+
+/* steps: the counter disc picks up a blue tint */
+[data-v-step-title]::before {
+  background-color: light-dark(
+    rgba(36, 80, 236, 0.08),
+    rgba(0, 184, 228, 0.12)
+  );
+  color: light-dark(var(--deck-blue), #8fdbe2);
+  font-weight: 600;
+}
+
+/* Cards (<Cards>/<Card>): Vocs gives them no data hook, so they are matched
+   as the block links (an <a> holding <div>s) inside the article */
+article[data-v-content] a:not([data-v]):has(> div) {
+  border-radius: var(--radius-xl);
+  background-color: var(--vocs-background-color-surface);
+  box-shadow: var(--shadow-card);
+  transition:
+    border-color 0.25s ease,
+    box-shadow 0.25s ease;
+
+  &:hover {
+    border-color: light-dark(rgba(36, 80, 236, 0.25), rgba(0, 184, 228, 0.35));
+    background-color: var(--vocs-background-color-surface);
+    box-shadow: var(--shadow-card-hover);
+  }
+}
+
+/* --- Page footer ------------------------------------------------------------- */
+
+[data-v-edit-link] {
+  font-weight: 500;
+}
+
+/* prev / next: white cards with a hairline border and a soft blue lift. Vocs
+   renders an empty placeholder when one side is missing; it keeps its half so
+   a lone "next" card stays on the right. */
+[data-v-pagination] > * {
+  flex: 1 1 0;
+}
+
+[data-v-pagination] > a {
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--vocs-border-color-primary);
+  border-radius: var(--radius-xl);
+  background-color: var(--vocs-background-color-surface);
+  text-decoration: none;
+  transition:
+    border-color 0.25s ease,
+    box-shadow 0.25s ease;
+
+  &:hover {
+    border-color: light-dark(rgba(36, 80, 236, 0.25), rgba(0, 184, 228, 0.35));
+    box-shadow: var(--shadow-card-hover);
+  }
 }

@@ -1,0 +1,1124 @@
+/* ==========================================================================
+   Landing page
+   ========================================================================== */
+
+/* the home page owns its full-bleed layout and footer */
+[data-v-main]:has(.nl-home) {
+  padding-bottom: 0;
+  background: var(--vocs-background-color-primary);
+}
+
+[data-v-content]:has(.nl-home) {
+  padding: 0;
+}
+
+/* the top nav joins the navy hero */
+:root:has(.nl-home) [data-v-gutter-top] {
+  background: var(--deck-navy);
+  /* the mobile icons inherit the body colour */
+  color: var(--vocs-text-color-primary);
+  border-color: transparent;
+}
+
+/* Navy areas keep the dark theme whatever the page scheme. The production
+   build compiles light-dark() into variables that resolve once at :root, so
+   color-scheme alone does not reach them: flip Lightning CSS's switch for rules
+   using light-dark() directly, and pin the theme tokens to their dark values. */
+:root:has(.nl-home) [data-v-gutter-top],
+.nl-hero-aside {
+  color-scheme: dark;
+  --lightningcss-light: ;
+  --lightningcss-dark: initial;
+  --vocs-color-accent: #00b8e4;
+  --vocs-text-color-primary: #dde3ec;
+  --vocs-text-color-secondary: #a3adbd;
+  --vocs-text-color-muted: #7d889b;
+  --vocs-text-color-heading: #ffffff;
+  --vocs-text-color-link: #4fc8ec;
+  --vocs-text-color-link-hover: #8fdbe2;
+  --vocs-border-color-primary: #1f2c45;
+  --vocs-border-color-secondary: #1a263c;
+  --vocs-background-color-primary: #0b1322;
+  --vocs-background-color-surface: #111b2e;
+  --vocs-background-color-surfaceMuted: #0e1728;
+  --vocs-background-color-surfaceTint: #18243b;
+  --vocs-background-color-code-block: #0e1728;
+}
+
+/* the floating Ask AI bar crosses the navy hero, so it needs a solid surface;
+   Vocs pins its tint with a layered !important, so paint over it instead */
+:root:has(.nl-home) [data-v-ask-ai-container] > button {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--vocs-background-color-surface) 90%, transparent),
+    color-mix(in srgb, var(--vocs-background-color-surface) 90%, transparent)
+  );
+}
+
+.nl-home {
+  --nl-section-bg: light-dark(var(--deck-surface-soft), var(--deck-navy));
+  --nl-section-alt-bg: light-dark(var(--deck-surface-soft), #0e1728);
+  --nl-card-bg: light-dark(#ffffff, var(--deck-navy-2));
+  --nl-card-border: light-dark(#e5e5e5, #1f2c45);
+  --nl-mist: light-dark(var(--deck-surface), #16223a);
+  --nl-fg: light-dark(#161616, #ffffff);
+  --nl-muted-fg: light-dark(#555555, #a3adbd);
+  --nl-headline-muted: light-dark(#767a82, #8792a6);
+  /* #767a82 is for large text only; small numerals need 4.5:1 on mist */
+  --nl-numeral: light-dark(#686c74, #8792a6);
+  --nl-blue: light-dark(var(--deck-blue), #7e9dff);
+
+  font-family: var(--vocs-font-family);
+  color: var(--nl-fg);
+  line-height: 1.6;
+  overflow-x: clip;
+}
+
+.nl-container {
+  position: relative;
+  width: 100%;
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 0 20px;
+  box-sizing: border-box;
+}
+
+@media (width >= 1550px) {
+  .nl-container {
+    max-width: 1500px;
+  }
+}
+
+/* --- Buttons ------------------------------------------------------------- */
+
+.nl-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 48px;
+  padding: 0 1.5rem;
+  border-radius: var(--radius-lg);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    box-shadow 0.25s ease,
+    background-color 0.25s ease,
+    border-color 0.25s ease,
+    color 0.25s ease;
+}
+
+.nl-btn:active {
+  transform: translateY(1px);
+}
+
+.nl-btn .nl-arrow {
+  display: inline-block;
+  transition: transform 0.25s ease;
+}
+
+.nl-btn:hover .nl-arrow {
+  transform: translateX(3px);
+}
+
+.nl-btn-primary {
+  border: 0;
+  background: var(--button-hero-gradient);
+  box-shadow: var(--button-hero-shadow);
+  color: #fff;
+  font-weight: 600;
+}
+
+.nl-btn-primary:hover {
+  box-shadow: var(--button-hero-shadow-hover);
+  color: #fff;
+}
+
+.nl-btn-ghost-dark {
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+}
+
+.nl-btn-ghost-dark:hover {
+  border-color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.nl-btn-outline {
+  border: 1px solid
+    light-dark(rgba(36, 80, 236, 0.7), rgba(255, 255, 255, 0.45));
+  background: light-dark(#fff, rgba(255, 255, 255, 0.04));
+  color: var(--nl-fg);
+  font-weight: 600;
+}
+
+.nl-btn-outline:hover {
+  border-color: light-dark(var(--deck-blue), rgba(255, 255, 255, 0.6));
+  background: light-dark(rgba(36, 80, 236, 0.04), rgba(255, 255, 255, 0.12));
+  color: light-dark(var(--deck-blue), #fff);
+}
+
+/* on navy and on gradient buttons the focus ring turns cyan */
+.nl-hero :focus-visible,
+.nl-footer :focus-visible,
+.nl-btn-primary:focus-visible {
+  outline-color: var(--deck-cyan);
+}
+
+/* --- Hero ---------------------------------------------------------------- */
+
+.nl-hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  color: #fff;
+  background:
+    radial-gradient(
+      ellipse 42rem 28rem at 12% 18%,
+      color-mix(in srgb, var(--brand-highlight) 25%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      ellipse 36rem 26rem at 88% 92%,
+      color-mix(in srgb, var(--deck-cyan) 12%, transparent),
+      transparent 70%
+    ),
+    var(--deck-navy);
+}
+
+/* top-right brand wave */
+.nl-hero::before {
+  content: "";
+  position: absolute;
+  /* reaches past the right edge so the drift never uncovers it */
+  inset: -1px -1.5rem auto auto;
+  width: min(100%, 48rem);
+  height: 13rem;
+  background: var(--wave-svg) no-repeat;
+  background-size: 100% 100%;
+  mask-image: linear-gradient(to left, #000 35%, transparent);
+  pointer-events: none;
+  z-index: -1;
+  animation: nl-wave-drift 18s ease-in-out infinite alternate;
+}
+
+/* sunlight through the water surface: the sun is far away, so the shafts
+   run almost parallel and slant gently; two layers of uneven, soft beams
+   fade in and out of phase like light broken up by passing surface waves */
+.nl-rays {
+  /* a distant sun, far above and to the left of the hero */
+  --nl-sun: 18% -190%;
+
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  /* the bright, slightly warm band just below the surface */
+  background: linear-gradient(
+    to bottom,
+    rgba(225, 240, 255, 0.12),
+    rgba(170, 225, 255, 0.04) 14%,
+    transparent 30%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    #000,
+    rgba(0, 0, 0, 0.6) 40%,
+    transparent 85%
+  );
+  mix-blend-mode: screen;
+}
+
+.nl-rays i {
+  --nl-sun-ray: rgba(225, 240, 255, 0.09);
+
+  position: absolute;
+  inset: -5% -10%;
+  animation: nl-ray-flicker 7s ease-in-out infinite alternate;
+  will-change: opacity;
+  background: conic-gradient(
+    at var(--nl-sun),
+    transparent 0deg 140deg,
+    rgba(225, 240, 255, 0.05) 141deg 142deg,
+    transparent 143deg 147.5deg,
+    var(--nl-sun-ray) 148.5deg 150.5deg,
+    transparent 151.5deg 154.5deg,
+    rgba(225, 240, 255, 0.06) 155deg 156deg,
+    transparent 157deg 162deg,
+    rgba(225, 240, 255, 0.12) 163deg 165.5deg,
+    transparent 166.5deg 170.5deg,
+    rgba(225, 240, 255, 0.05) 171deg 172deg,
+    transparent 173deg 176.5deg,
+    var(--nl-sun-ray) 177.5deg 179.5deg,
+    transparent 180.5deg 185.5deg,
+    rgba(225, 240, 255, 0.06) 186deg 187.5deg,
+    transparent 188.5deg 360deg
+  );
+}
+
+/* the second set sits between the first and flickers on its own rhythm */
+.nl-rays i + i {
+  --nl-sun-ray: rgba(170, 225, 255, 0.08);
+
+  animation-duration: 11s;
+  animation-direction: alternate-reverse;
+  background: conic-gradient(
+    at var(--nl-sun),
+    transparent 0deg 143.5deg,
+    var(--nl-sun-ray) 144.5deg 146deg,
+    transparent 147deg 151.5deg,
+    rgba(170, 225, 255, 0.05) 152deg 153deg,
+    transparent 154deg 158.5deg,
+    rgba(170, 225, 255, 0.1) 159.5deg 161deg,
+    transparent 162deg 167.5deg,
+    rgba(170, 225, 255, 0.05) 168deg 169.5deg,
+    transparent 170.5deg 173.5deg,
+    var(--nl-sun-ray) 174.5deg 176deg,
+    transparent 177deg 182.5deg,
+    rgba(170, 225, 255, 0.06) 183deg 184.5deg,
+    transparent 185.5deg 360deg
+  );
+}
+
+@keyframes nl-ray-flicker {
+  from {
+    opacity: 0.45;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.nl-hero-inner {
+  display: grid;
+  /* a fixed-ish aside keeps the 68px headline on two lines */
+  grid-template-columns: minmax(0, 1fr) clamp(26rem, 36%, 34rem);
+  align-items: center;
+  gap: 3rem;
+  padding-top: clamp(3.5rem, 7vw, 6rem);
+  padding-bottom: clamp(7rem, 13vw, 11rem);
+}
+
+.nl-hero-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding-left: 1.5rem;
+  container-type: inline-size;
+}
+
+.nl-logo {
+  height: 40px;
+  width: auto;
+  margin-bottom: 2.25rem;
+  /* the wordmark ships dark; render it white on navy */
+  filter: brightness(0) invert(1);
+}
+
+.nl-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  padding: 0.3rem 0.85rem 0.3rem 0.35rem;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.8);
+  text-decoration: none;
+  transition:
+    border-color 0.25s ease,
+    background-color 0.25s ease;
+}
+
+.nl-pill:hover {
+  border-color: rgba(255, 255, 255, 0.32);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.nl-nowrap {
+  white-space: nowrap;
+}
+
+.nl-pill-tag {
+  padding: 0.1rem 0.55rem;
+  border-radius: 9999px;
+  background: var(--button-hero-gradient);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #fff;
+}
+
+.nl-hero-title {
+  max-width: 22ch;
+  margin: 0 0 1.25rem;
+  /* 68px from ~1180px up; scales down with the column so it never takes 3 lines */
+  font-size: clamp(52px, 10.8cqi, 68px);
+  font-weight: 400;
+  line-height: 1.04;
+  letter-spacing: -0.04em;
+  color: #fff;
+  text-wrap: balance;
+}
+
+.nl-hero-title-muted {
+  color: rgba(255, 255, 255, 0.64);
+}
+
+.nl-hero-subtitle {
+  max-width: 40rem;
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.78);
+  text-wrap: pretty;
+}
+
+.nl-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 2.5rem;
+}
+
+/* install snippet: glass panel on navy */
+.nl-hero-aside {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+  padding-right: 1.5rem;
+}
+
+.nl-glass {
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--radius-xl);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow:
+    0 20px 50px -20px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.nl-glass-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem 0.6rem;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.nl-dots {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.nl-dots i {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* Vocs v2 renders code groups as Base UI tabs, so hook onto its `data-v-*`
+   attributes rather than internal class names. */
+.nl-glass [data-v-code-group] {
+  margin: 0;
+}
+
+.nl-glass :is([data-v-code-header], [data-v-code-group-list]) {
+  /* Vocs bleeds the tab list to the viewport edge on small screens */
+  margin: 0;
+  border-color: rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  background: rgba(11, 19, 34, 0.6);
+}
+
+/* inner radius follows the 6px glass padding */
+.nl-glass pre[data-v] {
+  margin: 0;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(11, 19, 34, 0.85);
+  font-size: 17px;
+}
+
+.nl-stats {
+  display: grid;
+  /* the version string is the longest value */
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.75rem;
+}
+
+.nl-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.03);
+  color: #fff;
+  text-decoration: none;
+  transition:
+    border-color 0.25s ease,
+    background-color 0.25s ease;
+}
+
+.nl-stat:hover {
+  border-color: rgba(255, 255, 255, 0.32);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.nl-stat-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.66);
+}
+
+.nl-stat-value {
+  overflow: hidden;
+  font-family: var(--vocs-font-family-mono);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* layered wave that hands the navy over to the section below */
+.nl-hero-wave {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  width: 100%;
+  height: clamp(72px, 10vw, 150px);
+  pointer-events: none;
+}
+
+.nl-hero-wave-layer {
+  animation: nl-hero-wave-flow calc(24s + var(--i) * 10s) linear infinite;
+}
+
+.nl-hero-wave-layer:nth-of-type(2n) {
+  animation-direction: reverse;
+}
+
+.nl-stop-navy {
+  stop-color: var(--deck-navy-2);
+}
+
+.nl-stop-blue {
+  stop-color: var(--deck-blue);
+  stop-opacity: 0.85;
+}
+
+.nl-stop-highlight {
+  stop-color: var(--brand-highlight);
+}
+
+.nl-stop-cyan {
+  stop-color: var(--deck-cyan);
+}
+
+/* the front wave ends in the colour of the section below */
+.nl-stop-mist {
+  stop-color: var(--nl-wave-mist);
+}
+
+.nl-stop-end {
+  stop-color: var(--nl-wave-end);
+}
+
+.nl-home {
+  --nl-wave-mist: color-mix(
+    in srgb,
+    var(--deck-cyan) 22%,
+    light-dark(var(--deck-surface-soft), var(--deck-navy))
+  );
+  --nl-wave-end: light-dark(var(--deck-surface-soft), var(--deck-navy));
+}
+
+@keyframes nl-hero-wave-flow {
+  to {
+    transform: translateX(-1440px);
+  }
+}
+
+@keyframes nl-wave-drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-2.5%, 2%, 0) scale(1.03);
+  }
+}
+
+/* --- Sections ------------------------------------------------------------ */
+
+.nl-section {
+  padding: 4rem 0 6.5rem;
+  background: var(--nl-section-bg);
+}
+
+.nl-section-alt {
+  background: var(--nl-section-alt-bg);
+  border-top: 1px solid var(--nl-card-border);
+  border-bottom: 1px solid var(--nl-card-border);
+}
+
+/* the closing card has no header, so it needs less room above it */
+.nl-section:has(+ .nl-section-closing) {
+  padding-bottom: 3.5rem;
+}
+
+.nl-section-closing {
+  padding-top: 3rem;
+}
+
+.nl-section-header {
+  display: grid;
+  gap: 1.25rem;
+  margin-bottom: 3.5rem;
+}
+
+@media (width >= 1024px) {
+  .nl-section-header {
+    grid-template-columns: 1.25fr 1fr;
+    align-items: end;
+    column-gap: 4rem;
+  }
+}
+
+.nl-eyebrow {
+  display: block;
+  margin-bottom: 1rem;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--nl-muted-fg);
+}
+
+.nl-section-title {
+  max-width: 18ch;
+  margin: 0;
+  font-size: 52px;
+  font-weight: 400;
+  line-height: 1.08;
+  letter-spacing: -0.035em;
+  color: var(--nl-fg);
+  text-wrap: balance;
+}
+
+.nl-title-muted {
+  color: var(--nl-headline-muted);
+}
+
+.nl-section-intro {
+  max-width: 34rem;
+  margin: 0;
+  font-size: 19px;
+  line-height: 1.55;
+  color: var(--nl-muted-fg);
+}
+
+/* --- Link rows ---------------------------------------------------------- */
+
+.nl-link-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem 0;
+  border-top: 1px solid var(--nl-card-border);
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--nl-fg);
+  text-decoration: none;
+}
+
+.nl-link-row-label {
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  transition:
+    color 0.2s ease,
+    text-decoration-color 0.2s ease;
+}
+
+.nl-link-row-tile {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--nl-card-border);
+  border-radius: var(--radius-md);
+  color: var(--nl-fg);
+  transition:
+    background-color 0.25s ease,
+    border-color 0.25s ease,
+    color 0.25s ease,
+    transform 0.25s ease;
+}
+
+.nl-link-row:hover .nl-link-row-label {
+  color: var(--nl-blue);
+  text-decoration-color: currentColor;
+}
+
+.nl-link-row:hover .nl-link-row-tile {
+  border-color: var(--deck-blue);
+  background: var(--deck-blue);
+  color: #fff;
+  transform: rotate(-45deg);
+}
+
+/* --- Quick start ----------------------------------------------------------- */
+
+.nl-split {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.3fr);
+  align-items: start;
+  gap: 4rem;
+}
+
+.nl-steps {
+  display: grid;
+  gap: 0;
+  margin: 2.5rem 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: nl-step;
+}
+
+.nl-steps li {
+  display: grid;
+  grid-template-columns: 2.5rem 1fr;
+  gap: 0.75rem;
+  padding: 1rem 0;
+  border-top: 1px solid var(--nl-card-border);
+  counter-increment: nl-step;
+}
+
+.nl-steps li::before {
+  content: counter(nl-step, decimal-leading-zero);
+  font-size: 14px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.9;
+  color: var(--nl-numeral);
+}
+
+.nl-step-title {
+  display: block;
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--nl-fg);
+}
+
+.nl-step-text {
+  display: block;
+  font-size: 15px;
+  color: var(--nl-muted-fg);
+}
+
+.nl-code-card {
+  overflow: hidden;
+  border: 1px solid var(--nl-card-border);
+  border-radius: var(--radius-card);
+  background: var(--nl-card-bg);
+  box-shadow: var(--shadow-card);
+}
+
+.nl-code-card-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 1.25rem;
+  border-bottom: 1px solid var(--nl-card-border);
+  background: var(--nl-mist);
+  font-family: var(--vocs-font-family-mono);
+  font-size: 13px;
+  color: var(--nl-muted-fg);
+}
+
+/* gradient hairline under the editor bar */
+.nl-code-card-bar::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  width: 7rem;
+  height: 2px;
+  background: var(--brand-hairline);
+}
+
+.nl-code-card-bar .nl-dots i {
+  background: light-dark(rgba(11, 19, 34, 0.14), rgba(255, 255, 255, 0.18));
+}
+
+.nl-code-card pre[data-v] {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--nl-card-bg);
+}
+
+/* --- Feature grid ---------------------------------------------------------- */
+
+.nl-features {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--nl-card-border);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+  background: var(--nl-card-bg);
+  box-shadow: var(--shadow-card);
+}
+
+.nl-feature {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  /* inner hairlines only: the outer right/bottom edges slip under the
+     frame's clip, so the rounded border stays a single line at any column count */
+  margin: 0 -1px -1px 0;
+  padding: 1.75rem 2rem;
+  border-right: 1px solid var(--nl-card-border);
+  border-bottom: 1px solid var(--nl-card-border);
+  color: inherit;
+  text-decoration: none;
+  transition: background-color 0.25s ease;
+}
+
+/* the frame clips anything outside the cell */
+.nl-feature:focus-visible {
+  outline-offset: -4px;
+}
+
+a.nl-feature:hover {
+  background: light-dark(rgba(36, 80, 236, 0.04), rgba(255, 255, 255, 0.04));
+}
+
+.nl-feature-num {
+  font-size: 14px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--nl-numeral);
+}
+
+.nl-feature-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 19px;
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+  color: var(--nl-fg);
+  transition: color 0.2s ease;
+}
+
+.nl-feature-title .nl-arrow {
+  color: var(--nl-headline-muted);
+  transition:
+    transform 0.25s ease,
+    color 0.25s ease;
+}
+
+a.nl-feature:hover .nl-feature-title {
+  color: var(--nl-blue);
+}
+
+a.nl-feature:hover .nl-arrow {
+  color: var(--nl-blue);
+  transform: translateX(3px);
+}
+
+.nl-feature-text {
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--nl-muted-fg);
+}
+
+.nl-feature-text a {
+  color: light-dark(var(--brand-highlight), #4fc8ec);
+}
+
+/* --- Closing CTA ----------------------------------------------------------- */
+
+.nl-cta {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 3rem;
+  align-items: end;
+  padding: 3.5rem;
+  border: 1px solid var(--nl-card-border);
+  border-radius: var(--radius-card);
+  background: var(--nl-card-bg);
+  box-shadow: var(--shadow-card);
+}
+
+/* the wave fills the closing card */
+.nl-cta::before {
+  content: "";
+  position: absolute;
+  inset: 0 -2.5rem 0 0;
+  background: var(--wave-svg) no-repeat;
+  background-size: 100% 100%;
+  mask-image: linear-gradient(to left, #000 25%, transparent 85%);
+  pointer-events: none;
+  z-index: -1;
+  animation: nl-wave-drift 16s ease-in-out infinite alternate;
+}
+
+.nl-cta-title {
+  max-width: 20ch;
+  margin: 0 0 1rem;
+  font-size: 34px;
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: -0.035em;
+  color: var(--nl-fg);
+  text-wrap: balance;
+}
+
+.nl-cta-text {
+  max-width: 34rem;
+  margin: 0 0 2rem;
+  font-size: 17px;
+  color: var(--nl-muted-fg);
+}
+
+.nl-cta .nl-actions {
+  margin-top: 0;
+}
+
+.nl-cta-links {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nl-cta-links .nl-link-row {
+  padding: 0.9rem 0;
+}
+
+.nl-cta-links li:last-child .nl-link-row {
+  border-bottom: 1px solid var(--nl-card-border);
+}
+
+.nl-link-row-sub {
+  display: block;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--nl-muted-fg);
+}
+
+/* --- Footer ---------------------------------------------------------------- */
+
+.nl-footer {
+  padding: 2.5rem 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--deck-navy);
+  color: rgba(255, 255, 255, 0.68);
+  color-scheme: dark;
+  font-size: 14px;
+}
+
+.nl-footer-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.nl-footer-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.nl-footer-brand img {
+  height: 18px;
+  width: auto;
+  filter: brightness(0) invert(1);
+  opacity: 0.85;
+}
+
+.nl-footer nav {
+  display: flex;
+  gap: 1.5rem;
+}
+
+.nl-footer a {
+  color: rgba(255, 255, 255, 0.72);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.nl-footer a:hover {
+  color: #fff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+/* --- Scroll reveal (CSS only, where supported) ------------------------------ */
+
+@supports (animation-timeline: view()) {
+  .nl-reveal {
+    animation: nl-reveal linear both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 40%;
+  }
+}
+
+@keyframes nl-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(28px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* --- Responsive ------------------------------------------------------------ */
+
+@media (width < 1024px) {
+  .nl-hero-inner,
+  .nl-split,
+  .nl-cta {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3rem;
+  }
+
+  .nl-hero-copy,
+  .nl-hero-aside {
+    padding: 0;
+  }
+
+  .nl-hero-title {
+    font-size: 52px;
+  }
+
+  .nl-hero-subtitle {
+    font-size: 17px;
+  }
+
+  .nl-features {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .nl-feature:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (width < 768px) {
+  .nl-features {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .nl-section {
+    padding: 2.5rem 0 3.5rem;
+  }
+
+  .nl-section:has(+ .nl-section-closing) {
+    padding-bottom: 2rem;
+  }
+
+  .nl-section-closing {
+    padding-top: 2rem;
+  }
+
+  .nl-section-header {
+    margin-bottom: 2rem;
+  }
+
+  .nl-section-title {
+    font-size: 34px;
+  }
+
+  .nl-section-intro {
+    font-size: 16px;
+  }
+
+  .nl-cta {
+    padding: 2rem 1.5rem;
+  }
+
+  /* keep the wave's proportions in the tall stacked card */
+  .nl-cta::before {
+    bottom: auto;
+    height: 16rem;
+  }
+
+  .nl-cta-title {
+    font-size: 26px;
+  }
+
+  .nl-stats {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .nl-stat:first-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (width < 480px) {
+  .nl-hero-title {
+    font-size: 38px;
+  }
+
+  .nl-hero-subtitle {
+    font-size: 16px;
+  }
+
+  .nl-actions .nl-btn {
+    flex: 1 1 auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nl-home *,
+  .nl-home *::before,
+  .nl-home *::after,
+  .nl-hero::before {
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion has to beat every component rule */
+    animation: none !important;
+    /* biome-ignore lint/complexity/noImportantStyles: as above */
+    transition: none !important;
+  }
+}
