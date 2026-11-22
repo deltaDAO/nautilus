@@ -176,6 +176,10 @@ A service-level gate runs with the policy server's default VC and VP policies on
 [`addRequestCredentials`](/docs/api/servicebuilder/addRequestCredentials) and
 [Credential-gated assets](/docs/guides/identity).
 
+For a node with the native SSI module, gate the service with
+[`addSsiPolicyV2`](/docs/api/servicebuilder/addSsiPolicyV2) instead: the service's values
+and the asset's must all be satisfied.
+
 ## Attaching it to an asset
 
 ```ts twoslash
@@ -252,7 +256,13 @@ Compute services only; these throw on an access service.
 ### Gating
 
 [`addCredentialAddresses`](/docs/api/servicebuilder/addCredentialAddresses) ·
+[`addSsiPolicyV2`](/docs/api/servicebuilder/addSsiPolicyV2) ·
+[`removeSsiPolicyV2`](/docs/api/servicebuilder/addSsiPolicyV2) ·
 [`addRequestCredentials`](/docs/api/servicebuilder/addRequestCredentials)
+
+`addSsiPolicyV2` and `removeSsiPolicyV2` gate for nodes with the native SSI module.
+`addRequestCredentials` writes the policy server's `SSIpolicy` and is deprecated for those
+nodes: they translate it only while their operator keeps the legacy format on.
 
 ### Building
 

@@ -1,13 +1,15 @@
 ---
-description: PolicySessionResolver opens the policy-server session ocean-node checks on a download or compute job. Covers resolve(), its options, methods and errors.
+description: PolicySessionResolver opens the session a node checks on a download or compute job, with its policy server or its native SSI module. Covers resolve(), resolveSession(), options, methods and errors.
 ---
 
 # PolicySessionResolver
 
-Opens the policy-server session that ocean-node checks on a download or compute job.
-`Nautilus` holds one per instance, built from its `credentials` and `sessionStore`; use it
-directly only with the standalone `access(config, context)` / `compute(config, context)`
-functions (as `context.policySessions`).
+Opens the session that a node checks on a download or compute job: a policy-server session
+on a node with a policy server, or an SSI session (`ssiInitiate`) on a node with the native
+SSI module (pontusx-node). `Nautilus` holds one per instance, built from its `credentials`,
+`sessionStore` and `ssiStatusPolling`; use it directly only with the standalone
+`access(config, context)` / `compute(config, context)` functions (as
+`context.policySessions`).
 
 ## Usage
 
@@ -33,7 +35,89 @@ const session = await policySessions.resolve({ // [!code focus]
 }) // [!code focus]
 ```
 
-## What `resolve` does
+`resolve()` returns the payload for the node's `policyServer` slot
+(`PolicyServerPayload | SsiSessionPayload`), or `null` when the node checks no session.
+`resolveSession()` returns the same session with its protocol:
+
+```ts twoslash
+import { PolicySessionResolver } from '@deltadao/nautilus'
+import type { AssetV5, OceanNodeClient } from '@deltadao/nautilus'
+
+declare const node: OceanNodeClient
+declare const asset: AssetV5
+declare const policySessions: PolicySessionResolver
+// ---cut---
+const session = await policySessions.resolveSession({
+  node,
+  asset,
+  serviceId: 'a-service-id',
+  consumerAddress: '0x…'
+})
+
+if (session?.protocol === 'ssi') {
+  session.payload // { sessionId }: the native SSI module
+} else if (session?.protocol === 'policy-server') {
+  session.payload // the policy server's payload, redirect URIs empty
+}
+```
+
+A compute job needs the protocol to shape its `policyServer` field: on a node with the
+native SSI module it is `{ sessionId, sessionIds: { <did>: <sessionId> } }`, one session per
+input.
+
+## Which flow a node gets
+
+Neither the asset nor the service has `credentials` (`{}` counts as having them): `null`,
+whatever the node. Otherwise `resolveSession()` reads the node's SSI capabilities
+(`getSsiCapabilities()`, from its status, kept for 5 minutes) and takes:
+
+| The node's status | The asset or service | Flow |
+| --- | --- | --- |
+| announces an `ssi` block | any credentials | [native SSI](#native-ssi-flow) |
+| cannot be read | has an `SSIpolicyV2` entry | [native SSI](#native-ssi-flow) |
+| cannot be read | no `SSIpolicyV2` entry (a deprecated `SSIpolicy` only, or addresses only) | [policy server](#policy-server-flow) |
+| has no `ssi` block | any credentials | [policy server](#policy-server-flow) |
+
+## Native SSI flow
+
+1. Neither the asset nor the service has an SSI entry (`SSIpolicyV2`, or a deprecated
+   `SSIpolicy`): `null`. The node checks addresses and access lists itself.
+2. The node announces the module but `enabled: false` (no verifier configured): an
+   `OceanNodeError`, since such a node denies every consumer.
+3. No credential provider is set: an `Error`, before anything is signed.
+4. The provider's `prepare()`, when it has one. An error there is thrown as it is, and no
+   node session is opened: a session that is opened and never presented stays pending at
+   the node until its presentation window closes, and counts against the consumer's pending
+   sessions.
+5. `ssiInitiate` for `node.policySessionAddress(consumerAddress)`, signed
+   (`address + nonce + "ssiInitiate"`, or a node auth token). A 403 (address) or 422 (an SSI
+   policy the node cannot satisfy) is a `PolicyDeniedError` with `source: 'ssi'`. A node
+   that answers that the service needs no session: `null`. A `Deprecation: true` header (the
+   node translated a deprecated `SSIpolicy`) logs `identity.ssi.legacy_policy`, once per
+   node and asset.
+6. The host of the request's `request_uri` must be the node's announced verifier host
+   (`status.ssi.verifierPublicHost`): otherwise a `CredentialPresentationError` with reason
+   `request-invalid`, before the wallet is used. A node that announces no verifier host
+   logs `identity.ssi.verifier_unannounced`, once per node, and the check is skipped.
+7. The provider's `present()` with a challenge of `protocol: 'oid4vp'`, carrying `dcql`,
+   `expiresAt` and `verifierHost` when the node sent them. When `present()` throws an error
+   that may have reached the verifier (a `CredentialPresentationError` with
+   `reason: 'verifier-rejected'`, or any error from a custom provider), `ssiStatus` is read
+   once, with a 15-second timeout. If it names failed checks, a `PolicyDeniedError` with
+   them is thrown, with the provider's error as its `cause`; otherwise the provider's error.
+8. `ssiStatus` while the session is `pending`: up to `ssiStatusPolling.attempts` reads,
+   `intervalMs` apart (default 5, 2 s). Only `verified` passes; `failed`, `expired`, or
+   still `pending` after the last read is a `PolicyDeniedError` with `source: 'ssi'` and the
+   node's results in `policyResults`. A 404 from `ssiStatus` (a session the node does not
+   know, or one opened for another consumer, asset or service) counts as `failed`, with a
+   `binding` result.
+9. `{ protocol: 'ssi', sessionId, payload: { sessionId } }`.
+
+Native sessions are never cached: the node consumes one on the download (for one order) or
+on the compute start (for one job), so every flow opens its own. `sessionStore`,
+`sessionTtlMs` and `persistPresentedSessions` apply to the policy-server flow only.
+
+## Policy-server flow
 
 1. Neither the asset nor the service has `credentials` (`{}` counts as having them): `null`.
 2. A cached session for (node, asset, service, consumer), opened less than `sessionTtlMs`
@@ -65,6 +149,7 @@ const session = await policySessions.resolve({ // [!code focus]
    the read. Either way nothing is cached.
 7. The session is cached and returned as the payload for the node's `policyServer` slot: a
    presented session in memory only, unless `persistPresentedSessions`.
+   `resolveSession()` returns it as `{ protocol: 'policy-server', sessionId, payload }`.
 
 ## Options
 
@@ -74,6 +159,8 @@ const session = await policySessions.resolve({ // [!code focus]
 | `sessionStore` | `SessionStore` | Where sessions are kept. Default: [`MemorySessionStore`](/docs/api/identity/MemorySessionStore). A store of your own gets only sessions opened without a presentation. |
 | `persistPresentedSessions` | `boolean` | Also keep presented sessions in `sessionStore`. Default `false`. See the warning below. |
 | `sessionTtlMs` | `number` | How long a cached session is reused, in ms from `initiate`. `0` caches nothing. Default: `DEFAULT_SESSION_TTL_MS`, 2 minutes. |
+| `ssiStatusPolling` | `{ attempts?: number; intervalMs?: number }` | Nodes with the native SSI module: how many `ssiStatus` reads after a presentation while the session is `pending`, and how far apart. Default 5 attempts (`DEFAULT_SSI_STATUS_ATTEMPTS`), 2,000 ms (`DEFAULT_SSI_STATUS_INTERVAL_MS`). `attempts` is a whole number from 1 to 60, `intervalMs` from 0 to 60,000; other values throw in the constructor. Every read is a signed command: with an interactive signer, one prompt each. |
+| `logger` | `Logger` | Where the resolver's log events go. Default: the process-wide logger. |
 
 :::warning
 A session id is a credential. The node accepts it for the download or compute job, and
@@ -85,15 +172,20 @@ until the verifier forgets it. Keep session ids out of logs and shared URLs, and
 
 ## Methods
 
-`resolve(request)` · `setCredentialProvider(credentials | undefined)` · `clearSessions()`
+`resolve(request)` · `resolveSession(request)` · `setCredentialProvider(credentials | undefined)` · `clearSessions()`
+
+`clearSessions()` clears the cached policy-server sessions; native SSI sessions are never
+cached.
 
 ## Errors
 
 | Error | When |
 | --- | --- |
-| `PolicyDeniedError` | The policy server refused the consumer: a reply with `success: false` and a 4xx (`code`: its status, `reason`: its message, bounded), or the verifier did not accept the presentation (`code` is `undefined`, `reason` names the failed policies as the node reports them, `policyResults` lists each policy's name, outcome and error, never the presentation; `cause` is the provider's error when `present()` threw). Also carries `did`, `serviceId` and `consumerAddress`. |
-| The provider's error | `present()` threw for a step before the verifier, or the verifier's record names no failed policy or cannot be read: for `WaltIdCredentialProvider` a `CredentialPresentationError` with a `reason`. |
-| `OceanNodeError` | Anything else, with the status: the node's own 401 (nonce, signature, "Auth not configured"), its 404 (`Not found`: the asset is not indexed there), its 400 when it cannot reach the policy server, a network error, a timeout, a rate limit or a 5xx. |
+| `PolicyDeniedError` | `source: 'policy-server'`: the policy server refused the consumer: a reply with `success: false` and a 4xx (`code`: its status, `reason`: its message, bounded), or the verifier did not accept the presentation (`code` is `undefined`, `reason` names the failed policies as the node reports them, `policyResults` lists each policy's name, outcome and error, never the presentation; `cause` is the provider's error when `present()` threw). Also carries `did`, `serviceId` and `consumerAddress`. |
+| `PolicyDeniedError` | `source: 'ssi'`: `ssiInitiate` answered 403 or 422 (`code`: the status), or the session ended `failed` or `expired`, or was still `pending` after the last `ssiStatus` (`code` is `undefined`). `policyResults` carry the node's results: `scope` (`vc`, `vp`, `gaiax`, `rego` or `binding`), `credential` (the DCQL query id), `policy`, `success`, `error`. verifier-api2 runs rego as the credential policy `dynamic`, so a rego deny shows as `scope: 'vc'`, `policy: 'dynamic'`, with the DCQL query id as `credential`. |
+| `CredentialPresentationError` | Native SSI: the request's `request_uri` is not on the node's announced verifier host (`reason: 'request-invalid'`). |
+| The provider's error | `prepare()` threw (native SSI; no session opened), or `present()` threw for a step before the verifier, or the verifier's record names no failed policy or cannot be read: for `WaltIdCredentialProvider` and `WalletApi2CredentialProvider` a `CredentialPresentationError` with a `reason`. |
+| `OceanNodeError` | Anything else, with the status: the node's own 401 (nonce, signature, "Auth not configured"), its 404 (`Not found`: the asset is not indexed there), its 400 when it cannot reach the policy server, a network error, a timeout, a rate limit or a 5xx. On a node with the native SSI module, also: `ssiInitiate`'s 429 (too many pending sessions for the consumer) and 503 (the verifier or the Gaia-X anchors are unavailable), a node that announces the module with `enabled: false`, a P2P node URI or a pre-computed signature (the SSI commands are HTTP only and signed on their own). |
 | `Error` | The service asks for a presentation and no credential provider is set. |
 
 `policyResults` come through the node (for a download, the publisher's choice of node), so

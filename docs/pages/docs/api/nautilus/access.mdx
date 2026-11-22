@@ -48,7 +48,21 @@ What happens in order:
    [credential provider](/docs/api/identity/CredentialProvider), and nautilus checks that the
    verifier accepted the presentation. This happens **before** any spend, so a refusal
    costs nothing.
-3. The node is asked for provider fees and whether a previous order can be reused. Before
+
+   On a node with the native SSI module instead (its status announces `ssi`, or the status
+   cannot be read and the asset or service has an `SSIpolicyV2` entry), nautilus opens a
+   session only when the asset or the service has an `SSIpolicyV2` or deprecated `SSIpolicy`
+   entry in its `allow` list. For anything else the node checks addresses and access lists
+   itself. nautilus runs the provider's `prepare()`, opens the session with `ssiInitiate`,
+   has the [credential provider](/docs/api/identity/WalletApi2CredentialProvider) present the
+   OpenID4VP request, which must point at the node's announced verifier host, then asks
+   `ssiStatus` until the session leaves `pending`
+   ([`ssiStatusPolling`](/docs/api/nautilus/create#ssistatuspolling)). Only `verified`
+   passes. The node consumes the session on the download, so nautilus caches none and every
+   `access()` opens its own. See [nodes with the native SSI module](/docs/guides/identity#nodes-with-the-native-ssi-module).
+3. The node is asked for provider fees and whether a previous order can be reused. A node
+   with the native SSI module also gets the session here (`{ sessionId }` in the
+   `policyServer` query parameter) and checks it before it quotes. Before
    ordering, nautilus checks that the provider fee signature recovers to
    `providerFeeAddress` the way the datatoken contract verifies it, since an order with any
    other fee reverts. If it does not, nautilus calls `initialize` again, 1.1 s later: at
@@ -77,7 +91,8 @@ What happens in order:
    allowed to pay exactly that fee. Everything it pulls from you (the purchase, the
    publish-market fee and the provider fee) is approved with one allowance per token and
    spender, after every check has passed.
-6. The download URL is built, carrying the policy-server session if there is one.
+6. The download URL is built, carrying the session if there is one: the policy-server
+   payload, or `{ sessionId }` for a node with the native SSI module.
 
 Some limits of this release apply to `access()`: one download URL at a time per consumer and
 node, parallel purchases of the same service, a second `access()` right after buying (it pays
@@ -246,13 +261,40 @@ read either (usually the same failing RPC), nothing can be bought, and `access()
   `serviceId` and `consumerAddress`. Don't send `policyResults` to a central log: a policy's
   error can quote a credential value. See
   [what a rejection looks like](/docs/guides/identity#what-a-rejection-looks-like).
-- `CredentialPresentationError` (from `WaltIdCredentialProvider`): the wallet could not
+
+  From a node with the native SSI module, `error.source` is `'ssi'` (`'policy-server'`
+  otherwise). The node refused the consumer at `ssiInitiate` (`error.code` 403: an address
+  its allow or deny lists refuse; 422: an SSI policy it cannot satisfy), or the session
+  ended `failed` or `expired`, or was still `pending` after the last `ssiStatus` (`error.code`
+  is `undefined`). For a session that ended, `error.policyResults` lists the node's results, each with a `scope`
+  (`vc`, `vp`, `gaiax`, `rego` or `binding`), `policy`, `success`, `error` and, for a check
+  per credential, `credential`: the DCQL query id the credential was presented for.
+  verifier-api2 runs rego as the credential policy `dynamic`, so a rego deny shows as scope
+  `vc`, policy `dynamic`, with the DCQL query id as `credential`. A session the node does
+  not know, or one opened for another consumer, asset or service, shows as scope `binding`,
+  policy `session`.
+- `CredentialPresentationError` (from the credential provider): the wallet could not
   present, e.g. it holds no credential of the requested type (`error.reason` is
   `'no-matching-credential'`), or the verifier refused and its record names no failed policy
   (`'verifier-rejected'`; the others are listed on
   [`WaltIdCredentialProvider`](/docs/api/identity/WaltIdCredentialProvider#errors)).
-  Neither error carries the policy-server session id; `NAUTILUS_DEBUG=sensitive` with the
+  On a node with the native SSI module, from [`WalletApi2CredentialProvider`](/docs/api/identity/WalletApi2CredentialProvider#errors),
+  `error.reason` is `'request-invalid'` (also when the request does not point at the node's
+  announced verifier host, or is a policy-server challenge), `'wallet-setup'` (no wallet for
+  the consumer's address, or a rejected token: thrown from `prepare()`, so no node session is
+  opened), `'no-matching-credential'`, `'none-selected'`, `'wallet-failed'` or
+  `'verifier-rejected'`. After `'verifier-rejected'` (or any error from a custom provider),
+  nautilus reads `ssiStatus` once: when it names a failed check, a `PolicyDeniedError` with
+  `policyResults` is thrown instead, with the provider's error as `cause`.
+  Neither error carries the session id; `NAUTILUS_DEBUG=sensitive` with the
   `policy` and `wallet` topics shows the raw answers ([debugging](/docs/guides/debugging)).
+- An `OceanNodeError` when the node with the native SSI module has no verifier configured
+  (`status.ssi.enabled` is `false`) and the service has an SSI entry, or when `ssiInitiate` or
+  `ssiStatus` fails otherwise (e.g. 429 for too many pending sessions of the consumer, 503
+  when the verifier is unavailable). The SSI commands are sent over HTTP only and signed on
+  their own, so a node URI that is a peer id or multiaddr, or a node client built with a
+  pre-computed signature, is refused before anything is sent (see
+  [`OceanNodeClient`](/docs/api/node/OceanNodeClient#ssi-native-module)).
 - An `Error` when the service asks for a verifiable presentation and no credential provider
   is set.
 - `ConsumerParameterError`: `userdata` does not fit the service's consumer parameters.

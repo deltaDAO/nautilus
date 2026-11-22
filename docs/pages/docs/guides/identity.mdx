@@ -1,5 +1,5 @@
 ---
-description: Publish and consume credential-gated assets with verifiable credentials, walt.id and the policy server, and how to swap in your own wallet provider.
+description: Publish and consume credential-gated assets with verifiable credentials, on nodes with the native SSI module (OpenID4VP 1.0, walt.id wallet-api2) or a policy server, and how to swap in your own wallet provider.
 ---
 
 # Credential-gated assets
@@ -9,6 +9,117 @@ you hold a particular verifiable credential, issued by someone the publisher tru
 guide covers both sides: consuming a gated asset, and publishing one.
 
 This is new in nautilus v2. It did not exist in v1, because the stack it depends on did not.
+
+## Two stacks
+
+nautilus speaks both, and picks per node from its status:
+
+| | Native SSI module | Policy server |
+| --- | --- | --- |
+| Node | pontusx-node (ocean-node with verifier-api2) | ocean-node with `POLICY_SERVER_URL` |
+| Announced as | `status.ssi` | `status.isPSConfigured` |
+| DDO entry | `SSIpolicyV2` (DCQL), [`addSsiPolicyV2`](/docs/api/assetbuilder/addSsiPolicyV2) | `SSIpolicy`, [`addRequestCredentials`](/docs/api/assetbuilder/addRequestCredentials) |
+| Protocol | OpenID4VP 1.0 | openid4vp with a presentation definition |
+| Wallet | walt.id wallet-api2, [`WalletApi2CredentialProvider`](/docs/api/identity/WalletApi2CredentialProvider) | walt.id v1, [`WaltIdCredentialProvider`](/docs/api/identity/WaltIdCredentialProvider) |
+
+A node with the native SSI module still reads `SSIpolicy` entries while its operator keeps
+`SSI_LEGACY_FORMAT` on, and translates them. nautilus warns about them
+(`identity.ssi.legacy_policy`, `publish.preflight.ssi_legacy`).
+
+## Nodes with the native SSI module
+
+```mermaid
+sequenceDiagram
+    participant N as nautilus
+    participant ON as node
+    participant V as verifier-api2
+    participant W as wallet-api2
+    N->>ON: status (ssi capabilities)
+    N->>ON: ssiInitiate (asset, service), signed
+    alt address denied or SSI policy unsatisfiable
+        ON-->>N: 403 / 422 - PolicyDeniedError, nothing ordered
+    else
+        ON->>V: create session (DCQL, policies)
+        ON-->>N: sessionId, requestUri, dcql
+    end
+    N->>W: preview-handle (requestUri)
+    W->>V: fetch request
+    N->>W: submit-handle (chosen credentials)
+    W->>V: vp_token
+    N->>ON: ssiStatus until verified, signed
+    N->>ON: initialize, order, download / compute - policyServer: { sessionId }
+```
+
+1. nautilus reads `status.ssi`. A service whose asset and service have no SSI entry needs no
+   session: the node checks addresses and access lists itself.
+2. nautilus runs the credential provider's `prepare()` (the wallet-api2 provider finds the
+   consumer's wallet there), then `ssiInitiate` (signed: `address + nonce + "ssiInitiate"`, or
+   a node auth token), which checks the consumer's address and opens a verifier session. A
+   403 or 422 is a `PolicyDeniedError` with `source: 'ssi'`, before anything is ordered.
+   `prepare()` comes first because a session that is opened and never presented stays
+   pending, and the node allows a consumer only 5 pending sessions (`ssiInitiate` then
+   answers 429).
+3. The credential provider presents the OpenID4VP request, which must point at the node's
+   announced verifier host (`status.ssi.verifierPublicHost`).
+4. nautilus polls `ssiStatus` while the session is `pending` (`ssiStatusPolling`, default 5
+   attempts, 2 s apart). `failed` or `expired` is a `PolicyDeniedError` whose `policyResults`
+   name each failed check (`scope` `vc`, `vp`, `gaiax`, `rego` or `binding`; `credential`, the
+   DCQL query id). verifier-api2 runs rego as the credential policy `dynamic`, so a rego deny
+   reads `{ scope: 'vc', credential: '<query id>', policy: 'dynamic', error: 'rego policy "<name>" denied' }`.
+5. The session goes into the download as `{ sessionId }`, and into `initializeCompute` and the
+   compute start as `{ sessionId, sessionIds: { <did>: <sessionId> } }`: one per input with an
+   SSI entry, the algorithm included.
+
+The node consumes a session on the download (for one order) or the compute start (for one
+job), so nautilus opens a new one for every flow and caches none.
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus, WalletApi2CredentialProvider } from '@deltadao/nautilus'
+
+const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const config = { oceanNodeUri: 'https://node.example.org' }
+declare function hankoSessionToken(): Promise<string>
+// ---cut---
+const nautilus = await Nautilus.create(signer, {
+  config,
+  credentials: new WalletApi2CredentialProvider({ // [!code focus]
+    walletApi: 'https://wallet-api.example.org', // [!code focus]
+    token: hankoSessionToken // the account's session token, never logged // [!code focus]
+  }) // [!code focus]
+})
+
+const { url } = await nautilus.access({ assetDid: 'did:ope:1234abcd...' })
+```
+
+Publishing an asset for these nodes:
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+const builder = new AssetBuilder()
+// ---cut---
+builder.addSsiPolicyV2({ // [!code focus]
+  version: '2', // [!code focus]
+  dcql: { credentials: [{ id: 'pid', format: 'dc+sd-jwt', meta: { vct_values: ['urn:eu.europa.ec.eudi:pid:1'] } }] }, // [!code focus]
+  vcPolicies: ['signature', 'expiration', 'revocation'], // [!code focus]
+  consumerBinding: true // [!code focus]
+}) // [!code focus]
+```
+
+The value is checked against the node's rules as it is added. Check rego with
+[`validateRego`](/docs/api/nautilus/validateRego) before publishing. The publish preflight
+warns when a service's node cannot check its SSI entries (`publish.preflight.ssi_*`,
+`publish.preflight.gaiax_unsupported`).
+
+:::warning
+`dc+sd-jwt` credentials are bound to the consumer by the node's `transaction_data`, which the
+wallet shows and signs. `jwt_vc_json` credentials are not, unless the value sets
+`consumerBinding: true`: prefer `dc+sd-jwt` for sensitive assets.
+:::
+
+## Nodes with a policy server
+
+The rest of this guide covers nodes with a policy server.
 
 ## How the pieces fit
 

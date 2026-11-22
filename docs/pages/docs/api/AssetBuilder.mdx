@@ -150,6 +150,22 @@ it with a self-issued credential of another type. An allow list containing `'*'`
 leaves no gate at all, so list the allowed addresses explicitly.
 See the [known limitation](/docs/guides/identity#known-limitation-credentials-of-another-type).
 
+For a node with the native SSI module (pontusx-node), gate with
+[`addSsiPolicyV2`](/docs/api/assetbuilder/addSsiPolicyV2) instead: an `SSIpolicyV2` value with
+a DCQL query, checked against the node's rules as it is added. `addRequestCredentials`,
+`setVcPolicies` and `setVpPolicies` write the policy server's `SSIpolicy`.
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+const gatedV2 = new AssetBuilder()
+// ---cut---
+gatedV2.addSsiPolicyV2({ // [!code focus]
+  version: '2', // [!code focus]
+  dcql: { credentials: [{ id: 'pid', format: 'dc+sd-jwt', meta: { vct_values: ['urn:eu.europa.ec.eudi:pid:1'] } }] }, // [!code focus]
+  vcPolicies: ['signature', 'expiration', 'revocation'] // [!code focus]
+}) // [!code focus]
+```
+
 See [Credential-gated assets](/docs/guides/identity) for the whole picture, including the
 consumer side.
 
@@ -193,10 +209,16 @@ consumer side.
 [`addCredentialAddresses`](/docs/api/assetbuilder/addCredentialAddresses) ·
 [`removeCredentialAddresses`](/docs/api/assetbuilder/removeCredentialAddresses) ·
 [`addCredentialAccessList`](/docs/api/assetbuilder/addCredentialAccessList) ·
+[`addSsiPolicyV2`](/docs/api/assetbuilder/addSsiPolicyV2) ·
+[`removeSsiPolicyV2`](/docs/api/assetbuilder/addSsiPolicyV2) ·
 [`addRequestCredentials`](/docs/api/assetbuilder/addRequestCredentials) ·
 [`setVcPolicies`](/docs/api/assetbuilder/setVcPolicies) ·
 [`setVpPolicies`](/docs/api/assetbuilder/setVpPolicies) ·
 [`setCredentialMatchRules`](/docs/api/assetbuilder/setCredentialMatchRules)
+
+`addSsiPolicyV2` and `removeSsiPolicyV2` gate for nodes with the native SSI module.
+`addRequestCredentials` is deprecated for those nodes: they translate `SSIpolicy` only while
+their operator keeps the legacy format on.
 
 ### Lifecycle
 

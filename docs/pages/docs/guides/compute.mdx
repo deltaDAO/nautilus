@@ -117,6 +117,8 @@ const paidJobId = paid.jobs[0].jobId
 console.log('orders', paid.orders)
 ```
 
+`orders` maps each ordered input, keyed `<did>#<serviceId>`, to its order transaction.
+
 What nautilus does, in order:
 
 1. Resolves every input and picks its compute service.
@@ -170,7 +172,8 @@ as `config.escrow`, or paid jobs are refused. See
 [Escrow contract](/docs/api/nautilus/compute#escrow-contract).
 
 The payer must differ from the environment's `consumerAddress`, or escrow rejects the
-job with "Payer cannot be payee".
+job with "Payer cannot be payee". The node locks the job's payment in escrow from its own
+account when it accepts the job, so that account needs gas on the chain.
 :::
 
 ## Several datasets
@@ -192,6 +195,72 @@ const multi = await nautilus.compute({
 
 nautilus assembles the single array the node expects. Every dataset is ordered.
 
+## Credential-gated inputs
+
+Datasets and algorithms can require verifiable credentials. On a node with the native SSI
+module (`status.ssi`), an input requires them when its asset or its compute service has an
+`SSIpolicyV2` (or deprecated `SSIpolicy`) entry. Configure a credential provider on the
+instance; `compute()` and `freeCompute()` are called as before:
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import {
+  Nautilus,
+  PolicyDeniedError,
+  WalletApi2CredentialProvider
+} from '@deltadao/nautilus'
+
+const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const config = { oceanNodeUri: 'https://node.example.org' }
+declare function hankoSessionToken(): Promise<string>
+// ---cut---
+const nautilus = await Nautilus.create(signer, {
+  config,
+  credentials: new WalletApi2CredentialProvider({ // [!code focus]
+    walletApi: 'https://wallet-api.example.org', // [!code focus]
+    token: hankoSessionToken // [!code focus]
+  }) // [!code focus]
+})
+
+try {
+  await nautilus.freeCompute({
+    dataset: { did: 'did:ope:1234abcd...' },
+    algorithm: { did: 'did:ope:5678wxyz...' }
+  })
+} catch (error) {
+  if (error instanceof PolicyDeniedError && error.source === 'ssi') // [!code focus]
+    console.log(error.did, error.reason, error.policyResults) // [!code focus]
+  else throw error
+}
+```
+
+Before the quote and before any escrow, order or job, nautilus opens one SSI session per
+input with an SSI entry (datasets and algorithm alike), one after the other, on the node that
+runs the job. For each it calls `ssiInitiate`, has the credential provider present the
+OpenID4VP request and polls `ssiStatus` until the session is `verified`. The sessions go
+into the job start, and for a paid job into `initializeCompute` before it, as:
+
+```ts
+policyServer: { sessionId, sessionIds: { '<did>': '<sessionId>' } }
+```
+
+`sessionIds` has one entry per input with an SSI entry, keyed by its DID; `sessionId` is the
+first of them. Inputs without an SSI entry get no session: the node checks addresses
+and access lists itself.
+
+- **A refusal costs nothing.** A `PolicyDeniedError` with `source: 'ssi'` (an address the
+  node refuses, an SSI policy it cannot satisfy, or a session that ends `failed` or
+  `expired`) is thrown before any escrow, order or job. Its `did` names the input.
+- **One session per DID.** The node looks sessions up by DID only, so two inputs that are
+  services of one asset and need different sessions cannot be told apart: nautilus refuses
+  such a job before anything is ordered or paid.
+- **No session is reused.** The node consumes the sessions when it starts the job, so every
+  `compute()` and `freeCompute()` call opens new ones, and nautilus caches none.
+
+On a node with a policy server, the same calls open policy-server sessions instead. See
+[Credential-gated assets](/docs/guides/identity#nodes-with-the-native-ssi-module) for the
+flow, the credential provider and how to read a refusal.
+
 ## Following the job
 
 ```ts twoslash
@@ -211,6 +280,12 @@ jobs end below `70`, for example `41` when the algorithm failed or `11` when its
 not be pulled. Poll on `dateFinished` rather than on a status. A finished job's results are
 readable; at `71` (`JobSettle`) the node may still be writing `outputs.tar`, which is listed
 as the `output` result once it is written.
+
+A finished job can report `71` ("Job settling") for a long time, free jobs included: only
+the node's payment-claim run moves it on to `70`, and that runs every `paymentClaimInterval`
+of the node's configuration (3600 s by default). Until the `output` result is listed,
+`getComputeResult()` returns `undefined` with a `compute.result.not_ready` log line. Keep
+polling; this is not a failure.
 
 The algorithm's logs are useful for debugging an algorithm you cannot otherwise observe.
 While the job runs they stream live; once it has finished, `getComputeLogs` reads the job's

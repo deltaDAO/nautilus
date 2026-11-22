@@ -134,10 +134,34 @@ Pass a `WaltIdVcSigner` to issue from a real DID instead — see the
 
 - Type: `CredentialProvider`
 
-Answers the verifiable-presentation request of a service whose `SSIpolicy` asks for
-credentials. nautilus opens the policy-server session itself, so a service gated by
-addresses only needs no provider. Without one, a service that asks for a presentation is
-refused before anything is spent. See [credential-gated assets](/docs/guides/identity).
+Answers the verifiable-presentation request of a service whose credentials ask for one:
+
+- for a node with the native SSI module (its status announces `ssi`; gated with
+  `SSIpolicyV2`, OpenID4VP 1.0), a
+  [`WalletApi2CredentialProvider`](/docs/api/identity/WalletApi2CredentialProvider);
+- for a node with a policy server (`SSIpolicy`), a
+  [`WaltIdCredentialProvider`](/docs/api/identity/WaltIdCredentialProvider).
+
+nautilus opens the session itself, so a service gated by addresses only needs no provider.
+Without one, a service that asks for a presentation is refused before anything is spent.
+See [credential-gated assets](/docs/guides/identity).
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus, WalletApi2CredentialProvider } from '@deltadao/nautilus'
+const signer = new Wallet('0x1234', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const config = { oceanNodeUri: 'https://node.example.org' }
+declare function hankoSessionToken(): Promise<string>
+// ---cut---
+// a node with the native SSI module
+const nautilus = await Nautilus.create(signer, {
+  config,
+  credentials: new WalletApi2CredentialProvider({ // [!code focus]
+    walletApi: 'https://wallet-api.example.org', // [!code focus]
+    token: hankoSessionToken // the account's session token // [!code focus]
+  }) // [!code focus]
+})
+```
 
 ```ts twoslash
 import { JsonRpcProvider, Wallet } from 'ethers'
@@ -146,11 +170,41 @@ const signer = new Wallet('0x1234', new JsonRpcProvider('https://rpc.dev.pontus-
 const config = { oceanNodeUri: 'https://node.example.org' }
 const bootstrap = await Nautilus.create(signer, { config })
 // ---cut---
+// a node with a policy server
 const nautilus = await Nautilus.create(signer, {
   config,
   credentials: new WaltIdCredentialProvider(bootstrap.getNodeClient(), { // [!code focus]
     walletApi: 'https://wallet.example.org' // [!code focus]
   }) // [!code focus]
+})
+```
+
+Each provider refuses the other protocol's request with a `CredentialPresentationError`
+(`request-invalid`), so pass the one that matches the nodes you consume from;
+[`setCredentialProvider`](/docs/api/nautilus/setCredentialProvider) swaps it later.
+
+##### ssiStatusPolling
+
+- Type: `{ attempts?: number; intervalMs?: number }`
+- Default: `{ attempts: 5, intervalMs: 2000 }` (5 attempts, 2 s apart)
+
+Nodes with the native SSI module: how many times, and how far apart, nautilus asks
+`ssiStatus` after the wallet has presented, while the node still reports the session
+`pending`. Each attempt is a signed command with its own nonce, so an interactive wallet
+prompts once per attempt. A session
+still `pending` after the last attempt is refused with a `PolicyDeniedError`
+(`source: 'ssi'`). `attempts` must be a whole number from 1 to 60 and `intervalMs` from 0 to
+60000, or `create` throws.
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus } from '@deltadao/nautilus'
+const signer = new Wallet('0x1234', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const config = { oceanNodeUri: 'https://node.example.org' }
+// ---cut---
+const nautilus = await Nautilus.create(signer, {
+  config,
+  ssiStatusPolling: { attempts: 10, intervalMs: 1000 } // [!code focus]
 })
 ```
 
@@ -164,6 +218,11 @@ consumer). Only sessions the policy server opened and, where a presentation was 
 the verifier accepted are stored. A store of your own gets only sessions opened without a
 presentation; presented ones stay in memory unless `persistPresentedSessions`. Session ids
 are credentials: keep the store private.
+
+Sessions of a node with the native SSI module are never cached, here or in memory: the node
+consumes each one (one order for a download, one job for compute), so every call opens its
+own. `sessionStore`, `persistPresentedSessions` and `sessionTtlMs` apply to policy-server
+sessions only.
 
 ##### persistPresentedSessions
 
@@ -379,3 +438,5 @@ other's escrow authorisation. Jobs from another instance or process are not cove
 - When `maxProviderFee` or `maxEscrowPayment` has an entry whose `token` is not an address,
   whose `amount` is not a non-negative integer, or whose token is listed twice, or when
   `confirmProviderFees` or `confirmEscrowPayment` is not a function.
+- When `ssiStatusPolling.attempts` is not a whole number from 1 to 60, or
+  `ssiStatusPolling.intervalMs` is not from 0 to 60000.

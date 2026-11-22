@@ -65,7 +65,10 @@ redirect ends, and refuse it with an `OceanNodeError` before its answer is read:
 `169.254.0.0/16`, `fc00::/7`, a single-label or `.internal` name, …), unless the node is on
 one itself. Only the final URL is checked; fetch does not show the hops in between.
 `initialize` does not follow redirects: its query carries the consumer's address and
-`userdata`.
+`userdata`. Its `policyServer` option sends a verified session of a node with the native SSI
+module (`{ sessionId }`) as the `policyServer` query parameter (JSON). The node checks the
+session before it quotes, without consuming it. This works over HTTP only: ocean.js's P2P
+`initialize` has no slot for it.
 
 `resolve(did)` throws an `AssetNotFoundError` (`status` 404, `did`) when the node does not
 serve the asset. Only then does it read the node's indexing state for the DID (both DID
@@ -260,6 +263,88 @@ outcomes and errors, never the presentation. Policy-server answers are read up t
 derived from the same one, so parallel calls to a node share its signing queue and do not
 sign the same nonce.
 
+### SSI (native module)
+
+`getSsiCapabilities(signal?)` · `ssiInitiate(request, signal?)` ·
+`ssiStatus(request, signal?)` · `validateRego(code, policy?, signal?)`
+
+For nodes with the native SSI module (pontusx-node: walt.id verifier-api2, OpenID4VP 1.0,
+DCQL), which replaces the policy server. `access()`, `compute()` and `freeCompute()` call
+them through the [`PolicySessionResolver`](/docs/api/identity/PolicySessionResolver); see
+[nodes with the native SSI module](/docs/guides/identity#nodes-with-the-native-ssi-module).
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+const node = nautilus.getNodeClient()
+const documentId = 'did:ope:1234abcd...'
+const serviceId = '0x...'
+// ---cut---
+const ssi = await node.getSsiCapabilities() // null: no native SSI module // [!code focus]
+
+if (ssi?.enabled) {
+  const opened = await node.ssiInitiate({ documentId, serviceId }) // [!code focus]
+  if (opened.required) {
+    // the wallet answers opened.requestUri (openid4vp://…), then:
+    const { status, results } = await node.ssiStatus({ // [!code focus]
+      sessionId: opened.sessionId, // [!code focus]
+      documentId, // [!code focus]
+      serviceId, // [!code focus]
+      consumerAddress: opened.consumerAddress // [!code focus]
+    }) // [!code focus]
+  }
+}
+```
+
+- **`getSsiCapabilities`** reads `ssi` from the node's status: `SsiCapabilities`
+  (`{ enabled, formats, vcPolicies, rego, gaiaxLevels, legacyFormat, verifierPublicHost? }`),
+  `null` when the node has no native SSI module (it may have a policy server, see
+  `hasPolicyServer`), or `undefined` when the status cannot be read. An answer is kept for 5
+  minutes; a failed read is not kept. Aborting `signal` rejects with the signal's reason.
+- **`ssiInitiate`** (`POST /api/services/ssi/initiate`) checks the consumer's address against
+  the asset's and the service's credentials, builds a DCQL query from their `SSIpolicyV2` (and
+  deprecated `SSIpolicy`) entries and opens a verifier session. It resolves with
+  `{ required: false }` when the asset asks for no credentials, else with
+  `{ required: true, sessionId, requestUri, expiresAt?, dcql?, deprecated? }` and the
+  `consumerAddress` the command was signed for. `deprecated` is `true` when the node answered
+  with a `Deprecation: true` header: the asset uses the deprecated `SSIpolicy` format, which
+  the node translated. A 403 (an address its allow or deny lists refuse) or 422 (an SSI
+  policy it cannot satisfy: invalid, unsupported, Gaia-X mixed with W3C queries, an unbound
+  asset on a node that requires consumer binding) throws a `PolicyDeniedError` with
+  `source: 'ssi'` and `code` the status. Every other failure is an `OceanNodeError` with the
+  status: 400, 401, 404 (asset or service), 429 (too many pending sessions of the consumer),
+  503 (the verifier or the Gaia-X trust anchors are unavailable), a network error or a
+  timeout. The `consumerAddress` of the request is replaced by the signer's address with a
+  `Signer`, and by the token's with a JWT.
+- **`ssiStatus`** (`POST /api/services/ssi/status`) reports `{ status, results }`: `status`
+  is `pending`, `verified`, `failed` or `expired`, and `verified` only when the verifier
+  accepted the presentation and the node's own checks (holder and consumer binding, Gaia-X,
+  rego) passed. Each result is `{ scope, credentialId?, name, success, error? }`, `scope`
+  being `vc`, `vp`, `gaiax`, `rego` or `binding` (another string from a newer node) and
+  `credentialId` the DCQL query id. These are the node's field names; a `PolicyDeniedError`
+  reports the same results as `{ scope, credential, policy, success, error? }`. The node learns of a presentation only when asked, so
+  poll it after the wallet presented. A 404 (the node does not know the session, or it was
+  opened for another consumer, asset or service) is not thrown: it resolves as `failed` with
+  one result `{ scope: 'binding', name: 'session', success: false }`. Other failures throw
+  an `OceanNodeError`, with the session id removed from the message.
+- **`validateRego`** (`POST /api/services/ssi/validateRego`) has the node run its static
+  checks on rego `code` and compile it in the verifier's OPA; `policy`, the `SSIpolicyV2`
+  value the code belongs to, is checked too. It resolves with `{ valid, errors }`. Only an
+  authorized publisher or an admin of the node may call it: anyone else, and everyone on a
+  node with neither list, gets an `OceanNodeError` with status 403; 503 when the node has no
+  verifier or its OPA is unavailable. [`Nautilus.validateRego`](/docs/api/nautilus/validateRego)
+  runs the local checks first.
+
+The three commands are signed on their own: `address + nonce + command` (`ssiInitiate`,
+`ssiStatus`, `validateRego`; the publisher's address for `validateRego`), or a node auth
+token. They are sent over HTTP only, since ocean.js has no P2P command for them: a client
+whose `nodeUri` is a peer id or multiaddr, or whose `auth` is a pre-computed signature,
+rejects with an `OceanNodeError` before anything is sent. They are serialized with the
+client's other signed commands, retried once when the node rejects the nonce (a `Signer`
+only), bounded by `requestTimeoutMs`, do not follow redirects (the body carries a signature
+or a token), and read answers up to 512 KiB.
+
 ### Diagnostics
 
 `getNodeStatus()` · `isValidNode(uri?)` · `OceanNodeClient.clearValidityCache()`
@@ -270,7 +355,7 @@ Every call is wrapped, so failures arrive as `OceanNodeError` with the operation
 error behind it on `cause`. For an ocean.js error, which carries the node's answer in its
 message, `cause` is a copy with the same name and its message sanitized like the node's
 text (below), not the ocean.js error itself. For the requests nautilus sends itself (`resolve`, `initialize`,
-`getComputeLogs` and the indexing reads over HTTP), the message carries the node's status
+`getComputeLogs`, the SSI commands and the indexing reads over HTTP), the message carries the node's status
 and text, unquoted, and `status` the HTTP status:
 
 ```text
@@ -309,9 +394,12 @@ try {
 recorded a failure. It carries `did`, `txId` and the node's record on `state`.
 `AssetNotFoundError` is the one `resolve` throws for an asset the node does not serve.
 
-`PolicyDeniedError` is not an `OceanNodeError`: the node and its policy server answered, and
-refused. It carries `did`, `serviceId`, `consumerAddress` (the address the request was sent
-with: a `Signer`'s own, whatever the request named), `code` (the HTTP status) and `reason`
-(the policy server's message).
+`PolicyDeniedError` is not an `OceanNodeError`: the node and its policy server or SSI module
+answered, and refused. It carries `source` (`'policy-server'`, or `'ssi'` for the native SSI
+module), `did`, `serviceId`, `consumerAddress` (the address the request was sent with: a
+`Signer`'s own, whatever the request named), `code` (the HTTP status) and `reason` (the
+node's message). A refusal after a presentation also carries `policyResults`; from the
+native SSI module each has a `scope` and, for a check per credential, the DCQL query id as
+`credential`.
 
 See [the Ocean Node client guide](/docs/guides/ocean-node).

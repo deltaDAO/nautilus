@@ -177,6 +177,50 @@ instance and nothing changes here — nautilus resolves the policy **before** or
 policy you cannot satisfy costs nothing. See
 [Credential-gated assets](/docs/guides/identity).
 
+### On a node with the native SSI module
+
+A node that announces an `ssi` block in its status (pontusx-node) checks `SSIpolicyV2`
+entries itself, with walt.id verifier-api2 and OpenID4VP 1.0. For these nodes, present from
+walt.id wallet-api2 with a
+[`WalletApi2CredentialProvider`](/docs/api/identity/WalletApi2CredentialProvider):
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus, WalletApi2CredentialProvider } from '@deltadao/nautilus'
+
+const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const config = { oceanNodeUri: 'https://node.example.org' }
+declare function hankoSessionToken(): Promise<string>
+// ---cut---
+const nautilus = await Nautilus.create(signer, {
+  config,
+  credentials: new WalletApi2CredentialProvider({ // [!code focus]
+    walletApi: 'https://wallet-api.example.org', // [!code focus]
+    token: hankoSessionToken // the account's session token // [!code focus]
+  }) // [!code focus]
+})
+
+const { url } = await nautilus.access({ assetDid: 'did:ope:1234abcd...' })
+```
+
+For a service whose asset or service has an SSI entry, `access()` then runs, on the node in
+the service's `serviceEndpoint`:
+
+1. `ssiInitiate`: the node checks the consumer's address and opens a verifier session. A
+   refusal is a `PolicyDeniedError` with `source: 'ssi'`.
+2. The credential provider presents the OpenID4VP request from the wallet.
+3. `ssiStatus`, polled until the session is `verified`. `failed` or `expired` is a
+   `PolicyDeniedError` whose `policyResults` name the failed checks.
+4. `initialize` with the session: the node checks it before it quotes the provider fee.
+5. The order, reused or placed, as for any other download.
+6. The download URL, carrying `policyServer: { sessionId }`.
+
+Steps 1 to 4 run before anything is paid. The node consumes the session with the download,
+so every `access()` call opens a new one. A service without an SSI entry needs no session.
+See [nodes with the native SSI module](/docs/guides/identity#nodes-with-the-native-ssi-module)
+for the details and [handling a refusal](/docs/guides/identity#handling-a-refusal) for the
+errors.
+
 ## What it costs
 
 Pricing is read from chain rather than from a subgraph, which v1 depended on and the current

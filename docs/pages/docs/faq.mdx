@@ -70,6 +70,53 @@ Publish-time policy enforcement does not exist yet either — the policy server'
 Credential gating is enforced on **consumption**, not on publication.
 :::
 
+## Which wallet do I need for a node with the native SSI module?
+
+walt.id **wallet-api2**, through
+[`WalletApi2CredentialProvider`](/docs/api/identity/WalletApi2CredentialProvider). A node
+with the native SSI module sends an OpenID4VP 1.0 request with a DCQL query, which walt.id's
+v1 wallet API cannot answer: [`WaltIdCredentialProvider`](/docs/api/identity/WaltIdCredentialProvider)
+refuses it with a `CredentialPresentationError` (`reason: 'request-invalid'`), and keeps
+working for nodes with a policy server. To see which kind a node is, call
+[`getSsiCapabilities(nodeUri)`](/docs/api/nautilus/getSsiCapabilities): an object for a node
+that announces the module (`status.ssi`), `null` for one that does not, `undefined` when its
+status cannot be read.
+
+## Why is my consumer getting HTTP 429 from `ssiInitiate`?
+
+The node limits how many SSI sessions may be pending (opened, not yet verified, presentation
+window still open) at once: by default 5 per consumer address, with further caps per client,
+per asset and per node. A session that is opened and never presented counts until its window
+closes (`challenge.expiresAt`, when the node sends it), so repeated attempts that fail after
+`ssiInitiate` use up the allowance. A credential provider can check what it can before the
+session is opened, in the optional
+[`prepare()`](/docs/api/identity/CredentialProvider): `WalletApi2CredentialProvider` resolves
+the consumer's wallet there, so a missing wallet or a rejected token throws a
+`wallet-setup` error and leaves no pending session. Otherwise wait for the pending sessions
+to expire.
+
+## Can I mix Gaia-X and W3C credential queries?
+
+Not in one `SSIpolicyV2` value. The wallet signs all W3C credentials of one presentation with
+the organisation's `did:web`, so a value that asks for Gaia-X compliance cannot also have a
+W3C query (`jwt_vc_json`): [`addSsiPolicyV2`](/docs/api/assetbuilder/addSsiPolicyV2) throws an
+`SsiPolicyValidationError`, and the node refuses such a value with a 422. Ask for the other
+credentials as `dc+sd-jwt`, or put them in another `SSIpolicyV2` value.
+
+## Which credential formats can an `SSIpolicyV2` ask for?
+
+`jwt_vc_json`, `dc+sd-jwt` and `vc+sd-jwt`; anything else is refused when the value is added.
+`dc+sd-jwt` credentials are bound to the consumer by the node's `transaction_data`;
+`jwt_vc_json` credentials only with `consumerBinding: true` (see
+[credential-gated assets](/docs/guides/identity#nodes-with-the-native-ssi-module)).
+
+## A rego deny shows as the VC policy `dynamic`
+
+verifier-api2 runs an asset's rego as the credential policy `dynamic`, so a
+`PolicyDeniedError` for a rego deny has a failed `policyResults` entry with `scope: 'vc'` and
+`policy: 'dynamic'` (`credential`: the DCQL query id). Check rego before publishing with
+[`validateRego`](/docs/api/nautilus/validateRego), which compiles it in the node's verifier.
+
 ## Why am I paying twice for the same asset?
 
 [`access`](/docs/api/nautilus/access) reuses your previous order while it is inside the

@@ -1,0 +1,39 @@
+---
+description: Nautilus.validateRego checks rego for an SSIpolicyV2 value locally and has the node compile it in its verifier's OPA before publishing.
+---
+
+# validateRego
+
+Checks rego code for an `SSIpolicyV2` value before publishing it: first locally, against the
+node's static rules (and, with `policy`, the value itself), then on the node, which compiles
+it in its verifier's OPA (`POST /api/services/ssi/validateRego`).
+
+## Usage
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus } from '@deltadao/nautilus'
+
+const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const nautilus = await Nautilus.create(signer, {
+  config: { oceanNodeUri: 'https://node.example.org' }
+})
+// ---cut---
+const { valid, errors } = await nautilus.validateRego( // [!code focus]
+  'package x\nimport rego.v1\nallow if input.credentialData.credentialSubject.employees >= input.parameter.min' // [!code focus]
+) // [!code focus]
+```
+
+## Parameters
+
+| Name | Type | Purpose |
+| --- | --- | --- |
+| `code` | `string` | Inline rego source. |
+| `options.policy` | `SsiPolicyV2Value` | The value the code belongs to; checked too. |
+| `options.nodeUri` | `string` | The node of the service the policy gates. Default: the configured node. |
+
+## Returns
+
+`{ valid: boolean, errors: string[] }`. A local problem answers `valid: false` without a
+request. Only an authorized publisher or an admin of the node may ask it: anyone else gets an
+`OceanNodeError` with status 403, and a node without a verifier answers 503.
