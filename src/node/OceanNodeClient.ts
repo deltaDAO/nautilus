@@ -192,18 +192,25 @@ export class OceanNodeError extends Error {
   readonly cause?: unknown
   /** The HTTP status the node answered with, when there was an answer. */
   readonly status?: number
+  /**
+   * The node's machine-readable error code, when it sent one, e.g. `MAINTENANCE_MODE` (the
+   * node drains: it takes no new compute or service jobs; running ones continue).
+   */
+  readonly code?: string
 
   constructor(
     operation: string,
     message: string,
     cause?: unknown,
-    status?: number
+    status?: number,
+    code?: string
   ) {
     super(`[ocean-node] ${operation}: ${message}`)
     this.name = 'OceanNodeError'
     this.operation = operation
     this.cause = cause
     this.status = status
+    this.code = code
   }
 
   /**
@@ -217,11 +224,22 @@ export class OceanNodeError extends Error {
   static from(operation: string, error: unknown): OceanNodeError {
     if (error instanceof OceanNodeError) return error
 
+    // ocean.js 10 throws OceanNodeProviderError (HTTP) and P2pError (P2P) with the node's
+    // status and code; earlier versions throw plain errors without them.
+    const { httpStatus, code } = (error ?? {}) as {
+      httpStatus?: unknown
+      code?: unknown
+    }
+
     return new OceanNodeError(
       operation,
       describeError(error),
       // describeError handed the raw error to the debug channel already.
-      sanitizedError(error, null)
+      sanitizedError(error, null),
+      Number.isInteger(httpStatus) ? (httpStatus as number) : undefined,
+      typeof code === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(code)
+        ? code
+        : undefined
     )
   }
 }

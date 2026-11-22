@@ -13,6 +13,13 @@
  * authorises only what the job needs on top of the current locks. Every amount is in the
  * token's smallest unit, as the node quotes it and the contract takes it.
  *
+ * Two contract generations are in use. Escrow v1 (`@oceanprotocol/contracts` 2.x, which
+ * pontusx-node and its deployments use) and Escrow v2 (contracts 3.x, ocean.js 10's
+ * default ABI), whose authorisation has a 7th field `expiryTimestamp` and whose
+ * `authorize` takes it as a 6th argument. A v2 contract answers ERC-165 for its core
+ * interface, a v1 contract has no `supportsInterface`; nautilus reads and writes each with
+ * its own ABI.
+ *
  * Not exported from the package.
  */
 import {
@@ -29,6 +36,90 @@ import type { EscrowPaymentQuote } from '../utils/paymentLimits.js'
 const ERC20_BALANCE_ABI = [
   'function balanceOf(address) view returns (uint256)'
 ] as const
+
+/**
+ * Seconds an expiring Escrow v2 authorisation must outlast the job's lock time by, for the
+ * orders and the start call before the node locks. ocean.js's `verifyFundsForEscrowPayment`
+ * adds the same.
+ */
+const EXPIRY_MARGIN_SECONDS = 120n
+
+/** Which escrow contract generation an address holds. */
+export type EscrowVersion = 1 | 2
+
+const abiAddress = (name: string) => ({
+  name,
+  type: 'address',
+  internalType: 'address'
+})
+const abiUint = (name: string) => ({
+  name,
+  type: 'uint256',
+  internalType: 'uint256'
+})
+
+/**
+ * The Escrow v1 functions nautilus calls (`@oceanprotocol/contracts` 2.x). ocean.js 10
+ * ships only the v2 ABI, which cannot decode a v1 authorisation (6 fields, not 7) and
+ * encodes `authorize` with a 6th argument a v1 contract does not have.
+ */
+const ESCROW_V1_ABI = [
+  {
+    type: 'function',
+    name: 'getUserFunds',
+    stateMutability: 'view',
+    inputs: [abiAddress('payer'), abiAddress('token')],
+    outputs: [
+      {
+        name: '',
+        type: 'tuple',
+        internalType: 'struct Escrow.userFunds',
+        components: [abiUint('available'), abiUint('locked')]
+      }
+    ]
+  },
+  {
+    type: 'function',
+    name: 'getAuthorizations',
+    stateMutability: 'view',
+    inputs: [abiAddress('token'), abiAddress('payer'), abiAddress('payee')],
+    outputs: [
+      {
+        name: '',
+        type: 'tuple[]',
+        internalType: 'struct Escrow.auth[]',
+        components: [
+          abiAddress('payee'),
+          abiUint('maxLockedAmount'),
+          abiUint('currentLockedAmount'),
+          abiUint('maxLockSeconds'),
+          abiUint('maxLockCounts'),
+          abiUint('currentLocks')
+        ]
+      }
+    ]
+  },
+  {
+    type: 'function',
+    name: 'deposit',
+    stateMutability: 'nonpayable',
+    inputs: [abiAddress('token'), abiUint('amount')],
+    outputs: []
+  },
+  {
+    type: 'function',
+    name: 'authorize',
+    stateMutability: 'nonpayable',
+    inputs: [
+      abiAddress('token'),
+      abiAddress('payee'),
+      abiUint('maxLockedAmount'),
+      abiUint('maxLockSeconds'),
+      abiUint('maxLockCounts')
+    ],
+    outputs: []
+  }
+]
 
 /**
  * Which rule chose the escrow contract a paid compute job may fund:
@@ -105,7 +196,14 @@ export interface EscrowPlan {
     maxLockedAmount: bigint
     maxLockSeconds: bigint
     maxLockCounts: bigint
+    /**
+     * Escrow v2 only: after it the payee can no longer create or extend locks; `0` is
+     * indefinite, which is what a v1 authorisation always is.
+     */
+    expiryTimestamp: bigint
   }
+  /** The escrow contract's generation, read before planning. */
+  version: EscrowVersion
 }
 
 /**
@@ -124,7 +222,8 @@ export async function planEscrow(
   quote: EscrowPaymentQuote
 ): Promise<EscrowPlan> {
   const payer = getAddress(await signer.getAddress())
-  const escrow = escrowAt(signer, chainConfig, quote.escrowAddress)
+  const version = await escrowVersion(signer, chainConfig, quote.escrowAddress)
+  const escrow = escrowAt(signer, chainConfig, quote.escrowAddress, version)
 
   const funds = await escrow.getUserFunds(payer, quote.token)
   const available = toBigInt(field(funds, 'available', 0) ?? 0)
@@ -156,7 +255,27 @@ export async function planEscrow(
     ),
     maxLockSeconds: toBigInt(field(standing, 'maxLockSeconds', 3) ?? 0),
     maxLockCounts: toBigInt(field(standing, 'maxLockCounts', 4) ?? 0),
-    currentLocks: toBigInt(field(standing, 'currentLocks', 5) ?? 0)
+    currentLocks: toBigInt(field(standing, 'currentLocks', 5) ?? 0),
+    // v2 only; a v1 authorisation never expires
+    expiryTimestamp:
+      version === 2 ? toBigInt(field(standing, 'expiryTimestamp', 6) ?? 0) : 0n
+  }
+
+  // An expiring v2 authorisation must outlast the job's lock, which the node creates only
+  // after the orders and the start call: EXPIRY_MARGIN_SECONDS on top, as ocean.js's own
+  // escrow check adds. Read from the chain's clock, which the contract compares against.
+  let lockUntil = 0n
+
+  if (current.expiryTimestamp !== 0n) {
+    const now = await chainTime(signer)
+
+    // In v2 a payer revokes by re-authorising with a past expiry: never undo that.
+    if (current.expiryTimestamp <= now)
+      throw new Error(
+        `The payer's escrow authorisation for ${quote.payee} on ${quote.escrowAddress} expired at ${current.expiryTimestamp} (chain time ${now}), which is how an authorisation is revoked; nautilus does not re-authorise it. Authorise the payee again to run paid jobs on it. Nothing was spent.`
+      )
+
+    lockUntil = now + quote.minLockSeconds + EXPIRY_MARGIN_SECONDS
   }
 
   const neededLocked = current.currentLockedAmount + quote.amount
@@ -164,20 +283,27 @@ export async function planEscrow(
     standing !== undefined &&
     current.maxLockedAmount >= neededLocked &&
     current.maxLockSeconds >= quote.minLockSeconds &&
-    current.maxLockCounts > current.currentLocks
+    current.maxLockCounts > current.currentLocks &&
+    (current.expiryTimestamp === 0n || current.expiryTimestamp >= lockUntil)
 
   return {
     quote,
     payer,
     deposit,
+    version,
     // Raise only what falls short, to exactly what this job needs; an allowance the payer
-    // set higher before is left as it was.
+    // set higher before is left as it was. An expiring v2 authorisation stays expiring,
+    // moved out to the job's lock; one without expiry stays without.
     authorize: covered
       ? undefined
       : {
           maxLockedAmount: max(current.maxLockedAmount, neededLocked),
           maxLockSeconds: max(current.maxLockSeconds, quote.minLockSeconds),
-          maxLockCounts: max(current.maxLockCounts, current.currentLocks + 1n)
+          maxLockCounts: max(current.maxLockCounts, current.currentLocks + 1n),
+          expiryTimestamp:
+            current.expiryTimestamp === 0n
+              ? 0n
+              : max(current.expiryTimestamp, lockUntil)
         }
   }
 }
@@ -192,8 +318,8 @@ export async function fundEscrow(
   plan: EscrowPlan,
   logger: Logger = log
 ): Promise<void> {
-  const { quote, deposit, authorize } = plan
-  const escrow = escrowAt(signer, chainConfig, quote.escrowAddress)
+  const { quote, deposit, authorize, version } = plan
+  const escrow = escrowAt(signer, chainConfig, quote.escrowAddress, version)
 
   if (deposit > 0n) {
     await approveFeeWei({
@@ -219,7 +345,8 @@ export async function fundEscrow(
       quote.payee,
       authorize.maxLockedAmount,
       authorize.maxLockSeconds,
-      authorize.maxLockCounts
+      authorize.maxLockCounts,
+      ...(version === 2 ? [authorize.expiryTimestamp] : [])
     ])
 }
 
@@ -228,9 +355,53 @@ export async function fundEscrow(
 function escrowAt(
   signer: Signer,
   chainConfig: Config,
-  address: string
+  address: string,
+  version: EscrowVersion
 ): EscrowContract {
-  return new EscrowContract(address, signer, chainConfig.chainId, chainConfig)
+  return version === 2
+    ? new EscrowContract(address, signer, chainConfig.chainId, chainConfig)
+    : new EscrowContract(
+        address,
+        signer,
+        chainConfig.chainId,
+        chainConfig,
+        ESCROW_V1_ABI as never
+      )
+}
+
+/**
+ * The escrow contract's generation: 2 when it answers ERC-165 for Escrow v2's core
+ * interface (ocean.js `isEscrowCore`, which reads a revert or a missing method as no),
+ * else 1.
+ */
+export async function escrowVersion(
+  signer: Signer,
+  chainConfig: Config,
+  address: string
+): Promise<EscrowVersion> {
+  const probe = new EscrowContract(
+    address,
+    signer,
+    chainConfig.chainId,
+    chainConfig
+  )
+
+  return typeof probe.isEscrowCore === 'function' &&
+    (await probe.isEscrowCore()) === true
+    ? 2
+    : 1
+}
+
+/** The latest block's timestamp, in seconds. */
+async function chainTime(signer: Signer): Promise<bigint> {
+  const block = await signer.provider?.getBlock('latest')
+
+  if (!block)
+    throw new Error(
+      'Cannot read the chain time to check the escrow authorisation expiry: the signer has no provider. Nothing was spent.'
+    )
+
+  return BigInt(block.timestamp)
 }
 
 /**

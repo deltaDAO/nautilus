@@ -110,6 +110,8 @@ describe('local DDO validation', () => {
     expect(errors.id?.join(' ')).to.match(
       /does not derive from nftAddress and chainId/i
     )
+    // one message for the mismatch (ddo-js 1.1 reports it too, in other words)
+    expect(errors.id).to.have.length(1)
   })
 
   it('rejects an invalid nftAddress with a clean message, not a raw ethers error', async () => {

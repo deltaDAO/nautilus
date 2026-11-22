@@ -26,13 +26,18 @@ export async function validate(ddo: unknown): Promise<ValidationResult> {
   const [valid, errors] = await validateDDO(ddo as Record<string, unknown>)
   const merged: ValidationErrors = { ...(errors || {}) }
 
-  // ddo-js computes a DID-derivation check but discards it whenever the SHACL shape
-  // conforms (`validate()` returns `[true, {}]` and drops its own field errors). The v5
-  // shape only constrains the DID's prefix and length, so any 72-character `did:ope:…`
-  // string passes — including one that does not derive from this asset's nftAddress and
-  // chainId. The indexer would then reject the published asset, so the check is redone here.
+  // The v5 shape only constrains the DID's prefix and length, so a 72-character
+  // `did:ope:…` that does not derive from this asset's nftAddress and chainId passes it, and
+  // the indexer would reject the published asset. ddo-js 1.1 reports that mismatch itself
+  // (under `id`, "did is not valid for chainId and nft address"); 1.0 computed it but
+  // dropped it whenever the shape conformed. nautilus's check names the expected DID, so it
+  // takes the place of ddo-js's message: one message for the mismatch, not two.
   const didError = checkDid(ddo as Record<string, unknown>)
-  if (didError) merged.id = [...(merged.id || []), didError]
+  if (didError)
+    merged.id = [
+      ...(merged.id ?? []).filter((m) => !/valid for chainId/i.test(m)),
+      didError
+    ]
 
   return { valid: valid && !didError, errors: merged }
 }

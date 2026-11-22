@@ -1,10 +1,43 @@
 # Migrating from nautilus v1 to v2
 
 nautilus v2 keeps the builder pattern but sits on a different stack: `@oceanprotocol/lib`
-9.x instead of 3.4.6, ethers v6 instead of v5, ocean-node instead of Aquarius and
+10.x instead of 3.4.6, ethers v6 instead of v5, ocean-node instead of Aquarius and
 Provider, and DDO v5 instead of v4.1.0.
 
 This is a call-by-call map. If something is not listed, it did not change.
+
+## ocean.js 10 and ddo-js 1.1
+
+nautilus now depends on `@oceanprotocol/lib` 10.1.0 and `@oceanprotocol/ddo-js` 1.1.0, and
+needs ocean.js `^10.1.0` as its peer:
+
+```diff
+- "@oceanprotocol/lib": "^9.2.1",
++ "@oceanprotocol/lib": "^10.1.0",
+```
+
+- **Escrow v1 and v2.** ocean.js 10 ships the Escrow v2 contracts (`@oceanprotocol/contracts`
+  3.x): an authorisation has an expiry, and `authorize` takes it. pontusx-node and its
+  deployments still use Escrow v1 (contracts 2.x). `compute()` checks which one the quoted
+  escrow is (ERC-165) and uses that contract's ABI, so paid compute works with both.
+- **Expiring authorisations (v2).** An authorisation without expiry stays without. An
+  expiring one that ends before the job's lock (plus 120 seconds) is moved out to it. One
+  that has already expired is how a payer revokes, so `compute()` refuses with an `Error`
+  instead of re-enabling it; authorise the environment again yourself. Nothing is spent.
+- **Escrow addresses.** ocean.js's address data now names the v2 contracts on every chain it
+  ships escrows for (OP Sepolia, Sepolia, Optimism, Base, mainnet). A node that still quotes
+  its old v1 escrow there is refused before anything is spent, unless you set that contract
+  as `config.escrow`. Funds left in an old escrow stay there; withdraw them from it.
+- **`OceanNodeError.status` and `code`.** For calls that go through ocean.js, the error now
+  carries the node's HTTP status and its machine-readable `code` when the node sent one, e.g.
+  `MAINTENANCE_MODE` (the node takes no new compute jobs; running ones continue).
+- **DDO types.** ddo-js 1.1 types `credentials` on `ServiceV5` and on the v5
+  `credentialSubject` as an object (`{ allow, deny, match_allow, match_deny }`), not an
+  array; address values may be strings or `{ address }`. The builders already write that
+  shape; only code that reads these types changes.
+- **Validation.** ddo-js 1.1 reports a DID that does not derive from `nftAddress` and
+  `chainId` itself; [`validate`](https://nautilus.delta-dao.com/docs/guides/validation) still reports it once, naming the
+  expected DID.
 
 ## Nodes with the native SSI module (pontusx-node)
 
@@ -711,7 +744,7 @@ way, read the state from the chain, not from the node. See
 ```diff
 - "@oceanprotocol/lib": "3.4.6",
 - "ethers": "^5.7.2"
-+ "@oceanprotocol/lib": "^9.2.1",
++ "@oceanprotocol/lib": "^10.1.0",
 + "ethers": "^6.17.0"
 ```
 
@@ -723,10 +756,7 @@ do not need a direct `@oceanprotocol/ddo-js` dependency:
 import type { AssetV5, MetadataV5, ServiceV5 } from '@deltadao/nautilus'
 ```
 
-ocean.js 9.2.1 still nests an older ddo-js under `@oceanprotocol/lib` for its own internals.
-It is harmless and needs no override.
-
-DDO v5 now requires a `credentials` object on the asset and on every service (ddo-js 1.0.0).
+DDO v5 now requires a `credentials` object on the asset and on every service (ddo-js 1.x).
 The builders always emit one (`{}` when no access rules are set), so this only matters if you
 assemble or patch DDOs by hand.
 

@@ -1319,6 +1319,26 @@ describe("the node's text in a message", () => {
     expect(cause.message).not.to.contain('0xsecret')
     expect(cause.message.length).to.be.at.most(201)
   })
+
+  it("keeps the node's HTTP status and error code from ocean.js 10's typed errors", async () => {
+    const { OceanNodeProviderError } = await import('@oceanprotocol/lib')
+    const raw = new OceanNodeProviderError(
+      { error: 'node is in maintenance', code: 'MAINTENANCE_MODE' },
+      503
+    )
+
+    const error = OceanNodeError.from('computeStart', raw)
+
+    expect(error.status).to.equal(503)
+    expect(error.code).to.equal('MAINTENANCE_MODE')
+    // a plain error (ocean.js 9, or a network failure) has neither
+    const plain = OceanNodeError.from('computeStart', new Error('fetch failed'))
+    expect(plain.status).to.equal(undefined)
+    expect(plain.code).to.equal(undefined)
+    // a code that is not a short identifier is not taken over
+    const odd = Object.assign(new Error('x'), { code: 'a b\n<script>' })
+    expect(OceanNodeError.from('x', odd).code).to.equal(undefined)
+  })
   it('keeps a URL whole across a backslash in its path, and ends it at a quote', () => {
     const token = FAKE.rpcPathToken
     for (const [text, expected] of [
