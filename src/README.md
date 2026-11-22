@@ -55,7 +55,7 @@ Prefer running code to reading it? Every flow above is a command in [`examples/`
 
 ## What's new in 2.0.0
 
-nautilus v1 targeted `@oceanprotocol/lib` 3.4.6, ethers v5, Aquarius, Provider and DDO v4.1.0 — none of which a current Ocean deployment runs. v2 targets `@oceanprotocol/lib` 9.x, ethers v6, ocean-node and DDO v5, and adds first-class support for credential-gated assets: the policy server with walt.id's wallet-api, and nodes with the native SSI module (pontusx-node: walt.id verifier-api2, OpenID4VP and DCQL) with walt.id's wallet-api2.
+nautilus v1 targeted `@oceanprotocol/lib` 3.4.6, ethers v5, Aquarius, Provider and DDO v4.1.0 — none of which a current Ocean deployment runs. v2 targets `@oceanprotocol/lib` 10.x, ethers v6, ocean-node and DDO v5, and adds first-class support for credential-gated assets: the policy server with walt.id's wallet-api, and nodes with the native SSI module (pontusx-node: walt.id verifier-api2, OpenID4VP and DCQL) with walt.id's wallet-api2.
 
 The builder pattern is unchanged as the primary API: `AssetBuilder`, `ServiceBuilder` and `ConsumerParameterBuilder` keep their fluent shape, and every v1 capability still has a method. This is a breaking major because the DDO model, the transport and the signer library all changed underneath.
 

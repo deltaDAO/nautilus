@@ -363,8 +363,10 @@ and text, unquoted, and `status` the HTTP status:
 ```
 
 For the calls that go through ocean.js, a JSON string or `{ error }` answer is unwrapped
-(`[ocean-node] freeComputeStart: Error: Access to asset … was denied`); ocean.js passes on
-no status, and nothing of a plain-text answer.
+(`[ocean-node] freeComputeStart: Error: Access to asset … was denied`), and nothing of a
+plain-text answer. ocean.js 10 passes on the node's HTTP status as `status` and its
+machine-readable `code` when the node sent one, e.g. `MAINTENANCE_MODE` when the node drains
+(it takes no new compute or service jobs; running ones continue).
 
 The node's text is sanitized before it goes into a message: ANSI escapes and control
 characters (CR and LF included) are removed; the value of every key the log redaction

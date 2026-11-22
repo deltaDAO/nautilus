@@ -201,7 +201,7 @@ describe('escrow pin in Nautilus.create', () => {
 
     // ocean.js's ConfigHelper fills it from the address data's plain Escrow.
     expect(nautilus.getOceanConfig().escrow).to.equal(
-      '0x7842Fa3B2d87Ff1cd52C4152382f7C4B3406E5A6'
+      '0x8bA04715B1b210f710426b21A29887EEd4EA6751'
     )
 
     await nautilus.compute(JOB)

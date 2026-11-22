@@ -183,7 +183,7 @@ deprecating it first. If you deprecate, keep the asset object you read before
 ## SSI commands are HTTP only
 
 On a node with the native SSI module, nautilus opens and checks sessions with the node's
-`ssiInitiate`, `ssiStatus` and `validateRego` commands. ocean.js 9.2.1 has no generic P2P
+`ssiInitiate`, `ssiStatus` and `validateRego` commands. ocean.js (10.1.0) has no generic P2P
 command, so nautilus sends them over HTTP only: with a P2P node URI they fail with an
 `OceanNodeError` before anything is sent. Each command is also signed on its own
 (`address + nonce + command`), so a client set up with a pre-computed signature cannot send
