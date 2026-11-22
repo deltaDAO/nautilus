@@ -14,11 +14,15 @@ import type { StorageObject } from '@oceanprotocol/lib'
 import { FetchRequest, FetchResponse, makeError, Wallet } from 'ethers'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PublishedNotIndexed } from '../../src/@types/Publish.js'
-import { CredentialListTypes } from '../../src/ddo/types.js'
+import {
+  CredentialListTypes,
+  type SsiPolicyV2Value
+} from '../../src/ddo/types.js'
 import {
   addCredentialAddresses,
   addRequestCredentials
 } from '../../src/identity/policy.js'
+import type { SsiCapabilities } from '../../src/identity/ssi.js'
 import { useAsyncContext } from '../../src/log/context.js'
 import { type DebugEvent, setDebug } from '../../src/log/debug.js'
 import {
@@ -2144,5 +2148,114 @@ describe('indexer nonce preflight', () => {
     // The nonce has not moved: the same line, not again (code review round 2, n5).
     await nautilus.publish(validAsset())
     expect(log.named('node.indexer_nonce.zero_byte_accepted')).to.have.length(1)
+  })
+})
+
+describe('publish preflight on a node with the native SSI module', () => {
+  const SSI: SsiCapabilities = {
+    enabled: true,
+    formats: ['jwt_vc_json', 'dc+sd-jwt', 'vc+sd-jwt'],
+    vcPolicies: ['signature'],
+    rego: true,
+    gaiaxLevels: ['SC'],
+    legacyFormat: true,
+    verifierPublicHost: 'verifier.test.invalid'
+  }
+  const V2: SsiPolicyV2Value = {
+    version: '2',
+    dcql: {
+      credentials: [
+        { id: 'pid', format: 'dc+sd-jwt', meta: { vct_values: ['urn:pid'] } }
+      ]
+    }
+  }
+
+  function gated(value: SsiPolicyV2Value = V2) {
+    return new AssetBuilder()
+      .setType('dataset')
+      .setName('SSI Dataset')
+      .setProvidedBy('deltaDAO AG')
+      .setDescription('A description')
+      .addService(service())
+      .addSsiPolicyV2(value)
+      .build()
+  }
+
+  it('warns nothing for an SSIpolicyV2 asset the node can check', async () => {
+    const log = captureLog()
+    const { nautilus } = await createNautilus({ node: { ssi: SSI } })
+    await nautilus.publish(gated())
+    expect(
+      log.events.filter((event) => /preflight\.(ssi|gaiax)/.test(event.event))
+    ).to.deep.equal([])
+  })
+
+  it('warns when the node has no SSI module, or no verifier', async () => {
+    let log = captureLog()
+    let { nautilus } = await createNautilus({ node: { ssi: null } })
+    await nautilus.publish(gated())
+    expect(log.named('publish.preflight.ssi_v2_unsupported')).to.have.length(1)
+
+    log = captureLog()
+    ;({ nautilus } = await createNautilus({
+      node: { ssi: { ...SSI, enabled: false } }
+    }))
+    await nautilus.publish(gated())
+    expect(log.named('publish.preflight.ssi_disabled')).to.have.length(1)
+  })
+
+  it('warns about a legacy SSIpolicy and a Gaia-X level the node cannot check', async () => {
+    const log = captureLog()
+    const { nautilus } = await createNautilus({
+      node: { ssi: { ...SSI, legacyFormat: false } }
+    })
+    const asset = gated({
+      version: '2',
+      dcql: { credentials: [] },
+      gaiax: { minLabelLevel: 'L2' }
+    })
+    asset.ddo.credentials = addRequestCredentials(
+      asset.ddo.credentials,
+      CredentialListTypes.ALLOW,
+      [{ type: 'VerifiableId' }]
+    )
+
+    await nautilus.publish(asset)
+
+    const [legacy] = log.named('publish.preflight.ssi_legacy')
+    expect(legacy.msg).to.match(/no longer reads/)
+    const [gaiax] = log.named('publish.preflight.gaiax_unsupported')
+    expect(gaiax.fields).to.include({ level: 'L2' })
+  })
+
+  it('validateRego refuses locally what the node would refuse, and asks the node otherwise', async () => {
+    const { nautilus, node } = await createNautilus({
+      node: {
+        ssi: SSI,
+        regoValidation: { valid: false, errors: ['rego_type_error'] }
+      }
+    })
+
+    expect(
+      await nautilus.validateRego('package x\nallow := http.send({})')
+    ).to.deep.include({ valid: false })
+    expect(
+      (
+        await nautilus.validateRego('package x', {
+          policy: { ...V2, vcPolicies: ['regex' as never] }
+        })
+      ).errors[0]
+    ).to.match(/^policy: /)
+    expect(node.calls.validateRego).to.have.length(0)
+
+    expect(
+      await nautilus.validateRego('package x\nallow := true', { policy: V2 })
+    ).to.deep.equal({
+      valid: false,
+      errors: ['rego_type_error']
+    })
+    expect(node.calls.validateRego).to.deep.equal([
+      { code: 'package x\nallow := true', policy: V2 }
+    ])
   })
 })

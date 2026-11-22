@@ -43,6 +43,8 @@ export type OperationName =
   | 'query'
   | 'getComputeEnvironments'
   | 'getComputeEnvironment'
+  | 'getSsiCapabilities'
+  | 'validateRego'
 
 /** One running operation. */
 export interface OperationContext {
@@ -238,6 +240,8 @@ const EVENTS: Record<OperationName, OperationEvents> = {
   getAsset: NODE_QUERY,
   getAssets: NODE_QUERY,
   query: NODE_QUERY,
+  getSsiCapabilities: NODE_QUERY,
+  validateRego: NODE_QUERY,
   waitForIndexer: {
     started: 'node.operation.started',
     finished: 'node.operation.finished',

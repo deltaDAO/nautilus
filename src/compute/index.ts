@@ -45,7 +45,10 @@ import {
   getServiceIndex,
   getServices
 } from '../ddo/read.js'
-import type { PolicyServerComputePayload } from '../ddo/types.js'
+import type {
+  PolicyServerComputePayload,
+  SsiComputePayload
+} from '../ddo/types.js'
 import { PolicySessionResolver } from '../identity/PolicySessionResolver.js'
 import { type Logger, log } from '../log/logger.js'
 import type { OceanNodeClient } from '../node/OceanNodeClient.js'
@@ -606,34 +609,57 @@ function resolveMaxJobDuration(
  * Opens one policy session per input, datasets and algorithm alike, each for its own
  * (asset, service) on the node running the job: that node checks every input.
  *
- * The policy server receives the whole array on each per-input check and selects the entry
- * matching `documentId` + `serviceId`, so both are tagged on every element, and an input
- * never borrows another input's session. One input after the other: `initiate` is a signed
- * command, and the node accepts each nonce once.
+ * For a node with a policy server, an array: the policy server receives the whole array on
+ * each per-input check and selects the entry matching `documentId` + `serviceId`, so both
+ * are tagged on every element, and an input never borrows another input's session.
+ *
+ * For a node with the native SSI module, `{ sessionId, sessionIds }`: the node looks each
+ * input's session up by its DID in `sessionIds` (`sessionId` is the first, for nodes that
+ * read only that), checks them at `initializeCompute` and consumes them all-or-nothing at
+ * the start. Two inputs of one DID with different sessions cannot be told apart there, and
+ * are refused before anything is spent.
+ *
+ * One input after the other: each session is opened with a signed command, and the node
+ * accepts each nonce once.
  */
 async function resolvePolicies(
   node: OceanNodeClient,
   inputs: ResolvedInput[],
   consumerAddress: string,
   policySessions: PolicySessionResolver
-): Promise<PolicyServerComputePayload[] | undefined> {
+): Promise<PolicyServerComputePayload[] | SsiComputePayload | undefined> {
   const payloads: PolicyServerComputePayload[] = []
+  const sessionIds: Record<string, string> = {}
 
   for (const input of inputs) {
-    const session = await policySessions.resolve({
+    const session = await policySessions.resolveSession({
       node,
       asset: input.asset,
       serviceId: input.serviceId,
       consumerAddress
     })
+    if (!session) continue
 
-    if (session)
+    if (session.protocol === 'ssi') {
+      const did = input.asset.id
+      if (
+        Object.hasOwn(sessionIds, did) &&
+        sessionIds[did] !== session.sessionId
+      )
+        throw new Error(
+          `Two inputs of the compute job are services of ${did}, and each needs its own SSI session: the node looks sessions up by DID only, so it cannot tell them apart. Nothing was ordered or paid.`
+        )
+      sessionIds[did] = session.sessionId
+    } else
       payloads.push({
-        ...session,
+        ...session.payload,
         documentId: input.asset.id,
         serviceId: input.serviceId
       })
   }
+
+  const ids = Object.values(sessionIds)
+  if (ids.length) return { sessionId: ids[0], sessionIds }
 
   return payloads.length ? payloads : undefined
 }

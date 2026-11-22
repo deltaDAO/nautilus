@@ -1073,6 +1073,7 @@ describe('access with an order on chain', () => {
       },
       resolve: async () => asset,
       policySessionAddress: (address: string) => address,
+      getSsiCapabilities: async () => null,
       hasPolicyServer: async () => false,
       initialize: async () => ({ datatoken: DATATOKEN_ADDRESS, providerFee }),
       getDownloadUrl: vi.fn(async () => 'https://node.test.invalid/download')

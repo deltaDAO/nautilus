@@ -125,6 +125,7 @@ function policyNode(check: PolicySessionCheck | Error) {
   const node = {
     nodeUri: NODE,
     policySessionAddress: (address: string) => address,
+    getSsiCapabilities: async () => null,
     hasPolicyServer: async () => true,
     initializePolicyVerification: async () => {
       calls.initiate++
@@ -1268,6 +1269,7 @@ describe("a policy-server session id in the wallet's text (D10)", () => {
       auth: 'a-session-token',
       consumerAddress: OWNER_ADDRESS
     })
+    vi.spyOn(node, 'getSsiCapabilities').mockResolvedValue(null)
     vi.spyOn(node, 'hasPolicyServer').mockResolvedValue(true)
     vi.spyOn(node, 'initializePolicyVerification').mockResolvedValue({
       success: true,

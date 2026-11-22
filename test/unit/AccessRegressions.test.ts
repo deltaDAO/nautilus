@@ -281,6 +281,9 @@ describe('access endpoint routing', () => {
         policySessionAddress(address: string) {
           return address
         },
+        async getSsiCapabilities() {
+          return null
+        },
         async hasPolicyServer() {
           return false
         },
@@ -356,7 +359,7 @@ describe('access endpoint routing', () => {
         signer,
         chainConfig,
         policySessions: {
-          async resolve(request: { node: OceanNodeClient }) {
+          async resolveSession(request: { node: OceanNodeClient }) {
             asked.push(request.node.nodeUri)
             return null
           }
@@ -414,6 +417,9 @@ describe('provider-fee signature pre-check', () => {
         // A node without a policy server: no session is opened.
         policySessionAddress(address: string) {
           return address
+        },
+        async getSsiCapabilities() {
+          return null
         },
         async hasPolicyServer() {
           return false

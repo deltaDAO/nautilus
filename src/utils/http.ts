@@ -30,6 +30,8 @@ export interface FetchedText {
   body: string
   /** The `Retry-After` header, when the response has one. */
   retryAfter?: string
+  /** The `Deprecation` header, when the response has one. */
+  deprecation?: string
   /**
    * The URL that answered: the last one after followed redirects (`response.url`), or the
    * requested URL when fetch reports none.
@@ -406,6 +408,7 @@ async function readAnswer(
 ): Promise<FetchedText> {
   const body = await readBoundedText(response, maxBytes, signal, overflow)
   const retryAfter = response.headers?.get?.('retry-after') ?? undefined
+  const deprecation = response.headers?.get?.('deprecation') ?? undefined
 
   return {
     ok: response.ok,
@@ -413,7 +416,8 @@ async function readAnswer(
     statusText: response.statusText,
     body,
     url,
-    ...(retryAfter ? { retryAfter } : {})
+    ...(retryAfter ? { retryAfter } : {}),
+    ...(deprecation ? { deprecation } : {})
   }
 }
 

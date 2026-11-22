@@ -203,6 +203,9 @@ function computeNode(quote: object) {
     policySessionAddress(address: string) {
       return address
     },
+    async getSsiCapabilities() {
+      return null
+    },
     async hasPolicyServer() {
       return false
     },
@@ -1373,6 +1376,9 @@ describe('access() provider fee', () => {
       // A node without a policy server: no session is opened.
       policySessionAddress(address: string) {
         return address
+      },
+      async getSsiCapabilities() {
+        return null
       },
       async hasPolicyServer() {
         return false

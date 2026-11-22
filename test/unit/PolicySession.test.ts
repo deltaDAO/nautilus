@@ -146,6 +146,9 @@ function policyNode(
     policySessionAddress(address: string) {
       return address
     },
+    async getSsiCapabilities() {
+      return null
+    },
     async hasPolicyServer() {
       calls.push('hasPolicyServer')
       return 'policyServer' in options ? options.policyServer : true
@@ -1721,6 +1724,9 @@ describe('compute() with a policy server', () => {
       },
       policySessionAddress(address: string) {
         return address
+      },
+      async getSsiCapabilities() {
+        return null
       },
       async hasPolicyServer() {
         return true

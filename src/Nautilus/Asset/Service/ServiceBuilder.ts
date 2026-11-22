@@ -18,13 +18,15 @@ import type {
   ConsumerParameterV5,
   CredentialListTypes,
   RemoteObject,
-  RequestCredential
+  RequestCredential,
+  SsiPolicyV2Value
 } from '../../../ddo/types.js'
 import {
   addCredentialAddresses,
   addRequestCredentials,
   normalizeStoredCredentials
 } from '../../../identity/policy.js'
+import { addSsiPolicyV2, removeSsiPolicyV2 } from '../../../identity/ssi.js'
 import {
   type FileTypes,
   NautilusService,
@@ -355,7 +357,33 @@ export class ServiceBuilder<
     return this
   }
 
-  /** Requires verifiable credentials for this service specifically. */
+  /**
+   * Requires verifiable credentials for this service, on a node with the native SSI
+   * module: adds an `SSIpolicyV2` value to the service's `credentials.allow`, after
+   * checking it against the node's rules (`validateSsiPolicyV2Value`). The asset's values
+   * apply too (AND). See `AssetBuilder.addSsiPolicyV2`.
+   */
+  addSsiPolicyV2(value: SsiPolicyV2Value) {
+    this.service.credentials = addSsiPolicyV2(
+      this.service.credentials ?? {},
+      value
+    )
+    return this
+  }
+
+  /** Removes every `SSIpolicyV2` entry from the service's `credentials.allow`. */
+  removeSsiPolicyV2() {
+    if (this.service.credentials)
+      this.service.credentials = removeSsiPolicyV2(this.service.credentials)
+    return this
+  }
+
+  /**
+   * Requires verifiable credentials for this service specifically, on a node with a policy
+   * server.
+   *
+   * @deprecated for nodes with the native SSI module: use `addSsiPolicyV2`.
+   */
   addRequestCredentials(
     list: CredentialListTypes,
     requestCredentials: RequestCredential[]

@@ -13,6 +13,7 @@ import type {
   MatchRule,
   RemoteObject,
   RequestCredential,
+  SsiPolicyV2Value,
   VcPolicy,
   VpPolicy
 } from '../../ddo/types.js'
@@ -24,6 +25,7 @@ import {
   setVcPolicies,
   setVpPolicies
 } from '../../identity/policy.js'
+import { addSsiPolicyV2, removeSsiPolicyV2 } from '../../identity/ssi.js'
 import { NautilusAsset } from './NautilusAsset.js'
 import { NautilusDDO } from './NautilusDDO.js'
 import type {
@@ -291,10 +293,55 @@ export class AssetBuilder implements IAssetBuilder {
   }
 
   /**
-   * Requires verifiable credentials to access the asset.
+   * Requires verifiable credentials for every service of the asset, on a node with the
+   * native SSI module (OpenID4VP 1.0 / DCQL, verifier-api2): adds an `SSIpolicyV2` value to
+   * `credentials.allow`. The value is checked against the node's rules first
+   * (`validateSsiPolicyV2Value`), and an `SsiPolicyValidationError` names the first
+   * problem, before anything is published. Several values are all required (AND), with the
+   * service's own.
+   *
+   * ```ts
+   * builder.addSsiPolicyV2({
+   *   version: '2',
+   *   dcql: {
+   *     credentials: [{
+   *       id: 'legal_person',
+   *       format: 'jwt_vc_json',
+   *       meta: { type_values: [['gx:LegalPerson']] }
+   *     }]
+   *   },
+   *   vcPolicies: ['signature', 'expiration', 'revocation'],
+   *   specificVcPolicies: {
+   *     legal_person: [{ policy: 'allowed_issuer', allowed_issuer: ['did:web:issuer.example'] }]
+   *   }
+   * })
+   * ```
+   *
+   * Rego in the value is compiled only by the node: check it with
+   * `Nautilus.validateRego()` before publishing.
+   */
+  addSsiPolicyV2(value: SsiPolicyV2Value) {
+    this.asset.ddo.credentials = addSsiPolicyV2(
+      this.asset.ddo.credentials,
+      value
+    )
+    return this
+  }
+
+  /** Removes every `SSIpolicyV2` entry from the asset's `credentials.allow`. */
+  removeSsiPolicyV2() {
+    this.asset.ddo.credentials = removeSsiPolicyV2(this.asset.ddo.credentials)
+    return this
+  }
+
+  /**
+   * Requires verifiable credentials to access the asset, on a node with a policy server.
    *
    * Emitted as the `type: 'SSIpolicy'` entry the policy server parses — not the
    * `verifiableCredential` shape the ddo-js types declare, which nothing in the stack reads.
+   *
+   * @deprecated for nodes with the native SSI module, which only translate `SSIpolicy`
+   * while their operator keeps `SSI_LEGACY_FORMAT` on: use `addSsiPolicyV2`.
    */
   addRequestCredentials(
     list: CredentialListTypes,

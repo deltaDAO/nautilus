@@ -1,5 +1,9 @@
 import type { AssetV5 } from '../../src/ddo/index.js'
 import type {
+  RegoValidationResult,
+  SsiCapabilities
+} from '../../src/identity/ssi.js'
+import type {
   IndexerNonceState,
   OceanNodeClient,
   WaitForIndexerOptions
@@ -75,6 +79,10 @@ export interface NodeMockOptions {
   indexerNonce?: IndexerNonceState | Error
   /** What `hasPolicyServer` answers. Default: `undefined` (the status does not say). */
   policyServer?: boolean
+  /** What `getSsiCapabilities` answers. Default: `null` (no native SSI module). */
+  ssi?: SsiCapabilities | null
+  /** What `validateRego` answers. */
+  regoValidation?: RegoValidationResult
 }
 
 export interface NodeMock {
@@ -95,6 +103,10 @@ export interface NodeMock {
     getIndexerNonceState: number
     /** The node each `hasPolicyServer` call asked. */
     hasPolicyServer: string[]
+    /** The node each `getSsiCapabilities` call asked. */
+    getSsiCapabilities: string[]
+    /** Every `validateRego` call. */
+    validateRego: { code: string; policy?: unknown }[]
     resolve: string[]
     /** The node each `encrypt` call was addressed to — services must use their own. */
     encryptTargets: string[]
@@ -112,6 +124,8 @@ export function createNodeMock(options: NodeMockOptions = {}): NodeMock {
     checkDidFiles: [],
     getIndexerNonceState: 0,
     hasPolicyServer: [],
+    getSsiCapabilities: [],
+    validateRego: [],
     resolve: [],
     encryptTargets: [],
     fileInfoTargets: []
@@ -198,6 +212,15 @@ export function createNodeMock(options: NodeMockOptions = {}): NodeMock {
 
     policySessionAddress(address: string) {
       return address
+    },
+    async getSsiCapabilities() {
+      calls.getSsiCapabilities.push(client.nodeUri)
+      return options.ssi ?? null
+    },
+
+    async validateRego(code: string, policy?: unknown) {
+      calls.validateRego.push({ code, policy })
+      return options.regoValidation ?? { valid: true, errors: [] }
     },
     async hasPolicyServer() {
       calls.hasPolicyServer.push(client.nodeUri)

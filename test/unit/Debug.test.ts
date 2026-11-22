@@ -533,6 +533,7 @@ describe("sensitive: the raw value in the channel, never in the caller's error",
       const node = {
         nodeUri: NODE,
         policySessionAddress: (address: string) => address,
+        getSsiCapabilities: async () => null,
         hasPolicyServer: async () => true,
         initializePolicyVerification: async () => ({
           success: true,
@@ -1014,6 +1015,7 @@ describe('the same error, the same result, with the channel on or off', () => {
     const node = {
       nodeUri: NODE,
       policySessionAddress: (address: string) => address,
+      getSsiCapabilities: async () => null,
       hasPolicyServer: async () => true,
       initializePolicyVerification: async () => ({
         success: true,
@@ -1313,6 +1315,7 @@ describe('fix-round controls', () => {
     const node = {
       nodeUri: NODE,
       policySessionAddress: (address: string) => address,
+      getSsiCapabilities: async () => null,
       hasPolicyServer: async () => true,
       initializePolicyVerification: async () => ({
         success: true,
