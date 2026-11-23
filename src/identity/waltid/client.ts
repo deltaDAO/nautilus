@@ -110,12 +110,76 @@ export interface WaltIdWallet {
 
 export class WaltIdWalletError extends Error {
   readonly status?: number
+  /**
+   * The machine-readable code of a wallet-api2 address sign-in or address token refusal
+   * (`{ error, message, hint }`: `sign_in_disabled`, `verifier_not_allowed`, …), of the
+   * wallet UI's address gateway (`hanko_token_not_accepted`, `not_found`, …), or one of
+   * nautilus's own checks before anything is signed (`message_unexpected`,
+   * `wrong_endpoint`, `smart_account_not_deployed`, `signer_mismatch`).
+   */
+  readonly code?: string
+  /** What to do, and who fixes it, as the server said it (redacted, bounded). */
+  readonly hint?: string
+  /** Seconds to wait, from a `429` answer's `Retry-After`. */
+  readonly retryAfter?: number
 
-  constructor(operation: string, message: string, status?: number) {
+  constructor(
+    operation: string,
+    message: string,
+    status?: number,
+    extra: { code?: string; hint?: string; retryAfter?: number } = {}
+  ) {
     super(`[walt.id] ${operation}: ${message}`)
     this.name = 'WaltIdWalletError'
     this.status = status
+    if (extra.code !== undefined) this.code = extra.code
+    if (extra.hint !== undefined) this.hint = extra.hint
+    if (extra.retryAfter !== undefined) this.retryAfter = extra.retryAfter
   }
+}
+
+/**
+ * The longest nonce the legacy web3 login signs. walt.id answers `Sign in: 0x` and 64 hex
+ * characters (ktor-authnz), older versions a UUID or a signed nonce token (a JWT).
+ */
+const MAX_LEGACY_NONCE_LENGTH = 1024
+
+/**
+ * What the legacy web3 login signs: one line of base64url, hex, a UUID or a JWT, optionally
+ * after `Sign in: `. Nothing with a line break or other prose.
+ */
+const LEGACY_NONCE = /^(?:Sign in: )?[A-Za-z0-9._~+/=:-]{8,}$/
+
+/** The first line of an EIP-4361 (Sign-In with Ethereum) message. */
+const SIWE_MARKER = /wants you to sign in with your ethereum account/i
+
+/**
+ * Throws unless `nonce` is a short nonce of the form the legacy web3 login expects. The
+ * signer's key is the same one that signs in to wallet-api2 with an EIP-4361 message: a
+ * malicious endpoint posing as a legacy wallet could hand nautilus such a message and turn
+ * the signature into an address token. So nautilus never `personal_sign`s foreign text here.
+ */
+export function assertLegacyNonce(nonce: unknown): string {
+  if (typeof nonce !== 'string')
+    throw new WaltIdWalletError(
+      'auth/account/web3/nonce',
+      'the wallet answered no nonce to sign'
+    )
+  if (SIWE_MARKER.test(nonce))
+    throw new WaltIdWalletError(
+      'auth/account/web3/nonce',
+      'the wallet asked nautilus to sign a Sign-In with Ethereum message instead of a nonce. Refused: this is how a token for another service would be obtained with your key. Check the walletApi URL.',
+      undefined,
+      { code: 'message_unexpected' }
+    )
+  if (nonce.length > MAX_LEGACY_NONCE_LENGTH || !LEGACY_NONCE.test(nonce))
+    throw new WaltIdWalletError(
+      'auth/account/web3/nonce',
+      `the wallet asked nautilus to sign text that is not a login nonce (${nonce.length} characters). Refused: nautilus signs only a one-line nonce with this key.`,
+      undefined,
+      { code: 'message_unexpected' }
+    )
+  return nonce
 }
 
 export interface WaltIdHttpWalletOptions {
@@ -145,7 +209,7 @@ export class WaltIdHttpWallet implements WaltIdWallet {
       { raw: true }
     )
 
-    const signed = await signer.signMessage(nonce)
+    const signed = await signer.signMessage(assertLegacyNonce(nonce))
 
     return this.request<WaltIdSession>('auth/account/web3/signed', {
       method: 'POST',

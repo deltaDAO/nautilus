@@ -38,6 +38,7 @@
     "@changesets/cli": "^3.0.1",
     "@types/node": "^26.4.0",
     "@vitest/coverage-v8": "^4.1.11",
+    "jose": "^6.2.12",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11"
   }

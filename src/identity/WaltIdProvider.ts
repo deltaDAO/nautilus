@@ -98,7 +98,14 @@ export interface WaltIdCredentialProviderOptions {
  * - `wallet-setup`: no wallet session, wallet or DID, or the wallet is another account's;
  * - `request-invalid`: the presentation request or definition was refused before anything
  *   was presented (not an `openid4vp://` URL, an insecure or link-local URI, a credential
- *   type the asset does not ask for, no definition).
+ *   type the asset does not ask for, no definition);
+ * - `sign-in`: a wallet-api2 address sign-in failed, or its address token was refused
+ *   (`details.code`: wallet-api2's or the address gateway's code, e.g. `sign_in_disabled`,
+ *   `token_expired`, `hanko_token_not_accepted`, or nautilus's own `message_unexpected`,
+ *   `wrong_endpoint`, `signer_mismatch`, `smart_account_not_deployed`);
+ * - `not-permitted`: the address token may not do this (`details.code`, e.g.
+ *   `verifier_not_allowed`, `credential_not_on_access_list`, `did_web_holder_disabled`):
+ *   an organisation admin changes the address's sign-in settings.
  */
 export type CredentialPresentationReason =
   | 'verifier-rejected'
@@ -107,6 +114,8 @@ export type CredentialPresentationReason =
   | 'none-selected'
   | 'wallet-setup'
   | 'request-invalid'
+  | 'sign-in'
+  | 'not-permitted'
 
 /**
  * Raised when the wallet could not answer the presentation request. `reason` says which step
@@ -127,6 +136,8 @@ export class CredentialPresentationError extends Error {
   /**
    * For `verifier-rejected` and `wallet-failed`: `{ errorMessage }`, the wallet's message,
    * redacted and bounded. For `no-matching-credential`: what the wallet reports missing.
+   * From wallet-api2 address tokens (`sign-in`, `not-permitted`, and `wallet-failed` for
+   * e.g. `rate_limited`): also `code`, and `hint`, `status` and `retryAfter` when known.
    */
   readonly details?: unknown
 
