@@ -197,7 +197,8 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
         new CredentialPresentationError(problem, undefined, 'request-invalid')
       )
 
-    const matches: Record<string, WalletApi2CredentialOption[]> = {}
+    const matches: Record<string, WalletApi2CredentialOption[]> =
+      Object.create(null)
     for (const option of preview.credentialOptions) {
       const list = matches[option.queryId] ?? []
       list.push(option)
@@ -445,7 +446,7 @@ function defaultSelection(
         }
       ]
 
-  const selection: CredentialSelection = {}
+  const selection: CredentialSelection = Object.create(null)
   const missing: string[][] = []
 
   for (const requirement of requirements) {

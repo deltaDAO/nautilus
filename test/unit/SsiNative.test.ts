@@ -1523,6 +1523,23 @@ describe('WalletApi2CredentialProvider', () => {
     expect(calls.map((call) => call.name)).to.include('reject')
   })
 
+  it('selects credentials for query IDs that name Object properties', async () => {
+    const ids = ['toString', '__proto__']
+    const { wallet, calls } = fakeWallet({
+      credentialOptions: ids.map((queryId) => ({ queryId, credentialId: 'c' })),
+      credentialRequirements: [{ options: [ids] }]
+    })
+    await new WalletApi2CredentialProvider({ wallet, walletId: 'w' }).present(
+      challenge({
+        dcql: { credentials: ids.map((id) => ({ id, format: 'jwt_vc_json' })) }
+      })
+    )
+    expect(
+      (calls[1].args[1] as { selectedCredentialOptions: unknown[] })
+        .selectedCredentialOptions
+    ).to.deep.equal(ids.map((queryId) => ({ queryId, credentialId: 'c' })))
+  })
+
   it('takes an onSelectCredentials choice, and refuses one that was not offered', async () => {
     const chosen = fakeWallet()
     await new WalletApi2CredentialProvider({
