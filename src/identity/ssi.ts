@@ -402,7 +402,7 @@ export function validateSsiPolicyCombination(
       } else if (isSsiEntry(entry) && 'values' in entry) {
         // The native module translates these legacy queries into jwt_vc_json.
         for (const value of entry.values) {
-          if (!isRecord(value)) continue
+          if (!isRecord(value) || !('request_credentials' in value)) continue
           const requests = value.request_credentials
           for (const request of Array.isArray(requests) ? requests : [requests])
             if (
