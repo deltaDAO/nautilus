@@ -1689,6 +1689,39 @@ describe('WalletApi2HttpClient', () => {
     ])
   })
 
+  it('selects a required query whose only credential follows 500 other options', async () => {
+    const first = Array.from({ length: 500 }, (_, i) => ({
+      queryId: 'legal_person',
+      credentialId: `cred-${i}`
+    }))
+    const last = { queryId: 'company', credentialId: 'company-cred' }
+    const ids = ['legal_person', 'company']
+    const wallet = new WalletApi2HttpClient({
+      apiUrl: 'https://wallet-api.test.invalid',
+      token: 't',
+      fetchImpl: stub(200, {
+        handle: 'handle-0123456789abcdef',
+        preview: {
+          ...PREVIEW,
+          credentialOptions: [...first, last],
+          credentialRequirements: [{ options: [ids] }]
+        }
+      })
+    })
+    const submit = vi
+      .spyOn(wallet, 'submitPresentation')
+      .mockResolvedValue({ transmissionSuccess: true })
+    await new WalletApi2CredentialProvider({ wallet, walletId: 'w' }).present(
+      challenge({
+        dcql: { credentials: ids.map((id) => ({ id, format: 'jwt_vc_json' })) }
+      })
+    )
+    expect(submit.mock.calls[0][1].selectedCredentialOptions).to.deep.equal([
+      first[0],
+      last
+    ])
+  })
+
   it('rejects handles with oversized or malformed transaction data', async () => {
     const item = {
       type: 'org.oceanenterprise.transaction-data.asset-access',

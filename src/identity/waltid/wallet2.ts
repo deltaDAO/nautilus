@@ -443,7 +443,6 @@ function readPreview(raw: Record<string, unknown>): WalletApi2Preview {
       : []
     )
       .filter(isRecord)
-      .slice(0, 500)
       .flatMap((option): WalletApi2CredentialOption[] => {
         const queryId = str(option.queryId, 200)
         const credentialId = str(option.credentialId, 200)
