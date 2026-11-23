@@ -463,7 +463,7 @@ function legacyList(value: unknown): unknown[] {
 }
 
 // The legacy market JSON-encoded requests and policies, sometimes repeatedly.
-function decodeLegacy(value: unknown): unknown {
+function parseLegacy(value: unknown): unknown {
   for (let i = 0; i < 3 && typeof value === 'string'; i++) {
     if (!/^["{[]/.test(value.trim())) break
     try {
@@ -471,9 +471,14 @@ function decodeLegacy(value: unknown): unknown {
     } catch {
       break
     }
-    assertSafeJson(value)
   }
   return value
+}
+
+function decodeLegacy(value: unknown): unknown {
+  const decoded = parseLegacy(value)
+  assertSafeJson(decoded)
+  return decoded
 }
 
 const legacyAliases = new Map([
@@ -537,15 +542,17 @@ function legacySessionPolicy(
   if (rawRequests.length > MAX_CREDENTIAL_QUERIES)
     fail('too many credential queries for one session')
   const requests = rawRequests.map((raw, index) => {
-    const request = decodeLegacy(raw)
+    const request = parseLegacy(raw)
     if (!isRecord(request)) return {}
-    const format = request.format === 'jwt_vc' ? 'jwt_vc_json' : request.format
+    const { type, format: rawFormat, policies } = request
+    assertSafeJson({ type, format: rawFormat, policies })
+    const format = rawFormat === 'jwt_vc' ? 'jwt_vc_json' : rawFormat
     if (level && format === 'jwt_vc_json')
-      failGaiaXMixing(String(request.format), String(request.type))
+      failGaiaXMixing(String(rawFormat), String(type))
     return {
-      type: request.type,
+      type,
       format,
-      policies: vcPolicies(request.policies, index)
+      policies: vcPolicies(policies, index)
     }
   })
   const targetedRego = rego.length

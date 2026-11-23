@@ -266,6 +266,19 @@ describe('merged SSI session limits', () => {
     ({ allow: [{ type: 'SSIpolicy', values: [policy] }] }) as DdoCredentials
   const request = { type: 'pid', format: 'jwt_vc' }
 
+  it('checks only translated fields of an encoded request while checking the entire raw entry', () => {
+    const extension = { constructor: 'metadata' }
+    const extended = { ...request, extension }
+    const checkRequest = (raw: unknown) =>
+      validateSsiPolicyCombination(legacy({ request_credentials: raw }))
+
+    expect(() => checkRequest(JSON.stringify(extended))).not.toThrow()
+    expect(() => checkRequest(extended)).toThrow(/forbidden key "constructor"/)
+    expect(() =>
+      checkRequest(JSON.stringify({ ...request, policies: [extension] }))
+    ).toThrow(/forbidden key "constructor"/)
+  })
+
   it('counts translated legacy requests alongside V2 queries in either block', () => {
     const asset = legacy({ request_credentials: request })
     const atLimit = addSsiPolicyV2({}, value(19))
