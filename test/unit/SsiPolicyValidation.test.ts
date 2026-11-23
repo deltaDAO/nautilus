@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { SsiPolicyV2Value } from '../../src/ddo/types.js'
+import type { DdoCredentials, SsiPolicyV2Value } from '../../src/ddo/types.js'
 import {
   addSsiPolicyV2,
   validateSsiPolicyCombination,
@@ -7,6 +7,40 @@ import {
 } from '../../src/identity/ssi.js'
 
 describe('SSIpolicyV2 entry validation', () => {
+  it('limits raw SSI values across entries separately for each block', () => {
+    const value: SsiPolicyV2Value = {
+      version: '2',
+      dcql: { credentials: [] },
+      gaiax: { requireCompliance: true }
+    }
+    const block = {
+      allow: [
+        { type: 'SSIpolicyV2', values: Array(10).fill(value) },
+        {
+          type: 'SSIpolicy',
+          values: Array(10).fill({
+            request_credentials: [{ type: 'pid', format: 'vc+sd-jwt' }]
+          })
+        }
+      ]
+    } satisfies DdoCredentials
+    expect(() => validateSsiPolicyCombination(block, block)).not.toThrow()
+    expect(() => addSsiPolicyV2(block, value)).not.toThrow()
+    expect(() => addSsiPolicyV2(block, { ...value, rego: [] })).toThrow(
+      /too many SSI policies/
+    )
+    const overLimit: DdoCredentials = {
+      allow: [...block.allow, { type: 'SSIpolicyV2', values: [value] }]
+    }
+    for (const blocks of [
+      [block, overLimit],
+      [overLimit, block]
+    ])
+      expect(() => validateSsiPolicyCombination(...blocks)).toThrow(
+        /too many SSI policies/
+      )
+  })
+
   it('checks the size of the whole entry after deduplicating values', () => {
     const largeValue = (id: string): SsiPolicyV2Value => ({
       version: '2',

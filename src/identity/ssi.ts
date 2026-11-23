@@ -451,14 +451,27 @@ function sessionPolicyKey(value: SsiPolicyV2Value): string {
   })
 }
 
+/** The node counts every SSI value in one allow list before merging sessions. */
+function assertSsiPolicyCount(entries: DdoCredential[]): void {
+  let count = 0
+  for (const entry of entries) {
+    if (isSsiEntry(entry) && 'values' in entry && Array.isArray(entry.values))
+      count += entry.values.length
+  }
+  if (count > MAX_CREDENTIAL_QUERIES)
+    fail('too many SSI policies in one credentials block')
+}
+
 /** Checks limits and incompatible query formats after merging a service's policies. */
 export function validateSsiPolicyCombination(
   ...blocks: (DdoCredentials | undefined)[]
 ): void {
   const level = requiredGaiaXLevel(...blocks)
   const policies = new Map<string, SsiPolicyV2Value>()
-  for (const block of blocks)
-    for (const entry of block?.allow ?? []) {
+  for (const block of blocks) {
+    const entries = block?.allow ?? []
+    assertSsiPolicyCount(entries)
+    for (const entry of entries) {
       if (isSsiPolicyV2Credential(entry)) {
         for (const value of entry.values) {
           validateSsiPolicyV2Value(value)
@@ -479,6 +492,7 @@ export function validateSsiPolicyCombination(
         }
       }
     }
+  }
   // Gaia-X adds compliance and legal-person queries, plus a service offering from L1.
   let queryCount = level === undefined ? 0 : level === 'SC' ? 2 : 3
   let regoCount = 0
@@ -542,6 +556,7 @@ export function addSsiPolicyV2(
     fail('the SSIpolicyV2 entry is larger than 256 KiB')
 
   entries[index === -1 ? entries.length : index] = entry
+  assertSsiPolicyCount(entries)
 
   return { ...credentials, allow: entries }
 }
