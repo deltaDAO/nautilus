@@ -196,11 +196,8 @@ export interface EscrowPlan {
     maxLockedAmount: bigint
     maxLockSeconds: bigint
     maxLockCounts: bigint
-    /**
-     * Escrow v2 only: after it the payee can no longer create or extend locks; `0` is
-     * indefinite, which is what a v1 authorisation always is.
-     */
-    expiryTimestamp: bigint
+    /** Snapshot used to plan these limits, checked again before writing. */
+    previous: Awaited<ReturnType<typeof readAuthorization>>
   }
   /** The escrow contract's generation, read before planning. */
   version: EscrowVersion
@@ -255,52 +252,21 @@ export async function planEscrow(
       )
   }
 
-  const auths = (await escrow.getAuthorizations(
-    quote.token,
-    payer,
-    quote.payee
-  )) as unknown[]
-  const standing = (auths ?? []).find(
-    (auth) => getAddress(String(field(auth, 'payee', 0))) === quote.payee
+  const current = await readAuthorization(escrow, quote, payer, version)
+  const expiry = await renewalExpiry(
+    signer,
+    quote,
+    current.expiryTimestamp,
+    false
   )
-
-  const current = {
-    maxLockedAmount: toBigInt(field(standing, 'maxLockedAmount', 1) ?? 0),
-    currentLockedAmount: toBigInt(
-      field(standing, 'currentLockedAmount', 2) ?? 0
-    ),
-    maxLockSeconds: toBigInt(field(standing, 'maxLockSeconds', 3) ?? 0),
-    maxLockCounts: toBigInt(field(standing, 'maxLockCounts', 4) ?? 0),
-    currentLocks: toBigInt(field(standing, 'currentLocks', 5) ?? 0),
-    // v2 only; a v1 authorisation never expires
-    expiryTimestamp:
-      version === 2 ? toBigInt(field(standing, 'expiryTimestamp', 6) ?? 0) : 0n
-  }
-
-  // An expiring v2 authorisation must outlast the job's lock, which the node creates only
-  // after the orders and the start call: EXPIRY_MARGIN_SECONDS on top, as ocean.js's own
-  // escrow check adds. Read from the chain's clock, which the contract compares against.
-  let lockUntil = 0n
-
-  if (current.expiryTimestamp !== 0n) {
-    const now = await chainTime(signer)
-
-    // In v2 a payer revokes by re-authorising with a past expiry: never undo that.
-    if (current.expiryTimestamp < now)
-      throw new Error(
-        `The payer's escrow authorisation for ${quote.payee} on ${quote.escrowAddress} expired at ${current.expiryTimestamp} (chain time ${now}), which is how an authorisation is revoked; nautilus does not re-authorise it. Authorise the payee again to run paid jobs on it. Nothing was spent.`
-      )
-
-    lockUntil = now + quote.minLockSeconds + EXPIRY_MARGIN_SECONDS
-  }
 
   const neededLocked = current.currentLockedAmount + quote.amount
   const covered =
-    standing !== undefined &&
+    current.present &&
     current.maxLockedAmount >= neededLocked &&
     current.maxLockSeconds >= quote.minLockSeconds &&
     current.maxLockCounts > current.currentLocks &&
-    (current.expiryTimestamp === 0n || current.expiryTimestamp >= lockUntil)
+    current.expiryTimestamp === expiry
 
   return {
     quote,
@@ -316,10 +282,7 @@ export async function planEscrow(
           maxLockedAmount: max(current.maxLockedAmount, neededLocked),
           maxLockSeconds: max(current.maxLockSeconds, quote.minLockSeconds),
           maxLockCounts: max(current.maxLockCounts, current.currentLocks + 1n),
-          expiryTimestamp:
-            current.expiryTimestamp === 0n
-              ? 0n
-              : max(current.expiryTimestamp, lockUntil)
+          previous: current
         }
   }
 }
@@ -355,18 +318,91 @@ export async function fundEscrow(
     })
   }
 
-  if (authorize)
+  if (authorize) {
+    const latest = await readAuthorization(escrow, quote, plan.payer, version)
+    const previous = authorize.previous
+    if (
+      latest.present !== previous.present ||
+      latest.expiryTimestamp !== previous.expiryTimestamp ||
+      latest.maxLockedAmount !== previous.maxLockedAmount ||
+      latest.maxLockCounts !== previous.maxLockCounts ||
+      latest.maxLockSeconds !== previous.maxLockSeconds ||
+      latest.currentLockedAmount !== previous.currentLockedAmount ||
+      latest.currentLocks !== previous.currentLocks
+    )
+      throw new Error(
+        `The payer's escrow authorisation for ${quote.payee} changed after planning. No authorisation or order was sent.`
+      )
+    const expiry = await renewalExpiry(
+      signer,
+      quote,
+      latest.expiryTimestamp,
+      deposit > 0n
+    )
+
     await send(escrow, chainConfig, signer, 'authorize', [
       quote.token,
       quote.payee,
       authorize.maxLockedAmount,
       authorize.maxLockSeconds,
       authorize.maxLockCounts,
-      ...(version === 2 ? [authorize.expiryTimestamp] : [])
+      ...(version === 2 ? [expiry] : [])
     ])
+  }
 }
 
 // #region helpers
+
+async function readAuthorization(
+  escrow: EscrowContract,
+  quote: EscrowPaymentQuote,
+  payer: string,
+  version: EscrowVersion
+) {
+  const auths = (await escrow.getAuthorizations(
+    quote.token,
+    payer,
+    quote.payee
+  )) as unknown[]
+  const standing = (auths ?? []).find(
+    (auth) => getAddress(String(field(auth, 'payee', 0))) === quote.payee
+  )
+
+  return {
+    present: standing !== undefined,
+    maxLockedAmount: toBigInt(field(standing, 'maxLockedAmount', 1) ?? 0),
+    currentLockedAmount: toBigInt(
+      field(standing, 'currentLockedAmount', 2) ?? 0
+    ),
+    maxLockSeconds: toBigInt(field(standing, 'maxLockSeconds', 3) ?? 0),
+    maxLockCounts: toBigInt(field(standing, 'maxLockCounts', 4) ?? 0),
+    currentLocks: toBigInt(field(standing, 'currentLocks', 5) ?? 0),
+    // v2 only; a v1 authorisation never expires
+    expiryTimestamp:
+      version === 2 ? toBigInt(field(standing, 'expiryTimestamp', 6) ?? 0) : 0n
+  }
+}
+
+/** Expiring grants must cover the lock time and the orders and start call ahead of it. */
+async function renewalExpiry(
+  signer: Signer,
+  quote: EscrowPaymentQuote,
+  expiryTimestamp: bigint,
+  deposited: boolean
+): Promise<bigint> {
+  if (expiryTimestamp === 0n) return 0n
+  const now = await chainTime(signer)
+
+  if (expiryTimestamp < now)
+    throw new Error(
+      `The payer's escrow authorisation for ${quote.payee} on ${quote.escrowAddress} expired at ${expiryTimestamp} (chain time ${now}), which is how an authorisation is revoked; nautilus does not re-authorise it. Authorise the payee again to run paid jobs on it. ${deposited ? 'The deposit was confirmed.' : 'Nothing was spent.'}`
+    )
+
+  return max(
+    expiryTimestamp,
+    now + quote.minLockSeconds + EXPIRY_MARGIN_SECONDS
+  )
+}
 
 function escrowAt(
   signer: Signer,
@@ -414,7 +450,7 @@ async function chainTime(signer: Signer): Promise<bigint> {
 
   if (!block)
     throw new Error(
-      'Cannot read the chain time to check the escrow authorisation expiry: the signer has no provider. Nothing was spent.'
+      'Cannot read the chain time to check the escrow authorisation expiry: the latest block is unavailable.'
     )
 
   return BigInt(block.timestamp)

@@ -1222,6 +1222,52 @@ describe('compute() escrow funding, in exact amounts', () => {
       ])
     })
 
+    it.each([
+      ['revoked', standing(NOW - 1n)],
+      ['removed', []],
+      ['limits changed', [[PAYEE, ONE, 0n, 7200n, 10n, 0n, NOW + 60n]]]
+    ])(
+      'stops before renewing a grant %s during funding',
+      async (_why, changed) => {
+        escrow.getUserFunds.mockResolvedValue({ available: 0n, locked: 0n })
+        escrow.getAuthorizations
+          .mockResolvedValueOnce(standing(NOW + 60n))
+          .mockResolvedValue(changed)
+
+        await expectThrowsAsync(
+          () => runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running,
+          /authorisation .* changed after planning/
+        )
+
+        expect(escrowTransactions()).to.deep.equal([
+          { method: 'deposit', args: [TOKEN, ONE] }
+        ])
+        expect(
+          escrow.getAuthorizations.mock.invocationCallOrder[1]
+        ).to.be.greaterThan(vi.mocked(sendTx).mock.invocationCallOrder[0])
+        expect(vi.mocked(sendSettlement)).not.toHaveBeenCalled()
+      }
+    )
+
+    it('checks expiry against the chain time after deposit confirmation', async () => {
+      escrow.getUserFunds.mockResolvedValue({ available: 0n, locked: 0n })
+      escrow.getAuthorizations.mockResolvedValue(standing(NOW + 60n))
+      const getBlock = vi
+        .fn()
+        .mockResolvedValueOnce({ timestamp: Number(NOW) })
+        .mockResolvedValue({ timestamp: Number(NOW + 61n) })
+      Object.assign(signer, { provider: { getBlock } })
+
+      await expectThrowsAsync(
+        () => runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running,
+        /expired at .*The deposit was confirmed/
+      )
+      expect(escrowTransactions()).to.deep.equal([
+        { method: 'deposit', args: [TOKEN, ONE] }
+      ])
+      expect(vi.mocked(sendSettlement)).not.toHaveBeenCalled()
+    })
+
     it('can be extended in the last active second', async () => {
       escrow.getAuthorizations.mockResolvedValue(standing(NOW))
 
