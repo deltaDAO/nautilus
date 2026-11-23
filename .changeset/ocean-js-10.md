@@ -6,7 +6,7 @@ Update to `@oceanprotocol/lib` 10.1.0 and `@oceanprotocol/ddo-js` 1.1.0. The pee
 dependency on ocean.js is now `^10.1.0`. ocean.js no longer nests its own older ddo-js.
 
 - **Escrow v1 and v2.** ocean.js 10's escrow ABI is Escrow v2 (`@oceanprotocol/contracts`
-  3.x), whose authorisation has an expiry. pontusx-node and its deployments use Escrow v1
+  3.2.0), whose authorisation has an expiry. pontusx-node and its deployments use Escrow v1
   (contracts 2.x), whose authorisation ocean.js 10 cannot decode and whose `authorize` it
   encodes with one argument too many. `compute()` now detects the quoted escrow's
   generation (ERC-165) and reads and writes it with its own ABI, so paid compute works

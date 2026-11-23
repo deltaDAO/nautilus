@@ -14,7 +14,7 @@
  * token's smallest unit, as the node quotes it and the contract takes it.
  *
  * Two contract generations are in use. Escrow v1 (`@oceanprotocol/contracts` 2.x, which
- * pontusx-node and its deployments use) and Escrow v2 (contracts 3.x, ocean.js 10's
+ * pontusx-node and its deployments use) and Escrow v2 (contracts 3.2.0, ocean.js 10's
  * default ABI), whose authorisation has a 7th field `expiryTimestamp` and whose
  * `authorize` takes it as a 6th argument. A v2 contract answers ERC-165 for its core
  * interface, a v1 contract has no `supportsInterface`; nautilus reads and writes each with

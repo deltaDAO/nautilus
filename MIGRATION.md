@@ -17,7 +17,7 @@ needs ocean.js `^10.1.0` as its peer:
 ```
 
 - **Escrow v1 and v2.** ocean.js 10 ships the Escrow v2 contracts (`@oceanprotocol/contracts`
-  3.x): an authorisation has an expiry, and `authorize` takes it. pontusx-node and its
+  3.2.0): an authorisation has an expiry, and `authorize` takes it. pontusx-node and its
   deployments still use Escrow v1 (contracts 2.x). `compute()` checks which one the quoted
   escrow is (ERC-165) and uses that contract's ABI, so paid compute works with both.
 - **Expiring authorisations (v2).** An authorisation without expiry stays without. An
