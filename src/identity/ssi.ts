@@ -413,18 +413,19 @@ export function addSsiPolicyV2(
   const index = entries.findIndex(isSsiPolicyV2Credential)
   const copy = structuredClone(value)
 
-  if (index === -1) entries.push({ type: 'SSIpolicyV2', values: [copy] })
-  else {
-    const existing = entries[index] as SsiPolicyV2Credential
-    const values = Array.isArray(existing.values) ? existing.values : []
-    const key = canonicalJson(copy)
-    entries[index] = {
-      type: 'SSIpolicyV2',
-      values: values.some((stored) => canonicalJson(stored) === key)
-        ? values
-        : [...values, copy]
-    }
+  const existing = entries[index] as SsiPolicyV2Credential | undefined
+  const values = Array.isArray(existing?.values) ? existing.values : []
+  const key = canonicalJson(copy)
+  const entry: SsiPolicyV2Credential = {
+    type: 'SSIpolicyV2',
+    values: values.some((stored) => canonicalJson(stored) === key)
+      ? values
+      : [...values, copy]
   }
+  if (JSON.stringify(entry).length > MAX_ENTRY_BYTES)
+    fail('the SSIpolicyV2 entry is larger than 256 KiB')
+
+  entries[index === -1 ? entries.length : index] = entry
 
   return { ...credentials, allow: entries }
 }
