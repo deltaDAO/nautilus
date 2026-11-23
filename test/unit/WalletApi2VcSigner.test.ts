@@ -1,3 +1,4 @@
+import { generateKeyPairSync, sign } from 'node:crypto'
 import { Wallet } from 'ethers'
 import { describe, expect, it } from 'vitest'
 import { assertValid } from '../../src/ddo/index.js'
@@ -36,6 +37,7 @@ describe('WalletApi2VcSigner', () => {
       signIn,
       keyId: 'key-1',
       issuer: ISSUER,
+      resolveVerificationKey: gateway.resolveVerificationKey,
       fetchImpl: gateway.fetchImpl as unknown as typeof fetch
     })
   }
@@ -93,6 +95,36 @@ describe('WalletApi2VcSigner', () => {
       'present',
       'sign-ddo'
     ])
+  })
+
+  it('verifies secp256k1 signatures against the exact issuer verification method', async () => {
+    const { privateKey, publicKey } = generateKeyPairSync('ec', {
+      namedCurve: 'secp256k1'
+    })
+    const trustedKid = `${ISSUER}#secp256k1`
+    let kid = trustedKid
+    const gateway = mockGateway({
+      handle: (call) => {
+        if (!call.path.endsWith('/sign')) return undefined
+        const input = `${b64url(JSON.stringify({ alg: 'ES256K', kid }))}.${b64url(call.body)}`
+        const signature = sign('sha256', Buffer.from(input), {
+          key: privateKey,
+          dsaEncoding: 'ieee-p1363'
+        })
+        return new Response(`${input}.${b64url(signature)}`)
+      }
+    })
+    const signer = vcSigner({
+      ...gateway,
+      resolveVerificationKey: async (id) =>
+        id === trustedKid ? publicKey.export({ format: 'jwk' }) : undefined
+    })
+    const ddo = signer.prepareDocument(ddoFixture())
+    await expect(signer.sign(ddo)).resolves.toMatchObject({ issuer: ISSUER })
+    kid = `${ISSUER}#unknown`
+    await expect(signer.sign(ddo)).rejects.toMatchObject({
+      code: 'signature_invalid'
+    })
   })
 
   it('compares optional fields with their representation in the posted JSON', async () => {

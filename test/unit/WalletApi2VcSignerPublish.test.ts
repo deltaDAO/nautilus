@@ -1,5 +1,5 @@
 import { Wallet } from 'ethers'
-import { CompactSign, compactVerify, generateKeyPair } from 'jose'
+import { CompactSign, compactVerify, exportJWK, generateKeyPair } from 'jose'
 import { describe, expect, it, vi } from 'vitest'
 import { validate } from '../../src/ddo/index.js'
 import { AddressSignIn } from '../../src/identity/waltid/addressSignIn.js'
@@ -12,7 +12,7 @@ import { ServiceBuilder } from '../../src/Nautilus/Asset/Service/ServiceBuilder.
 import { Nautilus } from '../../src/Nautilus/Nautilus.js'
 import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
 import { assertSignedDdo } from '../../src/publish/envelope.js'
-import { createNftWithService } from '../../src/publish/index.js'
+import { createNftWithService, writeMetadata } from '../../src/publish/index.js'
 import type { RemoteStore } from '../../src/remote/RemoteStore.js'
 import { decodeCredential } from '../../src/signing/vc.js'
 import { WalletApi2VcSigner } from '../../src/signing/walletApi2.js'
@@ -70,7 +70,11 @@ vi.mock('@oceanprotocol/lib', async (importOriginal) => {
 })
 
 async function setup(
-  options: { didWebHolder?: boolean; walletId?: string } = {}
+  options: {
+    didWebHolder?: boolean
+    walletId?: string
+    corruptSignature?: boolean
+  } = {}
 ) {
   const { publicKey, privateKey } = await generateKeyPair('ES256')
   const signed: string[] = []
@@ -88,6 +92,14 @@ async function setup(
           kid: `${ISSUER}#key-1`
         })
         .sign(privateKey)
+      if (options.corruptSignature) {
+        const [header, payload, encoded] = jws.split('.')
+        const signature = Buffer.from(encoded, 'base64url')
+        signature[0] ^= 1
+        return new Response(
+          `${header}.${payload}.${signature.toString('base64url')}`
+        )
+      }
       return new Response(jws, { status: 200 })
     }
   })
@@ -102,6 +114,8 @@ async function setup(
     keyId: 'key-1',
     walletId: options.walletId,
     issuer: ISSUER,
+    resolveVerificationKey: (kid) =>
+      kid === `${ISSUER}#key-1` ? exportJWK(publicKey) : undefined,
     fetchImpl: gateway.fetchImpl as unknown as typeof fetch
   })
 
@@ -199,6 +213,19 @@ describe('publishing with WalletApi2VcSigner', () => {
     await expect(nautilus.publish(asset)).rejects.toMatchObject({ code })
     expect(createNftWithService).not.toHaveBeenCalled()
     expect(signed).to.have.length(0)
+  })
+
+  it('rejects a corrupted signature before writing metadata', async () => {
+    const { nautilus, signed } = await setup({ corruptSignature: true })
+    const asset = new AssetBuilder(
+      getAssetFixture({ issuer: undefined })
+    ).build()
+    vi.mocked(writeMetadata).mockClear()
+    await expect(nautilus.edit(asset)).rejects.toMatchObject({
+      code: 'signature_invalid'
+    })
+    expect(signed).to.have.length(1)
+    expect(writeMetadata).not.toHaveBeenCalled()
   })
 
   it('edit: prepares, validates, signs over the gateway and checks the JWS', async () => {

@@ -10,6 +10,8 @@
  * only the DDO's own fields. `prepareDocument` gives the publish flow that shape before it
  * validates, so what is validated is what is signed.
  */
+import { createPublicKey, verify } from 'node:crypto'
+import { compactVerify, type JWK } from 'jose'
 import { quoteText } from '../identity/waltid/addressErrors.js'
 import { WaltIdWalletError } from '../identity/waltid/client.js'
 import {
@@ -77,6 +79,14 @@ export interface WalletApi2VcSignerOptions {
    * organisation" for the address.
    */
   issuer: string
+  /**
+   * Look up the public JWK authorised to issue credentials for the exact verification
+   * method DID URL (the JWS kid). Use a trusted issuer document or pinned mapping.
+   * Return undefined or throw for an unknown or unauthorised method.
+   */
+  resolveVerificationKey: (
+    kid: string
+  ) => JWK | undefined | Promise<JWK | undefined>
   /** Default: the wallet of the sign-in. */
   walletId?: string
   /** Default: the sign-in's gateway (`signIn.endpoint`). */
@@ -175,6 +185,10 @@ export class WalletApi2VcSigner implements DdoSigner {
       !options.issuer.startsWith('did:')
     )
       throw new Error('WalletApi2VcSigner needs the issuer DID (issuer).')
+    if (typeof options.resolveVerificationKey !== 'function')
+      throw new Error(
+        'WalletApi2VcSigner needs a trusted resolveVerificationKey.'
+      )
     const walletApi = options.walletApi ?? options.signIn.endpoint
     if (!walletApi)
       throw new Error(
@@ -324,7 +338,7 @@ export class WalletApi2VcSigner implements DdoSigner {
       )
 
     const jws = await this.client.signDdo(walletId, keyId, credential)
-    this.assertJws(jws, credential)
+    await this.assertJws(jws, credential)
     return { jwt: jws, issuer }
   }
 
@@ -333,7 +347,10 @@ export class WalletApi2VcSigner implements DdoSigner {
    * signature algorithm), `kid` (a verification method of the issuer) and `typ` only, and
    * a payload without duplicate keys that equals the credential.
    */
-  private assertJws(jws: string, credential: Record<string, unknown>): void {
+  private async assertJws(
+    jws: string,
+    credential: Record<string, unknown>
+  ): Promise<void> {
     const { issuer } = this.options
     const operator =
       'Report it to the wallet operators: wallet-api2 answered something it does not sign.'
@@ -342,7 +359,7 @@ export class WalletApi2VcSigner implements DdoSigner {
         'wallet-api2 returned no compact JWS for the DDO.',
         operator
       )
-    const [headerPart, payloadPart] = jws.split('.')
+    const [headerPart, payloadPart, signaturePart] = jws.split('.')
     let header: unknown
     let payload: unknown
     let headerText: string
@@ -376,7 +393,11 @@ export class WalletApi2VcSigner implements DdoSigner {
         `wallet-api2 returned a JWS with the algorithm ${sanitize(String(header.alg), 20, null)}, not a JOSE signature algorithm.`,
         operator
       )
-    if (typeof header.kid !== 'string' || !header.kid.startsWith(`${issuer}#`))
+    if (
+      typeof header.kid !== 'string' ||
+      !header.kid.startsWith(`${issuer}#`) ||
+      header.kid.length === issuer.length + 1
+    )
       throw signingError(
         `wallet-api2 signed with ${typeof header.kid === 'string' ? quoteText(header.kid, 200) : 'no key id'}, not with a verification method of ${issuer}.`,
         `Developer: use a keyId whose key is a verification method of ${issuer}; admin: check the issuer DID's document in the wallet.`
@@ -392,5 +413,43 @@ export class WalletApi2VcSigner implements DdoSigner {
         `wallet-api2's JWS header and signature take ${overhead} characters, more than the ${JWS_SIGNING_ALLOWANCE} nautilus allows for them when it sizes the envelope.`,
         'Developer: sign with a key whose signatures are shorter (an EC or a smaller RSA key), or a shorter key id.'
       )
+
+    try {
+      const signature = Buffer.from(signaturePart, 'base64url')
+      if (signature.toString('base64url') !== signaturePart) throw new Error()
+      const key = await this.options.resolveVerificationKey(header.kid)
+      if (!key) throw new Error()
+      if (header.alg === 'ES256K') {
+        // WebCrypto (and jose) do not support secp256k1.
+        if (
+          signature.length !== 64 ||
+          key.kty !== 'EC' ||
+          key.crv !== 'secp256k1' ||
+          key.d !== undefined ||
+          (key.alg !== undefined && key.alg !== 'ES256K') ||
+          (key.use !== undefined && key.use !== 'sig') ||
+          (key.key_ops !== undefined &&
+            !(Array.isArray(key.key_ops) && key.key_ops.includes('verify')))
+        )
+          throw new Error()
+        const valid = verify(
+          'sha256',
+          Buffer.from(`${headerPart}.${payloadPart}`, 'ascii'),
+          {
+            key: createPublicKey({ key, format: 'jwk' }),
+            dsaEncoding: 'ieee-p1363'
+          },
+          signature
+        )
+        if (!valid) throw new Error()
+      } else {
+        await compactVerify(jws, key, { algorithms: [header.alg] })
+      }
+    } catch {
+      throw signingError(
+        "The DDO signature could not be verified with the issuer's verification method.",
+        'Developer: check that resolveVerificationKey returns the trusted public key for the exact kid. Admin: check the issuer DID and wallet signing key.'
+      )
+    }
   }
 }

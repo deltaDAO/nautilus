@@ -12,7 +12,9 @@ publishes.
 ## Usage
 
 ```ts twoslash
+import { readFileSync } from 'node:fs'
 import { JsonRpcProvider, Wallet } from 'ethers'
+import type { JWK } from 'jose'
 import {
   Nautilus,
   WalletApi2CredentialProvider,
@@ -28,10 +30,17 @@ const credentials = WalletApi2CredentialProvider.withAddressSignIn({
   scopes: ['present', 'sign-ddo']
 })
 
+// Trusted public JWKs keyed by their full DID verification method IDs.
+const trustedMethods: Record<string, JWK> = JSON.parse(
+  readFileSync('./issuer-verification-methods.json', 'utf8')
+)
+const methods = new Map(Object.entries(trustedMethods))
+
 const ddoSigner = new WalletApi2VcSigner({ // [!code focus]
   signIn: credentials.signIn, // [!code focus]
   keyId: 'publisher-key', // [!code focus]
-  issuer: 'did:web:example.org' // [!code focus]
+  issuer: 'did:web:example.org', // [!code focus]
+  resolveVerificationKey: (kid) => methods.get(kid) // [!code focus]
 }) // [!code focus]
 
 const nautilus = await Nautilus.create(signer, { config, credentials, ddoSigner })
@@ -47,6 +56,7 @@ UI. Signing as the organisation's did:web also needs "Present as …".
 | `signIn` | `WalletApi2TokenSource` | `credentials.signIn`, or an `AddressSignIn`, with the scope `sign-ddo`. Required. |
 | `keyId` | `string` | The wallet-api2 key to sign with. Required. |
 | `issuer` | `string` | The DID the credential is issued as; `keyId`'s key must be one of its verification methods. Required. |
+| `resolveVerificationKey` | Function | Required. Return the trusted public JWK authorised by the issuer for this exact verification method DID URL, or `undefined` for an unknown method. May be async. |
 | `walletId` | `string` | Default: the address's wallet. |
 | `walletApi` | `string` | Default: the sign-in's gateway. |
 | `allowInsecureTransport`, `timeoutMs`, `fetchImpl` | | As for `AddressSignIn`. |
@@ -65,7 +75,7 @@ validate, so the document that is validated, signed and returned in `PublishResp
 one document. `sign()` refuses a DDO with other fields before sending it.
 
 The answer must be a compact JWS of exactly the posted credential, with a `kid` of the
-issuer's DID document (`<issuer>#…`) and a header and signature within
+issuer's DID document (`<issuer>#…`), a signature that verifies with that method's trusted public key, and a header and signature within
 `JWS_SIGNING_ALLOWANCE` (1024 characters); the publish flow then checks the payload against
 the validated DDO, as for every signer.
 

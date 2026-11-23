@@ -9,9 +9,12 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { getAddress, type Provider, verifyMessage, Wallet } from 'ethers'
 import {
+  CompactSign,
   calculateJwkThumbprint,
   decodeProtectedHeader,
   EmbeddedJWK,
+  exportJWK,
+  generateKeyPair,
   type JWK,
   jwtVerify
 } from 'jose'
@@ -166,6 +169,14 @@ export interface GatewayOptions {
  */
 export function mockGateway(options: GatewayOptions = {}) {
   const calls: Call[] = []
+  const signingMethod = `${ISSUER}#key-1`
+  let signingKeys: ReturnType<typeof generateKeyPair> | undefined
+  const getSigningKeys = () => (signingKeys ??= generateKeyPair('ES256'))
+  async function resolveVerificationKey(kid: string) {
+    return kid === signingMethod
+      ? exportJWK((await getSigningKeys()).publicKey)
+      : undefined
+  }
   const tokens = new Map<string, string>()
   const proofs: string[] = []
   const signatures: string[] = []
@@ -373,22 +384,30 @@ export function mockGateway(options: GatewayOptions = {}) {
       if (path.endsWith('/reject-handle'))
         return new Response(null, { status: 200 })
       if (/^wallet\/[^/]+\/keys\/[^/]+\/sign$/.test(path)) {
-        const header = b64url(
-          JSON.stringify({ typ: 'JWT', kid: `${ISSUER}#key-1`, alg: 'ES256' })
+        const signed = await new CompactSign(
+          new TextEncoder().encode(call.body)
         )
-        return new Response(
-          `${header}.${b64url(call.body)}.${b64url('signature')}`,
-          {
-            status: 200,
-            headers: { 'content-type': 'text/plain' }
-          }
-        )
+          .setProtectedHeader({ typ: 'JWT', kid: signingMethod, alg: 'ES256' })
+          .sign((await getSigningKeys()).privateKey)
+        return new Response(signed, {
+          status: 200,
+          headers: { 'content-type': 'text/plain' }
+        })
       }
       return refusal('not_found')
     }
   )
 
-  return { fetchImpl, calls, proofs, signatures, problems, tokens, revoked }
+  return {
+    fetchImpl,
+    calls,
+    proofs,
+    signatures,
+    problems,
+    tokens,
+    revoked,
+    resolveVerificationKey
+  }
 }
 
 export function challenge(

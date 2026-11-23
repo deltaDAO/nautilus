@@ -431,6 +431,7 @@ describe('WalletApi2VcSigner JWS checks (S3, C9)', () => {
       signIn,
       keyId: 'key-1',
       issuer: ISSUER,
+      resolveVerificationKey: gateway.resolveVerificationKey,
       fetchImpl: gateway.fetchImpl as unknown as typeof fetch
     })
     const ddo = {

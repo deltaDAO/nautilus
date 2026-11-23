@@ -142,7 +142,9 @@ and publish with a [`WalletApi2VcSigner`](/docs/api/signing/WalletApi2VcSigner).
 named in the signed message, so the signer sees it.
 
 ```ts twoslash
+import { readFileSync } from 'node:fs'
 import { JsonRpcProvider, Wallet } from 'ethers'
+import type { JWK } from 'jose'
 import {
   Nautilus,
   WalletApi2CredentialProvider,
@@ -159,10 +161,17 @@ const credentials = WalletApi2CredentialProvider.withAddressSignIn({
   scopes: ['present', 'sign-ddo'] // [!code focus]
 })
 
+// Trusted public JWKs keyed by their full DID verification method IDs.
+const trustedMethods: Record<string, JWK> = JSON.parse(
+  readFileSync('./issuer-verification-methods.json', 'utf8')
+)
+const methods = new Map(Object.entries(trustedMethods))
+
 const ddoSigner = new WalletApi2VcSigner({ // [!code focus]
   signIn: credentials.signIn, // [!code focus]
   keyId: 'publisher-key', // [!code focus]
-  issuer: 'did:web:example.org' // [!code focus]
+  issuer: 'did:web:example.org', // [!code focus]
+  resolveVerificationKey: (kid) => methods.get(kid) // [!code focus]
 }) // [!code focus]
 
 const nautilus = await Nautilus.create(signer, { config, credentials, ddoSigner })
