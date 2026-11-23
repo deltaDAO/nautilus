@@ -12,6 +12,7 @@ import { ServiceBuilder } from '../../src/Nautilus/Asset/Service/ServiceBuilder.
 import { Nautilus } from '../../src/Nautilus/Nautilus.js'
 import type { OceanNodeClient } from '../../src/node/OceanNodeClient.js'
 import { assertSignedDdo } from '../../src/publish/envelope.js'
+import { createNftWithService } from '../../src/publish/index.js'
 import type { RemoteStore } from '../../src/remote/RemoteStore.js'
 import { decodeCredential } from '../../src/signing/vc.js'
 import { WalletApi2VcSigner } from '../../src/signing/walletApi2.js'
@@ -42,6 +43,7 @@ vi.mock('../../src/publish/index.js', async (importOriginal) => {
   const actual = await importOriginal<object>()
   return {
     ...actual,
+    createNftWithService: vi.fn(),
     writeMetadata: vi.fn(async () => ({ hash: '0xsetmetadata' })),
     waitForMetadataPermission: vi.fn(async () => undefined)
   }
@@ -67,10 +69,13 @@ vi.mock('@oceanprotocol/lib', async (importOriginal) => {
   }
 })
 
-async function setup() {
+async function setup(
+  options: { didWebHolder?: boolean; walletId?: string } = {}
+) {
   const { publicKey, privateKey } = await generateKeyPair('ES256')
   const signed: string[] = []
   const gateway = mockGateway({
+    didWebHolder: options.didWebHolder ?? true,
     ddoSigning: true,
     scopes: ['present', 'sign-ddo'],
     handle: async (call) => {
@@ -95,6 +100,7 @@ async function setup() {
   const ddoSigner = new WalletApi2VcSigner({
     signIn,
     keyId: 'key-1',
+    walletId: options.walletId,
     issuer: ISSUER,
     fetchImpl: gateway.fetchImpl as unknown as typeof fetch
   })
@@ -160,7 +166,41 @@ async function check(
   expect(response.ddo.issuer).to.equal(ISSUER)
 }
 
+function newAsset() {
+  const service = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+    serviceType: ServiceTypes.ACCESS
+  })
+    .setServiceEndpoint('https://node.test.invalid')
+    .setName('Access Service')
+    .setPricing({ type: 'free' })
+    .addFile({
+      type: 'url',
+      url: 'https://data.test.invalid/file.csv',
+      method: 'GET'
+    })
+    .build()
+  return new AssetBuilder()
+    .setType('dataset')
+    .setName('Dataset signed over the gateway')
+    .setProvidedBy('deltaDAO AG')
+    .setDescription('A description')
+    .addService(service)
+    .build()
+}
+
 describe('publishing with WalletApi2VcSigner', () => {
+  it.each([
+    [{ didWebHolder: false }, 'did_web_holder_disabled'],
+    [{ walletId: 'other-wallet' }, 'wallet_mismatch']
+  ] as const)('publish refuses %j before minting', async (options, code) => {
+    const { nautilus, signed } = await setup(options)
+    const asset = newAsset()
+
+    await expect(nautilus.publish(asset)).rejects.toMatchObject({ code })
+    expect(createNftWithService).not.toHaveBeenCalled()
+    expect(signed).to.have.length(0)
+  })
+
   it('edit: prepares, validates, signs over the gateway and checks the JWS', async () => {
     const { nautilus, publicKey, signed, gateway } = await setup()
     const asset = new AssetBuilder(
@@ -176,27 +216,9 @@ describe('publishing with WalletApi2VcSigner', () => {
 
   it('publish: the metadata write of a new asset does the same', async () => {
     const { nautilus, publicKey, signed } = await setup()
-    const service = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
-      serviceType: ServiceTypes.ACCESS
-    })
-      .setServiceEndpoint('https://node.test.invalid')
-      .setName('Access Service')
-      .setPricing({ type: 'free' })
-      .addFile({
-        type: 'url',
-        url: 'https://data.test.invalid/file.csv',
-        method: 'GET'
-      })
-      .build()
+    const asset = newAsset()
     // As publish() does after minting: the service names its datatoken.
-    service.datatokenAddress = DATATOKEN_ADDRESS
-    const asset = new AssetBuilder()
-      .setType('dataset')
-      .setName('Dataset signed over the gateway')
-      .setProvidedBy('deltaDAO AG')
-      .setDescription('A description')
-      .addService(service)
-      .build()
+    asset.ddo.services[0].datatokenAddress = DATATOKEN_ADDRESS
     const internals = nautilus as unknown as {
       writeAsset(params: Record<string, unknown>): Promise<{
         ddo: Record<string, unknown>

@@ -123,7 +123,8 @@ describe('WalletApi2VcSigner', () => {
   it('checks requested scopes and current address grants in the issuer preflight', async () => {
     const allowed = mockGateway({
       scopes: ['present', 'sign-ddo'],
-      ddoSigning: true
+      ddoSigning: true,
+      didWebHolder: true
     })
     await expect(
       vcSigner(allowed, ['present']).getIssuer()

@@ -155,6 +155,7 @@ export interface GatewayOptions {
     count: number
   ) => Response | undefined | Promise<Response | undefined>
   expiresIn?: number
+  didWebHolder?: boolean
   ddoSigning?: boolean
   scopes?: string[]
 }
@@ -331,7 +332,7 @@ export function mockGateway(options: GatewayOptions = {}) {
           tokenId: 'tk_1',
           expiresAt: '2026-11-23T11:00:00Z',
           scopes: options.scopes ?? ['present'],
-          didWebHolder: false,
+          didWebHolder: options.didWebHolder ?? false,
           ddoSigning: options.ddoSigning ?? false,
           verifiers: [
             {

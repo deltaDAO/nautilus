@@ -196,6 +196,27 @@ export class WalletApi2VcSigner implements DdoSigner {
       const account = await this.client.account()
       if (!account.ddoSigning || !account.scopes.includes('sign-ddo'))
         throw this.scopeError()
+      if (this.options.issuer.startsWith('did:web:') && !account.didWebHolder)
+        throw new WaltIdWalletError(
+          'keys/sign',
+          'Signing as the organisation requires its did:web holder grant.',
+          undefined,
+          {
+            code: 'did_web_holder_disabled',
+            hint: 'Admin: enable "Present as the organisation" for the address.'
+          }
+        )
+      const walletId = this.options.walletId ?? this.options.signIn.walletId
+      if (walletId !== account.walletId)
+        throw new WaltIdWalletError(
+          'keys/sign',
+          'The signing wallet must be the wallet of the signed-in address.',
+          undefined,
+          {
+            code: 'wallet_mismatch',
+            hint: 'Developer: use the walletId returned for this address.'
+          }
+        )
     }
     return this.options.issuer
   }
