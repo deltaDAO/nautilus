@@ -379,6 +379,28 @@ function requestProblem(
       return `The presentation request asks for the credential query "${unasked.slice(0, 64)}", which the node's session does not.`
   }
 
+  const sets = challenge.dcql?.credential_sets
+  if (
+    !preview.credentialRequirements.length &&
+    sets !== undefined &&
+    (!Array.isArray(sets) ||
+      sets.length === 0 ||
+      !sets.every(
+        (set) =>
+          set &&
+          (set.required === undefined || typeof set.required === 'boolean') &&
+          Array.isArray(set.options) &&
+          set.options.length > 0 &&
+          set.options.every(
+            (option) =>
+              Array.isArray(option) &&
+              option.length > 0 &&
+              option.every((id) => asked?.has(id))
+          )
+      ))
+  )
+    return 'The session has invalid DCQL credential sets.'
+
   for (const item of preview.transactionData) {
     const details = { ...(item.rawJson ?? {}), ...(item.details ?? {}) }
     if (item.type !== ASSET_ACCESS_TRANSACTION_DATA_TYPE)
@@ -435,23 +457,20 @@ function selectionProblem(
 
 /**
  * The default selection: every required combination satisfied with its first option the
- * wallet holds credentials for, the first match of each of its queries. Without listed
- * requirements, every query of the DCQL query (or every query with matches) is required.
+ * wallet holds credentials for, the first match of each of its queries. When the preview
+ * omits requirements, use the node's DCQL. Optional sets need explicit selection.
  */
 function defaultSelection(
   preview: WalletApi2Preview,
   matches: Record<string, WalletApi2CredentialOption[]>,
   dcql: DcqlQuery | undefined
 ): { selection: CredentialSelection } | { missing: string[][] } {
-  const requirements = preview.credentialRequirements.length
-    ? preview.credentialRequirements
-    : [
-        {
-          options: [
-            [...(queryIds(dcql) ?? new Set(Object.keys(matches)))]
-          ].filter((option) => option.length > 0)
-        }
-      ]
+  let requirements = preview.credentialRequirements
+  if (!requirements.length && dcql) {
+    requirements = dcql.credential_sets
+      ? dcql.credential_sets.filter((set) => set.required !== false)
+      : [{ options: [[...(queryIds(dcql) ?? [])]] }]
+  }
 
   const selection: CredentialSelection = Object.create(null)
   const missing: string[][] = []

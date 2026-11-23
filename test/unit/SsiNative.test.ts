@@ -1343,6 +1343,91 @@ describe('WalletApi2CredentialProvider', () => {
     ])
   })
 
+  it('requires explicit selection for an optional-only presentation', async () => {
+    const ids = ['legal_person', 'company']
+    const request = challenge({
+      dcql: {
+        credentials: ids.map((id) => ({ id, format: 'jwt_vc_json' })),
+        credential_sets: ids.map((id) => ({ options: [[id]], required: false }))
+      }
+    })
+    const { wallet, calls } = fakeWallet({
+      credentialOptions: ids.map((queryId) => ({
+        queryId,
+        credentialId: queryId
+      })),
+      credentialRequirements: []
+    })
+    const provider = new WalletApi2CredentialProvider({ wallet, walletId: 'w' })
+    for (const input of [request, challenge({ dcql: undefined })]) {
+      await expect(provider.present(input)).rejects.toMatchObject({
+        reason: 'none-selected'
+      })
+    }
+    expect(calls.map((call) => call.name)).to.deep.equal([
+      'preview',
+      'reject',
+      'preview',
+      'reject'
+    ])
+
+    const submit = vi.spyOn(wallet, 'submitPresentation')
+    await new WalletApi2CredentialProvider({
+      wallet,
+      walletId: 'w',
+      onSelectCredentials: async () => ({ company: ['company'] })
+    }).present(request)
+    expect(submit.mock.calls[0][1].selectedCredentialOptions).to.deep.equal([
+      { queryId: 'company', credentialId: 'company' }
+    ])
+  })
+
+  it('uses only the first satisfiable option from each required DCQL set when preview requirements are empty', async () => {
+    const ids = ['missing', 'company', 'legal_person', 'optional']
+    const { wallet } = fakeWallet({
+      credentialOptions: ids
+        .slice(1)
+        .map((queryId) => ({ queryId, credentialId: queryId })),
+      credentialRequirements: []
+    })
+    const submit = vi.spyOn(wallet, 'submitPresentation')
+    await new WalletApi2CredentialProvider({ wallet, walletId: 'w' }).present(
+      challenge({
+        dcql: {
+          credentials: ids.map((id) => ({ id, format: 'jwt_vc_json' })),
+          credential_sets: [
+            { options: [['missing'], ['company'], ['legal_person']] },
+            { options: [['optional']], required: false }
+          ]
+        }
+      })
+    )
+    expect(submit.mock.calls[0][1].selectedCredentialOptions).to.deep.equal([
+      { queryId: 'company', credentialId: 'company' }
+    ])
+  })
+
+  it('rejects malformed fallback DCQL sets before selecting a credential', async () => {
+    const { wallet, calls } = fakeWallet({ credentialRequirements: [] })
+    const request = challenge({
+      dcql: {
+        credentials: [{ id: 'legal_person', format: 'jwt_vc_json' }],
+        credential_sets: [
+          {
+            options: [['legal_person']],
+            required: 'false' as unknown as boolean
+          }
+        ]
+      }
+    })
+    await expect(
+      new WalletApi2CredentialProvider({ wallet, walletId: 'w' }).present(
+        request
+      )
+    ).rejects.toMatchObject({ reason: 'request-invalid' })
+    expect(calls.map((call) => call.name)).to.deep.equal(['preview', 'reject'])
+  })
+
   it('prepare() resolves the wallet once, before any session', async () => {
     const { wallet, calls } = fakeWallet()
     const provider = new WalletApi2CredentialProvider({ wallet })
