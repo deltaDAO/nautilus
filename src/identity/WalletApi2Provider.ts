@@ -240,6 +240,33 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
         )
       )
 
+    const sdQueries = new Set(
+      challenge.dcql?.credentials
+        .filter((query) => query?.format === 'dc+sd-jwt')
+        .map((query) => query.id)
+    )
+    const boundQueries = new Set(
+      preview.transactionData.flatMap((item) => item.credentialQueryIds ?? [])
+    )
+    for (const { queryId, credentialId } of selectedCredentialOptions) {
+      const isSdJwt =
+        sdQueries.has(queryId) ||
+        matches[queryId].some(
+          (option) =>
+            option.credentialId === credentialId &&
+            option.format === 'dc+sd-jwt'
+        )
+      if (isSdJwt && !boundQueries.has(queryId))
+        return decline(
+          'invalid_request',
+          new CredentialPresentationError(
+            `The selected dc+sd-jwt query "${queryId.slice(0, 64)}" has no asset-access transaction data.`,
+            undefined,
+            'request-invalid'
+          )
+        )
+    }
+
     const keyId = preview.holder?.keyId ?? preview.keyId
     let result: Awaited<ReturnType<WalletApi2['submitPresentation']>>
     try {

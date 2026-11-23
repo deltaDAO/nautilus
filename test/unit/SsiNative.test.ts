@@ -1462,6 +1462,54 @@ describe('WalletApi2CredentialProvider', () => {
     expect(calls.map((call) => call.name)).to.deep.equal(['preview', 'submit'])
   })
 
+  it('requires asset-access data covering every selected dc+sd-jwt query', async () => {
+    const ids = ['pid', 'company']
+    const request = challenge({
+      dcql: { credentials: ids.map((id) => ({ id, format: 'dc+sd-jwt' })) }
+    })
+    for (const covered of [[], ['pid'], ids]) {
+      const { wallet, calls } = fakeWallet({
+        credentialOptions: ids.map((queryId) => ({
+          queryId,
+          credentialId: 'cred'
+        })),
+        credentialRequirements: [{ options: [ids] }],
+        transactionData: covered.length
+          ? [
+              {
+                type: 'org.oceanenterprise.transaction-data.asset-access',
+                credentialQueryIds: covered,
+                details: {
+                  consumer_address: CONSUMER,
+                  document_id: ASSET_DID,
+                  service_id: SERVICE_ID
+                }
+              }
+            ]
+          : []
+      })
+      const result = await new WalletApi2CredentialProvider({
+        wallet,
+        walletId: 'w'
+      })
+        .present(request)
+        .catch((e) => e)
+      if (covered.length === ids.length) {
+        expect(result).to.equal(undefined)
+        expect(calls.map((call) => call.name)).to.deep.equal([
+          'preview',
+          'submit'
+        ])
+      } else {
+        expect(result.reason).to.equal('request-invalid')
+        expect(calls.map((call) => call.name)).to.deep.equal([
+          'preview',
+          'reject'
+        ])
+      }
+    }
+  })
+
   it('declines with no-matching-credential when a requirement cannot be met', async () => {
     const { wallet, calls } = fakeWallet({ credentialOptions: [] })
     const thrown = await new WalletApi2CredentialProvider({
