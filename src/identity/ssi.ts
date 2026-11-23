@@ -451,11 +451,13 @@ function sessionPolicyKey(value: SsiPolicyV2Value): string {
   })
 }
 
-/** The node counts every SSI value in one allow list before merging sessions. */
-function assertSsiPolicyCount(entries: DdoCredential[]): void {
+/** Check whole SSI entries and count their values before merging sessions. */
+function assertSsiEntryLimits(entries: DdoCredential[]): void {
   let count = 0
   for (const entry of entries) {
-    if (isSsiEntry(entry) && 'values' in entry && Array.isArray(entry.values))
+    if (!isSsiEntry(entry)) continue
+    assertSafeJson(entry)
+    if ('values' in entry && Array.isArray(entry.values))
       count += entry.values.length
   }
   if (count > MAX_CREDENTIAL_QUERIES)
@@ -470,7 +472,7 @@ export function validateSsiPolicyCombination(
   const policies = new Map<string, SsiPolicyV2Value>()
   for (const block of blocks) {
     const entries = block?.allow ?? []
-    assertSsiPolicyCount(entries)
+    assertSsiEntryLimits(entries)
     for (const entry of entries) {
       if (isSsiPolicyV2Credential(entry)) {
         for (const value of entry.values) {
@@ -552,11 +554,10 @@ export function addSsiPolicyV2(
       ? values
       : [...values, copy]
   }
+  entries[index === -1 ? entries.length : index] = entry
+  assertSsiEntryLimits(entries)
   if (JSON.stringify(entry).length > MAX_ENTRY_BYTES)
     fail('the SSIpolicyV2 entry is larger than 256 KiB')
-
-  entries[index === -1 ? entries.length : index] = entry
-  assertSsiPolicyCount(entries)
 
   return { ...credentials, allow: entries }
 }

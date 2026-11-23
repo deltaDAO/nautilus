@@ -41,6 +41,42 @@ describe('SSIpolicyV2 entry validation', () => {
       )
   })
 
+  it('measures nesting from the assembled SSI entry in builders and preflight', () => {
+    const metaAtEntryDepth = (depth: number) => {
+      // entry.values[0].dcql.credentials[0].meta is already six levels deep.
+      let meta = {}
+      for (let i = 6; i < depth; i++) meta = { nested: meta }
+      return meta
+    }
+    const policyAtEntryDepth = (depth: number): SsiPolicyV2Value => ({
+      version: '2',
+      dcql: {
+        credentials: [
+          { id: 'pid', format: 'dc+sd-jwt', meta: metaAtEntryDepth(depth) }
+        ]
+      }
+    })
+    const boundary = addSsiPolicyV2({}, policyAtEntryDepth(32))
+    expect(() => validateSsiPolicyCombination(boundary)).not.toThrow()
+
+    const overLimit = policyAtEntryDepth(33)
+    expect(() => addSsiPolicyV2({}, overLimit)).toThrow(/nested too deeply/)
+    expect(() =>
+      validateSsiPolicyCombination({
+        allow: [{ type: 'SSIpolicyV2', values: [overLimit] }]
+      })
+    ).toThrow(/nested too deeply/)
+    const legacyValue = {
+      request_credentials: [{ type: 'pid', format: 'vc+sd-jwt' }],
+      extra: metaAtEntryDepth(40)
+    }
+    expect(() =>
+      validateSsiPolicyCombination({
+        allow: [{ type: 'SSIpolicy', values: [legacyValue] }]
+      })
+    ).toThrow(/nested too deeply/)
+  })
+
   it('checks the size of the whole entry after deduplicating values', () => {
     const largeValue = (id: string): SsiPolicyV2Value => ({
       version: '2',
