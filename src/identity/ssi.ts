@@ -541,6 +541,42 @@ function checkVcPolicy(input: unknown, field: string): void {
   }
 }
 
+function checkClaim(claim: unknown, credentialId: string): string | undefined {
+  if (
+    !isRecord(claim) ||
+    !Array.isArray(claim.path) ||
+    !claim.path.length ||
+    claim.path.length > 16 ||
+    !claim.path.every(
+      (segment) =>
+        segment === null ||
+        (typeof segment === 'string' &&
+          segment.length > 0 &&
+          segment.length <= 256) ||
+        (typeof segment === 'number' &&
+          Number.isInteger(segment) &&
+          segment >= 0)
+    )
+  )
+    fail(`the dcql query "${credentialId}" has an invalid claims.path`)
+
+  if (
+    claim.values !== undefined &&
+    (!Array.isArray(claim.values) ||
+      !claim.values.length ||
+      claim.values.length > 50 ||
+      !claim.values.every(
+        (value) =>
+          (typeof value === 'string' && value.length <= 1024) ||
+          (typeof value === 'number' && Number.isFinite(value)) ||
+          typeof value === 'boolean'
+      ))
+  )
+    fail(`the dcql query "${credentialId}" has invalid claims.values`)
+
+  return claim.id === undefined ? undefined : queryId(claim.id, 'claims.id')
+}
+
 function checkCredentialQuery(input: unknown): {
   id: string
   format: string
@@ -556,29 +592,35 @@ function checkCredentialQuery(input: unknown): {
     )
   if (input.meta !== undefined && !isRecord(input.meta))
     fail(`the dcql query "${id}" has an invalid meta`)
+  const claimIds = new Set<string>()
   if (input.claims !== undefined) {
     if (
       !Array.isArray(input.claims) ||
       !input.claims.length ||
-      input.claims.length > 50 ||
-      !input.claims.every(
-        (claim) =>
-          isRecord(claim) &&
-          Array.isArray(claim.path) &&
-          claim.path.length > 0 &&
-          claim.path.length <= 16 &&
-          claim.path.every(
-            (segment) =>
-              segment === null ||
-              typeof segment === 'string' ||
-              (typeof segment === 'number' &&
-                Number.isInteger(segment) &&
-                segment >= 0)
-          )
-      )
+      input.claims.length > 50
     )
       fail(`the dcql query "${id}" has invalid claims`)
+    for (const claim of input.claims) {
+      const claimId = checkClaim(claim, id)
+      if (claimId !== undefined) claimIds.add(claimId)
+    }
   }
+  if (
+    input.claim_sets !== undefined &&
+    (!Array.isArray(input.claim_sets) ||
+      input.claim_sets.length > MAX_SETS ||
+      !input.claim_sets.every(
+        (set) =>
+          Array.isArray(set) &&
+          set.length > 0 &&
+          set.every(
+            (claimId) => typeof claimId === 'string' && claimIds.has(claimId)
+          )
+      ))
+  )
+    fail(
+      `the dcql query "${id}" has invalid claim_sets: each set must name claims of this query`
+    )
   if (input.multiple !== undefined && typeof input.multiple !== 'boolean')
     fail(`the dcql query "${id}" has an invalid multiple`)
   if (
