@@ -498,6 +498,15 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
     try {
       wallets = await this.wallet.listWallets()
     } catch (error) {
+      if (
+        error instanceof WaltIdWalletError &&
+        error.code === 'hanko_token_not_accepted'
+      )
+        throw walletError(
+          "Could not list the organisation's wallets",
+          error,
+          (t) => t
+        )
       throw new CredentialPresentationError(
         `Could not list the organisation's wallets (${error instanceof Error ? error.message : String(error)}). Pass walletId to pick one.`,
         undefined,
@@ -718,8 +727,8 @@ function walletError(
           : {}),
       ...(retryAfter !== undefined ? { retryAfter } : {})
     },
-    // Codes are an address token's; a Hanko token keeps its reasons, whatever the body.
-    code && addressToken
+    // The gateway also returns hanko_token_not_accepted to a Bearer request.
+    code && (addressToken || code === 'hanko_token_not_accepted')
       ? addressCodeReason(code)
       : status === 401 || status === 403
         ? 'wallet-setup'

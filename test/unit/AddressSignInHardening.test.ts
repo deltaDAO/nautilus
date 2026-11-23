@@ -234,6 +234,35 @@ describe('error bodies (B3, S9)', () => {
     expect(thrown.code).to.equal('wrong_endpoint')
   })
 
+  it.each([undefined, 'w'])(
+    'keeps the Hanko gateway refusal with walletId %s',
+    async (walletId) => {
+      const fetchImpl = vi.fn(
+        async (_input: RequestInfo | URL, init?: RequestInit) => {
+          expect(new Headers(init?.headers).get('authorization')).to.equal(
+            'Bearer hanko-jwt'
+          )
+          return refusal('hanko_token_not_accepted')
+        }
+      )
+      const provider = new WalletApi2CredentialProvider({
+        walletId,
+        wallet: new WalletApi2HttpClient({
+          apiUrl: GATEWAY,
+          token: 'hanko-jwt',
+          fetchImpl
+        })
+      })
+      const thrown = await provider.present(challenge()).catch((e) => e)
+      expect(thrown.reason).to.equal('sign-in')
+      expect(thrown.details.code).to.equal('hanko_token_not_accepted')
+      expect(thrown.details.hint).to.equal(
+        'Developer or admin: fix hanko_token_not_accepted.'
+      )
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+    }
+  )
+
   it('a Hanko 401/403 with a coded body stays wallet-setup', async () => {
     for (const status of [401, 403]) {
       const fetchImpl = vi.fn(async () =>
