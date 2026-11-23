@@ -82,7 +82,7 @@ export interface WalletApi2VcSignerOptions {
   /**
    * Look up the public JWK authorised to issue credentials for the exact verification
    * method DID URL (the JWS kid). Use a trusted issuer document or pinned mapping.
-   * Return undefined or throw for an unknown or unauthorised method.
+   * Return undefined for an unknown or unauthorised method. Throw if the lookup fails.
    */
   resolveVerificationKey: (
     kid: string
@@ -414,10 +414,29 @@ export class WalletApi2VcSigner implements DdoSigner {
         'Developer: sign with a key whose signatures are shorter (an EC or a smaller RSA key), or a shorter key id.'
       )
 
+    const signature = Buffer.from(signaturePart, 'base64url')
+    if (signature.toString('base64url') !== signaturePart)
+      throw signingError(
+        'wallet-api2 returned an invalid base64url signature.',
+        operator
+      )
+
+    let key: JWK | undefined
     try {
-      const signature = Buffer.from(signaturePart, 'base64url')
-      if (signature.toString('base64url') !== signaturePart) throw new Error()
-      const key = await this.options.resolveVerificationKey(header.kid)
+      key = await this.options.resolveVerificationKey(header.kid)
+    } catch {
+      throw new WaltIdWalletError(
+        'keys/sign',
+        "The lookup for the issuer's verification key failed.",
+        undefined,
+        {
+          code: 'verification_key_lookup_failed',
+          hint: 'Developer: check the verification key resolver and retry if the failure was temporary.'
+        }
+      )
+    }
+
+    try {
       if (!key) throw new Error()
       if (header.alg === 'ES256K') {
         // WebCrypto (and jose) do not support secp256k1.

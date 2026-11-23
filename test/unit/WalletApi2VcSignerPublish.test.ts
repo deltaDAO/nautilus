@@ -73,6 +73,7 @@ async function setup(
   options: {
     didWebHolder?: boolean
     walletId?: string
+    resolverUnavailable?: boolean
     corruptSignature?: boolean
   } = {}
 ) {
@@ -114,8 +115,10 @@ async function setup(
     keyId: 'key-1',
     walletId: options.walletId,
     issuer: ISSUER,
-    resolveVerificationKey: (kid) =>
-      kid === `${ISSUER}#key-1` ? exportJWK(publicKey) : undefined,
+    resolveVerificationKey: async (kid) => {
+      if (options.resolverUnavailable) throw new Error('DID resolver timed out')
+      return kid === `${ISSUER}#key-1` ? exportJWK(publicKey) : undefined
+    },
     fetchImpl: gateway.fetchImpl as unknown as typeof fetch
   })
 
@@ -215,18 +218,22 @@ describe('publishing with WalletApi2VcSigner', () => {
     expect(signed).to.have.length(0)
   })
 
-  it('rejects a corrupted signature before writing metadata', async () => {
-    const { nautilus, signed } = await setup({ corruptSignature: true })
-    const asset = new AssetBuilder(
-      getAssetFixture({ issuer: undefined })
-    ).build()
-    vi.mocked(writeMetadata).mockClear()
-    await expect(nautilus.edit(asset)).rejects.toMatchObject({
-      code: 'signature_invalid'
-    })
-    expect(signed).to.have.length(1)
-    expect(writeMetadata).not.toHaveBeenCalled()
-  })
+  it.each([
+    [{ corruptSignature: true }, 'signature_invalid'],
+    [{ resolverUnavailable: true }, 'verification_key_lookup_failed']
+  ] as const)(
+    'edit reports %j before writing metadata',
+    async (options, code) => {
+      const { nautilus, signed } = await setup(options)
+      const asset = new AssetBuilder(
+        getAssetFixture({ issuer: undefined })
+      ).build()
+      vi.mocked(writeMetadata).mockClear()
+      await expect(nautilus.edit(asset)).rejects.toMatchObject({ code })
+      expect(signed).to.have.length(1)
+      expect(writeMetadata).not.toHaveBeenCalled()
+    }
+  )
 
   it('edit: prepares, validates, signs over the gateway and checks the JWS', async () => {
     const { nautilus, publicKey, signed, gateway } = await setup()

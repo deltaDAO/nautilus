@@ -56,7 +56,7 @@ UI. Signing as the organisation's did:web also needs "Present as …".
 | `signIn` | `WalletApi2TokenSource` | `credentials.signIn`, or an `AddressSignIn`, with the scope `sign-ddo`. Required. |
 | `keyId` | `string` | The wallet-api2 key to sign with. Required. |
 | `issuer` | `string` | The DID the credential is issued as; `keyId`'s key must be one of its verification methods. Required. |
-| `resolveVerificationKey` | Function | Required. Return the trusted public JWK authorised by the issuer for this exact verification method DID URL, or `undefined` for an unknown method. May be async. |
+| `resolveVerificationKey` | Function | Required. Return the trusted public JWK authorised by the issuer for this exact verification method DID URL, or `undefined` for an unknown or unauthorised method. Throw or reject if the lookup fails. |
 | `walletId` | `string` | Default: the address's wallet. |
 | `walletApi` | `string` | Default: the sign-in's gateway. |
 | `allowInsecureTransport`, `timeoutMs`, `fetchImpl` | | As for `AddressSignIn`. |
@@ -91,6 +91,7 @@ Every error is a `WaltIdWalletError` with `code` and a `hint` that says who fixe
 - `code: 'not_a_ddo'`: the DDO has fields wallet-api2 does not sign (call `prepareDocument()`
   first; refused before anything is sent), or wallet-api2 refused the body's shape;
 - `code: 'issuer_mismatch'`: the DDO declares another issuer than `issuer`;
+- A thrown or rejected key lookup produces `code: 'verification_key_lookup_failed'`.
 - `code: 'signature_invalid'`: the answer is not a JWS nautilus accepts: a header with members
   other than `alg`, `kid` and `typ` (no `crit`, `b64`, `jwk`), an algorithm that is not a JOSE
   signature algorithm (`none`, `HS256`), a `kid` outside the issuer's DID document, a payload
