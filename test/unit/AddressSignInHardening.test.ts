@@ -635,12 +635,17 @@ describe('verifier comparison (S8)', () => {
     expect(thrown.details.code).to.equal('verifier_not_allowed')
   })
 
-  it('checks both the announced and the expected verifier', async () => {
-    const thrown = await withSignIn(account(`https://${VERIFIER_HOST}`), {
+  it('uses the announced verifier for prepare and present, with a fallback when absent', async () => {
+    const { credentials } = withSignIn(account(`https://${VERIFIER_HOST}`), {
       expectedVerifierHost: 'other.test.invalid'
     })
-      .credentials.prepare(preparation())
-      .catch((e) => e)
+    const verifierHost = `${VERIFIER_HOST}:443`
+    await credentials.prepare(preparation(ADDRESS, verifierHost))
+    await credentials.present(challenge({ verifierHost }))
+
+    const context = preparation()
+    context.node = challenge().node
+    const thrown = await credentials.prepare(context).catch((e) => e)
     expect(thrown.details.code).to.equal('verifier_not_allowed')
     expect(thrown.message).to.contain('other.test.invalid')
   })

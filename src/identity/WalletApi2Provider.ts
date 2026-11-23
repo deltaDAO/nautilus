@@ -291,19 +291,16 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
         normalizeVerifierHost(verifier.responseUriOrigin)
       )
     )
-    // Both the node's announced verifier and the one this provider expects, when both are
-    // known, must be on the address's list.
-    for (const host of new Set(
-      [announced, this.options.expectedVerifierHost]
-        .filter((host): host is string => !!host)
-        .map(normalizeVerifierHost)
-    ))
+    const verifierHost = announced ?? this.options.expectedVerifierHost
+    if (verifierHost) {
+      const host = normalizeVerifierHost(verifierHost)
       if (!allowed.has(host))
         throw new CredentialPresentationError(
           `The address ${address} may present to ${[...allowed].map((h) => sanitize(h, 100, null)).join(', ')}, not to the verifier of ${context.node.nodeUri} (${sanitize(host, 100, null)}). Admin: add that verifier (${where}).`,
           { code: 'verifier_not_allowed', verifierHost: host },
           'not-permitted'
         )
+    }
 
     if (!account.presentableCredentials.length)
       throw new CredentialPresentationError(
@@ -347,9 +344,8 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
       this.options.allowInsecureTransport === true
     )
 
-    const verifierHost = (
-      challenge.verifierHost ?? this.options.expectedVerifierHost
-    )?.toLowerCase()
+    const expected = challenge.verifierHost ?? this.options.expectedVerifierHost
+    const verifierHost = expected && normalizeVerifierHost(expected)
     const requestHost = requestUriHost(requestUri)
     if (verifierHost && requestHost !== verifierHost)
       throw new CredentialPresentationError(
@@ -742,9 +738,11 @@ function walletError(
 function normalizeVerifierHost(value: string): string {
   const text = value.trim().toLowerCase()
   try {
-    return new URL(
-      /^[a-z][a-z0-9+.-]*:\/\//.test(text) ? text : `https://${text}`
-    ).host
+    const origin = /^[a-z][a-z0-9+.-]*:\/\//.test(text)
+      ? text
+      : `https://${text}`
+    if (!/^https?:\/\/[^/@?#\\]+\/?$/.test(origin)) return text
+    return new URL(origin).host
   } catch {
     return text
   }
