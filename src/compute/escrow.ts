@@ -225,6 +225,22 @@ export async function planEscrow(
   const version = await escrowVersion(signer, chainConfig, quote.escrowAddress)
   const escrow = escrowAt(signer, chainConfig, quote.escrowAddress, version)
 
+  if (version === 2 && (await escrow.isEscrowEnterprise())) {
+    if (!(await escrow.isTokenAllowed(quote.token)))
+      throw new Error(
+        `Enterprise escrow ${quote.escrowAddress} does not allow token ${quote.token}. Nothing was spent.`
+      )
+
+    // With zero decimal places the wrapper accepts and returns exact base units.
+    const fee = BigInt(
+      await escrow.previewFee(quote.token, quote.amount.toString(), 0)
+    )
+    if (fee >= quote.amount)
+      throw new Error(
+        `Enterprise escrow fee ${fee} leaves no payment from the gross lock amount ${quote.amount} base units. Nothing was spent.`
+      )
+  }
+
   const funds = await escrow.getUserFunds(payer, quote.token)
   const available = toBigInt(field(funds, 'available', 0) ?? 0)
   const deposit = quote.amount > available ? quote.amount - available : 0n

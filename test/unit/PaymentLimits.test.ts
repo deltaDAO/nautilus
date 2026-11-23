@@ -65,6 +65,9 @@ const escrow = {
   getAuthorizations: vi.fn(),
   // ERC-165 probe for Escrow v2 (ocean.js 10); false: a v1 contract
   isEscrowCore: vi.fn(),
+  isEscrowEnterprise: vi.fn(),
+  isTokenAllowed: vi.fn(),
+  previewFee: vi.fn(),
   contract: {
     getFunction: vi.fn((name: string) =>
       Object.assign(vi.fn(), {
@@ -289,6 +292,7 @@ beforeEach(() => {
   escrow.getUserFunds.mockResolvedValue({ available: 0n, locked: 0n })
   escrow.getAuthorizations.mockResolvedValue([])
   escrow.isEscrowCore.mockResolvedValue(false)
+  escrow.isEscrowEnterprise.mockResolvedValue(false)
   erc20.balanceOf.mockResolvedValue(100n * ONE)
   vi.mocked(allowanceWei).mockResolvedValue('0')
 })
@@ -1119,6 +1123,52 @@ describe('compute() escrow funding, in exact amounts', () => {
     expect(escrowTransactions().at(-1)).to.deep.equal({
       method: 'authorize',
       args: [TOKEN, PAYEE, ONE, 3900n, 1n, 0n]
+    })
+  })
+
+  describe('a fee-gated v2 EnterpriseEscrow', () => {
+    beforeEach(() => {
+      escrow.isEscrowCore.mockResolvedValue(true)
+      escrow.isEscrowEnterprise.mockResolvedValue(true)
+      escrow.isTokenAllowed.mockResolvedValue(true)
+    })
+
+    it('refuses a disallowed token before funding or ordering', async () => {
+      escrow.isTokenAllowed.mockResolvedValue(false)
+
+      await expectThrowsAsync(
+        () => runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running,
+        /does not allow token/
+      )
+      expect(escrow.isTokenAllowed).toHaveBeenCalledExactlyOnceWith(TOKEN)
+      expectNothingSent()
+    })
+
+    it.each([ONE, ONE + 1n])(
+      'refuses a fee of %s that consumes the lock',
+      async (fee) => {
+        escrow.previewFee.mockResolvedValue(fee.toString())
+
+        await expectThrowsAsync(
+          () => runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running,
+          /fee .* leaves no payment/
+        )
+        expectNothingSent()
+      }
+    )
+
+    it('checks the gross amount in base units even with a partial deposit', async () => {
+      escrow.getUserFunds.mockResolvedValue({ available: ONE / 2n, locked: 0n })
+      escrow.previewFee.mockResolvedValue((ONE - 1n).toString())
+
+      await runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running
+
+      expect(escrow.previewFee).toHaveBeenCalledExactlyOnceWith(
+        TOKEN,
+        ONE.toString(),
+        0
+      )
+      expect(vi.mocked(sendSettlement)).toHaveBeenCalledTimes(2)
     })
   })
 
