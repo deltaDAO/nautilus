@@ -1447,6 +1447,33 @@ describe('WalletApi2CredentialProvider', () => {
     expect(thrown.reason).to.equal('wallet-setup')
   })
 
+  it.each([undefined, 'w-other'])(
+    'opens no session after wallet access expires (walletId %s)',
+    async (walletId) => {
+      const { wallet } = fakeWallet()
+      const provider = new WalletApi2CredentialProvider({ wallet, walletId })
+      await provider.prepare(challenge())
+      vi.spyOn(wallet, 'listWallets').mockRejectedValue(new Error('401'))
+
+      const { client, calls } = ssiNode()
+      await expect(
+        resolver(provider).resolve(request(client))
+      ).rejects.toMatchObject({ reason: 'wallet-setup' })
+      expect(calls).to.deep.equal([])
+    }
+  )
+
+  it('requires the configured wallet to be accessible during preparation', async () => {
+    const { wallet } = fakeWallet()
+    const provider = new WalletApi2CredentialProvider({
+      wallet,
+      walletId: 'missing'
+    })
+    await expect(provider.prepare(challenge())).rejects.toMatchObject({
+      reason: 'wallet-setup'
+    })
+  })
+
   it('refuses a wallet account without a wallet for the consumer', async () => {
     const { wallet } = fakeWallet()
     const thrown = await new WalletApi2CredentialProvider({ wallet })

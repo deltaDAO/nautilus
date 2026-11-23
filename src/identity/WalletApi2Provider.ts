@@ -119,7 +119,7 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
    * `wallet-setup` and no pending session is left behind.
    */
   async prepare(context: CredentialPreparation): Promise<void> {
-    await this.walletFor(context.consumerAddress)
+    await this.resolveWallet(context.consumerAddress)
   }
 
   async present(challenge: CredentialChallenge): Promise<void> {
@@ -147,7 +147,10 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
         'request-invalid'
       )
 
-    const walletId = await this.walletFor(challenge.consumerAddress)
+    const walletId =
+      this.options.walletId ||
+      this.wallets.get(challenge.consumerAddress.toLowerCase()) ||
+      (await this.resolveWallet(challenge.consumerAddress))
     const remove = sessionIdRemover(challenge.sessionId)
 
     let opened: Awaited<ReturnType<WalletApi2['previewPresentation']>>
@@ -303,21 +306,28 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
   /** Wallet ids already resolved, by lower-cased address. */
   private readonly wallets = new Map<string, string>()
 
-  /** The wallet to present from: the pinned one, or the organisation's for `address`. */
-  private async walletFor(address: string): Promise<string> {
-    if (this.options.walletId) return this.options.walletId
-    const known = this.wallets.get(address.toLowerCase())
-    if (known) return known
-
+  /** Resolve the pinned or address-matched wallet against the current account. */
+  private async resolveWallet(address: string): Promise<string> {
     let wallets: Awaited<ReturnType<WalletApi2['listWallets']>>
     try {
       wallets = await this.wallet.listWallets()
     } catch (error) {
       throw new CredentialPresentationError(
-        `Could not list the organisation's wallets (${error instanceof Error ? error.message : String(error)}). Pass walletId to pick one.`,
+        `Could not list the organisation's wallets (${error instanceof Error ? error.message : String(error)}).`,
         undefined,
         'wallet-setup'
       )
+    }
+
+    const pinned = this.options.walletId
+    if (pinned) {
+      if (!wallets.some((wallet) => wallet.walletId === pinned))
+        throw new CredentialPresentationError(
+          'The wallet account has no access to the configured walletId.',
+          undefined,
+          'wallet-setup'
+        )
+      return pinned
     }
 
     const own = wallets.find(
