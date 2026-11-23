@@ -95,6 +95,20 @@ describe('WalletApi2VcSigner', () => {
     ])
   })
 
+  it('compares optional fields with their representation in the posted JSON', async () => {
+    const gateway = mockGateway()
+    const signer = vcSigner(gateway)
+    const ddo = signer.prepareDocument(ddoFixture())
+    const subject = ddo.credentialSubject as Record<string, unknown>
+    subject.license = { name: 'MIT', licenseDocuments: undefined }
+
+    const { jwt } = await signer.sign(ddo)
+    const signed = JSON.parse(
+      Buffer.from(jwt.split('.')[1], 'base64url').toString()
+    )
+    expect(signed.credentialSubject.license).to.deep.equal({ name: 'MIT' })
+  })
+
   it('refuses a DDO with fields wallet-api2 would refuse, before sending it', async () => {
     const gateway = mockGateway()
     const thrown = await vcSigner(gateway)

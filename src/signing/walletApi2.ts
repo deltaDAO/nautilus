@@ -280,11 +280,14 @@ export class WalletApi2VcSigner implements DdoSigner {
 
     this.assertRequestedScope()
 
-    const credential: Record<string, unknown> = {
-      ...ddo,
-      type: [...CREDENTIAL_TYPE],
-      issuer
-    }
+    // Freeze the JSON value we send and compare, including omission of optional fields.
+    const credential = JSON.parse(
+      JSON.stringify({
+        ...ddo,
+        type: [...CREDENTIAL_TYPE],
+        issuer
+      })
+    ) as Record<string, unknown>
 
     let walletId = this.options.walletId
     if (!walletId) {
