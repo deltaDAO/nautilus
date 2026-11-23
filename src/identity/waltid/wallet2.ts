@@ -382,6 +382,21 @@ function walletErrorText(body: string): string {
 
 /** The parts of a preview nautilus reads, with their types checked. */
 function readPreview(raw: Record<string, unknown>): WalletApi2Preview {
+  const transactionData =
+    raw.transactionData === undefined ? [] : raw.transactionData
+  if (
+    !Array.isArray(transactionData) ||
+    transactionData.length > 50 ||
+    !transactionData.every(isRecord)
+  )
+    return {
+      valid: false,
+      error: { code: 'invalid_request', message: 'Invalid transaction data.' },
+      transactionData: [],
+      credentialOptions: [],
+      credentialRequirements: []
+    }
+
   const error = isRecord(raw.error)
     ? {
         code: str(raw.error.code, 100) ?? 'invalid_request',
@@ -416,18 +431,12 @@ function readPreview(raw: Record<string, unknown>): WalletApi2Preview {
     ...(str(raw.clientId) ? { clientId: raw.clientId as string } : {}),
     ...(verifierName ? { verifier: { name: verifierName } } : {}),
     ...(str(raw.responseUri) ? { responseUri: raw.responseUri as string } : {}),
-    transactionData: (Array.isArray(raw.transactionData)
-      ? raw.transactionData
-      : []
-    )
-      .filter(isRecord)
-      .slice(0, 50)
-      .map((item) => ({
-        type: typeof item.type === 'string' ? item.type : '',
-        credentialQueryIds: stringArray(item.credentialQueryIds),
-        ...(isRecord(item.details) ? { details: item.details } : {}),
-        ...(isRecord(item.rawJson) ? { rawJson: item.rawJson } : {})
-      })),
+    transactionData: transactionData.map((item) => ({
+      type: typeof item.type === 'string' ? item.type : '',
+      credentialQueryIds: stringArray(item.credentialQueryIds),
+      ...(isRecord(item.details) ? { details: item.details } : {}),
+      ...(isRecord(item.rawJson) ? { rawJson: item.rawJson } : {})
+    })),
     credentialOptions: (Array.isArray(raw.credentialOptions)
       ? raw.credentialOptions
       : []

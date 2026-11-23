@@ -1598,6 +1598,40 @@ describe('WalletApi2HttpClient', () => {
     ])
   })
 
+  it('rejects handles with oversized or malformed transaction data', async () => {
+    const item = {
+      type: 'org.oceanenterprise.transaction-data.asset-access',
+      details: {
+        consumer_address: CONSUMER,
+        document_id: ASSET_DID,
+        service_id: SERVICE_ID
+      }
+    }
+    for (const transactionData of [Array(51).fill(item), [null], {}]) {
+      const fetchImpl = stub(200, {
+        handle: 'handle-0123456789abcdef',
+        preview: { ...PREVIEW, transactionData }
+      })
+      const wallet = new WalletApi2HttpClient({
+        apiUrl: 'https://wallet-api.test.invalid',
+        token: 't',
+        fetchImpl
+      })
+      const error = await new WalletApi2CredentialProvider({
+        wallet,
+        walletId: 'w'
+      })
+        .present(challenge())
+        .catch((e) => e)
+      expect(error.reason).to.equal('request-invalid')
+      expect(
+        (fetchImpl.mock.calls as unknown as [string][]).map(([url]) =>
+          url.split('/').pop()
+        )
+      ).to.deep.equal(['preview-handle', 'reject-handle'])
+    }
+  })
+
   it('reads the snake_case submit answer and the org wallets', async () => {
     const submit = new WalletApi2HttpClient({
       apiUrl: 'https://wallet-api.test.invalid',
