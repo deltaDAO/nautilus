@@ -946,10 +946,15 @@ describe('PolicySessionResolver on a node with the native SSI module', () => {
     expect(challenges).to.have.length(0)
   })
 
-  it.each(['https://evil.test/r', `https://${VERIFIER_HOST}:8443/r`])(
-    'refuses a request for %s before presenting',
-    async (target) => {
+  it.each([
+    ['https://evil.test/r', VERIFIER_HOST],
+    [`https://${VERIFIER_HOST}:8443/r`, VERIFIER_HOST],
+    ['file:///request', ' ']
+  ])(
+    'refuses a request for %s with announced host "%s" before presenting',
+    async (target, announced) => {
       const { client } = ssiNode({
+        capabilities: { ...CAPABILITIES, verifierPublicHost: announced },
         initiate: async () => ({
           required: true,
           sessionId: SESSION,

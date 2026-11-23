@@ -327,7 +327,8 @@ export function normalizeVerifierHost(value: string): string {
 export function requestUriHost(requestUri: string): string | undefined {
   try {
     const target = new URL(requestUri).searchParams.get('request_uri')
-    return target ? new URL(target).host.toLowerCase() : undefined
+    if (!target) return undefined
+    return new URL(target).host.toLowerCase() || undefined
   } catch {
     return undefined
   }
