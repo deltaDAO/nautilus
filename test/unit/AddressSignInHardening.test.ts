@@ -802,6 +802,19 @@ describe('contract details (C1, C2, C4, C5)', () => {
     }
   })
 
+  it('observes signer failures when the caller aborts during sign-in startup', async () => {
+    const gateway = mockGateway()
+    const controller = new AbortController()
+    const { wallet } = signer()
+    vi.spyOn(wallet, 'getAddress').mockImplementation(async () => {
+      controller.abort(new Error('stop'))
+      throw new Error('signer unavailable')
+    })
+    const { signIn } = signInWith(gateway, { signer: wallet })
+    await expect(signIn.getToken(controller.signal)).rejects.toThrow('stop')
+    expect(gateway.calls).to.have.length(0)
+  })
+
   it('backs off while renewals fail in the last minute', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-11-23T10:00:00Z'))

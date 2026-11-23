@@ -647,10 +647,10 @@ export class AddressSignIn implements WalletApi2TokenSource {
 /** `promise`, or the signal's reason as soon as `signal` aborts (the work goes on). */
 function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return promise
-  if (signal.aborted) return Promise.reject(signal.reason)
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => reject(signal.reason)
-    signal.addEventListener('abort', onAbort, { once: true })
+    if (signal.aborted) onAbort()
+    else signal.addEventListener('abort', onAbort, { once: true })
     promise.then(
       (value) => {
         signal.removeEventListener('abort', onAbort)
