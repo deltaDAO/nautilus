@@ -452,6 +452,134 @@ function sessionPolicyKey(value: SsiPolicyV2Value): string {
   })
 }
 
+interface SessionCounts {
+  queries: number
+  targetedRego: number
+  globalRego: number
+}
+
+function legacyList(value: unknown): unknown[] {
+  return value == null ? [] : Array.isArray(value) ? value : [value]
+}
+
+// The legacy market JSON-encoded requests and policies, sometimes repeatedly.
+function decodeLegacy(value: unknown): unknown {
+  for (let i = 0; i < 3 && typeof value === 'string'; i++) {
+    if (!/^["{[]/.test(value.trim())) break
+    try {
+      value = JSON.parse(value)
+    } catch {
+      break
+    }
+    assertSafeJson(value)
+  }
+  return value
+}
+
+const legacyAliases = new Map([
+  ['expired', 'expiration'],
+  ['not-before', 'not_before'],
+  ['revoked-status-list', 'revocation'],
+  ['revoked_status_list', 'revocation'],
+  ['allowed-issuer', 'allowed_issuer'],
+  ['schema', 'json_schema'],
+  ['json-schema', 'json_schema'],
+  ['credential-status', 'status'],
+  ['vct-integrity', 'vct_integrity']
+])
+
+// Project the fields kept by the node's v1Translator. The merge deduplicates
+// translated policies, so ignored fields and legacy spellings must compare equal.
+function legacySessionPolicy(
+  value: Record<string, unknown>,
+  level?: GaiaXLabelLevel
+) {
+  const rego: unknown[] = []
+  const vcPolicies = (list: unknown, target?: number) => {
+    const policies: unknown[] = []
+    for (const raw of legacyList(list)) {
+      const policy = decodeLegacy(raw)
+      const name = isRecord(policy) ? policy.policy : policy
+      const args = isRecord(policy) ? decodeLegacy(policy.args) : undefined
+      if (typeof name !== 'string') continue
+      const mapped = legacyAliases.get(name) ?? name
+      if (mapped === 'dynamic' && isRecord(args)) {
+        const rules = decodeLegacy(args.rules)
+        if (!isRecord(rules)) continue
+        const code = rules.rego
+        const url =
+          typeof rules.policy_url === 'string' && URL.canParse(rules.policy_url)
+            ? new URL(rules.policy_url).href
+            : rules.policy_url
+        rego.push({
+          target,
+          name:
+            typeof args.policy_name === 'string' && args.policy_name
+              ? args.policy_name.slice(0, 128)
+              : 'dynamic',
+          argument: decodeLegacy(args.argument ?? {}),
+          ...(typeof code === 'string' && code ? { code } : { url })
+        })
+      } else if (mapped === 'allowed_issuer') {
+        policies.push([mapped, legacyList(args)])
+      } else if (mapped === 'json_schema') {
+        policies.push([
+          mapped,
+          isRecord(args) && isRecord(args.schema) ? args.schema : args
+        ])
+      } else if (mapped === 'status') {
+        policies.push([mapped, args])
+      } else policies.push(mapped)
+    }
+    return policies
+  }
+  const rawRequests = legacyList(value.request_credentials)
+  if (rawRequests.length > MAX_CREDENTIAL_QUERIES)
+    fail('too many credential queries for one session')
+  const requests = rawRequests.map((raw, index) => {
+    const request = decodeLegacy(raw)
+    if (!isRecord(request)) return {}
+    const format = request.format === 'jwt_vc' ? 'jwt_vc_json' : request.format
+    if (level && format === 'jwt_vc_json')
+      failGaiaXMixing(String(request.format), String(request.type))
+    return {
+      type: request.type,
+      format,
+      policies: vcPolicies(request.policies, index)
+    }
+  })
+  const targetedRego = rego.length
+  const globalPolicies = vcPolicies(value.vc_policies)
+  const sets = []
+  for (const raw of legacyList(value.vp_policies)) {
+    const vp = decodeLegacy(raw)
+    if (!isRecord(vp) || vp.policy !== 'vp_required_credentials') continue
+    const args = decodeLegacy(vp.args)
+    if (!isRecord(args)) continue
+    for (const requirement of legacyList(args.required)) {
+      if (!isRecord(requirement)) continue
+      const types =
+        'credential_type' in requirement
+          ? [requirement.credential_type]
+          : legacyList(requirement.any_of)
+      // For identical requests each type maps to the same ordered query IDs.
+      sets.push(types)
+    }
+  }
+  return {
+    key: canonicalJson({
+      source: 'legacy',
+      requests,
+      globalPolicies,
+      sets,
+      rego
+    }),
+    queries: requests.length,
+    targetedRego,
+    globalRego: rego.length - targetedRego
+  }
+}
+
 /** Check whole SSI entries and count their values before merging sessions. */
 function assertSsiEntryLimits(entries: DdoCredential[]): void {
   let count = 0
@@ -475,7 +603,7 @@ export function validateSsiPolicyCombination(
   ...blocks: (DdoCredentials | undefined)[]
 ): void {
   const level = requiredGaiaXLevel(...blocks)
-  const policies = new Map<string, SsiPolicyV2Value>()
+  const policies = new Map<string, SessionCounts>()
   for (const block of blocks) {
     if (block?.deny?.some(isSsiEntry))
       fail(
@@ -488,19 +616,19 @@ export function validateSsiPolicyCombination(
         for (const value of entry.values) {
           validateSsiPolicyV2Value(value)
           if (level) checkGaiaXQueries(value.dcql?.credentials ?? [])
-          policies.set(sessionPolicyKey(value), value)
+          const rego = value.rego ?? []
+          const targetedRego = rego.filter((rule) => rule.credentialId).length
+          policies.set(sessionPolicyKey(value), {
+            queries: value.dcql?.credentials.length ?? 0,
+            targetedRego,
+            globalRego: rego.length - targetedRego
+          })
         }
-      } else if (level && isSsiEntry(entry) && 'values' in entry) {
-        // The native module translates these legacy queries into jwt_vc_json.
+      } else if (isSsiEntry(entry) && 'values' in entry) {
         for (const value of entry.values) {
-          if (!isRecord(value) || !('request_credentials' in value)) continue
-          const requests = value.request_credentials
-          for (const request of Array.isArray(requests) ? requests : [requests])
-            if (
-              isRecord(request) &&
-              (request.format === 'jwt_vc' || request.format === 'jwt_vc_json')
-            )
-              failGaiaXMixing(request.format, String(request.type))
+          if (!isRecord(value)) continue
+          const policy = legacySessionPolicy(value, level)
+          policies.set(policy.key, policy)
         }
       }
     }
@@ -508,11 +636,9 @@ export function validateSsiPolicyCombination(
   // Gaia-X adds compliance and legal-person queries, plus a service offering from L1.
   let queryCount = level === undefined ? 0 : level === 'SC' ? 2 : 3
   let regoCount = 0
-  for (const value of policies.values()) {
-    const queries = value.dcql?.credentials.length ?? 0
+  for (const { queries, targetedRego, globalRego } of policies.values()) {
     queryCount += queries
-    for (const rego of value.rego ?? [])
-      regoCount += policies.size === 1 || rego.credentialId ? 1 : queries
+    regoCount += targetedRego + globalRego * (policies.size === 1 ? 1 : queries)
   }
   if (queryCount > MAX_CREDENTIAL_QUERIES)
     fail('too many credential queries for one session')

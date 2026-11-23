@@ -226,7 +226,7 @@ describe('DCQL claims validation', () => {
   })
 })
 
-describe('merged SSIpolicyV2 session limits', () => {
+describe('merged SSI session limits', () => {
   const value = (count: number, prefix = 'q'): SsiPolicyV2Value => ({
     version: '2',
     dcql: {
@@ -260,6 +260,89 @@ describe('merged SSIpolicyV2 session limits', () => {
     ).not.toThrow()
     expect(() => check(asset, value(9))).not.toThrow()
     expect(() => check(asset, value(10))).toThrow(/too many credential queries/)
+  })
+
+  const legacy = (policy: unknown): DdoCredentials =>
+    ({ allow: [{ type: 'SSIpolicy', values: [policy] }] }) as DdoCredentials
+  const request = { type: 'pid', format: 'jwt_vc' }
+
+  it('counts translated legacy requests alongside V2 queries in either block', () => {
+    const asset = legacy({ request_credentials: request })
+    const atLimit = addSsiPolicyV2({}, value(19))
+    const overLimit = addSsiPolicyV2({}, value(20))
+    expect(() => validateSsiPolicyCombination(asset, atLimit)).not.toThrow()
+    expect(() => validateSsiPolicyCombination(asset, overLimit)).toThrow(
+      /too many credential queries/
+    )
+    expect(() => validateSsiPolicyCombination(overLimit, asset)).toThrow(
+      /too many credential queries/
+    )
+  })
+
+  it('deduplicates equivalent translated requirements but counts repeated queries within one', () => {
+    const requests = Array(11).fill(request)
+    const asset = legacy({
+      request_credentials: requests,
+      vc_policies: ['expired']
+    })
+    const equivalent = {
+      request_credentials: requests.map(() =>
+        JSON.stringify({ ...request, format: 'jwt_vc_json' })
+      ),
+      vc_policies: 'expiration',
+      vp_policies: ['holder-binding']
+    }
+    expect(() =>
+      validateSsiPolicyCombination(asset, legacy(equivalent))
+    ).not.toThrow()
+    expect(() =>
+      validateSsiPolicyCombination(
+        asset,
+        legacy({ ...equivalent, vc_policies: 'signature' })
+      )
+    ).toThrow(/too many credential queries/)
+  })
+
+  it('includes legacy SD-JWT requests in the Gaia-X session query budget', () => {
+    const asset = legacy({
+      request_credentials: { ...request, format: 'vc+sd-jwt' }
+    })
+    const service = (count: number) =>
+      addSsiPolicyV2({}, { ...value(count), gaiax: { minLabelLevel: 'L1' } })
+    expect(() => validateSsiPolicyCombination(asset, service(16))).not.toThrow()
+    expect(() => validateSsiPolicyCombination(asset, service(17))).toThrow(
+      /too many credential queries/
+    )
+  })
+
+  it('counts translated dynamic rules and expands global rules when mixing formats', () => {
+    const dynamic = JSON.stringify({
+      policy: 'dynamic',
+      args: { rules: { rego: 'allow := true' } }
+    })
+    const asset = (targeted: string[]) =>
+      legacy({
+        request_credentials: [{ ...request, policies: targeted }, request],
+        vc_policies: [dynamic]
+      })
+    const service = addSsiPolicyV2(
+      {},
+      {
+        ...value(18),
+        rego: [
+          { name: 'rule', code: 'allow := true' },
+          { name: 'other', code: 'allow := true' },
+          { name: 'targeted', code: 'allow := true', credentialId: 'q0' }
+        ]
+      }
+    )
+    // 37 V2 rules, two expansions of the legacy global rule, then targeted rules.
+    expect(() =>
+      validateSsiPolicyCombination(asset([dynamic]), service)
+    ).not.toThrow()
+    expect(() =>
+      validateSsiPolicyCombination(asset([dynamic, dynamic]), service)
+    ).toThrow(/too many rego policies/)
   })
 
   it('adds the Gaia-X queries once for the highest required level', () => {
