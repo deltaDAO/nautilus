@@ -157,6 +157,28 @@ describe('writeAsset issuer rules', () => {
     expect(signed[0].issuer).to.equal('did:jwk:test-issuer')
   })
 
+  it("signs and returns the signer's prepared document (prepareDocument)", async () => {
+    const { signer, signed } = fakeDdoSigner('did:jwk:test-issuer')
+    const prepared: Record<string, unknown>[] = []
+    signer.prepareDocument = (ddo) => {
+      prepared.push(ddo)
+      const subject = { ...(ddo.credentialSubject as Record<string, unknown>) }
+      delete subject.id
+      delete subject.version
+      return { ...ddo, credentialSubject: subject }
+    }
+    const { nautilus } = await createNautilus({ ddoSigner: signer })
+
+    const response = await nautilus.edit(
+      new AssetBuilder(getAssetFixture()).build()
+    )
+
+    expect(prepared).to.have.length(1)
+    expect(signed[0].credentialSubject).not.to.have.any.keys('id', 'version')
+    expect(response.ddo.credentialSubject).not.to.have.any.keys('id', 'version')
+    expect(signed[0].issuer).to.equal('did:jwk:test-issuer')
+  })
+
   it('refuses to republish under a signer that is not the declared issuer', async () => {
     // Previously writeAsset() overwrote the issuer unconditionally, so toCredential()'s
     // mismatch guard could never fire from the publish flow.

@@ -1986,11 +1986,16 @@ export class Nautilus {
       log
     } = params
 
-    const ddo = await asset.ddo.getDDO(this.node, {
+    const projected = await asset.ddo.getDDO(this.node, {
       create,
       chainId: this.config.chainId,
       nftAddress
     })
+    // A signer that accepts only some fields (wallet-api2 with an address token) shapes
+    // the document first, so the document validated, signed and returned is one document.
+    const ddo = ddoSigner.prepareDocument
+      ? ddoSigner.prepareDocument(projected)
+      : projected
 
     /**
      * The signer's identity is the *default* for `issuer`, stamped before validating,

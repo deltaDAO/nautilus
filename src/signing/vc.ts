@@ -40,6 +40,14 @@ export interface DdoSigner {
    * @param ddo the DDO to sign, already stripped of indexer-derived fields
    */
   sign(ddo: Record<string, unknown>): Promise<SignedCredential>
+
+  /**
+   * Optional. The document this signer will sign for `ddo`, for a signer that accepts
+   * only some fields. The publish and edit flows call it on the projected DDO before they
+   * stamp the issuer, validate and sign, so the validated document is the signed one.
+   * Returns a new object; `ddo` is not changed.
+   */
+  prepareDocument?(ddo: Record<string, unknown>): Record<string, unknown>
 }
 
 /**
