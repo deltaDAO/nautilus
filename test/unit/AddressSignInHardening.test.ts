@@ -559,6 +559,35 @@ describe('gateway URL (S5)', () => {
       )
     })
 
+  it('authorizes only the configured gateway and its routes, before signing in', async () => {
+    const gateway = mockGateway()
+    const { signIn, signMessage } = signInWith(gateway)
+    for (const url of [
+      'invalid',
+      GATEWAY.replace('wallet.test.invalid', 'other.test.invalid'),
+      GATEWAY.replace('https:', 'http:'),
+      GATEWAY.replace('https://', 'https://user@'),
+      `${GATEWAY}-other/auth/account`,
+      `${GATEWAY}/../other`,
+      `${GATEWAY}/%2e%2e/other`,
+      `${GATEWAY}/%2fother`
+    ])
+      await expect(
+        signIn.authorize({ method: 'GET', url })
+      ).rejects.toMatchObject({ code: 'wrong_endpoint' })
+    expect(gateway.calls).to.have.length(0)
+    expect(signMessage).not.toHaveBeenCalled()
+
+    const url = `${GATEWAY}/auth/account`
+    const { headers } = await signIn.authorize({
+      method: 'GET',
+      url: `${url}?q=1`
+    })
+    expect((await jwtVerify(headers.DPoP, EmbeddedJWK)).payload.htu).to.equal(
+      url
+    )
+  })
+
   it('accepts the URL as a parser reads it, with or without a trailing slash', () => {
     for (const gateway of [
       GATEWAY,

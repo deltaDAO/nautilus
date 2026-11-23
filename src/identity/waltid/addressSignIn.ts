@@ -239,6 +239,26 @@ export class AddressSignIn implements WalletApi2TokenSource {
     url: string
     signal?: AbortSignal
   }): Promise<{ token: string; headers: Record<string, string> }> {
+    const target = URL.canParse(request.url) ? new URL(request.url) : undefined
+    const gateway = new URL(this.gateway)
+    const basePath = gateway.pathname.replace(/\/$/, '')
+    if (
+      !target ||
+      target.origin !== gateway.origin ||
+      target.username ||
+      target.password ||
+      UNSAFE_URL.test(request.url) ||
+      target.pathname.includes('%') ||
+      (target.pathname !== basePath &&
+        !target.pathname.startsWith(`${basePath}/`))
+    )
+      throw new WaltIdWalletError(
+        'authorize',
+        'address tokens may only authorize requests to the configured gateway',
+        undefined,
+        { code: 'wrong_endpoint' }
+      )
+
     const session = await this.current(request.signal)
     return {
       token: session.token,
