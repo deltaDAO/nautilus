@@ -1574,6 +1574,28 @@ describe('WalletApi2CredentialProvider', () => {
     }
   })
 
+  it('rejects the handle on selection failure and preserves the original error', async () => {
+    const { wallet, calls } = fakeWallet()
+    const cancelled = new Error('selection cancelled')
+    const reject = vi
+      .spyOn(wallet, 'rejectPresentation')
+      .mockRejectedValue(new Error('handle expired'))
+    const error = await new WalletApi2CredentialProvider({
+      wallet,
+      walletId: 'w',
+      onSelectCredentials: async () => {
+        throw cancelled
+      }
+    })
+      .present(challenge())
+      .catch((e) => e)
+    expect(error).to.equal(cancelled)
+    expect(reject.mock.calls).to.deep.equal([
+      ['w', { handle: 'handle-0123456789abcdef', errorCode: 'access_denied' }]
+    ])
+    expect(calls.map((call) => call.name)).to.deep.equal(['preview'])
+  })
+
   it('reports a verifier refusal as verifier-rejected', async () => {
     const { wallet } = fakeWallet({}, { transmissionSuccess: false })
     const thrown = await new WalletApi2CredentialProvider({

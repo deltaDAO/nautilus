@@ -165,13 +165,16 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
     }
 
     const { handle, preview } = opened
-    const decline = async (errorCode: string, error: Error): Promise<never> => {
-      await this.wallet
-        .rejectPresentation(walletId, { handle, errorCode })
-        .catch((rejectError) => {
-          if (debugEnabled('sensitive', 'wallet'))
-            debugRaw('wallet', 'reject-handle failed', rejectError)
-        })
+    const decline = async (
+      errorCode: string,
+      error: unknown
+    ): Promise<never> => {
+      try {
+        await this.wallet.rejectPresentation(walletId, { handle, errorCode })
+      } catch (rejectError) {
+        if (debugEnabled('sensitive', 'wallet'))
+          debugRaw('wallet', 'reject-handle failed', rejectError)
+      }
       throw error
     }
 
@@ -207,7 +210,11 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
 
     let selection: CredentialSelection
     if (this.options.onSelectCredentials) {
-      selection = await this.options.onSelectCredentials(matches, preview)
+      try {
+        selection = await this.options.onSelectCredentials(matches, preview)
+      } catch (error) {
+        return decline('access_denied', error)
+      }
       const invalid = selectionProblem(selection, matches)
       if (invalid)
         return decline(
