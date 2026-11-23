@@ -1,6 +1,7 @@
 import { EmbeddedJWK, jwtVerify } from 'jose'
 import { afterEach, describe, expect, it } from 'vitest'
 import { quoteText } from '../../src/identity/waltid/addressErrors.js'
+import { SignInMessageMismatch } from '../../src/identity/waltid/addressMessage.js'
 import { WaltIdWalletError } from '../../src/identity/waltid/client.js'
 import { DpopKey } from '../../src/identity/waltid/dpop.js'
 import type { DebugEvent } from '../../src/log/debug.js'
@@ -86,6 +87,9 @@ describe('redaction of address tokens, DPoP proofs, signatures and the ephemeral
       expect(quoteText(`key ${secret}`, 15)).to.equal('"key <redacted>"')
       const error = new WaltIdWalletError(`wallet/${secret}`, 'refused')
       expect(error.message).to.contain('wallet/<redacted>')
+      const mismatch = new SignInMessageMismatch('URI', 'gateway', secret)
+      expect(mismatch.message).to.contain('<redacted>')
+      expect(JSON.stringify(mismatch)).not.to.contain(secret)
     }
   })
 

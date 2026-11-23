@@ -98,8 +98,8 @@ export function buildSignInMessage(fields: SignInMessageFields): string {
 export class SignInMessageMismatch extends Error {
   constructor(
     readonly field: string,
-    readonly expected: string,
-    readonly actual: string
+    expected: string,
+    actual: string
   ) {
     super(
       `The sign-in message's ${field} is not what nautilus asked for, so it was not signed. Expected ${quoteText(expected)}, got ${quoteText(actual)}.`
