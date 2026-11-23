@@ -389,6 +389,43 @@ export function requiredGaiaXLevel(
   return highest >= 0 ? GAIAX_LABEL_LEVELS[highest] : undefined
 }
 
+/** Refuses Gaia-X and W3C requirements that apply to the same presentation. */
+export function validateSsiPolicyCombination(
+  ...blocks: (DdoCredentials | undefined)[]
+): void {
+  if (!requiredGaiaXLevel(...blocks)) return
+  for (const block of blocks)
+    for (const entry of block?.allow ?? []) {
+      if (isSsiPolicyV2Credential(entry)) {
+        for (const value of entry.values)
+          checkGaiaXQueries(value.dcql?.credentials ?? [])
+      } else if (isSsiEntry(entry) && 'values' in entry) {
+        // The native module translates these legacy queries into jwt_vc_json.
+        for (const value of entry.values) {
+          if (!isRecord(value)) continue
+          const requests = value.request_credentials
+          for (const request of Array.isArray(requests) ? requests : [requests])
+            if (
+              isRecord(request) &&
+              (request.format === 'jwt_vc' || request.format === 'jwt_vc_json')
+            )
+              failGaiaXMixing(request.format, String(request.type))
+        }
+      }
+    }
+}
+
+function checkGaiaXQueries(queries: { id: string; format: string }[]): void {
+  const w3c = queries.find(({ format }) => W3C_FORMATS.includes(format))
+  if (w3c) failGaiaXMixing(w3c.format, w3c.id)
+}
+
+function failGaiaXMixing(format: string, id: string): never {
+  fail(
+    `Gaia-X compliance cannot be combined with the ${format} query "${id}": the wallet signs all W3C credentials of one presentation with the organisation's did:web. Use dc+sd-jwt for the other credentials required by this service.`
+  )
+}
+
 /**
  * Adds an `SSIpolicyV2` value to the `allow` list, after checking it as the node will
  * (`validateSsiPolicyV2Value`). Values are appended to the list's one `SSIpolicyV2` entry,
@@ -730,13 +767,7 @@ export function validateSsiPolicyV2Value(value: unknown): void {
       `the dcql credential id "${reserved.id}" is reserved for the node's Gaia-X queries`
     )
 
-  if (requireGaiaX) {
-    const w3c = queries.find(({ format }) => W3C_FORMATS.includes(format))
-    if (w3c)
-      fail(
-        `Gaia-X compliance cannot be combined with the ${w3c.format} query "${w3c.id}": the wallet signs all W3C credentials of one presentation with the organisation's did:web. Use dc+sd-jwt for the other credentials, or another SSIpolicyV2 value.`
-      )
-  }
+  if (requireGaiaX) checkGaiaXQueries(queries)
 
   checkPolicyList(value.vcPolicies, 'vcPolicies')
 

@@ -202,7 +202,7 @@ export interface SsiPolicyV2Value {
   /**
    * Gaia-X compliance of the presenting organisation. A level alone implies the
    * requirement; `requireCompliance: true` without one means `SC`. Cannot be combined with
-   * `jwt_vc_json` queries in the same value (use `dc+sd-jwt` for other credentials).
+   * `jwt_vc_json` queries applying to the same service (use `dc+sd-jwt` for other credentials).
    */
   gaiax?: { requireCompliance?: boolean; minLabelLevel?: GaiaXLabelLevel }
   rego?: SsiRegoPolicy[]

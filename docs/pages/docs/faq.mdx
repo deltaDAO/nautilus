@@ -97,11 +97,11 @@ to expire.
 
 ## Can I mix Gaia-X and W3C credential queries?
 
-Not in one `SSIpolicyV2` value. The wallet signs all W3C credentials of one presentation with
-the organisation's `did:web`, so a value that asks for Gaia-X compliance cannot also have a
-W3C query (`jwt_vc_json`): [`addSsiPolicyV2`](/docs/api/assetbuilder/addSsiPolicyV2) throws an
-`SsiPolicyValidationError`, and the node refuses such a value with a 422. Ask for the other
-credentials as `dc+sd-jwt`, or put them in another `SSIpolicyV2` value.
+The node combines the asset's requirements with those of the requested service for one
+presentation. The wallet signs all W3C credentials in that presentation with the
+organisation's `did:web`. If the presentation requires Gaia-X compliance, request the
+other credentials as `dc+sd-jwt`. Publishing raises an `SsiPolicyValidationError` if
+any applicable value requests a W3C credential (`jwt_vc_json`).
 
 ## Which credential formats can an `SSIpolicyV2` ask for?
 

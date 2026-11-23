@@ -41,7 +41,13 @@ import {
   isJobFinished,
   isOutputPending
 } from '../compute/jobs.js'
-import { getLifecycleState, getNftAddress } from '../ddo/read.js'
+import {
+  getCredentials,
+  getLifecycleState,
+  getNftAddress,
+  getServiceCredentials,
+  getServices
+} from '../ddo/read.js'
 import type { DdoCredentials, SsiPolicyV2Value } from '../ddo/types.js'
 import { assertValid } from '../ddo/validate.js'
 import type { CredentialProvider } from '../identity/CredentialProvider.js'
@@ -56,6 +62,7 @@ import {
   regoProblem,
   requiredGaiaXLevel,
   type SsiCapabilities,
+  validateSsiPolicyCombination,
   validateSsiPolicyV2Value
 } from '../identity/ssi.js'
 import { type OperationName, runOperation } from '../log/context.js'
@@ -1952,6 +1959,12 @@ export class Nautilus {
     if (!preflight.issuer) preflight.issuer = params.issuer
 
     await assertValid(preflight)
+    const assetCredentials = getCredentials(preflight)
+    for (const service of getServices(preflight))
+      validateSsiPolicyCombination(
+        assetCredentials,
+        getServiceCredentials(service)
+      )
 
     // The node accepts decrypt requests up to 100 KB, so a DDO whose envelope does not fit
     // would go on chain without being indexed. The preflight document is as large as the

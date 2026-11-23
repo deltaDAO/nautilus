@@ -22,7 +22,7 @@ import {
   addCredentialAddresses,
   addRequestCredentials
 } from '../../src/identity/policy.js'
-import type { SsiCapabilities } from '../../src/identity/ssi.js'
+import { addSsiPolicyV2, type SsiCapabilities } from '../../src/identity/ssi.js'
 import { useAsyncContext } from '../../src/log/context.js'
 import { type DebugEvent, setDebug } from '../../src/log/debug.js'
 import {
@@ -2180,6 +2180,51 @@ describe('publish preflight on a node with the native SSI module', () => {
       .addSsiPolicyV2(value)
       .build()
   }
+
+  const gaiax: SsiPolicyV2Value = {
+    version: '2',
+    dcql: { credentials: [] },
+    gaiax: { minLabelLevel: 'SC' }
+  }
+  const w3c: SsiPolicyV2Value = {
+    version: '2',
+    dcql: { credentials: [{ id: 'company', format: 'jwt_vc_json' }] }
+  }
+
+  it.each(['asset', 'service', 'legacy service'])(
+    'rejects Gaia-X combined with a W3C requirement on the %s before minting',
+    async (scope) => {
+      const { nautilus } = await createNautilus()
+      const asset = gated(gaiax)
+      if (scope === 'asset')
+        asset.ddo.credentials = addSsiPolicyV2(asset.ddo.credentials, w3c)
+      else if (scope === 'service')
+        asset.ddo.services[0].credentials = addSsiPolicyV2({}, w3c)
+      else
+        asset.ddo.services[0].credentials = addRequestCredentials(
+          {},
+          CredentialListTypes.ALLOW,
+          [{ type: 'company', format: 'jwt_vc' }]
+        )
+
+      await expect(nautilus.publish(asset)).rejects.toThrow(
+        /Gaia-X compliance cannot be combined/
+      )
+      expect(createNftWithService).not.toHaveBeenCalled()
+    }
+  )
+
+  it('allows Gaia-X and W3C requirements on independent services', async () => {
+    const { nautilus } = await createNautilus()
+    const asset = validAsset()
+    const other = service('https://files.test.invalid/b.csv')
+    asset.ddo.services[0].credentials = addSsiPolicyV2({}, gaiax)
+    other.credentials = addSsiPolicyV2({}, w3c)
+    asset.ddo.services.push(other)
+
+    await nautilus.publish(asset)
+    expect(createNftWithService).toHaveBeenCalledTimes(1)
+  })
 
   it('warns nothing for an SSIpolicyV2 asset the node can check', async () => {
     const log = captureLog()
