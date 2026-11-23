@@ -40,6 +40,7 @@ import {
   type SessionEntry,
   type SessionKey
 } from '../../src/identity/session.js'
+import { CredentialPresentationError } from '../../src/identity/WaltIdProvider.js'
 import {
   OceanNodeClient,
   OceanNodeError,
@@ -1109,6 +1110,26 @@ describe('PolicySessionResolver', () => {
     expect(original.challenges).to.have.length(1)
     expect(replacement.challenges).to.have.length(0)
   })
+
+  it.each(['failed', 'expired'] as const)(
+    'surfaces the %s native session status with empty results after verifier rejection',
+    async (status) => {
+      const client = nativeNode()
+      client.ssiStatus = async () => ({ status, results: [] })
+      const rejection = new CredentialPresentationError(
+        'The verifier rejected the presentation.',
+        undefined,
+        'verifier-rejected'
+      )
+      const resolver = new PolicySessionResolver({
+        credentials: { present: vi.fn().mockRejectedValue(rejection) }
+      })
+
+      const error = await resolve(client, resolver, ssiAsset()).catch((e) => e)
+      expect(error).to.be.instanceOf(PolicyDeniedError)
+      expect(error).to.include({ source: 'ssi', cause: rejection })
+    }
+  )
 
   it('uses message.sessionId for an address-only asset, with no wallet', async () => {
     const { client, calls } = policyNode()

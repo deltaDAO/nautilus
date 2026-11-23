@@ -542,7 +542,12 @@ export class PolicySessionResolver {
     } catch (error) {
       if (reachedVerifier(error)) {
         const status = await boundedStatus(node, statusRequest, error)
-        if (status?.results.some((result) => !result.success))
+        if (
+          status &&
+          (status.status === 'failed' ||
+            status.status === 'expired' ||
+            status.results.some((result) => !result.success))
+        )
           throw denied(status, error)
       }
       throw error
