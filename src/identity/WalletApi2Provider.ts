@@ -31,7 +31,10 @@ import type {
   CredentialPreparation,
   CredentialProvider
 } from './CredentialProvider.js'
-import { assertPresentationRequest } from './requestChecks.js'
+import {
+  assertPresentationRequest,
+  presentationUrlProblem
+} from './requestChecks.js'
 import { ASSET_ACCESS_TRANSACTION_DATA_TYPE, requestUriHost } from './ssi.js'
 import { CredentialPresentationError } from './WaltIdProvider.js'
 import { WaltIdWalletError } from './waltid/client.js'
@@ -182,7 +185,12 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
         )
       )
 
-    const problem = requestProblem(preview, challenge, verifierHost)
+    const problem = requestProblem(
+      preview,
+      challenge,
+      verifierHost,
+      this.options.allowInsecureTransport === true
+    )
     if (problem)
       return decline(
         'invalid_request',
@@ -300,8 +308,17 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
 function requestProblem(
   preview: WalletApi2Preview,
   challenge: CredentialChallenge,
-  verifierHost: string | undefined
+  verifierHost: string | undefined,
+  allowInsecure: boolean
 ): string | undefined {
+  if (preview.responseUri !== undefined) {
+    const problem = presentationUrlProblem(
+      preview.responseUri,
+      'response_uri',
+      allowInsecure
+    )
+    if (problem) return problem
+  }
   if (verifierHost) {
     let responseHost: string | undefined
     try {

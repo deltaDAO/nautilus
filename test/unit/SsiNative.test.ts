@@ -1380,6 +1380,10 @@ describe('WalletApi2CredentialProvider', () => {
         { valid: false, error: { code: 'invalid_request', message: 'bad' } },
         /refused the presentation request/
       ],
+      [
+        { responseUri: `http://${VERIFIER_HOST}/response` },
+        /response_uri must be https/
+      ],
       [{ responseUri: 'https://evil.test/response' }, /posted to evil.test/],
       [
         { credentialOptions: [{ queryId: 'other', credentialId: 'c' }] },
@@ -1630,6 +1634,33 @@ describe('WalletApi2HttpClient', () => {
         )
       ).to.deep.equal(['preview-handle', 'reject-handle'])
     }
+  })
+
+  it('declines an unreadable response URI without an announced verifier', async () => {
+    const fetchImpl = stub(200, {
+      handle: 'handle-0123456789abcdef',
+      preview: {
+        ...PREVIEW,
+        responseUri: `http://wallet.test/${'x'.repeat(2048)}`
+      }
+    })
+    const wallet = new WalletApi2HttpClient({
+      apiUrl: 'https://wallet-api.test.invalid',
+      token: 't',
+      fetchImpl
+    })
+    const error = await new WalletApi2CredentialProvider({
+      wallet,
+      walletId: 'w'
+    })
+      .present(challenge({ verifierHost: undefined }))
+      .catch((e) => e)
+    expect(error.reason).to.equal('request-invalid')
+    expect(
+      (fetchImpl.mock.calls as unknown as [string][]).map(([url]) =>
+        url.split('/').pop()
+      )
+    ).to.deep.equal(['preview-handle', 'reject-handle'])
   })
 
   it('reads the snake_case submit answer and the org wallets', async () => {

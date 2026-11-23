@@ -426,7 +426,8 @@ function readPreview(raw: Record<string, unknown>): WalletApi2Preview {
     : undefined
 
   return {
-    valid: raw.valid === true,
+    valid:
+      raw.valid === true && (raw.responseUri == null || !!str(raw.responseUri)),
     ...(str(raw.keyId, 300) ? { keyId: raw.keyId as string } : {}),
     ...(str(raw.clientId) ? { clientId: raw.clientId as string } : {}),
     ...(verifierName ? { verifier: { name: verifierName } } : {}),
