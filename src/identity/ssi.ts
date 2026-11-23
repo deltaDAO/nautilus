@@ -91,6 +91,7 @@ const QUERY_ID = /^[A-Za-z0-9_-]{1,64}$/
 const MAX_CREDENTIAL_QUERIES = 20
 const MAX_REGO_POLICIES = 10
 const MAX_POLICIES_PER_LIST = 20
+const MAX_VC_POLICY_ARGUMENT_LENGTH = 16 * 1024
 const MAX_REGO_BYTES = 64 * 1024
 const MAX_ENTRY_BYTES = 256 * 1024
 const MAX_SETS = 20
@@ -671,10 +672,14 @@ function checkVcPolicy(input: unknown, field: string): void {
         fail(
           `${field}: json_schema needs an inline "schema" object (no schemaUrl)`
         )
+      if (JSON.stringify(args.schema).length > MAX_VC_POLICY_ARGUMENT_LENGTH)
+        fail(`${field}: json_schema.schema exceeds the 16 KiB serialized limit`)
       return
     case 'status':
       if (!isRecord(args.argument))
         fail(`${field}: status needs an "argument" object`)
+      if (JSON.stringify(args.argument).length > MAX_VC_POLICY_ARGUMENT_LENGTH)
+        fail(`${field}: status.argument exceeds the 16 KiB serialized limit`)
       return
     default:
       if (Object.keys(args).some((key) => key !== 'policy'))

@@ -93,16 +93,47 @@ describe('SSIpolicyV2 entry validation', () => {
     ).toThrow(/nested too deeply/)
   })
 
+  it('limits serialized inline schemas and status arguments in builders and preflight', () => {
+    const limit = 16 * 1024 - JSON.stringify({ text: '' }).length
+    for (const length of [limit, limit + 1]) {
+      const argument = { text: 'é'.repeat(length) }
+      const policies = [
+        { policy: 'json_schema', schema: argument },
+        { policy: 'status', argument }
+      ] as const
+      for (const policy of policies) {
+        for (const list of [
+          { vcPolicies: [policy] },
+          { specificVcPolicies: { pid: [policy] } }
+        ]) {
+          const value: SsiPolicyV2Value = {
+            version: '2',
+            dcql: { credentials: [{ id: 'pid', format: 'dc+sd-jwt' }] },
+            ...list
+          }
+          const stored: DdoCredentials = {
+            allow: [{ type: 'SSIpolicyV2', values: [value] }]
+          }
+          for (const validate of [
+            () => addSsiPolicyV2({}, value),
+            () => validateSsiPolicyCombination(stored)
+          ]) {
+            if (length === limit) expect(validate).not.toThrow()
+            else expect(validate).toThrow(/16 KiB/)
+          }
+        }
+      }
+    }
+  })
+
   it('checks the size of the whole entry after deduplicating values', () => {
     const largeValue = (id: string): SsiPolicyV2Value => ({
       version: '2',
       dcql: { credentials: [{ id, format: 'dc+sd-jwt' }] },
-      vcPolicies: [
-        {
-          policy: 'json_schema',
-          schema: { description: 'x'.repeat(140 * 1024) }
-        }
-      ]
+      vcPolicies: Array.from({ length: 10 }, () => ({
+        policy: 'json_schema',
+        schema: { description: 'x'.repeat(14 * 1024) }
+      }))
     })
     const value = largeValue('first')
     const credentials = addSsiPolicyV2({}, value)
