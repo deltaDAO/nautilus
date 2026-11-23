@@ -18,6 +18,7 @@ import {
   ServiceTypes,
   type VcPolicy,
   type VpPolicy,
+  WalletApi2CredentialProvider,
   WaltIdCredentialProvider,
   WaltIdHttpWallet,
   WaltIdVcSigner,
@@ -185,6 +186,16 @@ export function createCredentialProvider(
     role?: Role
   } = {}
 ): CredentialProvider {
+  // Nodes with the native SSI module, from a script: sign in to wallet-api2 with the
+  // signer's organisation address (WALLET_GATEWAY, the wallet UI's address gateway).
+  const gateway = process.env.WALLET_GATEWAY?.trim()
+  if (gateway)
+    return WalletApi2CredentialProvider.withAddressSignIn({
+      gateway,
+      signer: nautilus.getSigner(),
+      allowInsecureTransport: allowInsecureTransport()
+    })
+
   const { walletId, did } = walletEnv(options.role ?? 'publisher')
 
   return new WaltIdCredentialProvider(nautilus.getNodeClient(), {
