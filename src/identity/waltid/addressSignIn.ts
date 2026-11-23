@@ -22,6 +22,7 @@ import { getAddress } from 'ethers'
 import { sanitize } from '../../node/messages.js'
 import { errorMessage, fetchText } from '../../utils/http.js'
 import { assertSecureTransport } from '../../utils/transport.js'
+import { addressRefusal, NOT_FOUND_HINT } from './addressErrors.js'
 import {
   ADDRESS_SIGN_IN_SCOPES,
   type AddressSignInScope,
@@ -32,7 +33,6 @@ import { WaltIdWalletError } from './client.js'
 import { DpopKey } from './dpop.js'
 import {
   type AddressSignInAccount,
-  addressRefusal,
   WalletApi2HttpClient,
   type WalletApi2TokenSource
 } from './wallet2.js'
@@ -40,6 +40,12 @@ import {
 export type { AddressSignInScope } from './addressMessage.js'
 
 const DEFAULT_TIMEOUT_MS = 30_000
+/** The whole sign-in (challenge, signing, token) by default. */
+const DEFAULT_SIGN_IN_TIMEOUT_MS = 60_000
+/** After a failed renewal, the old token is used this long before the next attempt. */
+const RENEW_RETRY_MS = 5_000
+/** The longest token lifetime accepted (wallet-api2 issues 2 minutes to 4 hours). */
+const MAX_EXPIRES_IN_SECONDS = 86_400
 /** Sign in again this long before the token expires. */
 const RENEW_BEFORE_MS = 60_000
 /** The address token's form (wallet-api2 `TOKEN_REGEX`). */
@@ -71,6 +77,11 @@ export interface AddressSignInOptions {
   allowInsecureTransport?: boolean
   /** Per-request timeout in milliseconds. Default 30 s. */
   timeoutMs?: number
+  /**
+   * The whole sign-in in milliseconds: challenge, `signMessage` (a remote or hardware signer
+   * may wait for approval) and token. Default 60 s.
+   */
+  signInTimeoutMs?: number
   fetchImpl?: typeof fetch
 }
 
@@ -98,15 +109,18 @@ export class AddressSignIn implements WalletApi2TokenSource {
   readonly gateway: string
   /** The scopes asked for, in canonical order. */
   readonly scopes: AddressSignInScope[]
-  private readonly signer: Signer
-  private readonly options: AddressSignInOptions
-  private readonly fetchImpl: typeof fetch
-  private readonly timeoutMs: number
-  private session?: Session
-  private pending?: Promise<Session>
-  private lastWalletId?: string
-  private lastAddress?: string
-  private client?: WalletApi2HttpClient
+  readonly #signer: Signer
+  readonly #options: AddressSignInOptions
+  readonly #fetchImpl: typeof fetch
+  readonly #timeoutMs: number
+  /** The current session: true private fields, so no log, inspect or JSON shows a token. */
+  #session?: Session
+  #pending?: Promise<Session>
+  /** No renewal attempt before this time (epoch ms), after one failed. */
+  #renewRetryAt = 0
+  #lastWalletId?: string
+  #lastAddress?: string
+  #client?: WalletApi2HttpClient
 
   constructor(options: AddressSignInOptions) {
     if (!options || typeof options.gateway !== 'string')
@@ -114,12 +128,7 @@ export class AddressSignIn implements WalletApi2TokenSource {
         'create',
         'AddressSignIn needs the address gateway URL (gateway)'
       )
-    const gateway = options.gateway.trim().replace(/\/+$/, '')
-    if (!/^https?:\/\/[^/?#@]+(?:\/[^?#]*)?$/i.test(gateway))
-      throw new WaltIdWalletError(
-        'create',
-        `gateway must be an http(s) URL without query, fragment or user info, e.g. https://wallet.example.org/api/address-gateway (got ${sanitize(gateway, 200, null)})`
-      )
+    const gateway = normalizeGateway(options.gateway)
     try {
       assertSecureTransport(
         gateway,
@@ -158,10 +167,25 @@ export class AddressSignIn implements WalletApi2TokenSource {
     this.scopes = ADDRESS_SIGN_IN_SCOPES.filter((scope) =>
       scopes.includes(scope)
     )
-    this.signer = options.signer
-    this.options = options
-    this.fetchImpl = options.fetchImpl ?? fetch
-    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    this.#signer = options.signer
+    this.#options = options
+    this.#fetchImpl = options.fetchImpl ?? fetch
+    this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  }
+
+  /** What a log line or `console.log` shows: never the token or the key. */
+  toJSON(): Record<string, unknown> {
+    return {
+      gateway: this.gateway,
+      scopes: this.scopes,
+      address: this.address,
+      walletId: this.walletId,
+      signedIn: this.#session !== undefined
+    }
+  }
+
+  [Symbol.for('nodejs.util.inspect.custom')](): string {
+    return `AddressSignIn ${JSON.stringify(this.toJSON())}`
   }
 
   /** Address tokens go to the gateway only. */
@@ -171,30 +195,38 @@ export class AddressSignIn implements WalletApi2TokenSource {
 
   /** The wallet of the address, once signed in. */
   get walletId(): string | undefined {
-    return this.session?.walletId ?? this.lastWalletId
+    return this.#session?.walletId ?? this.#lastWalletId
   }
 
   /** The address signed in as (EIP-55), once signed in. */
   get address(): string | undefined {
-    return this.session?.address ?? this.lastAddress
+    return this.#session?.address ?? this.#lastAddress
   }
 
   /** A current token: the cached one, or a new sign-in (shared by concurrent callers). */
-  async getToken(): Promise<string> {
-    return (await this.current()).token
+  async getToken(signal?: AbortSignal): Promise<string> {
+    return (await this.current(signal)).token
   }
 
+  /**
+   * Forgets the token (only if it is still the current one), and revokes it at the gateway
+   * on a best-effort basis, so refused tokens do not pile up toward the address's cap of
+   * active sessions.
+   */
   invalidate(token?: string): void {
-    if (!this.session) return
-    if (token !== undefined && token !== this.session.token) return
-    this.session = undefined
+    const session = this.#session
+    if (!session) return
+    if (token !== undefined && token !== session.token) return
+    this.#session = undefined
+    this.retire(session)
   }
 
   async authorize(request: {
     method: string
     url: string
+    signal?: AbortSignal
   }): Promise<{ token: string; headers: Record<string, string> }> {
-    const session = await this.current()
+    const session = await this.current(request.signal)
     return {
       token: session.token,
       headers: {
@@ -214,25 +246,23 @@ export class AddressSignIn implements WalletApi2TokenSource {
    * as the organisation's did:web, and the credentials it may present (no claim values).
    */
   async check(signal?: AbortSignal): Promise<AddressSignInAccount> {
-    this.client ??= new WalletApi2HttpClient({
+    this.#client ??= new WalletApi2HttpClient({
       apiUrl: this.gateway,
       token: this,
-      allowInsecureTransport: this.options.allowInsecureTransport,
-      timeoutMs: this.timeoutMs,
-      fetchImpl: this.fetchImpl
+      allowInsecureTransport: this.#options.allowInsecureTransport,
+      timeoutMs: this.#timeoutMs,
+      fetchImpl: this.#fetchImpl
     })
-    return this.client.account(signal)
+    return this.#client.account(signal)
   }
 
-  /**
-   * Revokes the current token (`POST auth/logout`) and forgets it. The next request signs
-   * in again. Use it at the end of a CI job, so its session does not count against the
-   * address's active sessions until it expires.
-   */
-  async signOut(): Promise<void> {
-    const session = this.session
-    this.invalidate()
-    if (!session) return
+  /** A token a newer one replaced, or one refused: revoked in the background. */
+  private retire(session: Session): void {
+    if (Date.now() >= session.expiresAt) return
+    void this.revoke(session).catch(() => undefined)
+  }
+
+  private async revoke(session: Session): Promise<void> {
     const url = `${this.gateway}/auth/logout`
     const response = await this.post('auth/logout', url, undefined, {
       Authorization: `DPoP ${session.token}`,
@@ -241,40 +271,90 @@ export class AddressSignIn implements WalletApi2TokenSource {
     if (!response.ok) throw this.refusal('auth/logout', response)
   }
 
-  private async current(): Promise<Session> {
-    const session = this.session
-    if (session && Date.now() < session.renewAt) return session
-    this.pending ??= this.signIn().finally(() => {
-      this.pending = undefined
+  /**
+   * Revokes the current token (`POST auth/logout`) and forgets it. The next request signs
+   * in again. Use it at the end of a CI job, so its session does not count against the
+   * address's active sessions until it expires.
+   */
+  async signOut(): Promise<void> {
+    // A sign-in under way would otherwise leave a token nobody revokes.
+    if (this.#pending) await this.#pending.catch(() => undefined)
+    const session = this.#session
+    this.#session = undefined
+    if (!session) return
+    await this.revoke(session)
+  }
+
+  private async current(signal?: AbortSignal): Promise<Session> {
+    const session = this.#session
+    const now = Date.now()
+    if (session && now < session.renewAt) return session
+    // A renewal failed a moment ago and the token still works: no new attempt yet.
+    if (
+      session &&
+      now < this.#renewRetryAt &&
+      now < session.expiresAt - RENEW_RETRY_MS
+    )
+      return session
+    this.#pending ??= this.signIn().finally(() => {
+      this.#pending = undefined
     })
     try {
-      return await this.pending
+      return await abortable(this.#pending, signal)
     } catch (error) {
+      if (signal?.aborted) throw error
       // A renewal that fails while the token still has a few seconds left keeps it.
       if (
         session &&
-        this.session === session &&
-        Date.now() < session.expiresAt - 5_000
-      )
+        this.#session === session &&
+        Date.now() < session.expiresAt - RENEW_RETRY_MS
+      ) {
+        this.#renewRetryAt = Date.now() + RENEW_RETRY_MS
         return session
+      }
       throw error
     }
   }
 
+  /** The sign-in, bounded by `signInTimeoutMs` as a whole. */
   private async signIn(): Promise<Session> {
-    const address = getAddress(await this.signer.getAddress())
+    const limit = this.#options.signInTimeoutMs ?? DEFAULT_SIGN_IN_TIMEOUT_MS
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new WaltIdWalletError(
+          'auth/address',
+          `the sign-in did not finish within ${limit} ms (challenge, signing, token). A signer that waits for approval needs a longer signInTimeoutMs.`,
+          undefined,
+          { code: 'sign_in_timeout' }
+        )
+        controller.abort(error)
+        reject(error)
+      }, limit)
+    })
+    try {
+      return await Promise.race([this.signInSteps(controller.signal), timeout])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  private async signInSteps(signal: AbortSignal): Promise<Session> {
+    const address = getAddress(await this.#signer.getAddress())
     const chainId = await this.chainId()
-    if (this.options.smartAccount === true) await this.assertDeployed(address)
+    if (this.#options.smartAccount === true) await this.assertDeployed(address)
 
     const key = await DpopKey.create()
 
     const challengeUrl = `${this.gateway}/auth/address/challenge`
-    const challenged = await this.post('auth/address/challenge', challengeUrl, {
-      address,
-      chainId,
-      jkt: key.thumbprint,
-      scopes: this.scopes
-    })
+    const challenged = await this.post(
+      'auth/address/challenge',
+      challengeUrl,
+      { address, chainId, jkt: key.thumbprint, scopes: this.scopes },
+      {},
+      signal
+    )
     if (!challenged.ok) throw this.refusal('auth/address/challenge', challenged)
     const challenge = this.json('auth/address/challenge', challenged.body)
     const message = challenge.message
@@ -313,14 +393,17 @@ export class AddressSignIn implements WalletApi2TokenSource {
       )
     }
 
-    const signature = await this.signer.signMessage(message)
+    signal.throwIfAborted()
+    const signature = await this.#signer.signMessage(message)
+    signal.throwIfAborted()
 
     const tokenUrl = `${this.gateway}/auth/address/token`
     const issued = await this.post(
       'auth/address/token',
       tokenUrl,
       { message, challenge: challenge.challenge, signature },
-      { DPoP: await key.proof('POST', tokenUrl) }
+      { DPoP: await key.proof('POST', tokenUrl) },
+      signal
     )
     if (!issued.ok) {
       const error = this.refusal('auth/address/token', issued)
@@ -335,22 +418,22 @@ export class AddressSignIn implements WalletApi2TokenSource {
     if (
       typeof token !== 'string' ||
       !ADDRESS_TOKEN.test(token) ||
-      (answer.tokenType !== undefined && answer.tokenType !== 'DPoP') ||
+      answer.tokenType !== 'DPoP' ||
       typeof expiresIn !== 'number' ||
-      !(expiresIn > 0) ||
+      !Number.isSafeInteger(expiresIn) ||
+      expiresIn < 1 ||
+      expiresIn > MAX_EXPIRES_IN_SECONDS ||
       typeof walletId !== 'string' ||
-      !walletId
+      !/^[A-Za-z0-9._~:@+-]{1,200}$/.test(walletId) ||
+      typeof answer.address !== 'string'
     )
       throw new WaltIdWalletError(
         'auth/address/token',
-        'the gateway answered no usable address token',
+        'the gateway answered no usable address token (a pxa_ token of type DPoP, its lifetime, the address and its wallet)',
         issued.status,
         { code: 'wrong_endpoint' }
       )
-    if (
-      typeof answer.address === 'string' &&
-      answer.address.toLowerCase() !== address.toLowerCase()
-    )
+    if (answer.address.toLowerCase() !== address.toLowerCase())
       throw new WaltIdWalletError(
         'auth/address/token',
         `the gateway issued a token for ${sanitize(answer.address, 42, null)}, not for ${address}`,
@@ -374,35 +457,38 @@ export class AddressSignIn implements WalletApi2TokenSource {
         : [...this.scopes],
       address
     }
-    this.session = session
-    this.lastWalletId = walletId
-    this.lastAddress = address
+    const replaced = this.#session
+    this.#session = session
+    this.#renewRetryAt = 0
+    if (replaced && replaced.token !== session.token) this.retire(replaced)
+    this.#lastWalletId = walletId
+    this.#lastAddress = address
     return session
   }
 
   /** The chain id: the option, or the signer's network. */
   private async chainId(): Promise<number> {
-    if (this.options.chainId !== undefined) return this.options.chainId
-    const provider = this.signer.provider
+    if (this.#options.chainId !== undefined) return this.#options.chainId
+    const provider = this.#signer.provider
     if (!provider)
       throw new WaltIdWalletError(
         'auth/address/challenge',
-        'the signer has no provider to read the chain id from: pass chainId',
+        'the signer has no provider to read the chain id from: pass chainId, or connect the signer to a provider',
         undefined,
-        { code: 'invalid_request' }
+        { code: 'signer_without_provider' }
       )
     return Number((await provider.getNetwork()).chainId)
   }
 
   /** `smartAccount: true`: the account must be deployed (no ERC-6492). */
   private async assertDeployed(address: string): Promise<void> {
-    const provider = this.signer.provider
+    const provider = this.#signer.provider
     if (!provider)
       throw new WaltIdWalletError(
         'auth/address/challenge',
-        'smartAccount: true needs a signer with a provider, to check that the account is deployed',
+        'smartAccount: true needs a signer with a provider, to check that the account is deployed: connect the signer to a provider, or leave smartAccount out',
         undefined,
-        { code: 'invalid_request' }
+        { code: 'signer_without_provider' }
       )
     const code = await provider.getCode(address)
     if (!code || code === '0x')
@@ -419,10 +505,10 @@ export class AddressSignIn implements WalletApi2TokenSource {
     error: WaltIdWalletError,
     address: string
   ): Promise<WaltIdWalletError> {
-    if (this.options.smartAccount === false) return error
+    if (this.#options.smartAccount === false) return error
     let code: string | undefined
     try {
-      code = await this.signer.provider?.getCode(address)
+      code = await this.#signer.provider?.getCode(address)
     } catch {
       return error
     }
@@ -449,11 +535,12 @@ export class AddressSignIn implements WalletApi2TokenSource {
     path: string,
     url: string,
     body: unknown,
-    headers: Record<string, string> = {}
+    headers: Record<string, string> = {},
+    signal?: AbortSignal
   ): Promise<Awaited<ReturnType<typeof fetchText>>> {
     try {
       return await fetchText(
-        this.fetchImpl,
+        this.#fetchImpl,
         url,
         {
           method: 'POST',
@@ -466,9 +553,10 @@ export class AddressSignIn implements WalletApi2TokenSource {
           },
           ...(body !== undefined ? { body: JSON.stringify(body) } : {})
         },
-        { timeoutMs: this.timeoutMs, maxBodyBytes: 64 * 1024 }
+        { timeoutMs: this.#timeoutMs, maxBodyBytes: 64 * 1024, signal }
       )
     } catch (error) {
+      if (signal?.aborted) throw signal.reason
       throw new WaltIdWalletError(
         path,
         sanitize(errorMessage(error), MAX_MESSAGE_LENGTH, null)
@@ -504,19 +592,81 @@ export class AddressSignIn implements WalletApi2TokenSource {
     if (!refusal)
       return new WaltIdWalletError(
         path,
-        `${this.gateway} answered ${`${response.status} ${response.statusText}`.trim()} without an address sign-in error: it is not the wallet UI's address gateway (…/api/address-gateway), or the gateway is not deployed.`,
+        `${this.gateway} answered ${sanitize(`${response.status} ${response.statusText}`.trim(), 100, null)} without an address sign-in error: it is not the wallet UI's address gateway (…/api/address-gateway), or the gateway is not deployed.`,
         response.status,
         { code: 'wrong_endpoint', ...extra }
       )
+    const hint = refusal.code === 'not_found' ? NOT_FOUND_HINT : refusal.hint
     return new WaltIdWalletError(
       path,
-      `${refusal.message} (${refusal.code})${refusal.hint ? ` ${refusal.hint}` : ''}`,
+      `${refusal.message} (${refusal.code})${hint ? ` ${hint}` : ''}`,
       response.status,
       {
         code: refusal.code,
-        ...(refusal.hint ? { hint: refusal.hint } : {}),
+        ...(hint ? { hint } : {}),
         ...extra
       }
     )
   }
+}
+
+/** `promise`, or the signal's reason as soon as `signal` aborts (the work goes on). */
+function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise
+  if (signal.aborted) return Promise.reject(signal.reason)
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason)
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      }
+    )
+  })
+}
+
+/** Control characters, backslashes and whitespace inside the URL. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: refusing them is the point
+const UNSAFE_URL = /[\u0000-\u0020\u007f-\u009f\\]/
+
+/**
+ * The gateway URL without a trailing slash, if it is exactly what a URL parser reads: an
+ * http(s) URL without user info, query, fragment, an empty or default port, control
+ * characters, backslashes or anything the parser would rewrite (upper-case host, `..`,
+ * percent-encoding). wallet-api2 compares the sign-in message's domain and URI and every
+ * DPoP `htu` with its configured URL byte for byte, so nautilus uses the URL as given.
+ */
+function normalizeGateway(input: string): string {
+  const refuse = (why: string) =>
+    new WaltIdWalletError(
+      'create',
+      `gateway ${why}, e.g. https://wallet.example.org/api/address-gateway (got ${sanitize(input, 200, null)})`
+    )
+  const gateway = input.trim().replace(/\/+$/, '')
+  if (UNSAFE_URL.test(gateway))
+    throw refuse(
+      'must not contain whitespace, control characters or backslashes'
+    )
+  if (!/^https?:\/\/[^/?#@]+(?:\/[^?#]*)?$/i.test(gateway))
+    throw refuse('must be an http(s) URL without query, fragment or user info')
+  if (gateway.includes('%')) throw refuse('must not be percent-encoded')
+  if (/^https?:\/\/[^/]*:(?:\/|$)/i.test(gateway))
+    throw refuse('must not have an empty port')
+  let parsed: URL
+  try {
+    parsed = new URL(gateway)
+  } catch {
+    throw refuse('is not a valid URL')
+  }
+  const read = `${parsed.origin}${parsed.pathname}`.replace(/\/+$/, '')
+  if (read !== gateway)
+    throw refuse(
+      `must be written as a URL parser reads it (${sanitize(read, 200, null)}): lower-case host, no default port, no dot segments or percent-encoding`
+    )
+  return gateway
 }

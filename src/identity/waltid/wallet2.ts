@@ -22,6 +22,11 @@ import { debugEnabled, debugRaw } from '../../log/debug.js'
 import { sanitize } from '../../node/messages.js'
 import { errorMessage, fetchText } from '../../utils/http.js'
 import { assertSecureTransport } from '../../utils/transport.js'
+import {
+  addressRefusal,
+  NOT_FOUND_HINT,
+  plainJsonError
+} from './addressErrors.js'
 import { WaltIdWalletError } from './client.js'
 
 /** How much of wallet-api2's answer goes into a `WaltIdWalletError`. */
@@ -196,11 +201,13 @@ export interface WalletApi2TokenSource {
   readonly endpoint?: string
   /**
    * The headers of one request to `url` with `method`, and the token they carry. Without
-   * it, `Authorization: Bearer <getToken()>`.
+   * it, `Authorization: Bearer <getToken()>`. Called again for a retry, so a DPoP source
+   * makes a fresh proof.
    */
   authorize?(request: {
     method: string
     url: string
+    signal?: AbortSignal
   }): Promise<{ token: string; headers: Record<string, string> }>
 }
 
@@ -300,6 +307,12 @@ export class WalletApi2HttpClient implements WalletApi2 {
         'create',
         'wallet-api2 needs the account session token (token)'
       )
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: refusing them is the point
+    if (/[\u0000-\u001f\u007f\\]/.test(options.apiUrl))
+      throw new WaltIdWalletError(
+        'create',
+        'walletApi must not contain control characters or backslashes'
+      )
 
     this.apiUrl = options.apiUrl.trim().replace(/\/+$/, '')
     this.token = options.token
@@ -347,7 +360,7 @@ export class WalletApi2HttpClient implements WalletApi2 {
     signal?: AbortSignal
   ): Promise<WalletApi2PreviewHandle> {
     const data = await this.request(
-      `wallet/${encodeURIComponent(walletId)}/credentials/present/preview-handle`,
+      `wallet/${this.segment(walletId, 'walletId')}/credentials/present/preview-handle`,
       'POST',
       request,
       signal
@@ -382,7 +395,7 @@ export class WalletApi2HttpClient implements WalletApi2 {
     signal?: AbortSignal
   ): Promise<WalletApi2SubmitResult> {
     const data = await this.request(
-      `wallet/${encodeURIComponent(walletId)}/credentials/present/submit-handle`,
+      `wallet/${this.segment(walletId, 'walletId')}/credentials/present/submit-handle`,
       'POST',
       request,
       signal
@@ -406,7 +419,7 @@ export class WalletApi2HttpClient implements WalletApi2 {
     signal?: AbortSignal
   ): Promise<void> {
     await this.request(
-      `wallet/${encodeURIComponent(walletId)}/credentials/present/reject-handle`,
+      `wallet/${this.segment(walletId, 'walletId')}/credentials/present/reject-handle`,
       'POST',
       request,
       signal
@@ -442,7 +455,7 @@ export class WalletApi2HttpClient implements WalletApi2 {
     signal?: AbortSignal
   ): Promise<string> {
     const text = await this.request(
-      `wallet/${encodeURIComponent(walletId)}/keys/${encodeURIComponent(keyId)}/sign`,
+      `wallet/${this.segment(walletId, 'walletId')}/keys/${this.segment(keyId, 'keyId')}/sign`,
       'POST',
       credential,
       signal,
@@ -451,14 +464,33 @@ export class WalletApi2HttpClient implements WalletApi2 {
     return typeof text === 'string' ? text.trim() : ''
   }
 
+  /**
+   * One path segment. Through the address gateway (a source that names its `endpoint`) the
+   * id is sent as it is, which is what wallet-api2 sees and what the DPoP proof's `htu`
+   * must name, so only the gateway's segment characters are accepted
+   * (`[A-Za-z0-9._~:@+-]`). Elsewhere it is percent-encoded.
+   */
+  private segment(id: string, name: string): string {
+    if (this.source?.endpoint === undefined) return encodeURIComponent(id)
+    if (!GATEWAY_SEGMENT.test(id) || id === '.' || id === '..')
+      throw new WaltIdWalletError(
+        name,
+        `${name} ${JSON.stringify(id.slice(0, 100))} cannot go through the address gateway: it accepts only letters, digits and . _ ~ : @ + - in a path segment.`,
+        undefined,
+        { code: 'invalid_request' }
+      )
+    return id
+  }
+
   /** The headers of one request, and the token they carry. */
   private async authorize(
     method: string,
     url: string,
-    path: string
+    path: string,
+    signal?: AbortSignal
   ): Promise<{ token: string; headers: Record<string, string> }> {
     const source = this.source
-    if (source?.authorize) return source.authorize({ method, url })
+    if (source?.authorize) return source.authorize({ method, url, signal })
     const token = source
       ? await source.getToken()
       : typeof this.token === 'function'
@@ -479,17 +511,29 @@ export class WalletApi2HttpClient implements WalletApi2 {
     const url = `${this.apiUrl}/${path}`
     let response = await this.send(path, url, method, body, signal)
 
-    // A token source renews its token after a 401 (an expired or revoked address token, a
-    // DPoP proof outside the server's clock window); the request is retried once.
+    // A 401 is retried at most once, and only when a new attempt can succeed:
+    //   - token_invalid / token_expired (or WWW-Authenticate error="invalid_token"): the
+    //     source signs in again;
+    //   - dpop_invalid: the same token with a fresh proof (a clock step, a replayed jti);
+    //   - anything else (a fixed Hanko token, an unknown 401) is not retried.
+    // A 401 without the gateway's coded answer is no address gateway: that is reported
+    // before any retry.
     if (response.status === 401 && this.source) {
-      this.source.invalidate(response.token)
-      // A source that cannot renew (a fixed token) would send the same token again.
-      const renews =
-        this.source.authorize !== undefined ||
-        (await this.source.getToken()) !== response.token
-      if (renews) {
+      const refusal = addressRefusal(response.body)
+      const invalidToken =
+        refusal?.code === 'token_invalid' ||
+        refusal?.code === 'token_expired' ||
+        /error="?invalid_token"?/i.test(response.wwwAuthenticate ?? '')
+      const dpop = response.scheme === 'DPoP'
+      if (dpop && !refusal) throw this.wrongEndpoint(path, response.status)
+      if (invalidToken) {
+        this.source.invalidate(response.token)
+        const renews =
+          this.source.authorize !== undefined ||
+          (await this.source.getToken()) !== response.token
+        if (renews) response = await this.send(path, url, method, body, signal)
+      } else if (dpop && refusal?.code === 'dpop_invalid')
         response = await this.send(path, url, method, body, signal)
-      }
     }
 
     if (!response.ok) {
@@ -499,31 +543,42 @@ export class WalletApi2HttpClient implements WalletApi2 {
           body: response.body
         })
       const refusal = addressRefusal(response.body)
-      // An address token refused without the gateway's or wallet-api2's own answer: the
-      // URL is not the address gateway (wallet-api2 itself, a proxy, another service).
+      const plain = refusal ? undefined : plainJsonError(response.body)
       const dpop = response.scheme === 'DPoP'
+      // An address token refused without the gateway's or wallet-api2's own answer: the
+      // URL is not the address gateway (wallet-api2 itself, a proxy, another service). A
+      // 404 with a JSON error ("Key not found") is wallet-api2's own answer.
       if (
         dpop &&
         !refusal &&
-        (response.status === 401 || response.status === 404)
+        (response.status === 401 || (response.status === 404 && !plain))
       )
-        throw new WaltIdWalletError(
-          path,
-          `${this.apiUrl} answered ${response.status} without an address-token error: it is not the wallet UI's address gateway (…/api/address-gateway).`,
-          response.status,
-          { code: 'wrong_endpoint' }
-        )
+        throw this.wrongEndpoint(path, response.status)
       const retryAfter = Number(response.retryAfter)
+      const hint =
+        refusal?.code === 'not_found'
+          ? NOT_FOUND_HINT
+          : (refusal?.hint ??
+            (dpop &&
+            plain &&
+            (response.status === 404 || response.status === 400)
+              ? 'Developer: check walletId and keyId (wallet-api2 refused them for this address); admin: check that the key and the issuer DID belong to the address wallet.'
+              : undefined))
       throw new WaltIdWalletError(
         path,
         refusal
-          ? `${refusal.message}${refusal.code ? ` (${refusal.code})` : ''}`
-          : walletErrorText(response.body) ||
-              `${response.status} ${response.statusText}`.trim(),
+          ? `${refusal.message} (${refusal.code})`
+          : (plain ??
+              (walletErrorText(response.body) ||
+                sanitize(
+                  `${response.status} ${response.statusText}`.trim(),
+                  100,
+                  null
+                ))),
         response.status,
         {
           ...(refusal?.code ? { code: refusal.code } : {}),
-          ...(refusal?.hint ? { hint: refusal.hint } : {}),
+          ...(hint ? { hint } : {}),
           ...(Number.isFinite(retryAfter) && retryAfter >= 0
             ? { retryAfter }
             : {})
@@ -543,6 +598,15 @@ export class WalletApi2HttpClient implements WalletApi2 {
     }
   }
 
+  private wrongEndpoint(path: string, status: number): WaltIdWalletError {
+    return new WaltIdWalletError(
+      path,
+      `${this.apiUrl} answered ${status} without an address-token error: it is not the wallet UI's address gateway (…/api/address-gateway).`,
+      status,
+      { code: 'wrong_endpoint' }
+    )
+  }
+
   /** One request with fresh authorization. */
   private async send(
     path: string,
@@ -553,7 +617,7 @@ export class WalletApi2HttpClient implements WalletApi2 {
   ): Promise<
     Awaited<ReturnType<typeof fetchText>> & { token: string; scheme: string }
   > {
-    const { token, headers } = await this.authorize(method, url, path)
+    const { token, headers } = await this.authorize(method, url, path, signal)
     const scheme = /^DPoP\s/i.test(headers.Authorization ?? '')
       ? 'DPoP'
       : 'Bearer'
@@ -592,35 +656,8 @@ export class WalletApi2HttpClient implements WalletApi2 {
   }
 }
 
-/** Codes are snake_case words, as wallet-api2 and the gateway write them. */
-const ERROR_CODE = /^[a-z][a-z0-9_]{1,63}$/
-
-/**
- * An address sign-in refusal (`{ error, message, hint }`, as wallet-api2's address routes,
- * its presentation guard and the wallet UI's address gateway answer), redacted and bounded,
- * or `undefined`.
- */
-export function addressRefusal(
-  body: string
-): { code: string; message: string; hint?: string } | undefined {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(body)
-  } catch {
-    return undefined
-  }
-  if (!isRecord(parsed)) return undefined
-  const { error, message, hint } = parsed
-  if (typeof error !== 'string' || !ERROR_CODE.test(error)) return undefined
-  if (typeof message !== 'string' || typeof hint !== 'string') return undefined
-  return {
-    code: error,
-    message: sanitize(message, MAX_WALLET_MESSAGE_LENGTH, null) || error,
-    ...(hint.trim()
-      ? { hint: sanitize(hint, MAX_WALLET_MESSAGE_LENGTH, null) }
-      : {})
-  }
-}
+/** A path segment the address gateway forwards (pontusx-wallet-ui `SEGMENT`). */
+const GATEWAY_SEGMENT = /^[A-Za-z0-9._~:@+-]+$/
 
 /** `GET /auth/account` of an address token, with its types checked. */
 function readAccount(data: unknown): AddressSignInAccount | undefined {

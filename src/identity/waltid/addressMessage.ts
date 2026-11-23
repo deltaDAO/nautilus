@@ -9,6 +9,7 @@
  * message is not for this gateway, this key or this request, and nothing is signed.
  */
 import { getAddress } from 'ethers'
+import { quoteText } from './addressErrors.js'
 
 /** A scope of an address token: presenting, and signing DDOs for publishing. */
 export type AddressSignInScope = 'present' | 'sign-ddo'
@@ -24,6 +25,9 @@ export const JKT_URN_PREFIX = 'urn:ietf:params:oauth:jwk-thumbprint:sha-256:'
 
 /** How long a challenge is valid on wallet-api2 (`AddressChallenges.VALIDITY_SECONDS`). */
 export const CHALLENGE_VALIDITY_SECONDS = 300
+
+/** How far the server's clock may be ahead of this one (wallet-api2's DPoP `iat` window). */
+export const CLOCK_SKEW_SECONDS = 60
 
 /** The statement line for `scopes` (`AddressChallenges.statement`). */
 export function signInStatement(scopes: readonly string[]): string {
@@ -90,11 +94,6 @@ export function buildSignInMessage(fields: SignInMessageFields): string {
   ].join('\n')
 }
 
-/** `text` as a JSON string (control characters escaped), at most 300 characters of it. */
-function quote(text: string): string {
-  return JSON.stringify(text.length > 300 ? `${text.slice(0, 300)}…` : text)
-}
-
 /** Why a sign-in message is refused: the first line that differs, expected and actual. */
 export class SignInMessageMismatch extends Error {
   constructor(
@@ -103,7 +102,7 @@ export class SignInMessageMismatch extends Error {
     readonly actual: string
   ) {
     super(
-      `The sign-in message's ${field} is not what nautilus asked for, so it was not signed. Expected ${quote(expected)}, got ${quote(actual)}.`
+      `The sign-in message's ${field} is not what nautilus asked for, so it was not signed. Expected ${quoteText(expected)}, got ${quoteText(actual)}.`
     )
     this.name = 'SignInMessageMismatch'
   }
@@ -112,10 +111,13 @@ export class SignInMessageMismatch extends Error {
 const NONCE = /^[0-9a-f]{32}$/
 const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/
 
+/** Epoch seconds of `text`, a real instant written as `instantText` writes it. */
 function epochOf(text: string | undefined): number | undefined {
   if (!text || !INSTANT.test(text)) return undefined
   const ms = Date.parse(text)
-  return Number.isFinite(ms) ? ms / 1000 : undefined
+  if (!Number.isFinite(ms)) return undefined
+  // An impossible date (2026-02-30) parses to another day, or not at all.
+  return instantText(ms / 1000) === text ? ms / 1000 : undefined
 }
 
 /**
@@ -208,6 +210,18 @@ export function checkSignInMessage(
       'validity',
       `at most ${CHALLENGE_VALIDITY_SECONDS} s after the issue time`,
       `${issuedText} to ${expiryText}`
+    )
+  if (issuedAt > options.nowSeconds + CLOCK_SKEW_SECONDS)
+    throw new SignInMessageMismatch(
+      'issue time',
+      `at most ${CLOCK_SKEW_SECONDS} s after now (${instantText(Math.floor(options.nowSeconds))}): check this machine's clock`,
+      issuedText ?? ''
+    )
+  if (issuedAt < options.nowSeconds - CHALLENGE_VALIDITY_SECONDS)
+    throw new SignInMessageMismatch(
+      'issue time',
+      `at most ${CHALLENGE_VALIDITY_SECONDS} s before now (${instantText(Math.floor(options.nowSeconds))}): check this machine's clock`,
+      issuedText ?? ''
     )
   if (expiresAt <= options.nowSeconds)
     throw new SignInMessageMismatch(

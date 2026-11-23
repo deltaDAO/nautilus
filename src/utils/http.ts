@@ -32,6 +32,8 @@ export interface FetchedText {
   retryAfter?: string
   /** The `Deprecation` header, when the response has one. */
   deprecation?: string
+  /** The `WWW-Authenticate` header of a `401`, when the response has one. */
+  wwwAuthenticate?: string
   /**
    * The URL that answered: the last one after followed redirects (`response.url`), or the
    * requested URL when fetch reports none.
@@ -409,6 +411,10 @@ async function readAnswer(
   const body = await readBoundedText(response, maxBytes, signal, overflow)
   const retryAfter = response.headers?.get?.('retry-after') ?? undefined
   const deprecation = response.headers?.get?.('deprecation') ?? undefined
+  const wwwAuthenticate =
+    response.status === 401
+      ? (response.headers?.get?.('www-authenticate') ?? undefined)
+      : undefined
 
   return {
     ok: response.ok,
@@ -417,7 +423,8 @@ async function readAnswer(
     body,
     url,
     ...(retryAfter ? { retryAfter } : {}),
-    ...(deprecation ? { deprecation } : {})
+    ...(deprecation ? { deprecation } : {}),
+    ...(wwwAuthenticate ? { wwwAuthenticate } : {})
   }
 }
 

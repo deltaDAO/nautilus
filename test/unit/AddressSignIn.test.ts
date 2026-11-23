@@ -7,11 +7,9 @@ import {
   jwtVerify
 } from 'jose'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import {
-  addressCodeReason,
-  WalletApi2CredentialProvider
-} from '../../src/identity/WalletApi2Provider.js'
+import { WalletApi2CredentialProvider } from '../../src/identity/WalletApi2Provider.js'
 import { CredentialPresentationError } from '../../src/identity/WaltIdProvider.js'
+import { addressCodeReason } from '../../src/identity/waltid/addressErrors.js'
 import {
   buildSignInMessage,
   checkSignInMessage
@@ -320,7 +318,7 @@ describe('AddressSignIn', () => {
             /Issued At: .*\nExpiration Time: .*/,
             'Issued At: 2020-01-01T00:00:00Z\nExpiration Time: 2020-01-01T00:05:00Z'
           ),
-        /expiration time/
+        /issue time[\s\S]*check this machine's clock/
       ],
       [
         'a window longer than 5 minutes',
@@ -555,7 +553,9 @@ describe('AddressSignIn', () => {
       .getToken()
       .catch((e) => e)
     expect(disabled.code).to.equal('not_found')
-    expect(disabled.hint).to.equal('Check the gateway URL.')
+    expect(disabled.hint).to.match(
+      /does not serve the route[\s\S]*ADDRESS_GATEWAY_ENABLED[\s\S]*nautilus version/
+    )
   })
 })
 
@@ -579,7 +579,7 @@ describe('WalletApi2HttpClient with token sources', () => {
       fetchImpl: gateway.fetchImpl as unknown as typeof fetch
     })
     await client.rejectPresentation('w-address', { handle: 'h' })
-    expect(paths(gateway)).to.deep.equal([
+    expect(paths(gateway).filter((p) => p !== 'auth/logout')).to.deep.equal([
       'auth/address/challenge',
       'auth/address/token',
       'wallet/w-address/credentials/present/reject-handle',
@@ -588,6 +588,8 @@ describe('WalletApi2HttpClient with token sources', () => {
       'wallet/w-address/credentials/present/reject-handle'
     ])
     expect(signMessage).toHaveBeenCalledTimes(2)
+    // The refused token is revoked in the background, so it does not count as a session
+    await vi.waitFor(() => expect(gateway.revoked).to.have.length(1))
   })
 
   it('retries only once', async () => {
@@ -768,7 +770,8 @@ describe('WalletApi2CredentialProvider.withAddressSignIn', () => {
     const second = await withSignIn(empty)
       .credentials.prepare(preparation())
       .catch((e) => e)
-    expect(second.reason).to.equal('no-matching-credential')
+    expect(second.reason).to.equal('not-permitted')
+    expect(second.details.code).to.equal('no_presentable_credentials')
     expect(second.message).to.match(/access list \(Wallet UI → Credentials\)/)
 
     const none = mockGateway({
@@ -931,9 +934,13 @@ describe('WalletApi2CredentialProvider.withAddressSignIn', () => {
       'wrong_endpoint',
       'message_unexpected',
       'signer_mismatch',
-      'smart_account_not_deployed'
+      'smart_account_not_deployed',
+      'signer_without_provider',
+      'sign_in_timeout'
     ])
       expect(addressCodeReason(code)).to.equal('sign-in')
+    for (const code of ['wallet_mismatch', 'no_presentable_credentials'])
+      expect(addressCodeReason(code)).to.equal('not-permitted')
     expect(addressCodeReason('handle_evicted')).to.equal('wallet-failed')
   })
 

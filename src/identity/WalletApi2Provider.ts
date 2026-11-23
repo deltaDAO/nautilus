@@ -34,6 +34,7 @@ import type {
 import { assertPresentationRequest } from './requestChecks.js'
 import { ASSET_ACCESS_TRANSACTION_DATA_TYPE, requestUriHost } from './ssi.js'
 import { CredentialPresentationError } from './WaltIdProvider.js'
+import { addressCodeReason } from './waltid/addressErrors.js'
 import {
   AddressSignIn,
   type AddressSignInOptions
@@ -182,8 +183,16 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
   private readonly source?: WalletApi2TokenSource
   /** The address sign-in, when the provider presents with an address token. */
   readonly signIn?: AddressSignIn
-  /** The pre-flight of the address token, once per provider (a failure is not kept). */
-  private account?: Promise<AddressSignInAccount>
+  /**
+   * The pre-flight of the address token, kept for the token it ran with and at most
+   * `PREFLIGHT_TTL_MS`; dropped whenever `prepare()` fails from it, so an admin's fix takes
+   * effect at the next call.
+   */
+  private preflight?: {
+    token: string
+    at: number
+    account: Promise<AddressSignInAccount>
+  }
 
   constructor(options: WalletApi2CredentialProviderOptions) {
     if (!options.wallet && !(options.walletApi && options.token))
@@ -217,22 +226,42 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
     await this.walletFor(context.consumerAddress)
     const source = this.source
     if (!isAddressSource(source)) return
-
-    this.account ??= source.check().catch((error) => {
-      this.account = undefined
+    try {
+      await this.checkAccount(source, context)
+    } catch (error) {
+      this.preflight = undefined
       throw error
-    })
+    }
+  }
+
+  /** The pre-flight's verdict for `context`; throws when the address cannot present. */
+  private async checkAccount(
+    source: AddressTokenSource,
+    context: CredentialPreparation
+  ): Promise<void> {
+    const token = await source.getToken()
+    const cached = this.preflight
+    if (
+      !cached ||
+      cached.token !== token ||
+      Date.now() - cached.at > PREFLIGHT_TTL_MS
+    )
+      this.preflight = { token, at: Date.now(), account: source.check() }
     let account: AddressSignInAccount
     try {
-      account = await this.account
+      account = await (
+        this.preflight as { account: Promise<AddressSignInAccount> }
+      ).account
     } catch (error) {
       throw walletError(
         'The address sign-in pre-flight failed',
         error,
-        (t) => t
+        (t) => t,
+        true
       )
     }
 
+    const address = sanitize(account.address, 42, null)
     const where =
       'Wallet UI → Addresses → the address → Sign-in for scripts and servers'
     if (account.scopes.length && !account.scopes.includes('present'))
@@ -243,43 +272,50 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
       )
     if (!account.verifiers.length)
       throw new CredentialPresentationError(
-        `The address ${account.address} may present to no verifier. Admin: add the node's verifier (${where}).`,
+        `The address ${address} may present to no verifier. Admin: add the node's verifier (${where}).`,
         { code: 'verifier_not_allowed' },
         'not-permitted'
       )
 
-    let verifierHost: string | undefined
+    let announced: string | undefined
     try {
-      verifierHost = (await context.node.getSsiCapabilities?.())
+      announced = (await context.node.getSsiCapabilities?.())
         ?.verifierPublicHost
     } catch {
-      verifierHost = undefined
+      announced = undefined
     }
-    verifierHost ??= this.options.expectedVerifierHost?.toLowerCase()
-    if (verifierHost) {
-      const hosts = account.verifiers.map((verifier) => {
-        try {
-          return new URL(verifier.responseUriOrigin).host.toLowerCase()
-        } catch {
-          return verifier.responseUriOrigin.toLowerCase()
-        }
-      })
-      if (!hosts.includes(verifierHost))
+    const allowed = new Set(
+      account.verifiers.map((verifier) =>
+        normalizeVerifierHost(verifier.responseUriOrigin)
+      )
+    )
+    // Both the node's announced verifier and the one this provider expects, when both are
+    // known, must be on the address's list.
+    for (const host of new Set(
+      [announced, this.options.expectedVerifierHost]
+        .filter((host): host is string => !!host)
+        .map(normalizeVerifierHost)
+    ))
+      if (!allowed.has(host))
         throw new CredentialPresentationError(
-          `The address ${account.address} may present to ${hosts.join(', ')}, not to the verifier of ${context.node.nodeUri} (${verifierHost}). Admin: add that verifier (${where}).`,
-          { code: 'verifier_not_allowed', verifierHost },
+          `The address ${address} may present to ${[...allowed].map((h) => sanitize(h, 100, null)).join(', ')}, not to the verifier of ${context.node.nodeUri} (${sanitize(host, 100, null)}). Admin: add that verifier (${where}).`,
+          { code: 'verifier_not_allowed', verifierHost: host },
           'not-permitted'
         )
-    }
 
     if (!account.presentableCredentials.length)
       throw new CredentialPresentationError(
-        `The address ${account.address} has no credentials it may present. ${ACCESS_LIST_HINT}`,
-        { missing: [], code: 'no_presentable_credentials' },
-        'no-matching-credential'
+        `The address ${address} has no credentials it may present. ${ACCESS_LIST_HINT}`,
+        { code: 'no_presentable_credentials' },
+        'not-permitted'
       )
   }
 
+  /**
+   * Presents for one session. With an address token, a preview that newer previews of the
+   * same token replaced (`handle_evicted`) is made again once, which asks
+   * `onSelectCredentials` again.
+   */
   async present(challenge: CredentialChallenge): Promise<void> {
     try {
       await this.presentOnce(challenge)
@@ -333,7 +369,8 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
       throw walletError(
         'The wallet could not read the presentation request',
         error,
-        remove
+        remove,
+        isAddressSource(this.source)
       )
     }
 
@@ -421,7 +458,8 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
       throw walletError(
         'The wallet could not present the credentials',
         error,
-        remove
+        remove,
+        isAddressSource(this.source)
       )
     }
 
@@ -477,7 +515,12 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
     try {
       await source.getToken()
     } catch (error) {
-      throw walletError('Could not sign in with the address', error, (t) => t)
+      throw walletError(
+        'Could not sign in with the address',
+        error,
+        (t) => t,
+        true
+      )
     }
     const signedIn = source.address
     if (signedIn && signedIn.toLowerCase() !== consumer.toLowerCase())
@@ -496,61 +539,11 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
     if (this.options.walletId && this.options.walletId !== walletId)
       throw new CredentialPresentationError(
         `walletId ${this.options.walletId} is not the wallet of ${signedIn ?? consumer} (${walletId}). Address tokens present from their address's wallet only: leave walletId out.`,
-        { code: 'route_not_allowed' },
-        'wallet-setup'
+        { code: 'wallet_mismatch' },
+        'not-permitted'
       )
     return walletId
   }
-}
-
-/**
- * The codes of wallet-api2's address sign-in and the address gateway that mean the address
- * could not sign in or its token was refused: `sign-in`.
- */
-const SIGN_IN_CODES = new Set([
-  'chain_not_supported',
-  'challenge_invalid',
-  'challenge_expired',
-  'message_mismatch',
-  'dpop_invalid',
-  'sign_in_failed',
-  'nonce_used',
-  'address_not_linked',
-  'sign_in_not_allowed_for_organization',
-  'sign_in_disabled',
-  'too_many_sessions',
-  'token_invalid',
-  'token_expired',
-  'hanko_token_not_accepted',
-  'not_found',
-  // nautilus's own, before anything is signed or sent
-  'wrong_endpoint',
-  'message_unexpected',
-  'smart_account_not_deployed',
-  'signer_mismatch'
-])
-
-/** Codes that mean the address may not do this: `not-permitted`. */
-const NOT_PERMITTED_CODES = new Set([
-  'verifier_not_allowed',
-  'response_mode_not_allowed',
-  'did_web_holder_disabled',
-  'key_not_allowed',
-  'consumer_mismatch',
-  'credential_not_on_access_list',
-  'route_not_allowed',
-  'scope_not_enabled',
-  'not_a_ddo',
-  'holder_changed'
-])
-
-/** The `CredentialPresentationError` reason of an address sign-in code. */
-export function addressCodeReason(
-  code: string
-): 'sign-in' | 'not-permitted' | 'wallet-failed' {
-  if (SIGN_IN_CODES.has(code)) return 'sign-in'
-  if (NOT_PERMITTED_CODES.has(code)) return 'not-permitted'
-  return 'wallet-failed'
 }
 
 /**
@@ -683,7 +676,8 @@ function defaultSelection(
 function walletError(
   what: string,
   error: unknown,
-  remove: (text: string) => string
+  remove: (text: string) => string,
+  addressToken = false
 ): CredentialPresentationError {
   if (error instanceof CredentialPresentationError) return error
   const message =
@@ -706,10 +700,26 @@ function walletError(
       ...(hint ? { hint: remove(hint) } : {}),
       ...(retryAfter !== undefined ? { retryAfter } : {})
     },
-    code
+    // Codes are an address token's; a Hanko token keeps its reasons, whatever the body.
+    code && addressToken
       ? addressCodeReason(code)
       : status === 401 || status === 403
         ? 'wallet-setup'
         : 'wallet-failed'
   )
 }
+
+/** `https://Host:443` or `host:443` as `host`: the lower-case host, the port if not 443. */
+function normalizeVerifierHost(value: string): string {
+  const text = value.trim().toLowerCase()
+  try {
+    return new URL(
+      /^[a-z][a-z0-9+.-]*:\/\//.test(text) ? text : `https://${text}`
+    ).host
+  } catch {
+    return text
+  }
+}
+
+/** How long a pre-flight answer is reused for the same token. */
+const PREFLIGHT_TTL_MS = 60_000

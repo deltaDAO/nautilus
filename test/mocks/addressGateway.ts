@@ -89,12 +89,20 @@ export const json = (
   })
 
 /** wallet-api2's `{ error, message, hint }` with the status `AddressSignInCodes.status` gives. */
-export function refusal(code: string, status = codeStatus(code)) {
-  return json(status, {
-    error: code,
-    message: `refused: ${code}`,
-    hint: `Developer or admin: fix ${code}.`
-  })
+export function refusal(
+  code: string,
+  status = codeStatus(code),
+  headers: Record<string, string> = {}
+) {
+  return json(
+    status,
+    {
+      error: code,
+      message: `refused: ${code}`,
+      hint: `Developer or admin: fix ${code}.`
+    },
+    headers
+  )
 }
 
 export function codeStatus(code: string): number {
@@ -142,7 +150,10 @@ export interface GatewayOptions {
   /** Rewrites the challenge's message (a malicious or misconfigured server). */
   message?: (message: string) => string
   /** Answers a call before the default handling (after the DPoP check of token calls). */
-  handle?: (call: Call, count: number) => Response | undefined
+  handle?: (
+    call: Call,
+    count: number
+  ) => Response | undefined | Promise<Response | undefined>
   expiresIn?: number
   scopes?: string[]
 }
@@ -158,6 +169,8 @@ export function mockGateway(options: GatewayOptions = {}) {
   const signatures: string[] = []
   const jtis = new Set<string>()
   const problems: string[] = []
+  /** Tokens revoked with auth/logout. */
+  const revoked: string[] = []
   const challenges = new Map<string, { jkt: string; message: string }>()
   const counts = new Map<string, number>()
 
@@ -197,7 +210,15 @@ export function mockGateway(options: GatewayOptions = {}) {
     async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input)
       expect(url.startsWith(`${GATEWAY}/`)).to.equal(true)
-      const path = url.slice(GATEWAY.length + 1)
+      // As the gateway (Next.js) reads it: segments decoded, then joined; a segment outside
+      // its character set is not served.
+      const segments = url
+        .slice(GATEWAY.length + 1)
+        .split('/')
+        .map((segment) => decodeURIComponent(segment))
+      const path = segments.join('/')
+      if (segments.some((segment) => !/^[A-Za-z0-9._~:@+-]+$/.test(segment)))
+        return refusal('not_found')
       const call: Call = {
         path,
         method: init?.method ?? 'GET',
@@ -209,7 +230,7 @@ export function mockGateway(options: GatewayOptions = {}) {
       counts.set(path, count)
 
       if (path === 'auth/address/challenge') {
-        const early = options.handle?.(call, count)
+        const early = await options.handle?.(call, count)
         if (early) return early
         const body = JSON.parse(call.body)
         const now = Math.floor(Date.now() / 1000)
@@ -235,6 +256,11 @@ export function mockGateway(options: GatewayOptions = {}) {
       }
 
       if (path === 'auth/address/token') {
+        // The gateway's own check, before wallet-api2
+        if (!call.headers.get('dpop'))
+          return refusal('dpop_invalid', 401, {
+            'www-authenticate': 'DPoP algs="ES256", error="invalid_dpop_proof"'
+          })
         const body = JSON.parse(call.body)
         const issued = challenges.get(body.challenge)
         if (!issued) return refusal('challenge_invalid')
@@ -253,7 +279,7 @@ export function mockGateway(options: GatewayOptions = {}) {
         signatures.push(body.signature)
         if (verifyMessage(body.message, body.signature) !== ADDRESS)
           return refusal('sign_in_failed')
-        const early = options.handle?.(call, count)
+        const early = await options.handle?.(call, count)
         if (early) return early
         const token = `pxa_${randomBytes(32).toString('base64url')}`
         tokens.set(token, issued.jkt)
@@ -272,13 +298,19 @@ export function mockGateway(options: GatewayOptions = {}) {
       // Token routes
       const authorization = call.headers.get('authorization') ?? ''
       const token = authorization.replace(/^DPoP /, '')
+      if (path === 'auth/logout') {
+        if (tokens.delete(token)) revoked.push(token)
+        return new Response(null, { status: 200 })
+      }
       const jkt = tokens.get(token)
       if (!authorization.startsWith('DPoP ') || !jkt)
-        return refusal('token_invalid')
+        return refusal('token_invalid', 401, {
+          'www-authenticate': 'DPoP algs="ES256", error="invalid_token"'
+        })
       const problem = await checkProof(
         call.headers.get('dpop'),
         call.method,
-        url,
+        `${GATEWAY}/${path}`,
         token,
         jkt
       )
@@ -286,7 +318,7 @@ export function mockGateway(options: GatewayOptions = {}) {
         problems.push(problem)
         return refusal('dpop_invalid')
       }
-      const early = options.handle?.(call, count)
+      const early = await options.handle?.(call, count)
       if (early) return early
 
       if (path === 'auth/account')
@@ -338,7 +370,6 @@ export function mockGateway(options: GatewayOptions = {}) {
         return json(200, { transmission_success: true })
       if (path.endsWith('/reject-handle'))
         return new Response(null, { status: 200 })
-      if (path === 'auth/logout') return new Response(null, { status: 200 })
       if (/^wallet\/[^/]+\/keys\/[^/]+\/sign$/.test(path)) {
         const header = b64url(
           JSON.stringify({ typ: 'JWT', kid: `${ISSUER}#key-1`, alg: 'ES256' })
@@ -351,11 +382,11 @@ export function mockGateway(options: GatewayOptions = {}) {
           }
         )
       }
-      return refusal('route_not_allowed')
+      return refusal('not_found')
     }
   )
 
-  return { fetchImpl, calls, proofs, signatures, problems, tokens }
+  return { fetchImpl, calls, proofs, signatures, problems, tokens, revoked }
 }
 
 export function challenge(

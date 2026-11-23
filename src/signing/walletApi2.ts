@@ -10,11 +10,13 @@
  * only the DDO's own fields. `prepareDocument` gives the publish flow that shape before it
  * validates, so what is validated is what is signed.
  */
+import { quoteText } from '../identity/waltid/addressErrors.js'
 import { WaltIdWalletError } from '../identity/waltid/client.js'
 import {
   WalletApi2HttpClient,
   type WalletApi2TokenSource
 } from '../identity/waltid/wallet2.js'
+import { sanitize } from '../node/messages.js'
 import { JWS_SIGNING_ALLOWANCE } from '../publish/envelope.js'
 import { CREDENTIAL_TYPE } from './claims.js'
 import type { DdoSigner, SignedCredential } from './vc.js'
@@ -108,8 +110,54 @@ function jsonEqual(a: unknown, b: unknown): boolean {
   return a === b
 }
 
-function decodePart(part: string): unknown {
-  return JSON.parse(Buffer.from(part, 'base64url').toString('utf8'))
+/** The JSON text of a base64url JWS part. */
+function decodeText(part: string): string {
+  return Buffer.from(part, 'base64url').toString('utf8')
+}
+
+/**
+ * Whether JSON `text` has an object with the same key twice. `JSON.parse` keeps the last
+ * one silently, so a JWS could carry a payload another parser reads differently.
+ */
+function hasDuplicateKeys(text: string): boolean {
+  const frames: { object: boolean; keys: Set<string>; expectKey: boolean }[] =
+    []
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    const top = frames.at(-1)
+    if (c === '"') {
+      let j = i + 1
+      while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1
+      if (top?.object && top.expectKey) {
+        let key: string
+        try {
+          key = JSON.parse(text.slice(i, j + 1))
+        } catch {
+          return true
+        }
+        if (top.keys.has(key)) return true
+        top.keys.add(key)
+        top.expectKey = false
+      }
+      i = j
+    } else if (c === '{')
+      frames.push({ object: true, keys: new Set(), expectKey: true })
+    else if (c === '[')
+      frames.push({ object: false, keys: new Set(), expectKey: false })
+    else if (c === '}' || c === ']') frames.pop()
+    else if (c === ',' && top?.object) top.expectKey = true
+  }
+  return false
+}
+
+/** The header members wallet-api2 writes; anything else (`crit`, `b64`, `jwk`) is refused. */
+const HEADER_MEMBERS = new Set(['alg', 'kid', 'typ'])
+
+function signingError(message: string, hint: string): WaltIdWalletError {
+  return new WaltIdWalletError('keys/sign', message, undefined, {
+    code: 'signature_invalid',
+    hint
+  })
 }
 
 /** Signs with a wallet-api2 key, authenticated by an address sign-in. */
@@ -185,14 +233,26 @@ export class WalletApi2VcSigner implements DdoSigner {
         )
       : []
     if (extra.length || extraSubject.length)
-      throw new Error(
-        `wallet-api2 signs only the DDO fields ${WALLET_API2_DDO_FIELDS.join(', ')} (credentialSubject: ${WALLET_API2_DDO_SUBJECT_FIELDS.join(', ')}); this DDO also has ${[...extra, ...extraSubject.map((key) => `credentialSubject.${key}`)].join(', ')}. Pass it through prepareDocument() first (publish and edit do).`
+      throw new WaltIdWalletError(
+        'keys/sign',
+        `wallet-api2 signs only the DDO fields ${WALLET_API2_DDO_FIELDS.join(', ')} (credentialSubject: ${WALLET_API2_DDO_SUBJECT_FIELDS.join(', ')}); this DDO also has ${[...extra, ...extraSubject.map((key) => `credentialSubject.${key}`)].join(', ')}. Pass it through prepareDocument() first (publish and edit do).`,
+        undefined,
+        {
+          code: 'not_a_ddo',
+          hint: 'Developer: sign through publish() or edit(), or call prepareDocument() before sign().'
+        }
       )
 
     const declared = ddo.issuer
     if (typeof declared === 'string' && declared && declared !== issuer)
-      throw new Error(
-        `The DDO declares issuer "${declared}" but it is being signed by "${issuer}". Either remove setIssuer(), or sign with the identity you declared.`
+      throw new WaltIdWalletError(
+        'keys/sign',
+        `The DDO declares issuer ${quoteText(declared, 200)} but it is being signed by "${issuer}". Either remove setIssuer(), or sign with the identity you declared.`,
+        undefined,
+        {
+          code: 'issuer_mismatch',
+          hint: 'Developer: make setIssuer() and the signer issuer the same DID.'
+        }
       )
 
     const scopes = this.options.signIn.scopes
@@ -201,7 +261,10 @@ export class WalletApi2VcSigner implements DdoSigner {
         'keys/sign',
         "the sign-in has no scope sign-ddo. Sign in with scopes: ['present', 'sign-ddo'] (and ask an admin to turn on \"Sign asset descriptions (DDOs)\" for the address).",
         undefined,
-        { code: 'scope_not_enabled' }
+        {
+          code: 'scope_not_enabled',
+          hint: "Developer: sign in with scopes ['present', 'sign-ddo']; admin: turn on \"Sign asset descriptions (DDOs)\" for the address."
+        }
       )
 
     const credential: Record<string, unknown> = {
@@ -216,8 +279,11 @@ export class WalletApi2VcSigner implements DdoSigner {
       walletId = this.options.signIn.walletId
     }
     if (!walletId)
-      throw new Error(
-        'WalletApi2VcSigner: the sign-in names no wallet; pass walletId.'
+      throw new WaltIdWalletError(
+        'keys/sign',
+        'the sign-in names no wallet; pass walletId',
+        undefined,
+        { code: 'invalid_request', hint: 'Developer: pass walletId.' }
       )
 
     const jws = await this.client.signDdo(walletId, keyId, credential)
@@ -225,40 +291,69 @@ export class WalletApi2VcSigner implements DdoSigner {
     return { jwt: jws, issuer }
   }
 
-  /** The answer must be a compact JWS of exactly `credential`, by a method of the issuer. */
+  /**
+   * The answer must be a compact JWS of exactly `credential`: a header of `alg` (a JOSE
+   * signature algorithm), `kid` (a verification method of the issuer) and `typ` only, and
+   * a payload without duplicate keys that equals the credential.
+   */
   private assertJws(jws: string, credential: Record<string, unknown>): void {
     const { issuer } = this.options
+    const operator =
+      'Report it to the wallet operators: wallet-api2 answered something it does not sign.'
     if (!COMPACT_JWS.test(jws))
-      throw new Error('wallet-api2 returned no compact JWS for the DDO.')
+      throw signingError(
+        'wallet-api2 returned no compact JWS for the DDO.',
+        operator
+      )
     const [headerPart, payloadPart] = jws.split('.')
     let header: unknown
     let payload: unknown
+    let headerText: string
+    let payloadText: string
     try {
-      header = decodePart(headerPart)
-      payload = decodePart(payloadPart)
+      headerText = decodeText(headerPart)
+      payloadText = decodeText(payloadPart)
+      header = JSON.parse(headerText)
+      payload = JSON.parse(payloadText)
     } catch {
-      throw new Error('wallet-api2 returned a JWS that does not decode.')
+      throw signingError(
+        'wallet-api2 returned a JWS that does not decode.',
+        operator
+      )
     }
+    if (hasDuplicateKeys(headerText) || hasDuplicateKeys(payloadText))
+      throw signingError(
+        'wallet-api2 returned a JWS with a duplicate key.',
+        operator
+      )
     if (
       !isPlainObject(header) ||
-      typeof header.alg !== 'string' ||
-      !JWS_ALGORITHMS.has(header.alg)
+      Object.keys(header).some((key) => !HEADER_MEMBERS.has(key))
     )
-      throw new Error(
-        'wallet-api2 returned a JWS without a supported algorithm.'
+      throw signingError(
+        'wallet-api2 returned a JWS whose header has members other than alg, kid and typ.',
+        operator
+      )
+    if (typeof header.alg !== 'string' || !JWS_ALGORITHMS.has(header.alg))
+      throw signingError(
+        `wallet-api2 returned a JWS with the algorithm ${sanitize(String(header.alg), 20, null)}, not a JOSE signature algorithm.`,
+        operator
       )
     if (typeof header.kid !== 'string' || !header.kid.startsWith(`${issuer}#`))
-      throw new Error(
-        `wallet-api2 signed with ${typeof header.kid === 'string' ? header.kid.slice(0, 200) : 'no key id'}, not with a verification method of ${issuer}.`
+      throw signingError(
+        `wallet-api2 signed with ${typeof header.kid === 'string' ? quoteText(header.kid, 200) : 'no key id'}, not with a verification method of ${issuer}.`,
+        `Developer: use a keyId whose key is a verification method of ${issuer}; admin: check the issuer DID's document in the wallet.`
       )
     if (!jsonEqual(payload, credential))
-      throw new Error(
-        'wallet-api2 signed a document other than the DDO credential it was sent.'
+      throw signingError(
+        'wallet-api2 signed a document other than the DDO credential it was sent.',
+        operator
       )
     const overhead = jws.length - payloadPart.length
     if (overhead > JWS_SIGNING_ALLOWANCE)
-      throw new Error(
-        `wallet-api2's JWS header and signature take ${overhead} characters, more than the ${JWS_SIGNING_ALLOWANCE} nautilus allows for them when it sizes the envelope.`
+      throw signingError(
+        `wallet-api2's JWS header and signature take ${overhead} characters, more than the ${JWS_SIGNING_ALLOWANCE} nautilus allows for them when it sizes the envelope.`,
+        'Developer: sign with a key whose signatures are shorter (an EC or a smaller RSA key), or a shorter key id.'
       )
   }
 }
