@@ -129,6 +129,11 @@ const PATTERNS: [string, (text: string) => boolean][] = [
       )
   ],
   ['bearer credential', (text) => /Bearer\s+(?!<redacted>)\S/i.test(text)],
+  ['DPoP credential', (text) => /\bDPoP\s+(?!<redacted>)pxa_/i.test(text)],
+  [
+    'wallet-api2 address token',
+    (text) => /(?<![A-Za-z0-9])pxa_[A-Za-z0-9_-]{8,}/.test(text)
+  ],
   [
     'a fixture secret',
     (text) => SUITE_SECRETS.some((secret) => text.includes(secret))

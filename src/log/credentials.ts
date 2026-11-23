@@ -39,6 +39,8 @@
  *
  * The signer's private key and mnemonic are never shown at any tier (nautilus never holds
  * them; a key named so is still replaced, in objects and in text, also at `secrets`).
+ * Neither are wallet-api2 address tokens (`pxa_…`), `DPoP` credentials and DPoP proofs
+ * (`maskAddressTokens`), nor a `dpop` key.
  */
 import {
   isLongLivedCredential,
@@ -80,6 +82,35 @@ const URL_PATTERN =
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const IPFS_CID = /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{50,})$/
 const TOKEN_LIKE = /^[A-Za-z0-9_-]{20,}$/
+
+/**
+ * What no debug tier shows, wherever it stands: wallet-api2 address tokens (`pxa_…`), the
+ * `DPoP` authorization scheme's credential, and DPoP proofs (a compact JWS whose header has
+ * `typ: dpop+jwt`). They are short-lived, but a token with its proof is a working session
+ * for the organisation address.
+ */
+const ADDRESS_TOKEN = /(?<![A-Za-z0-9])pxa_[A-Za-z0-9_-]{8,}/g
+const DPOP_SCHEME = /\b(DPoP)\s+[^\s"',;\\]+/g
+const COMPACT_JWS = /(?<![\w-])eyJ[\w-]*\.[\w-]+\.[\w-]+/g
+
+/** `text` without address tokens, DPoP credentials and DPoP proofs (`ADDRESS_TOKEN`). */
+export function maskAddressTokens(text: string): string {
+  if (!/pxa_|dpop|eyJ/i.test(text)) return text
+  return text
+    .replace(DPOP_SCHEME, `$1 ${REDACTED}`)
+    .replace(ADDRESS_TOKEN, REDACTED)
+    .replace(COMPACT_JWS, (jws) => (isDpopProof(jws) ? REDACTED : jws))
+}
+
+function isDpopProof(jws: string): boolean {
+  try {
+    const header = jws.slice(0, jws.indexOf('.'))
+    const json = atob(header.replace(/-/g, '+').replace(/_/g, '/'))
+    return /dpop\+jwt/i.test(json)
+  } catch {
+    return false
+  }
+}
 
 /** How many levels of URLs nested in query values are masked. */
 const MAX_URL_NESTING = 3
@@ -133,8 +164,10 @@ function mask(
   known: readonly string[] | undefined,
   hidden: (key: string, value: unknown) => boolean
 ): unknown {
-  if (typeof value === 'string')
-    return known ? maskText(value, known) : maskNeverShownText(value)
+  if (typeof value === 'string') {
+    const text = maskAddressTokens(value)
+    return known ? maskText(text, known) : maskNeverShownText(text)
+  }
   if (value instanceof CutText)
     return new CutText(mask(value.text, known, hidden) as string, value.total)
   if (Array.isArray(value))

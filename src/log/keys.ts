@@ -46,7 +46,8 @@ const EXACT_SECRET_KEYS = new Set([
   'sig',
   'pass',
   'pwd',
-  'requesturi'
+  'requesturi',
+  'dpop'
 ])
 
 /** Normalised keys ending in a credential name, whatever their value. */
@@ -176,8 +177,11 @@ export const SECRET_KEYS: KeyRule = {
   toLineEnd: (key) => LINE_VALUE_KEY.test(normalizeKey(key))
 }
 
-/** Normalised keys whose value is never shown, at any debug tier. */
-const NEVER_SHOWN = /privatekey|privkey|(?:mnemonic|seedphrase)$/
+/**
+ * Normalised keys whose value is never shown, at any debug tier: private keys, mnemonics,
+ * and a wallet-api2 DPoP proof (`dpop`).
+ */
+const NEVER_SHOWN = /privatekey|privkey|(?:mnemonic|seedphrase)$|^dpop$/
 
 /**
  * Normalised keys the `sensitive` debug tier shows although `isSecretKey` (or a credential

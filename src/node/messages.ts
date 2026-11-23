@@ -64,8 +64,10 @@ const JSON_ESCAPE = /(?<!\\)\\+(?:\/|u([0-9a-fA-F]{4}))/g
  */
 const DECODABLE = /^[A-Za-z0-9_\-.:/@~+]$/
 
-/** A `Bearer` or `Basic` credential, wherever it stands. */
-const BEARER = /((?:Bearer|Basic)\s+)[\w.~+/=-]+/gi
+/** A `Bearer`, `Basic` or `DPoP` credential, wherever it stands. */
+const BEARER = /((?:Bearer|Basic|DPoP)\s+)[\w.~+/=-]+/gi
+/** A wallet-api2 address token (`pxa_…`), wherever it stands. */
+const ADDRESS_TOKEN = /(?<![A-Za-z0-9])pxa_[A-Za-z0-9_-]{8,}/g
 /**
  * A run of base64url words joined by dots (`a.b.c`), whole: where `redactJwts` looks for
  * JWTs. It starts only where no such character stands before it, so each run is read once
@@ -180,7 +182,8 @@ const ANSI_ESCAPE =
  *   A quoted, bracketed or `Bearer`/`Basic` value is redacted whole. As for fields, a
  *   `…token` holding an EVM address is kept, and so is a `…code` that reads as an error
  *   code (`code=SERVER_ERROR`, `"code": -32005`), so RPC failures stay legible;
- * - `Bearer` and `Basic` credentials, JWTs, 65-byte hex signatures, raw signed
+ * - `Bearer`, `Basic` and `DPoP` credentials, wallet-api2 address tokens (`pxa_…`), JWTs
+ *   (a DPoP proof is one), 65-byte hex signatures, raw signed
  *   transactions and policy-server session ids (`<64 hex>-<64 hex>`) anywhere.
  *
  * A URL keeps its origin only: its path and query (an openid4vp `request_uri`, a policy
@@ -232,6 +235,7 @@ function redactPatterns(text: string): string {
     SECRET_KEYS
   )
     .replace(BEARER, '$1<redacted>')
+    .replace(ADDRESS_TOKEN, '<redacted>')
     .replace(DOTTED_RUN, redactJwts)
     .replace(HEX_SIGNATURE, '<redacted>')
     .replace(SIGNED_TRANSACTION, (hex) =>
