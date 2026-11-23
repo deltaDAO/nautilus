@@ -90,14 +90,32 @@ const TOKEN_LIKE = /^[A-Za-z0-9_-]{20,}$/
  * for the organisation address.
  */
 const ADDRESS_TOKEN = /(?<![A-Za-z0-9])pxa_[A-Za-z0-9_-]{8,}/g
-const DPOP_SCHEME = /\b(DPoP)\s+[^\s"',;\\]+/g
+const DPOP_SCHEME = /\b(DPoP)(\s+)([^\s"',;\\]+)/g
+
+/**
+ * Whether the word after an authorization scheme (`Bearer`, `Basic`, `DPoP`) looks like a
+ * credential rather than prose: a `pxa_` token, 20 characters or more, anything with a
+ * digit or a base64/JWT character (`.`, `_`, `-`, `+`, `/`, `=`), or mixed case other than
+ * a capitalised word. So "The DPoP proof is invalid" keeps its words.
+ */
+export function isCredentialShaped(value: string): boolean {
+  if (value.startsWith('pxa_') || value.length >= 20) return true
+  if (/[^A-Za-z]/.test(value)) return true
+  return (
+    /[a-z]/.test(value) && /[A-Z]/.test(value) && !/^[A-Z][a-z]+$/.test(value)
+  )
+}
 const COMPACT_JWS = /(?<![\w-])eyJ[\w-]*\.[\w-]+\.[\w-]+/g
 
 /** `text` without address tokens, DPoP credentials and DPoP proofs (`ADDRESS_TOKEN`). */
 export function maskAddressTokens(text: string): string {
   if (!/pxa_|dpop|eyJ/i.test(text)) return text
   return text
-    .replace(DPOP_SCHEME, `$1 ${REDACTED}`)
+    .replace(
+      DPOP_SCHEME,
+      (match, scheme: string, space: string, value: string) =>
+        isCredentialShaped(value) ? `${scheme}${space}${REDACTED}` : match
+    )
     .replace(ADDRESS_TOKEN, REDACTED)
     .replace(COMPACT_JWS, (jws) => (isDpopProof(jws) ? REDACTED : jws))
 }

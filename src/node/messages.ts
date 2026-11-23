@@ -12,6 +12,7 @@
  * values returned here are the same with it on or off.
  */
 
+import { isCredentialShaped } from '../log/credentials.js'
 import { type DebugTopic, debugEnabled, debugRaw } from '../log/debug.js'
 import { isErrorCode, SECRET_KEYS } from '../log/keys.js'
 import { redactKeyValues } from '../log/keyValues.js'
@@ -64,8 +65,11 @@ const JSON_ESCAPE = /(?<!\\)\\+(?:\/|u([0-9a-fA-F]{4}))/g
  */
 const DECODABLE = /^[A-Za-z0-9_\-.:/@~+]$/
 
-/** A `Bearer`, `Basic` or `DPoP` credential, wherever it stands. */
-const BEARER = /((?:Bearer|Basic|DPoP)\s+)[\w.~+/=-]+/gi
+/**
+ * A `Bearer`, `Basic` or `DPoP` credential, wherever it stands; redacted when it is shaped
+ * like one (`isCredentialShaped`), so prose such as "the DPoP proof" stays readable.
+ */
+const BEARER = /((?:Bearer|Basic|DPoP)\s+)([\w.~+/=-]+)/gi
 /** A wallet-api2 address token (`pxa_…`), wherever it stands. */
 const ADDRESS_TOKEN = /(?<![A-Za-z0-9])pxa_[A-Za-z0-9_-]{8,}/g
 /**
@@ -234,7 +238,9 @@ function redactPatterns(text: string): string {
       .replace(SCHEMELESS_URL, hostOnly),
     SECRET_KEYS
   )
-    .replace(BEARER, '$1<redacted>')
+    .replace(BEARER, (match, scheme: string, value: string) =>
+      isCredentialShaped(value) ? `${scheme}<redacted>` : match
+    )
     .replace(ADDRESS_TOKEN, '<redacted>')
     .replace(DOTTED_RUN, redactJwts)
     .replace(HEX_SIGNATURE, '<redacted>')
