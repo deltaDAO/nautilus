@@ -299,10 +299,6 @@ export function mockGateway(options: GatewayOptions = {}) {
       // Token routes
       const authorization = call.headers.get('authorization') ?? ''
       const token = authorization.replace(/^DPoP /, '')
-      if (path === 'auth/logout') {
-        if (tokens.delete(token)) revoked.push(token)
-        return new Response(null, { status: 200 })
-      }
       const jkt = tokens.get(token)
       if (!authorization.startsWith('DPoP ') || !jkt)
         return refusal('token_invalid', 401, {
@@ -314,10 +310,14 @@ export function mockGateway(options: GatewayOptions = {}) {
         `${GATEWAY}/${path}`,
         token,
         jkt
-      )
+      ).catch(() => 'invalid proof')
       if (problem) {
         problems.push(problem)
         return refusal('dpop_invalid')
+      }
+      if (path === 'auth/logout') {
+        if (tokens.delete(token)) revoked.push(token)
+        return new Response(null, { status: 200 })
       }
       const early = await options.handle?.(call, count)
       if (early) return early
