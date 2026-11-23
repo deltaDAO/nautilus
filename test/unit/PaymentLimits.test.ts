@@ -26,7 +26,7 @@ import {
   EscrowContract,
   sendTx
 } from '@oceanprotocol/lib'
-import { getAddress, type Signer } from 'ethers'
+import { AbiCoder, getAddress, Interface, type Signer } from 'ethers'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComputeConfig } from '../../src/@types/Compute.js'
 import { access, settleOrder } from '../../src/access/index.js'
@@ -1081,17 +1081,29 @@ describe('compute() escrow funding, in exact amounts', () => {
   })
 
   it('reads and writes an Escrow v1 contract with the v1 ABI (no authorisation expiry)', async () => {
-    await runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running
-
-    const abi = vi
-      .mocked(EscrowContract)
-      .mock.calls.map((call) => call[4] as unknown)
-      .find(Array.isArray) as { name: string; inputs: unknown[] }[]
-    expect(abi, 'EscrowContract built with an explicit ABI').toBeDefined()
-    expect(abi.find((f) => f.name === 'authorize')?.inputs).toHaveLength(5)
+    // The six-field wire layout is independent of the ABI nautilus supplies to ocean.js.
+    const data = AbiCoder.defaultAbiCoder().encode(
+      ['tuple(address,uint256,uint256,uint256,uint256,uint256)[]'],
+      [[[PAYEE, 3n * ONE, ONE, 30n, 7n, 1n]]]
+    )
+    await vi.mocked(EscrowContract).withImplementation(
+      function (_address, _signer, _network, _config, abi) {
+        if (!abi) return escrow as unknown as EscrowContract
+        const iface = new Interface(abi)
+        expect(iface.getFunction('authorize')?.inputs).toHaveLength(5)
+        return {
+          ...escrow,
+          getAuthorizations: async () =>
+            iface.decodeFunctionResult('getAuthorizations', data)[0]
+        } as unknown as EscrowContract
+      },
+      async () => {
+        await runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running
+      }
+    )
     expect(escrowTransactions().at(-1)).to.deep.equal({
       method: 'authorize',
-      args: [TOKEN, PAYEE, ONE, 3900n, 1n]
+      args: [TOKEN, PAYEE, 3n * ONE, 3900n, 7n]
     })
   })
 
