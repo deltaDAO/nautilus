@@ -2235,43 +2235,48 @@ describe('publish preflight on a node with the native SSI module', () => {
     ).to.deep.equal([])
   })
 
-  it.each([
+  describe.each([
     { target: 'native SSI', ssi: SSI },
     { target: 'policy server', ssi: null },
     { target: 'unknown', ssi: undefined }
-  ])(
-    'checks legacy entry limits on edit for a $target endpoint',
-    async ({ ssi }) => {
-      const { nautilus, node } = await createNautilus()
-      vi.spyOn(node.client, 'getSsiCapabilities').mockResolvedValue(ssi)
-      const fixture = getAssetFixture()
-      const [existing] = fixture.credentialSubject.services
-      existing.serviceEndpoint = 'https://service.test.invalid'
-      Object.assign(existing, {
-        credentials: {
-          allow: [
-            {
-              type: 'SSIpolicy',
-              values: Array(21).fill({
-                request_credentials: [{ type: 'VerifiableId' }]
-              })
-            }
-          ]
-        }
-      })
-      const asset = new AssetBuilder(fixture).setName('Updated dataset').build()
+  ])('legacy entry limits on a $target endpoint', ({ ssi }) => {
+    it.each([
+      { size: 0, error: /at least one value/ },
+      { size: 21, error: /too many SSI policies/ }
+    ])(
+      'checks an unchanged entry with $size values on edit',
+      async ({ size, error }) => {
+        const { nautilus, node } = await createNautilus()
+        vi.spyOn(node.client, 'getSsiCapabilities').mockResolvedValue(ssi)
+        const fixture = getAssetFixture()
+        const [existing] = fixture.credentialSubject.services
+        existing.serviceEndpoint = 'https://service.test.invalid'
+        Object.assign(existing, {
+          credentials: {
+            allow: [
+              {
+                type: 'SSIpolicy',
+                values: Array(size).fill({
+                  request_credentials: [{ type: 'VerifiableId' }]
+                })
+              }
+            ]
+          }
+        })
+        const asset = new AssetBuilder(fixture)
+          .setName('Updated dataset')
+          .build()
 
-      if (ssi) {
-        await expect(nautilus.edit(asset)).rejects.toThrow(
-          /too many SSI policies/
-        )
-        expect(writeMetadata).not.toHaveBeenCalled()
-      } else {
-        await nautilus.edit(asset)
-        expect(writeMetadata).toHaveBeenCalledOnce()
+        if (ssi) {
+          await expect(nautilus.edit(asset)).rejects.toThrow(error)
+          expect(writeMetadata).not.toHaveBeenCalled()
+        } else {
+          await nautilus.edit(asset)
+          expect(writeMetadata).toHaveBeenCalledOnce()
+        }
       }
-    }
-  )
+    )
+  })
 
   it.each([
     { list: 'deny', values: [V2], error: /credentials\.deny/ },

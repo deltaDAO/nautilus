@@ -459,12 +459,12 @@ function assertSsiEntryLimits(entries: DdoCredential[]): void {
     if (!isSsiEntry(entry)) continue
     assertSafeJson(entry)
     if (
-      isSsiPolicyV2Credential(entry) &&
-      (!Array.isArray(entry.values) || entry.values.length === 0)
+      !('values' in entry) ||
+      !Array.isArray(entry.values) ||
+      entry.values.length === 0
     )
-      fail('an SSIpolicyV2 entry needs at least one value')
-    if ('values' in entry && Array.isArray(entry.values))
-      count += entry.values.length
+      fail(`an ${entry.type} entry needs at least one value`)
+    count += entry.values.length
   }
   if (count > MAX_CREDENTIAL_QUERIES)
     fail('too many SSI policies in one credentials block')
