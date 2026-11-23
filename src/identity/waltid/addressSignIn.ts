@@ -286,6 +286,7 @@ export class AddressSignIn implements WalletApi2TokenSource {
   }
 
   private async current(signal?: AbortSignal): Promise<Session> {
+    signal?.throwIfAborted()
     const session = this.#session
     const now = Date.now()
     if (session && now < session.renewAt) return session

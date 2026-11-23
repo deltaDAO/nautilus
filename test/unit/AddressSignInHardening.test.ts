@@ -698,12 +698,17 @@ describe('contract details (C1, C2, C4, C5)', () => {
 
   it('honours the caller AbortSignal and the overall sign-in timeout', async () => {
     const gateway = mockGateway()
-    const { signIn } = signInWith(gateway)
+    const { wallet: abortWallet } = signer()
+    const readAddress = vi.spyOn(abortWallet, 'getAddress')
+    const { signIn } = signInWith(gateway, { signer: abortWallet })
     const controller = new AbortController()
     controller.abort(new Error('stop'))
     expect(
       (await signIn.getToken(controller.signal).catch((e) => e)).message
     ).to.equal('stop')
+    expect(readAddress).not.toHaveBeenCalled()
+    await signIn.getToken()
+    await expect(signIn.getToken(controller.signal)).rejects.toThrow('stop')
 
     const { wallet } = signer()
     vi.spyOn(wallet, 'signMessage').mockImplementation(
