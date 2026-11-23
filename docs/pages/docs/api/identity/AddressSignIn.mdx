@@ -34,7 +34,7 @@ Usually you do not create one yourself: `withAddressSignIn` does, and exposes it
 
 | Option | Type | Purpose |
 | --- | --- | --- |
-| `gateway` | `string` | The address gateway, exactly as wallet-api2 knows it (`ADDRESS_SIGN_IN_PUBLIC_URL`): `https://<wallet UI>/api/address-gateway`. Required. Written as a URL parser reads it: lower-case host, no default or empty port, no user info, query, fragment, `%`, `..`, backslash or control character; a trailing slash is dropped. |
+| `gateway` | `string` | The address gateway, exactly as wallet-api2 knows it (`ADDRESS_SIGN_IN_PUBLIC_URL`): `https://<wallet UI>/api/address-gateway`. Required. Written as a URL parser reads it: lower-case host, explicit default port preserved, no empty port, no user info, query, fragment, `%`, `..`, backslash or control character; a trailing slash is dropped. |
 | `signer` | `Signer` | The key of the organisation address. Signs the sign-in message only. Required. |
 | `chainId` | `number` | The chain the message names. Default: the signer's provider's network. |
 | `smartAccount` | `'auto' \| boolean` | Default `'auto'`. wallet-api2 decides from how the address was linked whether it checks EIP-191 or ERC-1271, so nothing is sent. `true` refuses an address without code (an undeployed account; ERC-6492 is not supported); `'auto'` reads the code only to explain a `sign_in_failed`; `false` reads nothing. |

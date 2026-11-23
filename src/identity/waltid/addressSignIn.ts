@@ -266,7 +266,7 @@ export class AddressSignIn implements WalletApi2TokenSource {
         Authorization: `DPoP ${session.token}`,
         DPoP: await session.key.proof(
           request.method,
-          request.url,
+          this.gateway + target.pathname.slice(basePath.length),
           session.token
         )
       }
@@ -669,8 +669,8 @@ function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
 const UNSAFE_URL = /[\u0000-\u0020\u007f-\u009f\\]/
 
 /**
- * The gateway URL without a trailing slash, if it is exactly what a URL parser reads: an
- * http(s) URL without user info, query, fragment, an empty or default port, control
+ * The gateway URL without a trailing slash, as a URL parser reads it except for an explicit default port: an
+ * http(s) URL without user info, query, fragment, an empty port, control
  * characters, backslashes or anything the parser would rewrite (upper-case host, `..`,
  * percent-encoding). wallet-api2 compares the sign-in message's domain and URI and every
  * DPoP `htu` with its configured URL byte for byte, so nautilus uses the URL as given.
@@ -697,10 +697,15 @@ function normalizeGateway(input: string): string {
   } catch {
     throw refuse('is not a valid URL')
   }
-  const read = `${parsed.origin}${parsed.pathname}`.replace(/\/+$/, '')
-  if (read !== gateway)
+  const path = parsed.pathname.replace(/\/+$/, '')
+  const read = `${parsed.origin}${path}`
+  // URL.origin omits a default port even when wallet-api2 includes it in its signed bytes.
+  const defaultPort = parsed.protocol === 'https:' ? '443' : '80'
+  const explicitDefault =
+    !parsed.port && gateway === `${parsed.origin}:${defaultPort}${path}`
+  if (read !== gateway && !explicitDefault)
     throw refuse(
-      `must be written as a URL parser reads it (${sanitize(read, 200, null)}): lower-case host, no default port, no dot segments or percent-encoding`
+      `must be written as a URL parser reads it (${sanitize(read, 200, null)}): lower-case host, no dot segments or percent-encoding`
     )
   return gateway
 }

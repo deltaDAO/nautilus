@@ -548,7 +548,6 @@ describe('gateway URL (S5)', () => {
     'https://user:pw@wallet.test.invalid/api/address-gateway',
     'https://wallet.test.invalid:/api/address-gateway',
     'https://Wallet.Test.Invalid/api/address-gateway',
-    'https://wallet.test.invalid:443/api/address-gateway',
     'https://wallet.test.invalid/api/../api/address-gateway',
     'https://wallet.test.invalid/api/address%2Dgateway',
     'https://wallet.test.invalid/api/address gateway'
@@ -588,10 +587,47 @@ describe('gateway URL (S5)', () => {
     )
   })
 
+  it('keeps an explicit default port in the signed domain, URI and DPoP proofs', async () => {
+    const gateway = GATEWAY.replace('.invalid', '.invalid:443')
+    const server = mockGateway({
+      message: (message) =>
+        message.replaceAll('wallet.test.invalid', 'wallet.test.invalid:443')
+    })
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input)
+      if (url === `${gateway}/auth/address/challenge`)
+        return server.fetchImpl(url.replace(':443', ''), init)
+      expect(url).to.equal(`${gateway}/auth/address/token`)
+      const proof = new Headers(init?.headers).get('dpop') as string
+      expect((await jwtVerify(proof, EmbeddedJWK)).payload.htu).to.equal(url)
+      return json(200, {
+        accessToken: `pxa_${'a'.repeat(43)}`,
+        tokenType: 'DPoP',
+        address: ADDRESS,
+        walletId: 'w',
+        expiresIn: 3600
+      })
+    }
+    const signIn = new AddressSignIn({
+      gateway,
+      signer: signer().wallet,
+      fetchImpl
+    })
+    const { headers } = await signIn.authorize({
+      method: 'GET',
+      url: `${GATEWAY}/auth/account`
+    })
+    expect((await jwtVerify(headers.DPoP, EmbeddedJWK)).payload.htu).to.equal(
+      `${gateway}/auth/account`
+    )
+  })
+
   it('accepts the URL as a parser reads it, with or without a trailing slash', () => {
     for (const gateway of [
       GATEWAY,
       `${GATEWAY}/`,
+      'https://wallet.test.invalid:443/api/address-gateway',
+      'http://localhost:80/api/address-gateway',
       'https://wallet.test.invalid:8443/api/address-gateway',
       'http://localhost:3000/api/address-gateway'
     ])
