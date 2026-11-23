@@ -32,6 +32,34 @@ describe('DCQL claims validation', () => {
       version: '2',
       dcql: { credentials: [{ id: 'pid', format: 'dc+sd-jwt', ...query }] }
     })
+  it('bounds the serialized query metadata', () => {
+    const length = 8192 - JSON.stringify({ vct: '' }).length
+    expect(() => validate({ meta: { vct: 'é'.repeat(length) } })).not.toThrow()
+    expect(() => validate({ meta: { vct: 'x'.repeat(length + 1) } })).toThrow(
+      /meta/
+    )
+  })
+
+  it('checks the shape and limits of trusted authorities', () => {
+    const authority = { type: 'aki', values: Array(50).fill('x') }
+    expect(() =>
+      validate({ trusted_authorities: Array(10).fill(authority) })
+    ).not.toThrow()
+    for (const trusted_authorities of [
+      {},
+      Array(11).fill(authority),
+      [null],
+      [{ values: ['x'] }],
+      [{ ...authority, values: [] }],
+      [{ ...authority, values: Array(51).fill('x') }],
+      [{ ...authority, values: [1] }],
+      [{ ...authority, values: ['x'.repeat(2049)] }]
+    ])
+      expect(() => validate({ trusted_authorities })).toThrow(
+        /trusted_authorities/
+      )
+  })
+
   const claim = {
     id: 'age',
     path: ['person', null, 0],

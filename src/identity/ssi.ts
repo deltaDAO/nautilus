@@ -627,8 +627,29 @@ function checkCredentialQuery(input: unknown): {
     fail(
       `the dcql query "${id}" has a format the node does not accept (${SSI_FORMATS.join(', ')})`
     )
-  if (input.meta !== undefined && !isRecord(input.meta))
+  if (
+    input.meta !== undefined &&
+    (!isRecord(input.meta) || JSON.stringify(input.meta).length > 8 * 1024)
+  )
     fail(`the dcql query "${id}" has an invalid meta`)
+  if (
+    input.trusted_authorities !== undefined &&
+    (!Array.isArray(input.trusted_authorities) ||
+      input.trusted_authorities.length > 10 ||
+      !input.trusted_authorities.every(
+        (authority) =>
+          isRecord(authority) &&
+          typeof authority.type === 'string' &&
+          Array.isArray(authority.values) &&
+          authority.values.length > 0 &&
+          authority.values.length <= 50 &&
+          authority.values.every(
+            (value: unknown) =>
+              typeof value === 'string' && value.length <= 2048
+          )
+      ))
+  )
+    fail(`the dcql query "${id}" has invalid trusted_authorities`)
   const claimIds = new Set<string>()
   if (input.claims !== undefined) {
     if (
