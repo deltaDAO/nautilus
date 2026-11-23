@@ -66,8 +66,8 @@ const JSON_ESCAPE = /(?<!\\)\\+(?:\/|u([0-9a-fA-F]{4}))/g
 const DECODABLE = /^[A-Za-z0-9_\-.:/@~+]$/
 
 /**
- * A `Bearer`, `Basic` or `DPoP` credential, wherever it stands; redacted when it is shaped
- * like one (`isCredentialShaped`), so prose such as "the DPoP proof" stays readable.
+ * Mask Bearer and Basic credentials wherever they stand. DPoP also occurs in prose,
+ * so only mask the following word when it looks like a credential.
  */
 const BEARER = /((?:Bearer|Basic|DPoP)\s+)([\w.~+/=-]+)/gi
 /** A wallet-api2 address token (`pxa_…`), wherever it stands. */
@@ -239,7 +239,9 @@ function redactPatterns(text: string): string {
     SECRET_KEYS
   )
     .replace(BEARER, (match, scheme: string, value: string) =>
-      isCredentialShaped(value) ? `${scheme}<redacted>` : match
+      !/^dpop/i.test(scheme) || isCredentialShaped(value)
+        ? `${scheme}<redacted>`
+        : match
     )
     .replace(ADDRESS_TOKEN, '<redacted>')
     .replace(DOTTED_RUN, redactJwts)

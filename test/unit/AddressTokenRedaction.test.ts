@@ -56,6 +56,14 @@ describe('redaction of address tokens, DPoP proofs, signatures and the ephemeral
     }
   })
 
+  it('masks short alphabetic Bearer and Basic credentials', () => {
+    for (const scheme of ['Bearer', 'Basic']) {
+      expect(
+        sanitize(`upstream rejected ${scheme} sesame`, 300, null)
+      ).to.equal(`upstream rejected ${scheme} <redacted>`)
+    }
+  })
+
   it('redacts them from error text', () => {
     const token = `pxa_${'a'.repeat(43)}`
     const text = sanitize(
