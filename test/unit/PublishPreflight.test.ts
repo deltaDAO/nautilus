@@ -2235,6 +2235,23 @@ describe('publish preflight on a node with the native SSI module', () => {
     ).to.deep.equal([])
   })
 
+  it('warns on edit when an unchanged service cannot check a new asset policy', async () => {
+    const log = captureLog()
+    const { nautilus } = await createNautilus({ node: { ssi: null } })
+    const fixture = getAssetFixture()
+    const [existing] = fixture.credentialSubject.services
+    existing.serviceEndpoint = 'https://legacy.test.invalid'
+    const asset = new AssetBuilder(fixture).addSsiPolicyV2(V2).build()
+
+    await nautilus.edit(asset)
+
+    const [warning] = log.named('publish.preflight.ssi_v2_unsupported')
+    expect(warning.fields).to.include({
+      endpoint: existing.serviceEndpoint,
+      serviceId: existing.id
+    })
+  })
+
   it('warns when the node has no SSI module, or no verifier', async () => {
     let log = captureLog()
     let { nautilus } = await createNautilus({ node: { ssi: null } })

@@ -922,7 +922,7 @@ export class Nautilus {
 
     await resolvePublisherTrustedAlgorithms(this.node, services)
     await this.assertServicesPublishable(services)
-    await this.assertValidBeforeSpend({
+    const preflight = await this.assertValidBeforeSpend({
       asset,
       create: true,
       nftAddress: PLACEHOLDER_ADDRESS,
@@ -934,7 +934,7 @@ export class Nautilus {
     await remoteStore.check?.()
     await this.warnIfPublisherIsNode(log)
     await this.warnIfPolicyServerDeniesAll(log, asset)
-    await this.warnIfSsiUnsupported(log, asset)
+    await this.warnIfSsiUnsupported(log, asset, preflight)
     await this.assertIndexerNotStuck(options, log)
 
     const published: PublishedService[] = []
@@ -1099,7 +1099,7 @@ export class Nautilus {
 
       await resolvePublisherTrustedAlgorithms(this.node, services)
       await this.assertServicesPublishable(services)
-      await this.assertValidBeforeSpend({
+      const preflight = await this.assertValidBeforeSpend({
         asset,
         create: true,
         nftAddress,
@@ -1108,7 +1108,7 @@ export class Nautilus {
       await remoteStore.check?.()
       await this.warnIfPublisherIsNode(log)
       await this.warnIfPolicyServerDeniesAll(log, asset, nftAddress)
-      await this.warnIfSsiUnsupported(log, asset, nftAddress)
+      await this.warnIfSsiUnsupported(log, asset, preflight, nftAddress)
       await this.assertIndexerNotStuck(options, log)
 
       // Every reused datatoken is on its service before the first transaction, so a retry
@@ -1457,7 +1457,7 @@ export class Nautilus {
       await resolvePublisherTrustedAlgorithms(this.node, asset.ddo.services)
       await this.assertServicesPublishable(asset.ddo.services)
       // The NFT is real on an edit; only the datatokens of newly priced services are not.
-      await this.assertValidBeforeSpend({
+      const preflight = await this.assertValidBeforeSpend({
         asset,
         create: false,
         nftAddress,
@@ -1466,7 +1466,7 @@ export class Nautilus {
       await remoteStore.check?.()
       await this.warnIfPublisherIsNode(log)
       await this.warnIfPolicyServerDeniesAll(log, asset)
-      await this.warnIfSsiUnsupported(log, asset)
+      await this.warnIfSsiUnsupported(log, asset, preflight)
       await this.assertIndexerNotStuck(options, log)
 
       const published: PublishedService[] = []
@@ -1735,9 +1735,10 @@ export class Nautilus {
   private async warnIfSsiUnsupported(
     log: Logger,
     asset: NautilusAsset,
+    preflight: Record<string, unknown>,
     nftAddress?: string
   ): Promise<void> {
-    const assetCredentials = asset.ddo.credentials
+    const assetCredentials = getCredentials(preflight)
     const subject =
       asset.ddo.id ||
       (nftAddress ? expectedDid(nftAddress, this.config.chainId) : undefined) ||
@@ -1746,8 +1747,8 @@ export class Nautilus {
         asset.ddo.metadata.name ?? ''
       ])
 
-    for (const service of asset.ddo.services) {
-      const credentials = service.credentials as DdoCredentials | undefined
+    for (const service of getServices(preflight)) {
+      const credentials = getServiceCredentials(service)
       const ssi = hasSsiEntries(assetCredentials) || hasSsiEntries(credentials)
       if (!ssi) continue
 
@@ -1948,7 +1949,7 @@ export class Nautilus {
     create: boolean
     nftAddress: string
     issuer: string
-  }): Promise<void> {
+  }): Promise<Record<string, unknown>> {
     const preflight = params.asset.ddo.getPreflightDDO({
       create: params.create,
       chainId: this.config.chainId as number,
@@ -1970,6 +1971,7 @@ export class Nautilus {
     // would go on chain without being indexed. The preflight document is as large as the
     // published one, so this checks the largest envelope its signature can give.
     assertDdoFitsDecryptLimit(preflight, params.issuer)
+    return preflight
   }
 
   /**
