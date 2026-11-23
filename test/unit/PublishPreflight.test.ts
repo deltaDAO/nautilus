@@ -2194,7 +2194,7 @@ describe('publish preflight on a node with the native SSI module', () => {
   it.each(['asset', 'service', 'legacy service'])(
     'rejects Gaia-X combined with a W3C requirement on the %s before minting',
     async (scope) => {
-      const { nautilus } = await createNautilus()
+      const { nautilus } = await createNautilus({ node: { ssi: SSI } })
       const asset = gated(gaiax)
       if (scope === 'asset')
         asset.ddo.credentials = addSsiPolicyV2(asset.ddo.credentials, w3c)
@@ -2234,6 +2234,66 @@ describe('publish preflight on a node with the native SSI module', () => {
       log.events.filter((event) => /preflight\.(ssi|gaiax)/.test(event.event))
     ).to.deep.equal([])
   })
+
+  it.each([
+    { target: 'native SSI', ssi: SSI },
+    { target: 'policy server', ssi: null },
+    { target: 'unknown', ssi: undefined }
+  ])(
+    'checks legacy entry limits on edit for a $target endpoint',
+    async ({ ssi }) => {
+      const { nautilus, node } = await createNautilus()
+      vi.spyOn(node.client, 'getSsiCapabilities').mockResolvedValue(ssi)
+      const fixture = getAssetFixture()
+      const [existing] = fixture.credentialSubject.services
+      existing.serviceEndpoint = 'https://service.test.invalid'
+      Object.assign(existing, {
+        credentials: {
+          allow: [
+            {
+              type: 'SSIpolicy',
+              values: Array(21).fill({
+                request_credentials: [{ type: 'VerifiableId' }]
+              })
+            }
+          ]
+        }
+      })
+      const asset = new AssetBuilder(fixture).setName('Updated dataset').build()
+
+      if (ssi) {
+        await expect(nautilus.edit(asset)).rejects.toThrow(
+          /too many SSI policies/
+        )
+        expect(writeMetadata).not.toHaveBeenCalled()
+      } else {
+        await nautilus.edit(asset)
+        expect(writeMetadata).toHaveBeenCalledOnce()
+      }
+    }
+  )
+
+  it.each([
+    { list: 'deny', values: [V2], error: /credentials\.deny/ },
+    { list: 'allow', values: [], error: /at least one value/ }
+  ])(
+    'still validates an unchanged V2 $list entry when SSI status is unavailable',
+    async ({ list, values, error }) => {
+      const { nautilus, node } = await createNautilus()
+      vi.spyOn(node.client, 'getSsiCapabilities').mockResolvedValue(undefined)
+      const fixture = getAssetFixture()
+      Object.assign(fixture.credentialSubject.services[0], {
+        credentials: { [list]: [{ type: 'SSIpolicyV2', values }] }
+      })
+
+      await expect(
+        nautilus.edit(
+          new AssetBuilder(fixture).setName('Updated dataset').build()
+        )
+      ).rejects.toThrow(error)
+      expect(writeMetadata).not.toHaveBeenCalled()
+    }
+  )
 
   it('warns on edit when an unchanged service cannot check a new asset policy', async () => {
     const log = captureLog()

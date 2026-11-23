@@ -56,7 +56,7 @@ import { isAddressCredential } from '../identity/policy.js'
 import type { SessionStore } from '../identity/session.js'
 import {
   hasLegacySsiEntries,
-  hasSsiEntries,
+  isSsiEntry,
   isSsiPolicyV2Credential,
   type RegoValidationResult,
   regoProblem,
@@ -934,7 +934,7 @@ export class Nautilus {
     await remoteStore.check?.()
     await this.warnIfPublisherIsNode(log)
     await this.warnIfPolicyServerDeniesAll(log, asset)
-    await this.warnIfSsiUnsupported(log, asset, preflight)
+    await this.checkSsiBeforeSpend(log, asset, preflight)
     await this.assertIndexerNotStuck(options, log)
 
     const published: PublishedService[] = []
@@ -1108,7 +1108,7 @@ export class Nautilus {
       await remoteStore.check?.()
       await this.warnIfPublisherIsNode(log)
       await this.warnIfPolicyServerDeniesAll(log, asset, nftAddress)
-      await this.warnIfSsiUnsupported(log, asset, preflight, nftAddress)
+      await this.checkSsiBeforeSpend(log, asset, preflight, nftAddress)
       await this.assertIndexerNotStuck(options, log)
 
       // Every reused datatoken is on its service before the first transaction, so a retry
@@ -1466,7 +1466,7 @@ export class Nautilus {
       await remoteStore.check?.()
       await this.warnIfPublisherIsNode(log)
       await this.warnIfPolicyServerDeniesAll(log, asset)
-      await this.warnIfSsiUnsupported(log, asset, preflight)
+      await this.checkSsiBeforeSpend(log, asset, preflight)
       await this.assertIndexerNotStuck(options, log)
 
       const published: PublishedService[] = []
@@ -1719,6 +1719,8 @@ export class Nautilus {
   }
 
   /**
+   * Checks the SSI policies together for each service. Only the native module translates
+   * legacy entries into native policies and applies its limits to them.
    * Warns when a service's node will not be able to check the asset's or the service's SSI
    * entries, so nobody (or everybody) could get access:
    *
@@ -1730,9 +1732,9 @@ export class Nautilus {
    *     native module: translated while the node keeps `legacyFormat`, refused otherwise;
    *   - `publish.preflight.gaiax_unsupported`: a Gaia-X label level the node cannot check.
    *
-   * Best effort, once per node, asset and kind; never throws.
+   * Capability warnings are best effort, once per node, asset and kind.
    */
-  private async warnIfSsiUnsupported(
+  private async checkSsiBeforeSpend(
     log: Logger,
     asset: NautilusAsset,
     preflight: Record<string, unknown>,
@@ -1749,8 +1751,14 @@ export class Nautilus {
 
     for (const service of getServices(preflight)) {
       const credentials = getServiceCredentials(service)
-      const ssi = hasSsiEntries(assetCredentials) || hasSsiEntries(credentials)
-      if (!ssi) continue
+      const blocks = [assetCredentials, credentials]
+      if (
+        !blocks.some(
+          (block) =>
+            block.allow?.some(isSsiEntry) || block.deny?.some(isSsiEntry)
+        )
+      )
+        continue
 
       const endpoint = (service.serviceEndpoint || this.node.nodeUri).replace(
         /\/+$/,
@@ -1764,15 +1772,22 @@ export class Nautilus {
           .forEndpoint(endpoint)
           .getSsiCapabilities()
       } catch {
-        continue
+        capabilities = undefined
       }
+      const policies = capabilities
+        ? blocks
+        : blocks.map((block) => ({
+            allow: block.allow?.filter(isSsiPolicyV2Credential),
+            deny: block.deny?.filter(isSsiPolicyV2Credential)
+          }))
+      validateSsiPolicyCombination(...policies)
       if (capabilities === undefined) continue
 
       const fields = { endpoint, serviceId: service.id }
       const once = (kind: string) => ({
         once: JSON.stringify([kind, endpoint, subject, service.id])
       })
-      const v2 = [assetCredentials, credentials].some(
+      const v2 = blocks.some(
         (block) =>
           Array.isArray(block?.allow) &&
           block.allow.some(isSsiPolicyV2Credential)
@@ -1960,12 +1975,6 @@ export class Nautilus {
     if (!preflight.issuer) preflight.issuer = params.issuer
 
     await assertValid(preflight)
-    const assetCredentials = getCredentials(preflight)
-    for (const service of getServices(preflight))
-      validateSsiPolicyCombination(
-        assetCredentials,
-        getServiceCredentials(service)
-      )
 
     // The node accepts decrypt requests up to 100 KB, so a DDO whose envelope does not fit
     // would go on chain without being indexed. The preflight document is as large as the
