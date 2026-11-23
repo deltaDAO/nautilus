@@ -1091,7 +1091,7 @@ describe('compute() escrow funding, in exact amounts', () => {
       [[[PAYEE, 3n * ONE, ONE, 30n, 7n, 1n]]]
     )
     await vi.mocked(EscrowContract).withImplementation(
-      function (_address, _signer, _network, _config, abi) {
+      function (this: void, _address, _signer, _network, _config, abi) {
         if (!abi) return escrow as unknown as EscrowContract
         const iface = new Interface(JSON.stringify(abi))
         expect(iface.getFunction('authorize')?.inputs).toHaveLength(5)
