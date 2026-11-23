@@ -189,15 +189,18 @@ const nautilus = await Nautilus.create(signer, { config, credentials, ddoSigner 
 ## Local development against the e2e stack
 
 pontusx-wallet-ui's local stack (`deploy/e2e/up.sh`) runs the gateway at
-`https://wallet.pxw.test:8443/api/address-gateway` on chain `31338`, and its scenario
+`https://wallet.pxw.test/api/address-gateway` on chain `31338` (Caddy listens on
+`127.0.0.1:8443`, but the URL wallet-api2 signs and checks has no port), and its scenario
 `11-address-sign-in` leaves sign-in on for anvil account 1
 (`0x70997970C51812dc3A010C7d01b50e0d17dc79C8`) with one granted organisation credential. To
 point a script at it:
 
-- resolve `*.pxw.test` to `127.0.0.1` (an `/etc/hosts` entry for `wallet.pxw.test` and the
-  node's host), and trust the stack's test CA: `NODE_EXTRA_CA_CERTS=<pontusx-wallet-ui>/deploy/.local-e2e/tls/ca.crt`;
-- use the URL wallet-api2 has as `ADDRESS_SIGN_IN_PUBLIC_URL` exactly, port included; a
-  different host or port is refused as `message_unexpected` before anything is signed;
+- send `*.pxw.test:443` to `127.0.0.1:8443` and trust the stack's test CA
+  (`<pontusx-wallet-ui>/deploy/.local-e2e/e2e-tls/ca.crt`), for example with an undici
+  dispatcher whose `connect` rewrites the host and port and keeps the server name, as the
+  nautilus end-to-end harness does; an `/etc/hosts` entry alone does not change the port;
+- use the gateway URL exactly as wallet-api2 has it (`ADDRESS_SIGN_IN_PUBLIC_URL`), without
+  `:8443`; another host or port is refused as `message_unexpected` before anything is signed;
 - sign with anvil account 1's well-known test key and pass `chainId: 31338` if the signer's
   provider is not the stack's chain.
 
