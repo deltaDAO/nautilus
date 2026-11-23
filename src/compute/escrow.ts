@@ -270,7 +270,7 @@ export async function planEscrow(
     const now = await chainTime(signer)
 
     // In v2 a payer revokes by re-authorising with a past expiry: never undo that.
-    if (current.expiryTimestamp <= now)
+    if (current.expiryTimestamp < now)
       throw new Error(
         `The payer's escrow authorisation for ${quote.payee} on ${quote.escrowAddress} expired at ${current.expiryTimestamp} (chain time ${now}), which is how an authorisation is revoked; nautilus does not re-authorise it. Authorise the payee again to run paid jobs on it. Nothing was spent.`
       )

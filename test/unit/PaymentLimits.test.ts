@@ -1160,6 +1160,19 @@ describe('compute() escrow funding, in exact amounts', () => {
       ])
     })
 
+    it('can be extended in the last active second', async () => {
+      escrow.getAuthorizations.mockResolvedValue(standing(NOW))
+
+      await runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running
+
+      expect(escrowTransactions()).to.deep.equal([
+        {
+          method: 'authorize',
+          args: [TOKEN, PAYEE, 5n * ONE, 7200n, 10n, NOW + 3900n + 120n]
+        }
+      ])
+    })
+
     it('is not re-enabled once it has expired (a revoke), and nothing is sent', async () => {
       escrow.getAuthorizations.mockResolvedValue(standing(NOW - 1n))
 
