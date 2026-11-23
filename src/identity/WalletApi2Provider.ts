@@ -179,10 +179,10 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
     }
   }
 
-  private readonly wallet: WalletApi2
-  private readonly options: WalletApi2CredentialProviderOptions
+  readonly #wallet: WalletApi2
+  readonly #options: WalletApi2CredentialProviderOptions
   /** The token source, when `token` is one (an `AddressSignIn`). */
-  private readonly source?: WalletApi2TokenSource
+  readonly #source?: WalletApi2TokenSource
   /** The address sign-in, when the provider presents with an address token. */
   readonly signIn?: AddressSignIn
   /**
@@ -202,10 +202,10 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
         'WalletApi2CredentialProvider needs a walletApi URL and its session token, or a wallet implementation.'
       )
 
-    this.options = options
-    if (isTokenSource(options.token)) this.source = options.token
+    this.#options = options
+    if (isTokenSource(options.token)) this.#source = options.token
     if (options.token instanceof AddressSignIn) this.signIn = options.token
-    this.wallet =
+    this.#wallet =
       options.wallet ??
       new WalletApi2HttpClient({
         apiUrl: options.walletApi as string,
@@ -226,7 +226,7 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
    */
   async prepare(context: CredentialPreparation): Promise<void> {
     await this.walletFor(context.consumerAddress)
-    const source = this.source
+    const source = this.#source
     if (!isAddressSource(source)) return
     try {
       await this.checkAccount(source, context)
@@ -291,7 +291,7 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
         normalizeVerifierHost(verifier.responseUriOrigin)
       )
     )
-    const verifierHost = announced ?? this.options.expectedVerifierHost
+    const verifierHost = announced ?? this.#options.expectedVerifierHost
     if (verifierHost) {
       const host = normalizeVerifierHost(verifierHost)
       if (!allowed.has(host))
@@ -341,10 +341,11 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
     const requestUri = challenge.redirectUri
     assertPresentationRequest(
       requestUri,
-      this.options.allowInsecureTransport === true
+      this.#options.allowInsecureTransport === true
     )
 
-    const expected = challenge.verifierHost ?? this.options.expectedVerifierHost
+    const expected =
+      challenge.verifierHost ?? this.#options.expectedVerifierHost
     const verifierHost = expected && normalizeVerifierHost(expected)
     const requestHost = requestUriHost(requestUri)
     if (verifierHost && requestHost !== verifierHost)
@@ -359,22 +360,22 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
 
     let opened: Awaited<ReturnType<WalletApi2['previewPresentation']>>
     try {
-      opened = await this.wallet.previewPresentation(walletId, {
+      opened = await this.#wallet.previewPresentation(walletId, {
         requestUrl: requestUri,
-        ...(this.options.holderDid ? { did: this.options.holderDid } : {})
+        ...(this.#options.holderDid ? { did: this.#options.holderDid } : {})
       })
     } catch (error) {
       throw walletError(
         'The wallet could not read the presentation request',
         error,
         remove,
-        isAddressSource(this.source)
+        isAddressSource(this.#source)
       )
     }
 
     const { handle, preview } = opened
     const decline = async (errorCode: string, error: Error): Promise<never> => {
-      await this.wallet
+      await this.#wallet
         .rejectPresentation(walletId, { handle, errorCode })
         .catch((rejectError) => {
           if (debugEnabled('sensitive', 'wallet'))
@@ -390,7 +391,7 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
       return decline(
         'access_denied',
         new CredentialPresentationError(
-          `The wallet holds no credential combination that satisfies the presentation request${preview.error.message ? ` (${remove(sanitize(remove(preview.error.message), MAX_PRESENTATION_ERROR_LENGTH, null))})` : ''}.${isAddressSource(this.source) ? ` ${ACCESS_LIST_HINT}` : ''}`,
+          `The wallet holds no credential combination that satisfies the presentation request${preview.error.message ? ` (${remove(sanitize(remove(preview.error.message), MAX_PRESENTATION_ERROR_LENGTH, null))})` : ''}.${isAddressSource(this.#source) ? ` ${ACCESS_LIST_HINT}` : ''}`,
           { errorCode: 'access_denied' },
           'no-matching-credential'
         )
@@ -421,8 +422,8 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
     }
 
     let selection: CredentialSelection
-    if (this.options.onSelectCredentials) {
-      selection = await this.options.onSelectCredentials(matches, preview)
+    if (this.#options.onSelectCredentials) {
+      selection = await this.#options.onSelectCredentials(matches, preview)
       const invalid = selectionProblem(selection, matches)
       if (invalid)
         return decline(
@@ -435,7 +436,7 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
         return decline(
           'access_denied',
           new CredentialPresentationError(
-            `The wallet holds no credentials for ${chosen.missing.map((ids) => ids.join(' + ')).join(', or ')}, which the presentation requires.${isAddressSource(this.source) ? ` ${ACCESS_LIST_HINT}` : ''}`,
+            `The wallet holds no credentials for ${chosen.missing.map((ids) => ids.join(' + ')).join(', or ')}, which the presentation requires.${isAddressSource(this.#source) ? ` ${ACCESS_LIST_HINT}` : ''}`,
             { missing: chosen.missing },
             'no-matching-credential'
           )
@@ -459,7 +460,7 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
     const keyId = preview.holder?.keyId ?? preview.keyId
     let result: Awaited<ReturnType<WalletApi2['submitPresentation']>>
     try {
-      result = await this.wallet.submitPresentation(walletId, {
+      result = await this.#wallet.submitPresentation(walletId, {
         handle,
         selectedCredentialOptions,
         ...(keyId ? { keyId } : {}),
@@ -470,7 +471,7 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
         'The wallet could not present the credentials',
         error,
         remove,
-        isAddressSource(this.source)
+        isAddressSource(this.#source)
       )
     }
 
@@ -487,14 +488,14 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
 
   /** The wallet to present from: the pinned one, or the organisation's for `address`. */
   private async walletFor(address: string): Promise<string> {
-    if (isAddressSource(this.source)) return this.addressWallet(address)
-    if (this.options.walletId) return this.options.walletId
+    if (isAddressSource(this.#source)) return this.addressWallet(address)
+    if (this.#options.walletId) return this.#options.walletId
     const known = this.wallets.get(address.toLowerCase())
     if (known) return known
 
     let wallets: Awaited<ReturnType<WalletApi2['listWallets']>>
     try {
-      wallets = await this.wallet.listWallets()
+      wallets = await this.#wallet.listWallets()
     } catch (error) {
       if (
         error instanceof WaltIdWalletError &&
@@ -531,7 +532,7 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
    * address signed in must be `consumer`, and a pinned `walletId` must be its wallet.
    */
   private async addressWallet(consumer: string): Promise<string> {
-    const source = this.source as AddressTokenSource
+    const source = this.#source as AddressTokenSource
     try {
       await source.getToken()
     } catch (error) {
@@ -556,9 +557,9 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
         { code: 'wrong_endpoint' },
         'sign-in'
       )
-    if (this.options.walletId && this.options.walletId !== walletId)
+    if (this.#options.walletId && this.#options.walletId !== walletId)
       throw new CredentialPresentationError(
-        `walletId ${this.options.walletId} is not the wallet of ${signedIn ?? consumer} (${walletId}). Address tokens present from their address's wallet only: leave walletId out.`,
+        `walletId ${this.#options.walletId} is not the wallet of ${signedIn ?? consumer} (${walletId}). Address tokens present from their address's wallet only: leave walletId out.`,
         { code: 'wallet_mismatch' },
         'not-permitted'
       )
