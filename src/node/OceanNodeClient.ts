@@ -38,6 +38,8 @@ import {
   type FileInfo,
   type NodeComputeJob,
   type NodeStatus,
+  OceanNodeProviderError,
+  P2pError,
   type PersistentStorageFileEntry,
   PROTOCOL_COMMANDS,
   type ProviderComputeInitializeResults,
@@ -224,19 +226,21 @@ export class OceanNodeError extends Error {
   static from(operation: string, error: unknown): OceanNodeError {
     if (error instanceof OceanNodeError) return error
 
-    // ocean.js 10 throws OceanNodeProviderError (HTTP) and P2pError (P2P) with the node's
-    // status and code; earlier versions throw plain errors without them.
-    const { httpStatus, code } = (error ?? {}) as {
-      httpStatus?: unknown
-      code?: unknown
-    }
+    const responseError =
+      error instanceof OceanNodeProviderError ||
+      (error instanceof P2pError && error.body !== undefined)
+        ? error
+        : undefined
+    const code = responseError?.code
 
     return new OceanNodeError(
       operation,
       describeError(error),
       // describeError handed the raw error to the debug channel already.
       sanitizedError(error, null),
-      Number.isInteger(httpStatus) ? (httpStatus as number) : undefined,
+      Number.isInteger(responseError?.httpStatus)
+        ? responseError?.httpStatus
+        : undefined,
       typeof code === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(code)
         ? code
         : undefined
