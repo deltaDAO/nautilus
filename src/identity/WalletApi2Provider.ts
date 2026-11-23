@@ -147,6 +147,7 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
       smartAccount,
       scopes,
       timeoutMs,
+      signInTimeoutMs,
       fetchImpl,
       ...rest
     } = options
@@ -157,6 +158,7 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
       smartAccount,
       scopes,
       timeoutMs,
+      signInTimeoutMs,
       fetchImpl,
       allowInsecureTransport: rest.allowInsecureTransport
     })

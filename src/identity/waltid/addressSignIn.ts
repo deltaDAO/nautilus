@@ -112,6 +112,7 @@ export class AddressSignIn implements WalletApi2TokenSource {
   readonly #signer: Signer
   readonly #options: AddressSignInOptions
   readonly #fetchImpl: typeof fetch
+  readonly #signInTimeoutMs: number
   readonly #timeoutMs: number
   /** The current session: true private fields, so no log, inspect or JSON shows a token. */
   #session?: Session
@@ -163,6 +164,18 @@ export class AddressSignIn implements WalletApi2TokenSource {
         'chainId must be a positive integer'
       )
 
+    const signInTimeoutMs =
+      options.signInTimeoutMs ?? DEFAULT_SIGN_IN_TIMEOUT_MS
+    if (
+      !Number.isInteger(signInTimeoutMs) ||
+      signInTimeoutMs < 1 ||
+      signInTimeoutMs > 2_147_483_647
+    )
+      throw new WaltIdWalletError(
+        'create',
+        'signInTimeoutMs must be an integer from 1 to 2147483647 ms'
+      )
+    this.#signInTimeoutMs = signInTimeoutMs
     this.gateway = gateway
     this.scopes = ADDRESS_SIGN_IN_SCOPES.filter((scope) =>
       scopes.includes(scope)
@@ -319,7 +332,7 @@ export class AddressSignIn implements WalletApi2TokenSource {
 
   /** The sign-in, bounded by `signInTimeoutMs` as a whole. */
   private async signIn(): Promise<Session> {
-    const limit = this.#options.signInTimeoutMs ?? DEFAULT_SIGN_IN_TIMEOUT_MS
+    const limit = this.#signInTimeoutMs
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     const timeout = new Promise<never>((_, reject) => {

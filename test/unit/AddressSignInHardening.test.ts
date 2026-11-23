@@ -714,7 +714,7 @@ describe('contract details (C1, C2, C4, C5)', () => {
     vi.spyOn(wallet, 'signMessage').mockImplementation(
       () => new Promise(() => undefined)
     )
-    const slow = new AddressSignIn({
+    const { signIn: slow } = WalletApi2CredentialProvider.withAddressSignIn({
       gateway: GATEWAY,
       signer: wallet,
       signInTimeoutMs: 50,
@@ -722,6 +722,14 @@ describe('contract details (C1, C2, C4, C5)', () => {
     })
     const thrown = await slow.getToken().catch((e) => e)
     expect(thrown.code).to.equal('sign_in_timeout')
+  })
+
+  it('validates the sign-in timeout before scheduling a timer', () => {
+    for (const signInTimeoutMs of [0, -1, 1.5, Number.NaN, Infinity, 2 ** 31]) {
+      expect(() => withSignIn(mockGateway(), { signInTimeoutMs })).to.throw(
+        /signInTimeoutMs/
+      )
+    }
   })
 
   it('backs off while renewals fail in the last minute', async () => {
