@@ -111,6 +111,20 @@ describe('SSIpolicyV2 entry validation', () => {
       /entry is larger than 256 KiB/
     )
   })
+
+  it('requires a nonempty values array on each stored V2 entry', () => {
+    for (const values of [[], undefined, {}]) {
+      const stored = {
+        allow: [{ type: 'SSIpolicyV2', values }]
+      } as DdoCredentials
+      expect(() => validateSsiPolicyCombination(stored, {})).toThrow(
+        /at least one value/
+      )
+      expect(() => validateSsiPolicyCombination({}, stored)).toThrow(
+        /at least one value/
+      )
+    }
+  })
 })
 
 describe('DCQL claims validation', () => {

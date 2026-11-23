@@ -457,6 +457,11 @@ function assertSsiEntryLimits(entries: DdoCredential[]): void {
   for (const entry of entries) {
     if (!isSsiEntry(entry)) continue
     assertSafeJson(entry)
+    if (
+      isSsiPolicyV2Credential(entry) &&
+      (!Array.isArray(entry.values) || entry.values.length === 0)
+    )
+      fail('an SSIpolicyV2 entry needs at least one value')
     if ('values' in entry && Array.isArray(entry.values))
       count += entry.values.length
   }
