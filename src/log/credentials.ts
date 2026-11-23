@@ -50,8 +50,11 @@ import {
 } from './keys.js'
 import { redactKeyValues } from './keyValues.js'
 import {
+  ADDRESS_TOKEN,
+  DOTTED_RUN,
   INVISIBLE_CHARACTERS,
   QUOTED_USER_INFO,
+  redactJwts,
   SCHEMELESS_URL,
   trailingPunctuation,
   withEscapesUndone
@@ -89,7 +92,6 @@ const TOKEN_LIKE = /^[A-Za-z0-9_-]{20,}$/
  * `typ: dpop+jwt`). They are short-lived, but a token with its proof is a working session
  * for the organisation address.
  */
-const ADDRESS_TOKEN = /(?<![A-Za-z0-9])pxa_[A-Za-z0-9_-]{8,}/g
 const DPOP_SCHEME = /\b(DPoP)(\s+)([^\s"',;\\]+)/g
 
 /**
@@ -105,7 +107,6 @@ export function isCredentialShaped(value: string): boolean {
     /[a-z]/.test(value) && /[A-Z]/.test(value) && !/^[A-Z][a-z]+$/.test(value)
   )
 }
-const COMPACT_JWS = /(?<![\w-])eyJ[\w-]*\.[\w-]+\.[\w-]+/g
 
 /** `text` without address tokens, DPoP credentials and DPoP proofs (`ADDRESS_TOKEN`). */
 export function maskAddressTokens(text: string): string {
@@ -116,18 +117,32 @@ export function maskAddressTokens(text: string): string {
       (match, scheme: string, space: string, value: string) =>
         isCredentialShaped(value) ? `${scheme}${space}${REDACTED}` : match
     )
+    .replace(DOTTED_RUN, (run) => redactJwts(run, dpopHeaderStart))
     .replace(ADDRESS_TOKEN, REDACTED)
-    .replace(COMPACT_JWS, (jws) => (isDpopProof(jws) ? REDACTED : jws))
 }
 
-function isDpopProof(jws: string): boolean {
-  try {
-    const header = jws.slice(0, jws.indexOf('.'))
-    const json = atob(header.replace(/-/g, '+').replace(/_/g, '/'))
-    return /dpop\+jwt/i.test(json)
-  } catch {
-    return false
+/** A proof may follow an identifier that itself contains `eyJ`. Candidate headers
+ * four characters apart decode with the same byte alignment, so checking the first
+ * candidate at each alignment covers every suffix in at most four decodes.
+ */
+function dpopHeaderStart(word: string, payload: string): number {
+  if (!payload) return -1
+  const first = word.indexOf('eyJ')
+  if (first < 0) return -1
+  const tried = new Set<number>()
+  for (let i = first; i >= 0; i = word.indexOf('eyJ', i + 3)) {
+    const alignment = i % 4
+    if (tried.has(alignment)) continue
+    tried.add(alignment)
+    try {
+      const header = word.slice(i).replace(/-/g, '+').replace(/_/g, '/')
+      if (/dpop\+jwt/i.test(atob(header))) return first
+    } catch {
+      // A prefix can leave this alignment with an invalid base64 length.
+    }
+    if (tried.size === 4) break
   }
+  return -1
 }
 
 /** How many levels of URLs nested in query values are masked. */

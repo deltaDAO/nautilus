@@ -38,15 +38,20 @@ describe('redaction of address tokens, DPoP proofs, signatures and the ephemeral
 
       const token = await credentials.signIn.getToken()
       const proof = gateway.proofs.at(-1) as string
-      debugRaw('wallet', `wallet/${token}/keys/${proof}`, {
-        [token]: 'account',
-        [proof]: 'proof',
+      debugRaw('wallet', `wallet/w${token}/keys/k-${proof}`, {
+        [`w${token}`]: 'account',
+        [`eyJ-prefix-${proof}`]: 'proof',
         headers: { Authorization: `DPoP ${token}`, DPoP: proof },
         dpop: proof,
         text: `sent Authorization: DPoP ${token} with DPoP: ${proof}`,
         key: await DpopKey.create()
       })
 
+      expect(events.at(-1)).toMatchObject({
+        tier: level,
+        message: 'wallet/w<redacted>/keys/k-<redacted>',
+        data: { 'w<redacted>': 'account', '<redacted>': 'proof' }
+      })
       const printed = JSON.stringify(events)
       expect(events.length).to.be.greaterThan(0)
       for (const secret of [
@@ -72,7 +77,7 @@ describe('redaction of address tokens, DPoP proofs, signatures and the ephemeral
   it('redacts them from error text', () => {
     const token = `pxa_${'a'.repeat(43)}`
     const text = sanitize(
-      `refused Authorization: DPoP ${token}, token ${token}`,
+      `refused Authorization: DPoP ${token}, wallet${token}`,
       500,
       null
     )
@@ -84,7 +89,7 @@ describe('redaction of address tokens, DPoP proofs, signatures and the ephemeral
     const token = 'pxa_abcdefghijklmnopqrstuvwxyz'
     const proof = await (await DpopKey.create()).proof('GET', GATEWAY, token)
     for (const secret of [token, proof]) {
-      expect(quoteText(`key ${secret}`, 15)).to.equal('"key <redacted>"')
+      expect(quoteText(`key-${secret}`, 15)).to.equal('"key-<redacted>"')
       const error = new WaltIdWalletError(`wallet/${secret}`, 'refused')
       expect(error.message).to.contain('wallet/<redacted>')
       const mismatch = new SignInMessageMismatch('URI', 'gateway', secret)

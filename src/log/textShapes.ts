@@ -4,6 +4,40 @@
  * the package's exports.
  */
 
+/** A wallet-api2 address token (`pxa_…`), including one embedded in an identifier. */
+export const ADDRESS_TOKEN = /pxa_[A-Za-z0-9_-]{8,}/g
+
+/**
+ * A run of base64url words joined by dots (`a.b.c`), whole: where `redactJwts` looks for
+ * JWTs. It starts only where no such character stands before it, so each run is read once
+ * and hostile text costs linear time; a rule for the JWT itself without a word boundary in
+ * front would rescan the run from each `eyJ`.
+ */
+export const DOTTED_RUN = /(?<![\w.-])[\w-]*\.[\w.-]*/g
+/** Mask the JWTs in a dotted run whose header the caller recognises. */
+export function redactJwts(
+  run: string,
+  headerStart: (word: string, payload: string) => number
+): string {
+  const parts = run.split('.')
+  const kept: string[] = []
+  let index = 0
+  while (index < parts.length) {
+    const start =
+      index + 2 < parts.length
+        ? headerStart(parts[index], parts[index + 1])
+        : -1
+    if (start < 0) {
+      kept.push(parts[index])
+      index += 1
+    } else {
+      kept.push(`${parts[index].slice(0, start)}<redacted>`)
+      index += 3
+    }
+  }
+  return kept.join('.')
+}
+
 /**
  * Invisible characters: C0 controls but the whitespace ones, DEL, C1 controls, the soft
  * hyphen, zero-width characters, word joiners, the BOM, and the bidi marks, overrides and

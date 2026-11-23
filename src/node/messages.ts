@@ -17,8 +17,11 @@ import { type DebugTopic, debugEnabled, debugRaw } from '../log/debug.js'
 import { isErrorCode, SECRET_KEYS } from '../log/keys.js'
 import { redactKeyValues } from '../log/keyValues.js'
 import {
+  ADDRESS_TOKEN,
+  DOTTED_RUN,
   INVISIBLE_CHARACTERS,
   QUOTED_USER_INFO,
+  redactJwts,
   SCHEMELESS_URL,
   trailingPunctuation,
   URL_AUTHORITY,
@@ -70,46 +73,8 @@ const DECODABLE = /^[A-Za-z0-9_\-.:/@~+]$/
  * so only mask the following word when it looks like a credential.
  */
 const BEARER = /((?:Bearer|Basic|DPoP)\s+)([\w.~+/=-]+)/gi
-/** A wallet-api2 address token (`pxa_…`), wherever it stands. */
-const ADDRESS_TOKEN = /(?<![A-Za-z0-9])pxa_[A-Za-z0-9_-]{8,}/g
-/**
- * A run of base64url words joined by dots (`a.b.c`), whole: where `redactJwts` looks for
- * JWTs. It starts only where no such character stands before it, so each run is read once
- * and hostile text costs linear time; a rule for the JWT itself without a word boundary in
- * front would rescan the run from each `eyJ`.
- */
-const DOTTED_RUN = /(?<![\w.-])[\w-]*\.[\w.-]*/g
 /** A JSON object's start in base64url, at least 10 characters: `{"`, `{ ` or `{\n`. */
 const JSON_OBJECT = /e[wy][\w-]{8}/
-
-/**
- * A dotted run (`DOTTED_RUN`) with each JWT in it (header, payload and signature,
- * base64url) replaced by `<redacted>`. A JWT's header is a JSON object: `eyJ…` (`{"`), or
- * `ew…`/`eyA…` when its JSON has whitespace, which counts only when the payload does too.
- *
- * It is found also right after a letter, as one is when `stripControlCharacters` deletes
- * an escape that ended in a letter in front of it (`Evil\u001b[2JeyJ…`): from the first
- * header start in its word, so what stood before it in that word may go with it.
- */
-function redactJwts(run: string): string {
-  const parts = run.split('.')
-  const kept: string[] = []
-  let index = 0
-  while (index < parts.length) {
-    const start =
-      index + 2 < parts.length
-        ? headerStart(parts[index], parts[index + 1])
-        : -1
-    if (start < 0) {
-      kept.push(parts[index])
-      index += 1
-    } else {
-      kept.push(`${parts[index].slice(0, start)}<redacted>`)
-      index += 3
-    }
-  }
-  return kept.join('.')
-}
 
 /** Where a JWT's header starts in `word`, with `payload` after it, or `-1`. */
 function headerStart(word: string, payload: string): number {
@@ -244,7 +209,7 @@ function redactPatterns(text: string): string {
         : match
     )
     .replace(ADDRESS_TOKEN, '<redacted>')
-    .replace(DOTTED_RUN, redactJwts)
+    .replace(DOTTED_RUN, (run) => redactJwts(run, headerStart))
     .replace(HEX_SIGNATURE, '<redacted>')
     .replace(SIGNED_TRANSACTION, (hex) =>
       isSignedTransaction(hex) ? '<redacted>' : hex
