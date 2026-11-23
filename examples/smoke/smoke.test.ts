@@ -44,6 +44,7 @@ import {
 import { signedProviderFee } from '../../test/fixtures/ProviderFee.js'
 import { createNodeMock } from '../../test/mocks/node.js'
 import { COMMANDS, runCommand } from '../commands.js'
+import { setupWithIdentity } from '../identity.js'
 import { publishSession } from '../publish.js'
 
 /** The NFT as the chain stubs answer for it. */
@@ -423,6 +424,16 @@ describe('example commands', () => {
 
     expect(out).toContain(`Job ${JOB_ID}`)
     expect(out).toContain('status:  70 (Job finished)')
+  })
+
+  it('refuses unsupported interactive selection with the address gateway', async () => {
+    vi.stubEnv(
+      'WALLET_GATEWAY',
+      'https://wallet.example.org/api/address-gateway'
+    )
+    await expect(setupWithIdentity({ interactive: true })).rejects.toThrow(
+      /interactive credential selection with WALLET_GATEWAY/
+    )
   })
 
   it('ssi:publish-gated publishes the safe policy set', async () => {

@@ -189,12 +189,17 @@ export function createCredentialProvider(
   // Nodes with the native SSI module, from a script: sign in to wallet-api2 with the
   // signer's organisation address (WALLET_GATEWAY, the wallet UI's address gateway).
   const gateway = process.env.WALLET_GATEWAY?.trim()
-  if (gateway)
+  if (gateway) {
+    if (options.interactive)
+      throw new Error(
+        'This example does not implement interactive credential selection with WALLET_GATEWAY. To choose credentials, pass onSelectCredentials to WalletApi2CredentialProvider.withAddressSignIn().'
+      )
     return WalletApi2CredentialProvider.withAddressSignIn({
       gateway,
       signer: nautilus.getSigner(),
       allowInsecureTransport: allowInsecureTransport()
     })
+  }
 
   const { walletId, did } = walletEnv(options.role ?? 'publisher')
 
