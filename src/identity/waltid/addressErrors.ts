@@ -2,6 +2,7 @@
  * The refusals of wallet-api2's address sign-in and the wallet UI's address gateway, and
  * what nautilus makes of them. Kept out of the package's exports (internal).
  */
+import { maskAddressTokens } from '../../log/credentials.js'
 import { sanitize } from '../../node/messages.js'
 
 /** How much of a server's text goes into an error. */
@@ -139,7 +140,8 @@ const UNSAFE_CHARACTERS =
  * @internal
  */
 export function quoteText(text: string, max = 300): string {
-  const cut = text.length > max ? `${text.slice(0, max)}…` : text
+  const masked = maskAddressTokens(text)
+  const cut = masked.length > max ? `${masked.slice(0, max)}…` : masked
   return `"${cut
     .replace(/["\\]/g, (c) => `\\${c}`)
     .replace(

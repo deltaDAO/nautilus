@@ -7,6 +7,7 @@
  * implementation of `WaltIdWallet`, not a rewrite of the exchange logic.
  */
 import type { Signer } from 'ethers'
+import { maskAddressTokens } from '../../log/credentials.js'
 import { debugEnabled, debugRaw } from '../../log/debug.js'
 import { sanitize } from '../../node/messages.js'
 
@@ -129,11 +130,11 @@ export class WaltIdWalletError extends Error {
     status?: number,
     extra: { code?: string; hint?: string; retryAfter?: number } = {}
   ) {
-    super(`[walt.id] ${operation}: ${message}`)
+    super(maskAddressTokens(`[walt.id] ${operation}: ${message}`))
     this.name = 'WaltIdWalletError'
     this.status = status
-    if (extra.code !== undefined) this.code = extra.code
-    if (extra.hint !== undefined) this.hint = extra.hint
+    if (extra.code !== undefined) this.code = maskAddressTokens(extra.code)
+    if (extra.hint !== undefined) this.hint = maskAddressTokens(extra.hint)
     if (extra.retryAfter !== undefined) this.retryAfter = extra.retryAfter
   }
 }

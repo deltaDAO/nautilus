@@ -200,7 +200,7 @@ function mask(
         ? REDACTED
         : mask(entry, known, hidden)
     // A `__proto__` own key (from `JSON.parse`) is kept as a key, not as the prototype.
-    Object.defineProperty(out, key, {
+    Object.defineProperty(out, maskAddressTokens(key), {
       value: masked,
       enumerable: true,
       writable: true,

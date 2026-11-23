@@ -24,7 +24,12 @@
  * When off, `debugEnabled` is one comparison and no raw value is copied or kept.
  */
 import { currentOperation, type OperationName } from './context.js'
-import { CutText, maskCredentials, maskNeverShown } from './credentials.js'
+import {
+  CutText,
+  maskAddressTokens,
+  maskCredentials,
+  maskNeverShown
+} from './credentials.js'
 import {
   DEBUG_LEVELS,
   DEBUG_TOPICS,
@@ -259,7 +264,7 @@ function deliver(
     time: new Date().toISOString(),
     tier,
     topic,
-    message,
+    message: maskAddressTokens(message),
     ...(operation && {
       opId: operation.opId,
       operation: operation.operation

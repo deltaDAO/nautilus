@@ -25,7 +25,8 @@ import { assertSecureTransport } from '../../utils/transport.js'
 import {
   addressRefusal,
   NOT_FOUND_HINT,
-  plainJsonError
+  plainJsonError,
+  quoteText
 } from './addressErrors.js'
 import { WaltIdWalletError } from './client.js'
 
@@ -475,7 +476,7 @@ export class WalletApi2HttpClient implements WalletApi2 {
     if (!GATEWAY_SEGMENT.test(id) || id === '.' || id === '..')
       throw new WaltIdWalletError(
         name,
-        `${name} ${JSON.stringify(id.slice(0, 100))} cannot go through the address gateway: it accepts only letters, digits and . _ ~ : @ + - in a path segment.`,
+        `${name} ${quoteText(id, 100)} cannot go through the address gateway: it accepts only letters, digits and . _ ~ : @ + - in a path segment.`,
         undefined,
         { code: 'invalid_request' }
       )

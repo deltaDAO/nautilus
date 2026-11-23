@@ -1,5 +1,7 @@
 import { EmbeddedJWK, jwtVerify } from 'jose'
 import { afterEach, describe, expect, it } from 'vitest'
+import { quoteText } from '../../src/identity/waltid/addressErrors.js'
+import { WaltIdWalletError } from '../../src/identity/waltid/client.js'
 import { DpopKey } from '../../src/identity/waltid/dpop.js'
 import type { DebugEvent } from '../../src/log/debug.js'
 import { debugRaw, resetDebug, setDebug } from '../../src/log/debug.js'
@@ -35,7 +37,9 @@ describe('redaction of address tokens, DPoP proofs, signatures and the ephemeral
 
       const token = await credentials.signIn.getToken()
       const proof = gateway.proofs.at(-1) as string
-      debugRaw('wallet', 'request', {
+      debugRaw('wallet', `wallet/${token}/keys/${proof}`, {
+        [token]: 'account',
+        [proof]: 'proof',
         headers: { Authorization: `DPoP ${token}`, DPoP: proof },
         dpop: proof,
         text: `sent Authorization: DPoP ${token} with DPoP: ${proof}`,
@@ -73,6 +77,16 @@ describe('redaction of address tokens, DPoP proofs, signatures and the ephemeral
     )
     expect(text).not.to.contain(token)
     expect(text).to.contain('<redacted>')
+  })
+
+  it('masks identifiers before quoting and truncating diagnostics', async () => {
+    const token = 'pxa_abcdefghijklmnopqrstuvwxyz'
+    const proof = await (await DpopKey.create()).proof('GET', GATEWAY, token)
+    for (const secret of [token, proof]) {
+      expect(quoteText(`key ${secret}`, 15)).to.equal('"key <redacted>"')
+      const error = new WaltIdWalletError(`wallet/${secret}`, 'refused')
+      expect(error.message).to.contain('wallet/<redacted>')
+    }
   })
 
   it('a DPoP key shows only its thumbprint', async () => {
