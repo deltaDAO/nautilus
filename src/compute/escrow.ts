@@ -253,20 +253,7 @@ export async function planEscrow(
   }
 
   const current = await readAuthorization(escrow, quote, payer, version)
-  const expiry = await renewalExpiry(
-    signer,
-    quote,
-    current.expiryTimestamp,
-    false
-  )
-
-  const neededLocked = current.currentLockedAmount + quote.amount
-  const covered =
-    current.present &&
-    current.maxLockedAmount >= neededLocked &&
-    current.maxLockSeconds >= quote.minLockSeconds &&
-    current.maxLockCounts > current.currentLocks &&
-    current.expiryTimestamp === expiry
+  const covered = await coversJob(current, quote, signer, false)
 
   return {
     quote,
@@ -279,7 +266,10 @@ export async function planEscrow(
     authorize: covered
       ? undefined
       : {
-          maxLockedAmount: max(current.maxLockedAmount, neededLocked),
+          maxLockedAmount: max(
+            current.maxLockedAmount,
+            current.currentLockedAmount + quote.amount
+          ),
           maxLockSeconds: max(current.maxLockSeconds, quote.minLockSeconds),
           maxLockCounts: max(current.maxLockCounts, current.currentLocks + 1n),
           previous: current
@@ -318,8 +308,8 @@ export async function fundEscrow(
     })
   }
 
+  const latest = await readAuthorization(escrow, quote, plan.payer, version)
   if (authorize) {
-    const latest = await readAuthorization(escrow, quote, plan.payer, version)
     const previous = authorize.previous
     if (
       latest.present !== previous.present ||
@@ -348,10 +338,35 @@ export async function fundEscrow(
       authorize.maxLockCounts,
       ...(version === 2 ? [expiry] : [])
     ])
+  } else if (!(await coversJob(latest, quote, signer, deposit > 0n))) {
+    throw new Error(
+      `The payer's escrow authorisation for ${quote.payee} no longer covers this compute job. No order was sent.`
+    )
   }
 }
 
 // #region helpers
+
+async function coversJob(
+  grant: Awaited<ReturnType<typeof readAuthorization>>,
+  quote: EscrowPaymentQuote,
+  signer: Signer,
+  deposited: boolean
+): Promise<boolean> {
+  const expiry = await renewalExpiry(
+    signer,
+    quote,
+    grant.expiryTimestamp,
+    deposited
+  )
+  return (
+    grant.present &&
+    grant.maxLockedAmount >= grant.currentLockedAmount + quote.amount &&
+    grant.maxLockSeconds >= quote.minLockSeconds &&
+    grant.maxLockCounts > grant.currentLocks &&
+    grant.expiryTimestamp === expiry
+  )
+}
 
 async function readAuthorization(
   escrow: EscrowContract,

@@ -1249,24 +1249,82 @@ describe('compute() escrow funding, in exact amounts', () => {
       }
     )
 
-    it('checks expiry against the chain time after deposit confirmation', async () => {
-      escrow.getUserFunds.mockResolvedValue({ available: 0n, locked: 0n })
-      escrow.getAuthorizations.mockResolvedValue(standing(NOW + 60n))
-      const getBlock = vi
-        .fn()
-        .mockResolvedValueOnce({ timestamp: Number(NOW) })
-        .mockResolvedValue({ timestamp: Number(NOW + 61n) })
-      Object.assign(signer, { provider: { getBlock } })
+    it.each([
+      ['revoked', standing(NOW - 1n), /expired at .*The deposit was confirmed/],
+      ['removed', [], /no longer covers/],
+      ['shortened', standing(NOW + 3900n), /no longer covers/],
+      [
+        'lock amount used',
+        [[PAYEE, ONE, 1n, 7200n, 10n, 1n, 0n]],
+        /no longer covers/
+      ],
+      [
+        'lock count used',
+        [[PAYEE, ONE, 0n, 7200n, 1n, 1n, 0n]],
+        /no longer covers/
+      ],
+      [
+        'lock duration reduced',
+        [[PAYEE, ONE, 0n, 3899n, 10n, 0n, 0n]],
+        /no longer covers/
+      ]
+    ] as const)(
+      'stops orders when a covering grant is %s during deposit confirmation',
+      async (_why, changed, error) => {
+        escrow.getUserFunds.mockResolvedValue({ available: 0n, locked: 0n })
+        escrow.getAuthorizations.mockResolvedValue(standing(NOW + 4020n))
+        vi.mocked(sendTx).mockResolvedValueOnce({
+          wait: async () => {
+            escrow.getAuthorizations.mockResolvedValue(changed)
+            return { hash: '0xdeposit' }
+          }
+        } as never)
 
-      await expectThrowsAsync(
-        () => runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running,
-        /expired at .*The deposit was confirmed/
-      )
-      expect(escrowTransactions()).to.deep.equal([
-        { method: 'deposit', args: [TOKEN, ONE] }
-      ])
-      expect(vi.mocked(sendSettlement)).not.toHaveBeenCalled()
+        const { running, computeStart } = runCompute(
+          quoteWith(goodFees, PAYMENT),
+          ALLOW_ALL
+        )
+        await expect(running).rejects.toThrow(error)
+        expect(escrowTransactions()).to.deep.equal([
+          { method: 'deposit', args: [TOKEN, ONE] }
+        ])
+        expect(vi.mocked(sendSettlement)).not.toHaveBeenCalled()
+        expect(computeStart).not.toHaveBeenCalled()
+      }
+    )
+
+    it('accepts a changed grant that still covers the job', async () => {
+      escrow.getAuthorizations
+        .mockResolvedValueOnce(standing(NOW + 4020n))
+        .mockResolvedValue([[PAYEE, ONE, 0n, 3900n, 1n, 0n, 0n]])
+
+      await runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running
+
+      expect(vi.mocked(sendTx)).not.toHaveBeenCalled()
+      expect(vi.mocked(sendSettlement)).toHaveBeenCalledTimes(2)
     })
+
+    it.each([60n, 4020n])(
+      'rechecks a grant expiring in %s seconds against the chain time after deposit confirmation',
+      async (lifetime) => {
+        escrow.getUserFunds.mockResolvedValue({ available: 0n, locked: 0n })
+        escrow.getAuthorizations.mockResolvedValue(standing(NOW + lifetime))
+        const getBlock = vi
+          .fn()
+          .mockResolvedValueOnce({ timestamp: Number(NOW) })
+          .mockResolvedValue({ timestamp: Number(NOW + lifetime + 1n) })
+        Object.assign(signer, { provider: { getBlock } })
+
+        await expectThrowsAsync(
+          () => runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running,
+          /expired at .*The deposit was confirmed/
+        )
+        expect(escrowTransactions()).to.deep.equal([
+          { method: 'deposit', args: [TOKEN, ONE] }
+        ])
+        expect(vi.mocked(sendSettlement)).not.toHaveBeenCalled()
+      }
+    )
 
     it('can be extended in the last active second', async () => {
       escrow.getAuthorizations.mockResolvedValue(standing(NOW))
