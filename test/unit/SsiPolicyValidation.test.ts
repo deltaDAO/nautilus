@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { SsiPolicyV2Value } from '../../src/ddo/types.js'
 import {
   addSsiPolicyV2,
+  validateSsiPolicyCombination,
   validateSsiPolicyV2Value
 } from '../../src/identity/ssi.js'
 
@@ -91,5 +92,71 @@ describe('DCQL claims validation', () => {
       expect(() => validate({ claims: [{ ...claim, ...override }] })).toThrow(
         /claims\./
       )
+  })
+})
+
+describe('merged SSIpolicyV2 session limits', () => {
+  const value = (count: number, prefix = 'q'): SsiPolicyV2Value => ({
+    version: '2',
+    dcql: {
+      credentials: Array.from({ length: count }, (_, i) => ({
+        id: prefix + i,
+        format: 'dc+sd-jwt'
+      }))
+    }
+  })
+  const check = (...policies: SsiPolicyV2Value[]) =>
+    validateSsiPolicyCombination(
+      ...policies.map((policy) => addSsiPolicyV2({}, policy))
+    )
+
+  it('validates queries from an existing DDO before counting them', () => {
+    const existing = value(1)
+    existing.dcql.credentials[0].trusted_authorities = [
+      { type: 'aki', values: [] }
+    ]
+    expect(() =>
+      validateSsiPolicyCombination({
+        allow: [{ type: 'SSIpolicyV2', values: [existing] }]
+      })
+    ).toThrow(/trusted_authorities/)
+  })
+
+  it('counts distinct parsed policies across asset and service even with overlapping query ids', () => {
+    const asset = value(11)
+    expect(() =>
+      check(asset, { ...asset, rego: [], consumerBinding: false })
+    ).not.toThrow()
+    expect(() => check(asset, value(9))).not.toThrow()
+    expect(() => check(asset, value(10))).toThrow(/too many credential queries/)
+  })
+
+  it('adds the Gaia-X queries once for the highest required level', () => {
+    const baseline = { ...value(18), gaiax: { requireCompliance: true } }
+    expect(() =>
+      check(baseline, { ...value(0), gaiax: { minLabelLevel: 'SC' } })
+    ).not.toThrow()
+    expect(() =>
+      check(baseline, { ...value(0), gaiax: { minLabelLevel: 'L1' } })
+    ).toThrow(/too many credential queries/)
+  })
+
+  it('expands untargeted rego per query only when combining distinct policies', () => {
+    const rego = { name: 'rule', code: 'package example\nallow := true' }
+    const asset = { ...value(8), rego: Array(5).fill(rego) }
+    expect(() => check({ ...asset, rego: Array(6).fill(rego) })).not.toThrow()
+    expect(() => check(asset, value(1))).not.toThrow()
+    expect(() => check(asset, { ...value(1), rego: [rego] })).toThrow(
+      /too many rego policies/
+    )
+    expect(() =>
+      check(
+        {
+          ...asset,
+          rego: [...asset.rego.slice(1), { ...rego, credentialId: 'q0' }]
+        },
+        { ...value(1), rego: [rego] }
+      )
+    ).not.toThrow()
   })
 })

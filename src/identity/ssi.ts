@@ -28,7 +28,8 @@ import type {
   DdoCredentials,
   GaiaXLabelLevel,
   SsiPolicyV2Credential,
-  SsiPolicyV2Value
+  SsiPolicyV2Value,
+  SsiVcPolicy
 } from '../ddo/types.js'
 import { CredentialListTypes } from '../ddo/types.js'
 
@@ -389,17 +390,82 @@ export function requiredGaiaXLevel(
   return highest >= 0 ? GAIAX_LABEL_LEVELS[highest] : undefined
 }
 
-/** Refuses Gaia-X and W3C requirements that apply to the same presentation. */
+// The node compares parsed policies. Omitted defaults and fields ignored by its
+// parser must not turn equivalent DDO and service requirements into two sessions' worth.
+function sessionPolicyKey(value: SsiPolicyV2Value): string {
+  const vcPolicyKey = (policy: SsiVcPolicy) => {
+    if (typeof policy === 'string') return policy
+    switch (policy.policy) {
+      case 'allowed_issuer':
+        return {
+          policy: policy.policy,
+          issuers: [policy.allowed_issuer].flat()
+        }
+      case 'json_schema':
+        return { policy: policy.policy, schema: policy.schema }
+      case 'status':
+        return { policy: policy.policy, argument: policy.argument }
+      default:
+        // The node also accepts a simple policy name in object form.
+        return (policy as { policy: string }).policy
+    }
+  }
+  return canonicalJson({
+    credentials: (value.dcql?.credentials ?? []).map((query) => ({
+      id: query.id,
+      format: query.format,
+      meta: query.meta,
+      claims: query.claims?.map(({ id, path, values }) => ({
+        id,
+        path,
+        values
+      })),
+      claim_sets: query.claim_sets,
+      multiple: query.multiple,
+      require_cryptographic_holder_binding:
+        query.require_cryptographic_holder_binding,
+      trusted_authorities: query.trusted_authorities?.map(
+        ({ type, values }) => ({ type, values })
+      )
+    })),
+    credential_sets: value.dcql?.credential_sets?.map(
+      ({ options, required }) => ({ options, required })
+    ),
+    vcPolicies: (value.vcPolicies ?? []).map(vcPolicyKey),
+    specificVcPolicies: Object.fromEntries(
+      Object.entries(value.specificVcPolicies ?? {}).map(([id, policies]) => [
+        id,
+        policies.map(vcPolicyKey)
+      ])
+    ),
+    gaiax:
+      value.gaiax?.minLabelLevel ??
+      (value.gaiax?.requireCompliance ? 'SC' : undefined),
+    rego: (value.rego ?? []).map(({ name, code, argument, credentialId }) => ({
+      name,
+      code,
+      argument: argument ?? {},
+      credentialId
+    })),
+    consumerBinding: value.consumerBinding === true
+  })
+}
+
+/** Checks limits and incompatible query formats after merging a service's policies. */
 export function validateSsiPolicyCombination(
   ...blocks: (DdoCredentials | undefined)[]
 ): void {
-  if (!requiredGaiaXLevel(...blocks)) return
+  const level = requiredGaiaXLevel(...blocks)
+  const policies = new Map<string, SsiPolicyV2Value>()
   for (const block of blocks)
     for (const entry of block?.allow ?? []) {
       if (isSsiPolicyV2Credential(entry)) {
-        for (const value of entry.values)
-          checkGaiaXQueries(value.dcql?.credentials ?? [])
-      } else if (isSsiEntry(entry) && 'values' in entry) {
+        for (const value of entry.values) {
+          validateSsiPolicyV2Value(value)
+          if (level) checkGaiaXQueries(value.dcql?.credentials ?? [])
+          policies.set(sessionPolicyKey(value), value)
+        }
+      } else if (level && isSsiEntry(entry) && 'values' in entry) {
         // The native module translates these legacy queries into jwt_vc_json.
         for (const value of entry.values) {
           if (!isRecord(value) || !('request_credentials' in value)) continue
@@ -413,6 +479,19 @@ export function validateSsiPolicyCombination(
         }
       }
     }
+  // Gaia-X adds compliance and legal-person queries, plus a service offering from L1.
+  let queryCount = level === undefined ? 0 : level === 'SC' ? 2 : 3
+  let regoCount = 0
+  for (const value of policies.values()) {
+    const queries = value.dcql?.credentials.length ?? 0
+    queryCount += queries
+    for (const rego of value.rego ?? [])
+      regoCount += policies.size === 1 || rego.credentialId ? 1 : queries
+  }
+  if (queryCount > MAX_CREDENTIAL_QUERIES)
+    fail('too many credential queries for one session')
+  if (regoCount > MAX_REGO_POLICIES * 4)
+    fail('too many rego policies for one session')
 }
 
 function checkGaiaXQueries(queries: { id: string; format: string }[]): void {
