@@ -155,6 +155,7 @@ export interface GatewayOptions {
     count: number
   ) => Response | undefined | Promise<Response | undefined>
   expiresIn?: number
+  ddoSigning?: boolean
   scopes?: string[]
 }
 
@@ -331,7 +332,7 @@ export function mockGateway(options: GatewayOptions = {}) {
           expiresAt: '2026-11-23T11:00:00Z',
           scopes: options.scopes ?? ['present'],
           didWebHolder: false,
-          ddoSigning: false,
+          ddoSigning: options.ddoSigning ?? false,
           verifiers: [
             {
               clientId: `x509_san_dns:${VERIFIER_HOST}`,

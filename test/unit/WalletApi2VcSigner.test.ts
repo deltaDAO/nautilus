@@ -106,6 +106,30 @@ describe('WalletApi2VcSigner', () => {
     expect(gateway.calls).to.have.length(0)
   })
 
+  it('checks requested scopes and current address grants in the issuer preflight', async () => {
+    const allowed = mockGateway({
+      scopes: ['present', 'sign-ddo'],
+      ddoSigning: true
+    })
+    await expect(
+      vcSigner(allowed, ['present']).getIssuer()
+    ).rejects.toMatchObject({
+      code: 'scope_not_enabled'
+    })
+    expect(allowed.calls).to.have.length(0)
+    for (const options of [
+      { scopes: ['present'], ddoSigning: true },
+      { scopes: ['present', 'sign-ddo'], ddoSigning: false }
+    ]) {
+      const gateway = mockGateway(options)
+      await expect(vcSigner(gateway).getIssuer()).rejects.toMatchObject({
+        code: 'scope_not_enabled'
+      })
+      expect(gateway.calls.at(-1)?.path).to.equal('auth/account')
+    }
+    expect(await vcSigner(allowed).getIssuer()).to.equal(ISSUER)
+  })
+
   it('refuses without the sign-ddo scope, and passes the server scope_not_enabled on', async () => {
     const gateway = mockGateway()
     const signer = vcSigner(gateway, ['present'])

@@ -191,7 +191,30 @@ export class WalletApi2VcSigner implements DdoSigner {
   }
 
   async getIssuer(): Promise<string> {
+    this.assertRequestedScope()
+    if ((await this.options.signIn.getToken()).startsWith('pxa_')) {
+      const account = await this.client.account()
+      if (!account.ddoSigning || !account.scopes.includes('sign-ddo'))
+        throw this.scopeError()
+    }
     return this.options.issuer
+  }
+
+  private assertRequestedScope(): void {
+    const scopes = this.options.signIn.scopes
+    if (scopes && !scopes.includes('sign-ddo')) throw this.scopeError()
+  }
+
+  private scopeError(): WaltIdWalletError {
+    return new WaltIdWalletError(
+      'keys/sign',
+      'Signing DDOs requires the sign-ddo scope and DDO signing enabled for the address.',
+      undefined,
+      {
+        code: 'scope_not_enabled',
+        hint: "Developer: sign in with scopes ['present', 'sign-ddo']; admin: turn on \"Sign asset descriptions (DDOs)\" for the address."
+      }
+    )
   }
 
   /**
@@ -255,17 +278,7 @@ export class WalletApi2VcSigner implements DdoSigner {
         }
       )
 
-    const scopes = this.options.signIn.scopes
-    if (Array.isArray(scopes) && !scopes.includes('sign-ddo'))
-      throw new WaltIdWalletError(
-        'keys/sign',
-        "the sign-in has no scope sign-ddo. Sign in with scopes: ['present', 'sign-ddo'] (and ask an admin to turn on \"Sign asset descriptions (DDOs)\" for the address).",
-        undefined,
-        {
-          code: 'scope_not_enabled',
-          hint: "Developer: sign in with scopes ['present', 'sign-ddo']; admin: turn on \"Sign asset descriptions (DDOs)\" for the address."
-        }
-      )
+    this.assertRequestedScope()
 
     const credential: Record<string, unknown> = {
       ...ddo,

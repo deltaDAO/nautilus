@@ -71,6 +71,7 @@ async function setup() {
   const { publicKey, privateKey } = await generateKeyPair('ES256')
   const signed: string[] = []
   const gateway = mockGateway({
+    ddoSigning: true,
     scopes: ['present', 'sign-ddo'],
     handle: async (call) => {
       if (!call.path.endsWith('/sign')) return undefined
