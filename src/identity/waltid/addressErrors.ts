@@ -42,7 +42,7 @@ export function addressRefusal(
 }
 
 /**
- * The `error` (or `message`) string of a JSON object body that is not a coded refusal,
+ * The `message` (or `error`) string of a JSON object body that is not a coded refusal,
  * e.g. wallet-api2's `{ "error": "Key not found" }`, redacted and bounded; `undefined` when
  * the body is not JSON with a string `error` or `message`.
  *
@@ -56,7 +56,7 @@ export function plainJsonError(body: string): string | undefined {
     return undefined
   }
   if (!isRecord(parsed)) return undefined
-  const text = [parsed.error, parsed.message].find(
+  const text = [parsed.message, parsed.error].find(
     (value): value is string => typeof value === 'string' && !!value.trim()
   )
   return text ? sanitize(text, MAX_TEXT_LENGTH, null) : undefined

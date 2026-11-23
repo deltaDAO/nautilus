@@ -207,7 +207,7 @@ describe('error bodies (B3, S9)', () => {
       scopes: ['present', 'sign-ddo'],
       handle: (call) =>
         call.path.endsWith('/sign')
-          ? json(404, { error: 'Key not found' })
+          ? json(404, { error: 'Not Found', message: 'Key not found' })
           : undefined
     })
     const { client } = signInWith(gateway, { scopes: ['present', 'sign-ddo'] })
