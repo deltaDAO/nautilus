@@ -575,9 +575,13 @@ describe('gateway URL (S5)', () => {
 describe('the session stays private (S6) and signOut (S7)', () => {
   it('shows no token in console.log, util.inspect or JSON', async () => {
     const gateway = mockGateway()
-    const { signIn } = signInWith(gateway)
+    const { credentials } = withSignIn(gateway)
+    const { signIn } = credentials
+    await credentials.prepare(preparation())
     const token = await signIn.getToken()
     for (const text of [
+      inspect(credentials, { depth: 10 }),
+      JSON.stringify(credentials),
       inspect(signIn, { depth: 10, showHidden: true }),
       JSON.stringify(signIn),
       String(signIn)

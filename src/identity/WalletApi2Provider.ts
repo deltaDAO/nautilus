@@ -188,7 +188,7 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
    * `PREFLIGHT_TTL_MS`; dropped whenever `prepare()` fails from it, so an admin's fix takes
    * effect at the next call.
    */
-  private preflight?: {
+  #preflight?: {
     token: string
     at: number
     account: Promise<AddressSignInAccount>
@@ -229,7 +229,7 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
     try {
       await this.checkAccount(source, context)
     } catch (error) {
-      this.preflight = undefined
+      this.#preflight = undefined
       throw error
     }
   }
@@ -240,17 +240,17 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
     context: CredentialPreparation
   ): Promise<void> {
     const token = await source.getToken()
-    const cached = this.preflight
+    const cached = this.#preflight
     if (
       !cached ||
       cached.token !== token ||
       Date.now() - cached.at > PREFLIGHT_TTL_MS
     )
-      this.preflight = { token, at: Date.now(), account: source.check() }
+      this.#preflight = { token, at: Date.now(), account: source.check() }
     let account: AddressSignInAccount
     try {
       account = await (
-        this.preflight as { account: Promise<AddressSignInAccount> }
+        this.#preflight as { account: Promise<AddressSignInAccount> }
       ).account
     } catch (error) {
       throw walletError(
