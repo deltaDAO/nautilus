@@ -151,20 +151,15 @@ const UUID_NONCE = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
 /** The first line of an EIP-4361 (Sign-In with Ethereum) message. */
 const SIWE_MARKER = /wants you to sign in with your ethereum account/i
 
-function decodeNoncePart(part: string): Record<string, unknown> | undefined {
-  try {
-    const decoded: unknown = JSON.parse(
-      atob(part.replace(/-/g, '+').replace(/_/g, '/'))
-    )
-    return decoded && typeof decoded === 'object' && !Array.isArray(decoded)
-      ? (decoded as Record<string, unknown>)
-      : undefined
-  } catch {
-    return undefined
-  }
+function decodeNoncePart(part: string): string {
+  const encoded = part.replace(/-/g, '+').replace(/_/g, '/')
+  const decoded = atob(encoded)
+  if (!part || btoa(decoded).replace(/=+$/, '') !== encoded)
+    throw new Error('Invalid unpadded base64url')
+  return decoded
 }
 
-/** Older wallets wrap the nonce in a signed JWT with a nonce claim. */
+/** The legacy signed challenge carries a hex nonce and optionally its expiry. */
 function isSignedNonce(text: string): boolean {
   const parts = text.split('.')
   if (
@@ -172,15 +167,23 @@ function isSignedNonce(text: string): boolean {
     !parts.every((part) => /^[A-Za-z0-9_-]+$/.test(part))
   )
     return false
-  const header = decodeNoncePart(parts[0])
-  const payload = decodeNoncePart(parts[1])
-  return (
-    typeof header?.alg === 'string' &&
-    !!header.alg &&
-    !/^(?:none$|eth)/i.test(header.alg) &&
-    typeof payload?.nonce === 'string' &&
-    !!payload.nonce
-  )
+  try {
+    const [headerText, payloadText] = parts.map(decodeNoncePart)
+    const header = JSON.parse(headerText)
+    const payload = JSON.parse(payloadText)
+    return (
+      (header.alg === 'EdDSA' || header.alg === 'HS256') &&
+      (header.typ === undefined || header.typ === 'JWT') &&
+      (header.kid === undefined || typeof header.kid === 'string') &&
+      Object.keys(header).every((key) => ['alg', 'typ', 'kid'].includes(key)) &&
+      typeof payload.nonce === 'string' &&
+      /^(?:0x)?[0-9a-f]+$/i.test(payload.nonce) &&
+      (payload.exp === undefined || Number.isSafeInteger(payload.exp)) &&
+      Object.keys(payload).every((key) => key === 'nonce' || key === 'exp')
+    )
+  } catch {
+    return false
+  }
 }
 
 /** Check the legacy challenge before using the wallet key to sign it. */

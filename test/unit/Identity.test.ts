@@ -641,8 +641,13 @@ describe('legacy login nonce formats', () => {
       'authorize:transfer',
       'Sign in: https://example.org/document',
       `${b64({ alg: 'EdDSA' })}.${b64({ action: 'transfer' })}.c2ln`,
-      `${b64({ alg: 'none' })}.${b64({ nonce: '1' })}.c2ln`
+      `${b64({ alg: 'none' })}.${b64({ nonce: '1' })}.c2ln`,
+      `${b64({ alg: 'garbage' })}.${b64({ nonce: '1' })}.c2ln`,
+      `${b64({ alg: 'EdDSA' })}.${b64({ nonce: '1' })}.x`,
+      `${b64({ alg: 'EdDSA' })}.${b64({ nonce: '1', action: 'transfer' })}.c2ln`
     ])
       expect(() => assertLegacyNonce(input)).to.throw(/not a login nonce/)
+    const signedNonce = `${b64({ alg: 'EdDSA' })}.${b64({ nonce: `0x${'ab'.repeat(32)}`, exp: 1800000300 })}.c2ln`
+    expect(assertLegacyNonce(signedNonce)).to.equal(signedNonce)
   })
 })
