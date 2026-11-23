@@ -1071,6 +1071,45 @@ describe('PolicySessionResolver', () => {
     })
   }
 
+  function nativeNode() {
+    const { client } = policyNode()
+    client.getSsiCapabilities = async () => ({
+      enabled: true,
+      formats: [],
+      vcPolicies: [],
+      rego: false,
+      gaiaxLevels: [],
+      legacyFormat: true,
+      verifierPublicHost: 'verifier.test'
+    })
+    client.ssiInitiate = async () => ({
+      required: true,
+      sessionId: SESSION,
+      consumerAddress: CONSUMER,
+      requestUri: 'openid4vp://authorize?request_uri=https://verifier.test/r'
+    })
+    client.ssiStatus = async () => ({ status: 'verified', results: [] })
+    return client
+  }
+
+  it('presents a native SSI session with the provider that prepared it', async () => {
+    const client = nativeNode()
+    const replacement = recordingProvider()
+    const original = recordingProvider()
+    const resolver = new PolicySessionResolver({
+      credentials: {
+        async prepare() {
+          resolver.setCredentialProvider(replacement.provider)
+        },
+        present: original.provider.present
+      }
+    })
+
+    await resolve(client, resolver, ssiAsset())
+    expect(original.challenges).to.have.length(1)
+    expect(replacement.challenges).to.have.length(0)
+  })
+
   it('uses message.sessionId for an address-only asset, with no wallet', async () => {
     const { client, calls } = policyNode()
     const { provider, challenges } = recordingProvider()
