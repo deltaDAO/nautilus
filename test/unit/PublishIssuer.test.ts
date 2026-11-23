@@ -173,7 +173,8 @@ describe('writeAsset issuer rules', () => {
       new AssetBuilder(getAssetFixture()).build()
     )
 
-    expect(prepared).to.have.length(1)
+    expect(prepared).to.have.length(2) // Preflight projection and final DDO.
+    expect(signed).to.have.length(1)
     expect(signed[0].credentialSubject).not.to.have.any.keys('id', 'version')
     expect(response.ddo.credentialSubject).not.to.have.any.keys('id', 'version')
     expect(signed[0].issuer).to.equal('did:jwk:test-issuer')
