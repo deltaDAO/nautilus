@@ -471,6 +471,10 @@ export function validateSsiPolicyCombination(
   const level = requiredGaiaXLevel(...blocks)
   const policies = new Map<string, SsiPolicyV2Value>()
   for (const block of blocks) {
+    if (block?.deny?.some(isSsiEntry))
+      fail(
+        'SSI entries are only allowed in credentials.allow, not credentials.deny'
+      )
     const entries = block?.allow ?? []
     assertSsiEntryLimits(entries)
     for (const entry of entries) {

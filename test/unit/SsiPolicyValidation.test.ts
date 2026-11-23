@@ -7,6 +7,22 @@ import {
 } from '../../src/identity/ssi.js'
 
 describe('SSIpolicyV2 entry validation', () => {
+  it('rejects SSI deny entries on the asset or service', () => {
+    const valid: DdoCredentials = {
+      deny: [{ type: 'address', values: ['0x1'] }]
+    }
+    expect(() => validateSsiPolicyCombination(valid, valid)).not.toThrow()
+    for (const type of ['SSIpolicyV2', 'SSIpolicy'] as const) {
+      const invalid = { deny: [{ type, values: [] }] }
+      expect(() => validateSsiPolicyCombination(invalid, valid)).toThrow(
+        /credentials\.deny/
+      )
+      expect(() => validateSsiPolicyCombination(valid, invalid)).toThrow(
+        /credentials\.deny/
+      )
+    }
+  })
+
   it('limits raw SSI values across entries separately for each block', () => {
     const value: SsiPolicyV2Value = {
       version: '2',
