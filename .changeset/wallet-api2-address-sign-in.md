@@ -26,14 +26,24 @@ backends and CI jobs present credentials (and sign DDOs) without a Hanko session
   `sign-ddo` scope, in the DDO credential shape wallet-api2 accepts (no `iss`, `sub`, `jti`;
   no `credentialSubject.id` or `version`). `DdoSigner.prepareDocument()` (optional) lets a
   signer shape the document before publish and edit validate it.
-- **Errors.** `CredentialPresentationError` reasons `sign-in` and `not-permitted`, with
+- **Errors.** `CredentialPresentationReason` gains `'sign-in'` and `'not-permitted'`: an
+  exhaustive `switch` over `error.reason` in your code needs a case for each. Both carry
   wallet-api2's or the gateway's code in `details.code` (and `hint`, `status`,
   `retryAfter`); `WaltIdWalletError` gains `code`, `hint` and `retryAfter`.
-  `no-matching-credential` under an address token names the credential access list.
+  `no-matching-credential` under an address token names the credential access list. A
+  Hanko token keeps its reasons (`wallet-setup` for a 401/403), whatever the body.
+- **401s** are retried at most once: a new sign-in after `token_invalid`/`token_expired`, a
+  fresh proof after `dpop_invalid`, nothing else. Refused and replaced address tokens are
+  revoked in the background. `AddressSignIn` takes `signInTimeoutMs` (default 60 s, covering
+  `signMessage`) and an `AbortSignal` on `getToken()`, `authorize()` and `check()`.
 - **Legacy walt.id client.** `WaltIdHttpWallet.authenticate()` signs only a one-line login
-  nonce, never a Sign-In with Ethereum message or other text.
+  nonce (trimmed), never a Sign-In with Ethereum message, a JWS signing input
+  (`header.payload`, as `Eip191VcSigner` signs) or other text.
 - **Redaction.** Address tokens (`pxa_…`), `DPoP` credentials and DPoP proofs are not
-  printed at any `NAUTILUS_DEBUG` level, and are redacted from error text.
+  printed at any `NAUTILUS_DEBUG` level, and are redacted from error text. After `Bearer`,
+  `Basic` and `DPoP` only credential-shaped values are redacted in error text, so "the DPoP
+  proof is invalid" keeps its words.
+- **`FetchedText.wwwAuthenticate`**: the `WWW-Authenticate` header of a `401`.
 
 Docs: the guide "Sign in from scripts and CI", `AddressSignIn` (with every error code, its
 cause and who fixes it) and `WalletApi2VcSigner` reference pages, and the migration entry

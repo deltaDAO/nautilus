@@ -34,24 +34,26 @@ Usually you do not create one yourself: `withAddressSignIn` does, and exposes it
 
 | Option | Type | Purpose |
 | --- | --- | --- |
-| `gateway` | `string` | The address gateway, exactly as wallet-api2 knows it (`ADDRESS_SIGN_IN_PUBLIC_URL`): `https://<wallet UI>/api/address-gateway`. Required. |
+| `gateway` | `string` | The address gateway, exactly as wallet-api2 knows it (`ADDRESS_SIGN_IN_PUBLIC_URL`): `https://<wallet UI>/api/address-gateway`. Required. Written as a URL parser reads it: lower-case host, no default or empty port, no user info, query, fragment, `%`, `..`, backslash or control character; a trailing slash is dropped. |
 | `signer` | `Signer` | The key of the organisation address. Signs the sign-in message only. Required. |
 | `chainId` | `number` | The chain the message names. Default: the signer's provider's network. |
 | `smartAccount` | `'auto' \| boolean` | Default `'auto'`. wallet-api2 decides from how the address was linked whether it checks EIP-191 or ERC-1271, so nothing is sent. `true` refuses an address without code (an undeployed account; ERC-6492 is not supported); `'auto'` reads the code only to explain a `sign_in_failed`; `false` reads nothing. |
 | `scopes` | `('present' \| 'sign-ddo')[]` | Default `['present']`. Add `'sign-ddo'` to sign DDOs. The scopes are named in the signed message. |
 | `allowInsecureTransport` | `boolean` | Accept a plain `http://` gateway on a non-loopback host. Default `false`. |
 | `timeoutMs` | `number` | Per request. Default 30 s. |
+| `signInTimeoutMs` | `number` | The whole sign-in: challenge, `signMessage` and token. Default 60 s; raise it for a signer that waits for approval. `sign_in_timeout` after it. |
 | `fetchImpl` | `typeof fetch` | For tests. |
 
 ## Members
 
 | Member | Purpose |
 | --- | --- |
-| `getToken()` | A current token: the cached one, or a new sign-in. Renewed 60 s before it expires; concurrent callers share one sign-in. |
-| `authorize({ method, url })` | `Authorization: DPoP pxa_…` and a fresh `DPoP` proof for one request. |
-| `invalidate(token?)` | Forgets the token (only if it is still the current one). |
+| `getToken(signal?)` | A current token: the cached one, or a new sign-in. Renewed 60 s before it expires; concurrent callers share one sign-in. When a renewal fails while the token still has time left, the token is kept and the next attempt waits 5 s. `signal` aborts the caller's wait. |
+| `authorize({ method, url, signal? })` | `Authorization: DPoP pxa_…` and a fresh `DPoP` proof for one request. |
+| `invalidate(token?)` | Forgets the token (only if it is still the current one) and revokes it in the background. A token a renewal replaced is revoked the same way, so refused or replaced tokens do not count toward the address's 50 active sessions. |
 | `check()` | Signs in if needed and reads `GET /auth/account`: `{ address, organizationId, walletId, tokenId, expiresAt, scopes, didWebHolder, ddoSigning, verifiers, presentableCredentials }`. |
-| `signOut()` | Revokes the token (`POST /auth/logout`) and forgets it. |
+| `signOut()` | Revokes the token (`POST /auth/logout`) and forgets it; a sign-in under way is awaited first. |
+| `toJSON()`, `util.inspect` | Gateway, scopes, address, wallet and whether signed in: never the token or the key (both are private fields). |
 | `walletId`, `address` | The address's wallet and the address, once signed in. |
 | `gateway`, `endpoint`, `scopes` | The gateway URL and the scopes asked for. |
 
@@ -80,7 +82,9 @@ Resources:
 The domain and URI are this gateway's, the address is in EIP-55 form, the statement is the one
 for the requested scopes (with `sign-ddo`, "and to sign asset descriptions (DDOs) for
 publishing"), the resources list the scopes and nautilus's own key, and the window is open now
-and at most 5 minutes long. Anything else is refused before the signer sees it
+and at most 5 minutes long, issued no more than 60 s after and 5 minutes before this machine's
+clock (a wrong clock is named as such). Anything else (also CRLF line ends, a repeated or
+reordered resource, a look-alike character in the domain, an impossible date) is refused before the signer sees it
 (`message_unexpected`, naming the expected and the actual line).
 
 ## DPoP
@@ -90,6 +94,13 @@ cannot be exported and is never logged. Every request carries a proof (RFC 9449)
 `typ: dpop+jwt`, `alg: ES256` and the public `jwk`; claims `htm`, `htu` (the gateway URL and
 path, without query), `iat`, a new `jti` and `ath` (the token's SHA-256). wallet-api2 accepts a
 proof within ±60 s of its clock.
+
+## Clock
+
+nautilus does not correct its clock: the DPoP `iat` and the sign-in message's window are
+checked against this machine's time, and wallet-api2 accepts proofs within ±60 s. Keep the
+clock synchronised (NTP); a wrong clock shows as `message_unexpected` ("check this machine's
+clock") or `dpop_invalid`.
 
 ## Token sources
 
@@ -116,8 +127,14 @@ interface WalletApi2TokenSource {
   `staticTokenSource(token)` wraps one as a source, for tests or your own code.
 - An `AddressSignIn` adds `authorize()` (DPoP) and `endpoint` (its gateway: a client for
   another URL refuses it with `wrong_endpoint`).
-- After a `401`, a request made with a source object calls `invalidate(token)` and is retried
-  once when the source has a new token.
+- A `401` is retried at most once: `token_invalid` or `token_expired` (or
+  `WWW-Authenticate: … error="invalid_token"`) calls `invalidate(token)` and retries with a
+  new sign-in; `dpop_invalid` retries with the same token and a fresh proof; any other `401`
+  is not retried. A `401` without the gateway's coded answer is `wrong_endpoint`, before any
+  retry. A request body is sent at most twice.
+- Through the gateway, path ids (`walletId`, `keyId`) are sent as they are, as wallet-api2
+  sees them and as the proof's `htu` names them; an id with characters other than letters,
+  digits and `. _ ~ : @ + -` is refused before anything is sent.
 
 ## Errors
 
@@ -129,12 +146,14 @@ activity".
 
 | Code | Reason | Cause | Who fixes it | Where |
 | --- | --- | --- | --- | --- |
-| `message_unexpected` | `sign-in` | The sign-in message is not for this gateway, key or request (often `ADDRESS_SIGN_IN_PUBLIC_URL` differs from the URL used). Nothing was signed. | developer, or operator | the `gateway` option; wallet-api2's `ADDRESS_SIGN_IN_PUBLIC_URL` |
-| `wrong_endpoint` | `sign-in` | The URL is not the address gateway, or an address token was given to a client for another URL. | developer | the `gateway` / `walletApi` option |
-| `not_found` | `sign-in` | The gateway is switched off, or the route does not exist. | operator | `ADDRESS_GATEWAY_ENABLED` in the wallet UI |
+| `message_unexpected` | `sign-in` | The sign-in message is not for this gateway, key or request (often `ADDRESS_SIGN_IN_PUBLIC_URL` differs from the URL used), or its issue time is off this machine's clock. Also the legacy walt.id client asked to sign something other than a login nonce. Nothing was signed. | developer, or operator | the `gateway` option; wallet-api2's `ADDRESS_SIGN_IN_PUBLIC_URL`; the system clock |
+| `wrong_endpoint` | `sign-in` | The URL is not the address gateway (a 401 without a coded answer, a 404 that is not JSON, an answer that is not the gateway's), or an address token was given to a client for another URL. | developer | the `gateway` / `walletApi` option |
+| `not_found` | `sign-in` | This gateway does not serve the route: a wrong gateway URL, the gateway switched off, or a nautilus version the gateway does not know. | developer, or operator | the gateway URL; `ADDRESS_GATEWAY_ENABLED` in the wallet UI; the nautilus version |
 | `hanko_token_not_accepted` | `sign-in` | A Hanko token was sent to the gateway. | developer | use `withAddressSignIn`, or the wallet-api2 URL for Hanko tokens |
 | `signer_mismatch` | `sign-in` | Signed in as another address than the consumer of the order. | developer | sign with the consumer's key |
 | `smart_account_not_deployed` | `sign-in` | `smartAccount: true` and the address has no code. | developer | deploy the account, or sign in with an EOA |
+| `signer_without_provider` | `sign-in` | No `chainId` and the signer has no provider, or `smartAccount: true` without one. | developer | pass `chainId`; connect the signer to a provider |
+| `sign_in_timeout` | `sign-in` | The sign-in took longer than `signInTimeoutMs` (often a signer waiting for approval). | developer | `signInTimeoutMs`; the signer |
 | `chain_not_supported` | `sign-in` | The chain is not enabled for sign-in. | developer, or operator | `chainId`; wallet-api2's `ADDRESS_SIGN_IN_CHAIN_IDS` |
 | `challenge_invalid`, `challenge_expired`, `message_mismatch`, `nonce_used` | `sign-in` | The challenge was altered, is older than 5 minutes, or was used twice. | developer | retry; check the system clock |
 | `dpop_invalid` | `sign-in` | The DPoP proof was refused (clock off by more than 60 s, another URL). | developer | the system clock; the `gateway` option |
@@ -150,13 +169,15 @@ activity".
 | `key_not_allowed`, `holder_changed` | `not-permitted` | Another key or holder than the previewed one. | developer | leave `keyId` and the holder to the preview |
 | `consumer_mismatch` | `not-permitted` | The request is bound to another consumer address. | developer | sign in with the address that orders |
 | `credential_not_on_access_list` | `not-permitted` | An organisation credential the address may not present. | admin | Wallet UI → Credentials → Addresses (scripts) |
-| `route_not_allowed` | `not-permitted` | A route or wallet an address token may not use (also a pinned `walletId` of another wallet). | developer | leave `walletId` out |
+| `route_not_allowed` | `not-permitted` | A route an address token may not use. | developer | address tokens present, sign DDOs and read `auth/account` only |
+| `wallet_mismatch` | `not-permitted` | A pinned `walletId` is not the address's wallet (checked by nautilus in `prepare()`). | developer | leave `walletId` out |
+| `no_presentable_credentials` | `not-permitted` | The pre-flight lists nothing the address may present (checked in `prepare()`). | admin | Wallet UI → Credentials → Addresses (scripts), or the address panel's "Choose…" |
 | `scope_not_enabled` | `not-permitted` | `sign-ddo` asked for but off, or not asked for at sign-in. | admin, or developer | "Sign asset descriptions (DDOs)"; `scopes` |
 | `not_a_ddo` | `not-permitted` | The signed body is not a DDO credential. | developer | sign through the publish flow |
 | `handle_evicted` | `wallet-failed` | Newer previews of the token replaced this one; nautilus previews again once. | developer | fewer parallel presentations per sign-in |
 | `handle_expired` | `wallet-failed` | The preview is older than 5 minutes or was used. | developer | retry |
 | `rate_limited`, `capacity_exhausted` | `wallet-failed` | Too many requests or open previews. | developer | wait `retryAfter` seconds |
-| `unavailable`, `invalid_request` | `wallet-failed` | wallet-api2 could not answer, or the request was malformed. | operator, or developer | retry later; report it |
+| `unavailable`, `invalid_request` | `wallet-failed` | wallet-api2 could not answer, or the request was malformed (also a path id the gateway cannot carry). | operator, or developer | retry later; report it |
 
 A `no-matching-credential` error with an address token says: "Organisation credentials appear
 only if an admin put this address on their access list (Wallet UI → Credentials)."

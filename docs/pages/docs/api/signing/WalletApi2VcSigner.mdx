@@ -69,11 +69,25 @@ issuer's DID document (`<issuer>#…`) and a header and signature within
 `JWS_SIGNING_ALLOWANCE` (1024 characters); the publish flow then checks the payload against
 the validated DDO, as for every signer.
 
+The field lists are exported as `WALLET_API2_DDO_FIELDS` and `WALLET_API2_DDO_SUBJECT_FIELDS`,
+for code that builds such a document itself.
+
 ## Errors
 
-- `WaltIdWalletError` with `code: 'scope_not_enabled'`: the sign-in has no `sign-ddo` scope
-  (refused before anything is sent), or DDO signing is off for the address;
-- `code: 'not_a_ddo'`: wallet-api2 refused the body's shape;
+Every error is a `WaltIdWalletError` with `code` and a `hint` that says who fixes it:
+
+- `code: 'scope_not_enabled'`: the sign-in has no `sign-ddo` scope (refused before anything
+  is sent), or DDO signing is off for the address;
+- `code: 'not_a_ddo'`: the DDO has fields wallet-api2 does not sign (call `prepareDocument()`
+  first; refused before anything is sent), or wallet-api2 refused the body's shape;
+- `code: 'issuer_mismatch'`: the DDO declares another issuer than `issuer`;
+- `code: 'signature_invalid'`: the answer is not a JWS nautilus accepts: a header with members
+  other than `alg`, `kid` and `typ` (no `crit`, `b64`, `jwk`), an algorithm that is not a JOSE
+  signature algorithm (`none`, `HS256`), a `kid` outside the issuer's DID document, a payload
+  with a duplicate key or other than the posted credential, or a header and signature over
+  `JWS_SIGNING_ALLOWANCE`;
+- no `code`, `status` 400 or 404: wallet-api2's own refusal ("Key not found", "The DDO issuer
+  is not a DID of this wallet"), with a hint to check `keyId`, `walletId` and the issuer;
 - `code: 'did_web_holder_disabled'`: the issuer is the organisation's did:web and "Present
   as …" is off;
 - the sign-in codes of [`AddressSignIn`](/docs/api/identity/AddressSignIn#errors).

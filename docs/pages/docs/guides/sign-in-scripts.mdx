@@ -124,6 +124,12 @@ sequenceDiagram
   expires, and after a `401` (a revoked or expired token) it signs in again and retries the
   request once. Concurrent requests share one sign-in.
 - **The chain** is the signer's provider's network, or `chainId`.
+- **The clock** must be right to within a minute: the message's issue time and every DPoP
+  proof are checked against it. nautilus does not correct it.
+- **The whole sign-in** (including `signMessage`) must finish within `signInTimeoutMs`
+  (60 s by default): raise it for a KMS or hardware signer that waits for approval.
+- **Refused and replaced tokens are revoked** in the background, so a failing pipeline does
+  not pile up sessions toward the address's cap.
 - **Smart accounts.** wallet-api2 checks an ERC-1271 signature when the address was linked as
   a smart account. The account must be deployed: signatures of undeployed accounts (ERC-6492)
   are not supported. `smartAccount: true` makes nautilus refuse an address without code
