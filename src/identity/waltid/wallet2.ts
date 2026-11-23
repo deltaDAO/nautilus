@@ -499,6 +499,13 @@ export class WalletApi2HttpClient implements WalletApi2 {
         : (this.token as string)
     if (!token)
       throw new WaltIdWalletError(path, 'no session token for wallet-api2')
+    if (token.trimStart().startsWith('pxa_'))
+      throw new WaltIdWalletError(
+        path,
+        'An address token needs a DPoP proof. Pass the AddressSignIn object as the token source so it can authorize each request.',
+        undefined,
+        { code: 'dpop_invalid' }
+      )
     return { token, headers: { Authorization: `Bearer ${token}` } }
   }
 

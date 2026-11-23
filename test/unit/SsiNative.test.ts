@@ -57,6 +57,7 @@ import {
 } from '../../src/identity/WaltIdProvider.js'
 import { WaltIdWalletError } from '../../src/identity/waltid/client.js'
 import {
+  staticTokenSource,
   type WalletApi2,
   WalletApi2HttpClient,
   type WalletApi2Preview
@@ -1579,6 +1580,24 @@ describe('WalletApi2HttpClient', () => {
         })
     )
   }
+
+  it('refuses address tokens supplied without a proof before sending any request', async () => {
+    const value = 'pxa_test_address_token'
+    const fetchImpl = stub(200, [])
+    for (const token of [value, async () => value, staticTokenSource(value)]) {
+      const client = new WalletApi2HttpClient({
+        apiUrl: 'https://wallet-api.test.invalid',
+        token,
+        fetchImpl
+      })
+      const refused = await client.listWallets().catch((error) => error)
+      expect(refused).to.be.instanceOf(WaltIdWalletError)
+      expect(refused.code).to.equal('dpop_invalid')
+      expect(refused.message).to.include('Pass the AddressSignIn object')
+      expect(refused.message).not.to.include(value)
+    }
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
 
   it('sends the bearer token, previews and reads the answer', async () => {
     const fetchImpl = stub(200, {
