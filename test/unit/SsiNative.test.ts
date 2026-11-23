@@ -1639,6 +1639,43 @@ describe('WalletApi2HttpClient', () => {
     ])
   })
 
+  it('includes every credential in bounded account and preview responses', async () => {
+    const ids = Array.from({ length: 501 }, (_, i) => `vc-${i}`)
+    const options = { apiUrl: 'https://wallet-api.test.invalid', token: 't' }
+    const account = new WalletApi2HttpClient({
+      ...options,
+      fetchImpl: stub(200, {
+        method: 'evm-address',
+        address: CONSUMER,
+        walletId: 'w',
+        presentableCredentials: ids.map((id) => ({ id }))
+      })
+    })
+    expect(
+      (await account.account()).presentableCredentials.map((c) => c.id)
+    ).to.deep.equal(ids)
+
+    const client = new WalletApi2HttpClient({
+      ...options,
+      fetchImpl: stub(200, {
+        handle: 'h',
+        preview: {
+          ...PREVIEW,
+          credentialOptions: ids.map((credentialId) => ({
+            queryId: credentialId === ids.at(-1) ? 'required' : 'optional',
+            credentialId
+          }))
+        }
+      })
+    })
+    const { preview } = await client.previewPresentation('w', {
+      requestUrl: REQUEST_URI
+    })
+    expect(preview.credentialOptions.map((c) => c.credentialId)).to.deep.equal(
+      ids
+    )
+  })
+
   it('reads the snake_case submit answer and the org wallets', async () => {
     const submit = new WalletApi2HttpClient({
       apiUrl: 'https://wallet-api.test.invalid',
