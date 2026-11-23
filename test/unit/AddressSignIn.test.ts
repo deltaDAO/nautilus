@@ -770,7 +770,7 @@ describe('WalletApi2CredentialProvider.withAddressSignIn', () => {
     const second = await withSignIn(empty)
       .credentials.prepare(preparation())
       .catch((e) => e)
-    expect(second.reason).to.equal('not-permitted')
+    expect(second.reason).to.equal('no-matching-credential')
     expect(second.details.code).to.equal('no_presentable_credentials')
     expect(second.message).to.match(/access list \(Wallet UI → Credentials\)/)
 
@@ -791,6 +791,24 @@ describe('WalletApi2CredentialProvider.withAddressSignIn', () => {
       .catch((e) => e)
     expect(third.reason).to.equal('not-permitted')
     expect(third.message).to.match(/may present to no verifier/)
+  })
+
+  it('reports an access-list grant removed before submit', async () => {
+    const gateway = mockGateway({
+      handle: (call) =>
+        call.path.endsWith('/submit-handle')
+          ? refusal('credential_not_on_access_list')
+          : undefined
+    })
+    const thrown = await withSignIn(gateway)
+      .credentials.present(challenge())
+      .catch((e) => e)
+    expect(thrown.reason).to.equal('no-matching-credential')
+    expect(thrown.message).to.contain('access list')
+    expect(thrown.details.code).to.equal('credential_not_on_access_list')
+    expect(thrown.details.hint).to.equal(
+      'Developer or admin: fix credential_not_on_access_list.'
+    )
   })
 
   it('previews again once after handle_evicted', async () => {
@@ -923,7 +941,7 @@ describe('WalletApi2CredentialProvider.withAddressSignIn', () => {
     ['did_web_holder_disabled', 'not-permitted'],
     ['key_not_allowed', 'not-permitted'],
     ['consumer_mismatch', 'not-permitted'],
-    ['credential_not_on_access_list', 'not-permitted'],
+    ['credential_not_on_access_list', 'no-matching-credential'],
     ['route_not_allowed', 'not-permitted'],
     ['scope_not_enabled', 'not-permitted'],
     ['not_a_ddo', 'not-permitted'],
@@ -972,8 +990,10 @@ describe('WalletApi2CredentialProvider.withAddressSignIn', () => {
       'sign_in_timeout'
     ])
       expect(addressCodeReason(code)).to.equal('sign-in')
-    for (const code of ['wallet_mismatch', 'no_presentable_credentials'])
-      expect(addressCodeReason(code)).to.equal('not-permitted')
+    expect(addressCodeReason('wallet_mismatch')).to.equal('not-permitted')
+    expect(addressCodeReason('no_presentable_credentials')).to.equal(
+      'no-matching-credential'
+    )
     expect(addressCodeReason('handle_evicted')).to.equal('wallet-failed')
   })
 

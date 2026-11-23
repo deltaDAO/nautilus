@@ -104,7 +104,7 @@ export interface WaltIdCredentialProviderOptions {
  *   `token_expired`, `hanko_token_not_accepted`, or nautilus's own `message_unexpected`,
  *   `wrong_endpoint`, `signer_mismatch`, `smart_account_not_deployed`);
  * - `not-permitted`: the address token may not do this (`details.code`, e.g.
- *   `verifier_not_allowed`, `credential_not_on_access_list`, `did_web_holder_disabled`):
+ *   `verifier_not_allowed`, `did_web_holder_disabled`):
  *   an organisation admin changes the address's sign-in settings.
  */
 export type CredentialPresentationReason =

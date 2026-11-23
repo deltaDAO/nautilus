@@ -168,10 +168,10 @@ activity".
 | `did_web_holder_disabled` | `not-permitted` | The holder or DDO issuer is the organisation's did:web and "Present as …" is off. | admin, or developer | the switch; `holderDid` / `issuer` |
 | `key_not_allowed`, `holder_changed` | `not-permitted` | Another key or holder than the previewed one. | developer | leave `keyId` and the holder to the preview |
 | `consumer_mismatch` | `not-permitted` | The request is bound to another consumer address. | developer | sign in with the address that orders |
-| `credential_not_on_access_list` | `not-permitted` | An organisation credential the address may not present. | admin | Wallet UI → Credentials → Addresses (scripts) |
+| `credential_not_on_access_list` | `no-matching-credential` | An organisation credential the address may not present. | admin | Wallet UI → Credentials → Addresses (scripts) |
 | `route_not_allowed` | `not-permitted` | A route an address token may not use. | developer | address tokens present, sign DDOs and read `auth/account` only |
 | `wallet_mismatch` | `not-permitted` | A pinned `walletId` is not the address's wallet (checked by nautilus in `prepare()`). | developer | leave `walletId` out |
-| `no_presentable_credentials` | `not-permitted` | The pre-flight lists nothing the address may present (checked in `prepare()`). | admin | Wallet UI → Credentials → Addresses (scripts), or the address panel's "Choose…" |
+| `no_presentable_credentials` | `no-matching-credential` | The pre-flight lists nothing the address may present (checked in `prepare()`). | admin | Wallet UI → Credentials → Addresses (scripts), or the address panel's "Choose…" |
 | `scope_not_enabled` | `not-permitted` | `sign-ddo` asked for but off, or not asked for at sign-in. | admin, or developer | "Sign asset descriptions (DDOs)"; `scopes` |
 | `not_a_ddo` | `not-permitted` | The signed body is not a DDO credential. | developer | sign through the publish flow |
 | `handle_evicted` | `wallet-failed` | Newer previews of the token replaced this one; nautilus previews again once. | developer | fewer parallel presentations per sign-in |

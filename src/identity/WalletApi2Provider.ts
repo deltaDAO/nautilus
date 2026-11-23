@@ -306,8 +306,8 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
     if (!account.presentableCredentials.length)
       throw new CredentialPresentationError(
         `The address ${address} has no credentials it may present. ${ACCESS_LIST_HINT}`,
-        { code: 'no_presentable_credentials' },
-        'not-permitted'
+        { code: 'no_presentable_credentials', hint: ACCESS_LIST_HINT },
+        'no-matching-credential'
       )
   }
 
@@ -704,13 +704,18 @@ function walletError(
   const retryAfter =
     error instanceof WaltIdWalletError ? error.retryAfter : undefined
 
+  const missingGrant = addressToken && code === 'credential_not_on_access_list'
   return new CredentialPresentationError(
-    `${what}: ${errorMessage}`,
+    `${what}: ${errorMessage}${missingGrant ? ` ${ACCESS_LIST_HINT}` : ''}`,
     {
       errorMessage,
       ...(status ? { status } : {}),
       ...(code ? { code } : {}),
-      ...(hint ? { hint: remove(hint) } : {}),
+      ...(hint
+        ? { hint: remove(hint) }
+        : missingGrant
+          ? { hint: ACCESS_LIST_HINT }
+          : {}),
       ...(retryAfter !== undefined ? { retryAfter } : {})
     },
     // Codes are an address token's; a Hanko token keeps its reasons, whatever the body.

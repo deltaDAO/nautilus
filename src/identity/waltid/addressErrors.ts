@@ -101,13 +101,11 @@ const NOT_PERMITTED_CODES = new Set([
   'did_web_holder_disabled',
   'key_not_allowed',
   'consumer_mismatch',
-  'credential_not_on_access_list',
   'route_not_allowed',
   'scope_not_enabled',
   'not_a_ddo',
   'holder_changed',
-  'wallet_mismatch',
-  'no_presentable_credentials'
+  'wallet_mismatch'
 ])
 
 /**
@@ -117,7 +115,12 @@ const NOT_PERMITTED_CODES = new Set([
  */
 export function addressCodeReason(
   code: string
-): 'sign-in' | 'not-permitted' | 'wallet-failed' {
+): 'sign-in' | 'not-permitted' | 'no-matching-credential' | 'wallet-failed' {
+  if (
+    code === 'credential_not_on_access_list' ||
+    code === 'no_presentable_credentials'
+  )
+    return 'no-matching-credential'
   if (SIGN_IN_CODES.has(code)) return 'sign-in'
   if (NOT_PERMITTED_CODES.has(code)) return 'not-permitted'
   return 'wallet-failed'
