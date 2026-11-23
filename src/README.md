@@ -247,6 +247,29 @@ const nautilus = await Nautilus.create(signer, {
 const { url } = await nautilus.access({ assetDid: 'did:ope:12345' })
 ```
 
+A script or CI job without a browser session signs in with the key of an organisation address
+instead of a Hanko token, once an organisation admin turned it on for that address in the
+wallet UI:
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus, WalletApi2CredentialProvider } from '@deltadao/nautilus'
+
+const provider = new JsonRpcProvider('https://rpc.dev.pontus-x.eu')
+const config = { oceanNodeUri: 'https://node.example.org' }
+
+const signer = new Wallet(process.env.PRIVATE_KEY as string, provider)
+const credentials = WalletApi2CredentialProvider.withAddressSignIn({
+  // https://wallet.example.org/api/address-gateway
+  gateway: process.env.WALLET_GATEWAY as string,
+  signer
+})
+
+const nautilus = await Nautilus.create(signer, { config, credentials })
+const { url } = await nautilus.access({ assetDid: 'did:ope:12345' })
+```
+
+See [sign in from scripts and CI](https://nautilus.delta-dao.com/docs/guides/sign-in-scripts).
 See [credential-gated assets](https://nautilus.delta-dao.com/docs/guides/identity) for both stacks,
 publishing `SSIpolicyV2` assets and Compute-to-Data on them.
 

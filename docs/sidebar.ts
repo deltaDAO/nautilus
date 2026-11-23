@@ -482,6 +482,10 @@ export const sidebar = {
       items: [
         { text: 'Credential-gated assets', link: '/docs/guides/identity' },
         {
+          text: 'Sign in from scripts and CI',
+          link: '/docs/guides/sign-in-scripts'
+        },
+        {
           text: 'Providers',
           items: [
             {
@@ -491,6 +495,10 @@ export const sidebar = {
             {
               text: 'WalletApi2CredentialProvider',
               link: '/docs/api/identity/WalletApi2CredentialProvider'
+            },
+            {
+              text: 'AddressSignIn',
+              link: '/docs/api/identity/AddressSignIn'
             },
             {
               text: 'WaltIdCredentialProvider',
@@ -541,6 +549,10 @@ export const sidebar = {
             {
               text: 'WaltIdVcSigner',
               link: '/docs/api/signing/WaltIdVcSigner'
+            },
+            {
+              text: 'WalletApi2VcSigner',
+              link: '/docs/api/signing/WalletApi2VcSigner'
             },
             {
               text: 'decodeCredential',

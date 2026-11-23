@@ -92,6 +92,10 @@ const nautilus = await Nautilus.create(signer, {
 const { url } = await nautilus.access({ assetDid: 'did:ope:1234abcd...' })
 ```
 
+Scripts, backends and CI jobs have no Hanko session: they sign in with the key of an
+organisation address instead, with
+[`WalletApi2CredentialProvider.withAddressSignIn`](/docs/guides/sign-in-scripts).
+
 Publishing an asset for these nodes:
 
 ```ts twoslash

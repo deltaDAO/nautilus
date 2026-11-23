@@ -149,6 +149,12 @@ which step failed. With [`WalletApi2CredentialProvider`](/docs/api/identity/Wall
 | `none-selected` | `onSelectCredentials` chose nothing, or something that was not offered. |
 | `wallet-failed` | wallet-api2 failed. |
 | `verifier-rejected` | The verifier refused the presentation. nautilus then reads `ssiStatus` and, when it names failed checks, throws a `PolicyDeniedError` with this error as `cause`. |
+| `sign-in` | With an [address sign-in](/docs/guides/sign-in-scripts): the address could not sign in, or its token was refused. `details.code` says why (`sign_in_disabled`, `message_unexpected`, …). |
+| `not-permitted` | With an address sign-in: the address may not do this (`verifier_not_allowed`, `credential_not_on_access_list`, …); an organisation admin changes its settings. |
+
+Every code of an address sign-in, with its cause and who fixes it, is in the
+[`AddressSignIn` reference](/docs/api/identity/AddressSignIn#errors). Address tokens, DPoP
+proofs and the sign-in signature are not printed at any `NAUTILUS_DEBUG` level.
 
 ### Too many pending sessions
 
