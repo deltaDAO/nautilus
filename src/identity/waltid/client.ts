@@ -145,45 +145,45 @@ export class WaltIdWalletError extends Error {
  */
 const MAX_LEGACY_NONCE_LENGTH = 1024
 
-/**
- * What the legacy web3 login signs: one line of base64url, hex, a UUID or a JWT, optionally
- * after `Sign in: `. Nothing with a line break or other prose.
- */
-const LEGACY_NONCE = /^(?:Sign in: )?[A-Za-z0-9._~+/=:-]{8,}$/
+const HEX_NONCE = /^(?:Sign in: 0x|0x)?[0-9a-fA-F]{64}$/
+const UUID_NONCE = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
 
 /** The first line of an EIP-4361 (Sign-In with Ethereum) message. */
 const SIWE_MARKER = /wants you to sign in with your ethereum account/i
 
-/** Whether base64url `part` decodes to JSON (an object, an array or a string). */
-function decodesToJson(part: string): unknown {
-  if (!/^[A-Za-z0-9_-]+$/.test(part)) return undefined
+function decodeNoncePart(part: string): Record<string, unknown> | undefined {
   try {
-    const text = atob(
-      part
-        .replace(/-/g, '+')
-        .replace(/_/g, '/')
-        .padEnd(Math.ceil(part.length / 4) * 4, '=')
+    const decoded: unknown = JSON.parse(
+      atob(part.replace(/-/g, '+').replace(/_/g, '/'))
     )
-    return /^\s*[[{"]/.test(text) ? JSON.parse(text) : undefined
+    return decoded && typeof decoded === 'object' && !Array.isArray(decoded)
+      ? (decoded as Record<string, unknown>)
+      : undefined
   } catch {
     return undefined
   }
 }
 
-/**
- * Throws unless `nonce` is a short nonce of the form the legacy web3 login expects, and
- * returns it without surrounding whitespace. The signer's key is the same one that signs in
- * to wallet-api2 with an EIP-4361 message and, with `Eip191VcSigner`, signs DDOs as
- * `personal_sign` over `<header>.<payload>`: a malicious endpoint posing as a legacy wallet
- * could hand nautilus either and turn the signature into an address token or a signed DDO.
- * So nautilus refuses, besides anything that is not one line of nonce characters:
- *
- * - a Sign-In with Ethereum message;
- * - an unsigned JWS signing input: two dot-separated parts whose first decodes to JSON
- *   (`Eip191VcSigner`'s input is one), and any dotted nonce whose first part is a JOSE
- *   header (`{"alg": …}`) other than a whole three-part JWT, the signed nonce token some
- *   walt.id versions answer.
- */
+/** Older wallets wrap the nonce in a signed JWT with a nonce claim. */
+function isSignedNonce(text: string): boolean {
+  const parts = text.split('.')
+  if (
+    parts.length !== 3 ||
+    !parts.every((part) => /^[A-Za-z0-9_-]+$/.test(part))
+  )
+    return false
+  const header = decodeNoncePart(parts[0])
+  const payload = decodeNoncePart(parts[1])
+  return (
+    typeof header?.alg === 'string' &&
+    !!header.alg &&
+    !/^(?:none$|eth)/i.test(header.alg) &&
+    typeof payload?.nonce === 'string' &&
+    !!payload.nonce
+  )
+}
+
+/** Check the legacy challenge before using the wallet key to sign it. */
 export function assertLegacyNonce(nonce: unknown): string {
   if (typeof nonce !== 'string')
     throw new WaltIdWalletError(
@@ -198,39 +198,20 @@ export function assertLegacyNonce(nonce: unknown): string {
       undefined,
       { code: 'message_unexpected' }
     )
-  if (trimmed.length > MAX_LEGACY_NONCE_LENGTH || !LEGACY_NONCE.test(trimmed))
-    throw new WaltIdWalletError(
-      'auth/account/web3/nonce',
-      `the wallet asked nautilus to sign text that is not a login nonce (${trimmed.length} characters). Refused: nautilus signs only a one-line nonce with this key.`,
-      undefined,
-      { code: 'message_unexpected' }
-    )
-  const parts = trimmed.split('.')
-  if (parts.length > 1) {
-    const header = decodesToJson(parts[0])
-    const jose =
-      typeof header === 'object' &&
-      header !== null &&
-      !Array.isArray(header) &&
-      'alg' in header
-    const ethSigned =
-      jose &&
-      String((header as { alg: unknown }).alg)
-        .toUpperCase()
-        .startsWith('ETH')
-    if (
-      (parts.length === 2 && header !== undefined) ||
-      (jose && parts.length !== 3) ||
-      ethSigned
-    )
-      throw new WaltIdWalletError(
-        'auth/account/web3/nonce',
-        'the wallet asked nautilus to sign a JWS signing input (header.payload) instead of a nonce. Refused: signed with this key it would be a signed credential, such as a DDO.',
-        undefined,
-        { code: 'message_unexpected' }
-      )
-  }
-  return trimmed
+  if (
+    trimmed.length <= MAX_LEGACY_NONCE_LENGTH &&
+    (HEX_NONCE.test(trimmed) ||
+      UUID_NONCE.test(trimmed) ||
+      isSignedNonce(trimmed))
+  )
+    return trimmed
+
+  throw new WaltIdWalletError(
+    'auth/account/web3/nonce',
+    `the wallet asked nautilus to sign text that is not a login nonce (${trimmed.length} characters). Refused: nautilus signs only a login challenge with this key, never a JWS signing input or other document.`,
+    undefined,
+    { code: 'message_unexpected' }
+  )
 }
 
 export interface WaltIdHttpWalletOptions {
