@@ -1471,6 +1471,28 @@ describe('WalletApi2CredentialProvider', () => {
     expect(calls.map((call) => call.name)).to.include('reject')
   })
 
+  it('declines with no-matching-credential when wallet-api2 finds no credential combination (access_denied)', async () => {
+    const { wallet, calls } = fakeWallet({
+      valid: false,
+      error: {
+        code: 'access_denied',
+        message:
+          'The wallet has no credential combination that satisfies this request'
+      }
+    })
+    const thrown = await new WalletApi2CredentialProvider({
+      wallet,
+      walletId: 'w-own'
+    })
+      .present(challenge())
+      .catch((e) => e)
+    expect(thrown.reason).to.equal('no-matching-credential')
+    expect(thrown.details).to.deep.equal({ errorCode: 'access_denied' })
+    expect(thrown.message).to.contain('no credential combination')
+    expect(thrown.message).not.to.contain('access list')
+    expect(calls.map((call) => call.name)).to.deep.equal(['preview', 'reject'])
+  })
+
   it('takes an onSelectCredentials choice, and refuses one that was not offered', async () => {
     const chosen = fakeWallet()
     await new WalletApi2CredentialProvider({

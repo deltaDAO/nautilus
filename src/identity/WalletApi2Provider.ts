@@ -385,6 +385,19 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
       throw error
     }
 
+    // wallet-api2 answers an invalid preview with `access_denied` when no credential combination
+    // of the wallet satisfies the request (for an address token: also when the organisation
+    // credentials it would need are not on the address's access list).
+    if (!preview.valid && preview.error?.code === 'access_denied')
+      return decline(
+        'access_denied',
+        new CredentialPresentationError(
+          `The wallet holds no credential combination that satisfies the presentation request${preview.error.message ? ` (${remove(sanitize(remove(preview.error.message), MAX_PRESENTATION_ERROR_LENGTH, null))})` : ''}.${isAddressSource(this.source) ? ` ${ACCESS_LIST_HINT}` : ''}`,
+          { errorCode: 'access_denied' },
+          'no-matching-credential'
+        )
+      )
+
     if (!preview.valid)
       return decline(
         preview.error?.code ?? 'invalid_request',

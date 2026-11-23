@@ -851,6 +851,39 @@ describe('WalletApi2CredentialProvider.withAddressSignIn', () => {
     )
   })
 
+  it('adds the access-list hint when wallet-api2 finds no credential combination (access_denied)', async () => {
+    const gateway = mockGateway({
+      handle: (call) =>
+        call.path.endsWith('/preview-handle')
+          ? json(200, {
+              handle: 'handle-0123456789',
+              preview: {
+                valid: false,
+                error: {
+                  code: 'access_denied',
+                  message:
+                    'The wallet has no credential combination that satisfies this request'
+                },
+                responseUri: `https://${VERIFIER_HOST}/r`,
+                transactionData: [],
+                credentialOptions: []
+              }
+            })
+          : undefined
+    })
+    const thrown = await withSignIn(gateway)
+      .credentials.present(challenge())
+      .catch((e) => e)
+    expect(thrown.reason).to.equal('no-matching-credential')
+    expect(thrown.details).to.deep.equal({ errorCode: 'access_denied' })
+    expect(thrown.message).to.contain(
+      'Organisation credentials appear only if an admin put this address on their access list (Wallet UI → Credentials).'
+    )
+    expect(paths(gateway).some((p) => p.endsWith('/reject-handle'))).to.equal(
+      true
+    )
+  })
+
   const SIGN_IN = [
     'chain_not_supported',
     'challenge_invalid',
