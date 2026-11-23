@@ -103,6 +103,7 @@ describe('WalletApi2VcSigner', () => {
     })
     const trustedKid = `${ISSUER}#secp256k1`
     let kid = trustedKid
+    let corruptSignature = false
     const gateway = mockGateway({
       handle: (call) => {
         if (!call.path.endsWith('/sign')) return undefined
@@ -111,6 +112,7 @@ describe('WalletApi2VcSigner', () => {
           key: privateKey,
           dsaEncoding: 'ieee-p1363'
         })
+        if (corruptSignature) signature[0] ^= 1
         return new Response(`${input}.${b64url(signature)}`)
       }
     })
@@ -121,6 +123,11 @@ describe('WalletApi2VcSigner', () => {
     })
     const ddo = signer.prepareDocument(ddoFixture())
     await expect(signer.sign(ddo)).resolves.toMatchObject({ issuer: ISSUER })
+    corruptSignature = true
+    await expect(signer.sign(ddo)).rejects.toMatchObject({
+      code: 'signature_invalid'
+    })
+    corruptSignature = false
     kid = `${ISSUER}#unknown`
     await expect(signer.sign(ddo)).rejects.toMatchObject({
       code: 'signature_invalid'
