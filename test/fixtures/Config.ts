@@ -44,14 +44,20 @@ function localChainContracts(chainId: number): Partial<Config> {
   const entry = Object.values(all).find((value) => value.chainId === chainId)
   if (!entry) return {}
 
-  return {
-    nftFactoryAddress: entry.ERC721Factory as string,
-    fixedRateExchangeAddress: entry.FixedPrice as string,
-    dispenserAddress: entry.Dispenser as string,
-    oceanTokenAddress: entry.Ocean as string,
-    opfCommunityFeeCollector: entry.OPFCommunityFeeCollector as string,
-    routerFactoryAddress: entry.Router as string
+  const contracts: Partial<Config> = {}
+  const addressFields = {
+    ERC721Factory: 'nftFactoryAddress',
+    FixedPrice: 'fixedRateExchangeAddress',
+    Dispenser: 'dispenserAddress',
+    Ocean: 'oceanTokenAddress',
+    OPFCommunityFeeCollector: 'opfCommunityFeeCollector',
+    Router: 'routerFactoryAddress'
+  } as const
+  for (const [name, key] of Object.entries(addressFields)) {
+    const address = entry[name]
+    if (typeof address === 'string' && address) contracts[key] = address
   }
+  return contracts
 }
 
 /** The ocean-node under test. */
