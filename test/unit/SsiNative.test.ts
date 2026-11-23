@@ -946,22 +946,25 @@ describe('PolicySessionResolver on a node with the native SSI module', () => {
     expect(challenges).to.have.length(0)
   })
 
-  it('refuses a request that does not point at the announced verifier, before presenting', async () => {
-    const { client } = ssiNode({
-      initiate: async () => ({
-        required: true,
-        sessionId: SESSION,
-        requestUri: `openid4vp://authorize?request_uri=${encodeURIComponent('https://evil.test/r')}`
+  it.each(['https://evil.test/r', `https://${VERIFIER_HOST}:8443/r`])(
+    'refuses a request for %s before presenting',
+    async (target) => {
+      const { client } = ssiNode({
+        initiate: async () => ({
+          required: true,
+          sessionId: SESSION,
+          requestUri: `openid4vp://authorize?request_uri=${encodeURIComponent(target)}`
+        })
       })
-    })
-    const { provider, challenges } = recordingProvider()
-    const thrown = await resolver(provider)
-      .resolve(request(client))
-      .catch((e) => e)
-    expect(thrown).to.be.instanceOf(CredentialPresentationError)
-    expect(thrown.reason).to.equal('request-invalid')
-    expect(challenges).to.have.length(0)
-  })
+      const { provider, challenges } = recordingProvider()
+      const thrown = await resolver(provider)
+        .resolve(request(client))
+        .catch((e) => e)
+      expect(thrown).to.be.instanceOf(CredentialPresentationError)
+      expect(thrown.reason).to.equal('request-invalid')
+      expect(challenges).to.have.length(0)
+    }
+  )
 
   it('warns once when the node does not announce its verifier', async () => {
     const { client } = ssiNode({
@@ -1122,8 +1125,13 @@ describe('PolicySessionResolver on a node with the native SSI module', () => {
 })
 
 describe('access() on a node with the native SSI module', () => {
-  it('verifies before the fee request and the order, and downloads with { sessionId }', async () => {
-    const { client, calls } = ssiNode()
+  it('verifies before the fee request and the order, and downloads with { sessionId } when the verifier announces :443', async () => {
+    const { client, calls } = ssiNode({
+      capabilities: {
+        ...CAPABILITIES,
+        verifierPublicHost: `${VERIFIER_HOST}:443`
+      }
+    })
 
     await access(
       { assetDid: ASSET_DID },
@@ -1204,8 +1212,14 @@ describe('compute() on a node with the native SSI module', () => {
     policySessions: resolver(recordingProvider().provider)
   })
 
-  it('sends { sessionId, sessionIds } keyed by DID to initializeCompute and computeStart', async () => {
-    const { client } = ssiNode({ assets: assets() })
+  it('sends { sessionId, sessionIds } keyed by DID to initializeCompute and computeStart when the verifier announces :443', async () => {
+    const { client } = ssiNode({
+      assets: assets(),
+      capabilities: {
+        ...CAPABILITIES,
+        verifierPublicHost: `${VERIFIER_HOST}:443`
+      }
+    })
 
     await compute(job, context(client))
 

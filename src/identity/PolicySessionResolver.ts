@@ -62,6 +62,7 @@ import {
 import {
   hasSsiEntries,
   isSsiPolicyV2Credential,
+  normalizeVerifierHost,
   requestUriHost,
   type SsiCapabilities,
   type SsiResult,
@@ -493,7 +494,7 @@ export class PolicySessionResolver {
         { nodeUri: node.nodeUri, requestHost },
         { once: JSON.stringify(['ssi-verifier', node.nodeUri]) }
       )
-    else if (requestHost !== verifierHost)
+    else if (requestHost !== normalizeVerifierHost(verifierHost))
       throw new CredentialPresentationError(
         `The presentation request points at ${requestHost ?? 'no request_uri'}, not at the verifier ${node.nodeUri} announces (${verifierHost}). It was not created by this node's verifier, so nothing was presented, ordered or paid.`,
         undefined,

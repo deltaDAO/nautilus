@@ -32,7 +32,11 @@ import type {
   CredentialProvider
 } from './CredentialProvider.js'
 import { assertPresentationRequest } from './requestChecks.js'
-import { ASSET_ACCESS_TRANSACTION_DATA_TYPE, requestUriHost } from './ssi.js'
+import {
+  ASSET_ACCESS_TRANSACTION_DATA_TYPE,
+  normalizeVerifierHost,
+  requestUriHost
+} from './ssi.js'
 import { CredentialPresentationError } from './WaltIdProvider.js'
 import { addressCodeReason } from './waltid/addressErrors.js'
 import {
@@ -733,20 +737,6 @@ function walletError(
         ? 'wallet-setup'
         : 'wallet-failed'
   )
-}
-
-/** `https://Host:443` or `host:443` as `host`: the lower-case host, the port if not 443. */
-function normalizeVerifierHost(value: string): string {
-  const text = value.trim().toLowerCase()
-  try {
-    const origin = /^[a-z][a-z0-9+.-]*:\/\//.test(text)
-      ? text
-      : `https://${text}`
-    if (!/^https?:\/\/[^/@?#\\]+\/?$/.test(origin)) return text
-    return new URL(origin).host
-  } catch {
-    return text
-  }
 }
 
 /** How long a pre-flight answer is reused for the same token. */
