@@ -38,6 +38,8 @@ import {
   type FileInfo,
   type NodeComputeJob,
   type NodeStatus,
+  OceanNodeProviderError,
+  P2pError,
   type PersistentStorageFileEntry,
   PROTOCOL_COMMANDS,
   type ProviderComputeInitializeResults,
@@ -192,18 +194,25 @@ export class OceanNodeError extends Error {
   readonly cause?: unknown
   /** The HTTP status the node answered with, when there was an answer. */
   readonly status?: number
+  /**
+   * The node's machine-readable error code, when it sent one, e.g. `MAINTENANCE_MODE` (the
+   * node drains: it takes no new compute or service jobs; running ones continue).
+   */
+  readonly code?: string
 
   constructor(
     operation: string,
     message: string,
     cause?: unknown,
-    status?: number
+    status?: number,
+    code?: string
   ) {
     super(`[ocean-node] ${operation}: ${message}`)
     this.name = 'OceanNodeError'
     this.operation = operation
     this.cause = cause
     this.status = status
+    this.code = code
   }
 
   /**
@@ -217,11 +226,24 @@ export class OceanNodeError extends Error {
   static from(operation: string, error: unknown): OceanNodeError {
     if (error instanceof OceanNodeError) return error
 
+    const responseError =
+      error instanceof OceanNodeProviderError ||
+      (error instanceof P2pError && error.body !== undefined)
+        ? error
+        : undefined
+    const code = responseError?.code
+
     return new OceanNodeError(
       operation,
       describeError(error),
       // describeError handed the raw error to the debug channel already.
-      sanitizedError(error, null)
+      sanitizedError(error, null),
+      Number.isInteger(responseError?.httpStatus)
+        ? responseError?.httpStatus
+        : undefined,
+      typeof code === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(code)
+        ? code
+        : undefined
     )
   }
 }

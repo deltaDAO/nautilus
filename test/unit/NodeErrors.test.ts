@@ -14,6 +14,8 @@ import {
   Aquarius,
   LoggerInstance,
   LogLevel,
+  OceanNodeProviderError,
+  P2pError,
   ProviderInstance
 } from '@oceanprotocol/lib'
 import {
@@ -1319,6 +1321,49 @@ describe("the node's text in a message", () => {
     expect(cause.message).not.to.contain('0xsecret')
     expect(cause.message.length).to.be.at.most(201)
   })
+
+  it("keeps the node's HTTP status and error code from ocean.js 10's typed errors", () => {
+    const raw = new OceanNodeProviderError(
+      { error: 'node is in maintenance', code: 'MAINTENANCE_MODE' },
+      503
+    )
+
+    const error = OceanNodeError.from('computeStart', raw)
+
+    expect(error.status).to.equal(503)
+    expect(error.code).to.equal('MAINTENANCE_MODE')
+    // a plain error (ocean.js 9, or a network failure) has neither
+    const plain = OceanNodeError.from('computeStart', new Error('fetch failed'))
+    expect(plain.status).to.equal(undefined)
+    expect(plain.code).to.equal(undefined)
+    // a code that is not a short identifier is not taken over
+    const odd = new OceanNodeProviderError({ code: 'a b\n<script>' }, 503)
+    expect(OceanNodeError.from('x', odd).code).to.equal(undefined)
+  })
+
+  it('takes P2P error codes from peer responses', () => {
+    const frame = { httpStatus: 503, code: 'MAINTENANCE_MODE' }
+    const error = new P2pError('protocol_failed', 'peer refused', {
+      ...frame,
+      body: frame
+    })
+    expect(OceanNodeError.from('computeStart', error)).toMatchObject({
+      status: 503,
+      code: 'MAINTENANCE_MODE'
+    })
+  })
+
+  it('leaves the node code unset for signer and transport failures', async () => {
+    for (const code of ['ACTION_REJECTED', 'ECONNRESET']) {
+      vi.spyOn(ProviderInstance, 'computeStop').mockRejectedValueOnce(
+        Object.assign(new Error('request failed'), { code })
+      )
+      const error = await rejection(() => client().computeStop(JOB))
+      expect(error.status).to.equal(undefined)
+      expect(error.code).to.equal(undefined)
+    }
+  })
+
   it('keeps a URL whole across a backslash in its path, and ends it at a quote', () => {
     const token = FAKE.rpcPathToken
     for (const [text, expected] of [

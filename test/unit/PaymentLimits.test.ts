@@ -26,7 +26,7 @@ import {
   EscrowContract,
   sendTx
 } from '@oceanprotocol/lib'
-import { getAddress, type Signer } from 'ethers'
+import { AbiCoder, getAddress, Interface, type Signer } from 'ethers'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComputeConfig } from '../../src/@types/Compute.js'
 import { access, settleOrder } from '../../src/access/index.js'
@@ -63,6 +63,11 @@ import { expectThrowsAsync } from '../helpers.js'
 const escrow = {
   getUserFunds: vi.fn(),
   getAuthorizations: vi.fn(),
+  // ERC-165 probe for Escrow v2 (ocean.js 10); false: a v1 contract
+  isEscrowCore: vi.fn(),
+  isEscrowEnterprise: vi.fn(),
+  isTokenAllowed: vi.fn(),
+  previewFee: vi.fn(),
   contract: {
     getFunction: vi.fn((name: string) =>
       Object.assign(vi.fn(), {
@@ -286,6 +291,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   escrow.getUserFunds.mockResolvedValue({ available: 0n, locked: 0n })
   escrow.getAuthorizations.mockResolvedValue([])
+  escrow.isEscrowCore.mockResolvedValue(false)
+  escrow.isEscrowEnterprise.mockResolvedValue(false)
   erc20.balanceOf.mockResolvedValue(100n * ONE)
   vi.mocked(allowanceWei).mockResolvedValue('0')
 })
@@ -794,11 +801,13 @@ describe('compute() escrow pin', () => {
 
 describe('resolveEscrowPin()', () => {
   const OP_SEPOLIA = 11155420
+  // OP Sepolia's contracts in the address data ocean.js 10.1.0 ships (redeployed since 9.x):
+  // literals on purpose, so a change of the shipped addresses fails here.
   const OP_SEPOLIA_ENTERPRISE_ESCROW = getAddress(
-    '0xfa48673a7C36A2A768f89AC1ee8C355D5c367B02'
+    '0x1706DF1f2d93558D1d77bEd49ccdB8B88fAfC306'
   )
   const OP_SEPOLIA_ESCROW = getAddress(
-    '0x7842Fa3B2d87Ff1cd52C4152382f7C4B3406E5A6'
+    '0x8bA04715B1b210f710426b21A29887EEd4EA6751'
   )
   const savedAddressFile = process.env.ADDRESS_FILE
 
@@ -1073,6 +1082,272 @@ describe('compute() escrow funding, in exact amounts', () => {
     expect(escrowTransactions()).to.deep.equal([
       { method: 'authorize', args: [TOKEN, PAYEE, 5n * ONE, 3900n, 10n] }
     ])
+  })
+
+  it('reads and writes an Escrow v1 contract with the v1 ABI (no authorisation expiry)', async () => {
+    // The six-field wire layout is independent of the ABI nautilus supplies to ocean.js.
+    const data = AbiCoder.defaultAbiCoder().encode(
+      ['tuple(address,uint256,uint256,uint256,uint256,uint256)[]'],
+      [[[PAYEE, 3n * ONE, ONE, 30n, 7n, 1n]]]
+    )
+    await vi.mocked(EscrowContract).withImplementation(
+      function (this: void, _address, _signer, _network, _config, abi) {
+        if (!abi) return escrow as unknown as EscrowContract
+        const iface = new Interface(JSON.stringify(abi))
+        expect(iface.getFunction('authorize')?.inputs).toHaveLength(5)
+        return {
+          ...escrow,
+          getAuthorizations: async () =>
+            iface.decodeFunctionResult('getAuthorizations', data)[0]
+        } as unknown as EscrowContract
+      },
+      async () => {
+        await runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running
+      }
+    )
+    expect(escrowTransactions().at(-1)).to.deep.equal({
+      method: 'authorize',
+      args: [TOKEN, PAYEE, 3n * ONE, 3900n, 7n]
+    })
+  })
+
+  it('authorises an Escrow v2 contract with its 6th argument, no expiry when none stood', async () => {
+    escrow.isEscrowCore.mockResolvedValue(true)
+
+    await runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running
+
+    // ocean.js 10's own (v2) ABI: no ABI argument
+    expect(
+      vi.mocked(EscrowContract).mock.calls.every((call) => call.length === 4)
+    ).toBe(true)
+    expect(escrowTransactions().at(-1)).to.deep.equal({
+      method: 'authorize',
+      args: [TOKEN, PAYEE, ONE, 3900n, 1n, 0n]
+    })
+  })
+
+  describe('a fee-gated v2 EnterpriseEscrow', () => {
+    beforeEach(() => {
+      escrow.isEscrowCore.mockResolvedValue(true)
+      escrow.isEscrowEnterprise.mockResolvedValue(true)
+      escrow.isTokenAllowed.mockResolvedValue(true)
+    })
+
+    it('refuses a disallowed token before funding or ordering', async () => {
+      escrow.isTokenAllowed.mockResolvedValue(false)
+
+      await expectThrowsAsync(
+        () => runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running,
+        /does not allow token/
+      )
+      expect(escrow.isTokenAllowed).toHaveBeenCalledExactlyOnceWith(TOKEN)
+      expectNothingSent()
+    })
+
+    it.each([ONE, ONE + 1n])(
+      'refuses a fee of %s that consumes the lock',
+      async (fee) => {
+        escrow.previewFee.mockResolvedValue(fee.toString())
+
+        await expectThrowsAsync(
+          () => runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running,
+          /fee .* leaves no payment/
+        )
+        expectNothingSent()
+      }
+    )
+
+    it('checks the gross amount in base units even with a partial deposit', async () => {
+      escrow.getUserFunds.mockResolvedValue({ available: ONE / 2n, locked: 0n })
+      escrow.previewFee.mockResolvedValue((ONE - 1n).toString())
+
+      await runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running
+
+      expect(escrow.previewFee).toHaveBeenCalledExactlyOnceWith(
+        TOKEN,
+        ONE.toString(),
+        0
+      )
+      expect(vi.mocked(sendSettlement)).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  describe('an expiring Escrow v2 authorisation', () => {
+    const NOW = 1_800_000_000n
+    const standing = (expiryTimestamp: bigint) => [
+      // ethers returns the 7-field struct as an array
+      [PAYEE, 5n * ONE, 0n, 7200n, 10n, 0n, expiryTimestamp]
+    ]
+
+    beforeEach(() => {
+      escrow.isEscrowCore.mockResolvedValue(true)
+      escrow.getUserFunds.mockResolvedValue({ available: ONE, locked: 0n })
+      Object.assign(signer, {
+        provider: { getBlock: async () => ({ timestamp: Number(NOW) }) }
+      })
+    })
+    afterEach(() => {
+      delete (signer as { provider?: unknown }).provider
+    })
+
+    it('is left as it is while it outlasts the job’s lock and the margin', async () => {
+      escrow.getAuthorizations.mockResolvedValue(standing(NOW + 3900n + 120n))
+
+      await runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running
+
+      expect(vi.mocked(sendTx)).not.toHaveBeenCalled()
+    })
+
+    it('is moved out to the job’s lock when it ends sooner, and stays expiring', async () => {
+      escrow.getAuthorizations.mockResolvedValue(standing(NOW + 60n))
+
+      await runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running
+
+      expect(escrowTransactions()).to.deep.equal([
+        {
+          method: 'authorize',
+          // the lock time plus 120 s for the orders and the start call
+          args: [TOKEN, PAYEE, 5n * ONE, 7200n, 10n, NOW + 3900n + 120n]
+        }
+      ])
+    })
+
+    it('is moved out when it would end within the margin', async () => {
+      escrow.getAuthorizations.mockResolvedValue(standing(NOW + 3900n + 60n))
+
+      await runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running
+
+      expect(escrowTransactions().map((tx) => tx.method)).to.deep.equal([
+        'authorize'
+      ])
+    })
+
+    it.each([
+      ['revoked', standing(NOW - 1n)],
+      ['removed', []],
+      ['limits changed', [[PAYEE, ONE, 0n, 7200n, 10n, 0n, NOW + 60n]]]
+    ])(
+      'stops before renewing a grant %s during funding',
+      async (_why, changed) => {
+        escrow.getUserFunds.mockResolvedValue({ available: 0n, locked: 0n })
+        escrow.getAuthorizations
+          .mockResolvedValueOnce(standing(NOW + 60n))
+          .mockResolvedValue(changed)
+
+        await expectThrowsAsync(
+          () => runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running,
+          /authorisation .* changed after planning/
+        )
+
+        expect(escrowTransactions()).to.deep.equal([
+          { method: 'deposit', args: [TOKEN, ONE] }
+        ])
+        expect(
+          escrow.getAuthorizations.mock.invocationCallOrder[1]
+        ).to.be.greaterThan(vi.mocked(sendTx).mock.invocationCallOrder[0])
+        expect(vi.mocked(sendSettlement)).not.toHaveBeenCalled()
+      }
+    )
+
+    it.each([
+      ['revoked', standing(NOW - 1n), /expired at .*The deposit was confirmed/],
+      ['removed', [], /no longer covers/],
+      ['shortened', standing(NOW + 3900n), /no longer covers/],
+      [
+        'lock amount used',
+        [[PAYEE, ONE, 1n, 7200n, 10n, 1n, 0n]],
+        /no longer covers/
+      ],
+      [
+        'lock count used',
+        [[PAYEE, ONE, 0n, 7200n, 1n, 1n, 0n]],
+        /no longer covers/
+      ],
+      [
+        'lock duration reduced',
+        [[PAYEE, ONE, 0n, 3899n, 10n, 0n, 0n]],
+        /no longer covers/
+      ]
+    ] as const)(
+      'stops orders when a covering grant is %s during deposit confirmation',
+      async (_why, changed, error) => {
+        escrow.getUserFunds.mockResolvedValue({ available: 0n, locked: 0n })
+        escrow.getAuthorizations.mockResolvedValue(standing(NOW + 4020n))
+        vi.mocked(sendTx).mockResolvedValueOnce({
+          wait: async () => {
+            escrow.getAuthorizations.mockResolvedValue(changed)
+            return { hash: '0xdeposit' }
+          }
+        } as never)
+
+        const { running, computeStart } = runCompute(
+          quoteWith(goodFees, PAYMENT),
+          ALLOW_ALL
+        )
+        await expect(running).rejects.toThrow(error)
+        expect(escrowTransactions()).to.deep.equal([
+          { method: 'deposit', args: [TOKEN, ONE] }
+        ])
+        expect(vi.mocked(sendSettlement)).not.toHaveBeenCalled()
+        expect(computeStart).not.toHaveBeenCalled()
+      }
+    )
+
+    it('accepts a changed grant that still covers the job', async () => {
+      escrow.getAuthorizations
+        .mockResolvedValueOnce(standing(NOW + 4020n))
+        .mockResolvedValue([[PAYEE, ONE, 0n, 3900n, 1n, 0n, 0n]])
+
+      await runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running
+
+      expect(vi.mocked(sendTx)).not.toHaveBeenCalled()
+      expect(vi.mocked(sendSettlement)).toHaveBeenCalledTimes(2)
+    })
+
+    it.each([60n, 4020n])(
+      'rechecks a grant expiring in %s seconds against the chain time after deposit confirmation',
+      async (lifetime) => {
+        escrow.getUserFunds.mockResolvedValue({ available: 0n, locked: 0n })
+        escrow.getAuthorizations.mockResolvedValue(standing(NOW + lifetime))
+        const getBlock = vi
+          .fn()
+          .mockResolvedValueOnce({ timestamp: Number(NOW) })
+          .mockResolvedValue({ timestamp: Number(NOW + lifetime + 1n) })
+        Object.assign(signer, { provider: { getBlock } })
+
+        await expectThrowsAsync(
+          () => runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running,
+          /expired at .*The deposit was confirmed/
+        )
+        expect(escrowTransactions()).to.deep.equal([
+          { method: 'deposit', args: [TOKEN, ONE] }
+        ])
+        expect(vi.mocked(sendSettlement)).not.toHaveBeenCalled()
+      }
+    )
+
+    it('can be extended in the last active second', async () => {
+      escrow.getAuthorizations.mockResolvedValue(standing(NOW))
+
+      await runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running
+
+      expect(escrowTransactions()).to.deep.equal([
+        {
+          method: 'authorize',
+          args: [TOKEN, PAYEE, 5n * ONE, 7200n, 10n, NOW + 3900n + 120n]
+        }
+      ])
+    })
+
+    it('is not re-enabled once it has expired (a revoke), and nothing is sent', async () => {
+      escrow.getAuthorizations.mockResolvedValue(standing(NOW - 1n))
+
+      await expectThrowsAsync(
+        () => runCompute(quoteWith(goodFees, PAYMENT), ALLOW_ALL).running,
+        /expired at .*revoked; nautilus does not re-authorise it.*Nothing was spent/
+      )
+      expectNothingSent()
+    })
   })
 
   it('refuses before any transaction when the wallet cannot cover the deposit', async () => {
