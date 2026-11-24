@@ -1,5 +1,167 @@
 # @deltadao/nautilus
 
+## 2.0.0-beta.4
+
+### Minor Changes
+
+- [#240](https://github.com/deltaDAO/nautilus/pull/240) [`cabe26b`](https://github.com/deltaDAO/nautilus/commit/cabe26ba9291bf5895c2ccfc4595d30cff5b1dac) Thanks [@Abrom8](https://github.com/Abrom8)! - Update to `@oceanprotocol/lib` 10.1.0 and `@oceanprotocol/ddo-js` 1.1.0. The peer
+  dependency on ocean.js is now `^10.1.0`. ocean.js no longer nests its own older ddo-js.
+  
+  - **Escrow v1 and v2.** ocean.js 10's escrow ABI is Escrow v2 (`@oceanprotocol/contracts`
+    3.2.0), whose authorisation has an expiry. pontusx-node and its deployments use Escrow v1
+    (contracts 2.x), whose authorisation ocean.js 10 cannot decode and whose `authorize` it
+    encodes with one argument too many. `compute()` now detects the quoted escrow's
+    generation (ERC-165) and reads and writes it with its own ABI, so paid compute works
+    with both.
+  - **Expiring authorisations (v2).** An authorisation without expiry stays without one. An
+    expiring authorisation that would end before the job's lock (plus 120 seconds for the
+    orders and the start call) is moved out to that point. An expired one, which is how a
+    payer revokes, is refused with an `Error` before anything is sent, instead of being
+    re-enabled.
+  - **Escrow addresses.** ocean.js 10's address data names the redeployed v2 contracts on
+    every chain it ships escrows for. Without `config.escrow`, a node that still quotes its
+    old v1 escrow on such a chain is refused before anything is spent. Funds left in an old
+    escrow stay there.
+  - **`OceanNodeError.code`**, and `status` for calls through ocean.js: ocean.js 10's typed
+    provider errors carry the node's HTTP status and machine-readable code, e.g.
+    `MAINTENANCE_MODE`.
+  - **DDO types.** ddo-js 1.1 types `credentials` on `ServiceV5` and the v5
+    `credentialSubject` as an object (`{ allow, deny, match_allow, match_deny }`) instead of
+    an array.
+  - **Validation.** ddo-js 1.1 reports a DID that does not derive from `nftAddress` and
+    `chainId` itself. `validate()` reports it once, with nautilus's message naming the
+    expected DID.
+  
+  **Verified** with the unit suite and against the pontusx e2e stack (pontusx-node `f1724658`
+  with Escrow v1 on anvil): SSI access, publish and consume, dc+sd-jwt, and free and paid
+  Compute-to-Data.
+
+- [#239](https://github.com/deltaDAO/nautilus/pull/239) [`b1e7416`](https://github.com/deltaDAO/nautilus/commit/b1e7416a2b5b8409a38dbcc5c5d99d52904c64c2) Thanks [@Abrom8](https://github.com/Abrom8)! - Support nodes with the native SSI module (pontusx-node: ocean-node with walt.id
+  verifier-api2, OpenID4VP 1.0 and DCQL), which replaced the policy server, and walt.id's
+  wallet-api2 as the wallet.
+  
+  nautilus picks the flow from the node's status: a node that announces an `ssi` block gets the
+  native SSI flow; a node with a policy server keeps the policy-server flow unchanged.
+  
+  **Consuming**
+  
+  - **`ssiInitiate` / `ssiStatus`.** `access()`, `compute()` and `freeCompute()` open an SSI
+    session for every service whose asset or service has an `SSIpolicyV2` (or deprecated
+    `SSIpolicy`) entry, have the credential provider present the OpenID4VP request, and poll
+    `ssiStatus` until it is `verified`, all before the fee request and any order. A refusal is
+    a `PolicyDeniedError` with `source: 'ssi'`: 403 (address) or 422 (an SSI policy the node
+    cannot satisfy) from `ssiInitiate`, or a `failed`/`expired` session, with the node's results
+    in `policyResults` (`scope`: `vc`, `vp`, `gaiax`, `rego`, `binding`; `credential`: the DCQL
+    query id). A rego deny shows as the `vc` policy `dynamic`, which is how verifier-api2 runs
+    rego.
+  - **`initialize`** gets the session too (`policyServer` query parameter): the node checks it
+    before it quotes the fee. An asset without SSI entries needs no session: the node checks addresses
+    itself.
+  - **`policyServer` payloads.** A download sends `{ sessionId }`; a compute job sends
+    `{ sessionId, sessionIds: { <did>: <sessionId> } }`, one session per input with an SSI
+    requirement, the algorithm included. Native sessions are never cached: the node consumes
+    them (one order for a download, one job for compute).
+  - **`WalletApi2CredentialProvider`.** Presents from walt.id wallet-api2 with its handle-based
+    flow (`present/preview-handle`, then `submit-handle` or `reject-handle`), authenticated
+    with the account's session token (a Hanko session JWT on the pontusx platform). By default
+    it presents from the organisation wallet of the consumer's address and picks, for every
+    required credential combination, the first one the wallet holds. It checks the request
+    first and declines it (`reject-handle`) when the request or the `response_uri` is not on
+    the node's announced verifier host, when the wallet offers credentials for a DCQL query the
+    node did not ask for, or when `transaction_data` is not the node's asset-access item for
+    this consumer, asset and service. `onSelectCredentials` drives the choice from a UI.
+  - **`CredentialProvider.prepare()`** (optional) runs before `ssiInitiate`. A provider that can
+    already tell it cannot present (no wallet for the consumer's address, a rejected token)
+    throws there, and no node session is opened: one that is opened and never presented stays
+    pending until its window closes, and the node allows a consumer only 5 pending sessions.
+    `WalletApi2CredentialProvider` resolves the consumer's wallet in it.
+  - **`CredentialChallenge`** gains `protocol` (`'policy-server'` | `'oid4vp'`), `dcql`,
+    `expiresAt` and `verifierHost`. `WaltIdCredentialProvider` refuses an `oid4vp` challenge and
+    `WalletApi2CredentialProvider` a policy-server one, both as `request-invalid`.
+  - **`PolicySessionResolver.resolveSession()`** returns the session with its protocol;
+    `resolve()` returns `PolicyServerPayload | SsiSessionPayload`. New option
+    `ssiStatusPolling` (also on `Nautilus.create`): default 5 attempts, 2 s apart.
+  - New log events `identity.ssi.legacy_policy` (the node translated a deprecated `SSIpolicy`)
+    and `identity.ssi.verifier_unannounced` (the node does not announce its verifier host).
+  
+  **Publishing**
+  
+  - **`AssetBuilder.addSsiPolicyV2()` / `ServiceBuilder.addSsiPolicyV2()`** (and
+    `removeSsiPolicyV2()`) write an `SSIpolicyV2` value into `credentials.allow`. The value is
+    first checked against the node's rules (`validateSsiPolicyV2Value`: formats, the VC policy
+    allowlist without `regex` and `webhook`, holder binding, reserved Gaia-X query ids, no
+    Gaia-X with W3C queries, rego static checks). A value the node would refuse throws an
+    `SsiPolicyValidationError` before anything is published. `addRequestCredentials` (the
+    policy server's `SSIpolicy`) is deprecated for these nodes.
+  - **`Nautilus.validateRego(code, { policy, nodeUri })`** checks rego locally, then has the
+    node compile it in its verifier's OPA (`validateRego`, authorized publishers and admins
+    only). **`Nautilus.getSsiCapabilities(nodeUri?)`** reads a node's `status.ssi`.
+  - New publish preflight warnings: `publish.preflight.ssi_v2_unsupported`,
+    `ssi_disabled`, `ssi_legacy` and `gaiax_unsupported`.
+  
+  **Node client**
+  
+  - `OceanNodeClient.ssiInitiate()`, `ssiStatus()`, `validateRego()` and
+    `getSsiCapabilities()`. The commands are signed on their own
+    (`address + nonce + command`, or a node auth token), over HTTP only: a pre-computed
+    signature and a P2P node URI are refused before anything is sent.
+  
+  **Verified end to end** against the pontusx stack (pontusx-wallet-ui `deploy/e2e`: node
+  `f1724658`, walt.id `85e302a67`, Hanko test double): capabilities, `access()` with explicit and
+  headless credential choice, a rego deny, a wallet-setup refusal that opens no node session,
+  `validateRego`, a nautilus publish with `addSsiPolicyV2` consumed by nautilus, a Gaia-X L1 asset
+  (granted, and refused with an untrusted label), a `dc+sd-jwt` asset consumed with an SD-JWT VC, and
+  Compute-to-Data on a docker-in-docker environment: `freeCompute()` and paid `compute()` on an
+  SSI-gated dataset and algorithm (one session per input, job finished, result checked) and a rego
+  deny refused before any job.
+
+- [#242](https://github.com/deltaDAO/nautilus/pull/242) [`49ef08e`](https://github.com/deltaDAO/nautilus/commit/49ef08e8638ec24425bb3292cd8209a1e0d819ef) Thanks [@Abrom8](https://github.com/Abrom8)! - Sign in to walt.id wallet-api2 with the key of an organisation address, so scripts,
+  backends and CI jobs present credentials (and sign DDOs) without a Hanko session token.
+  
+  - **`WalletApi2CredentialProvider.withAddressSignIn({ gateway, signer, chainId?,
+    smartAccount?, scopes? })`** signs in through the wallet UI's address gateway
+    (`…/api/address-gateway`) and presents from the address's own wallet.
+    `credentials.signIn` is the sign-in: `check()` reads what the address may do
+    (`GET /auth/account`), `signOut()` revokes the token. `prepare()` signs in, checks that
+    the signer is the consumer and that a pinned `walletId` is the address's wallet, and runs
+    the pre-flight once, so a missing verifier or credential fails before any node session is
+    opened. A preview evicted by newer previews (`handle_evicted`) is made again once.
+  - **`AddressSignIn`**: an ephemeral P-256 key in memory (WebCrypto, never exported), the
+    EIP-4361 message rebuilt and compared byte for byte before the signer signs it (refused
+    as `message_unexpected` with the expected and the actual line), a DPoP proof (RFC 9449)
+    on every request, the token cached and renewed 60 s before it expires, one sign-in for
+    concurrent callers, and one retry after a `401`.
+  - **`WalletApi2TokenSource`** and **`staticTokenSource()`**: `WalletApi2HttpClient` and
+    the provider take a token source as `token`; a string or a function (a Hanko token) is
+    sent as `Authorization: Bearer` as before. An address token is only sent to its gateway
+    (`wrong_endpoint`). `WalletApi2HttpClient.account()` and `signDdo()` are new.
+  - **`WalletApi2VcSigner`** signs DDOs with a wallet-api2 key over a sign-in with the
+    `sign-ddo` scope, in the DDO credential shape wallet-api2 accepts (no `iss`, `sub`, `jti`;
+    no `credentialSubject.id` or `version`). `DdoSigner.prepareDocument()` (optional) lets a
+    signer shape the document before publish and edit validate it.
+  - **Errors.** `CredentialPresentationReason` gains `'sign-in'` and `'not-permitted'`: an
+    exhaustive `switch` over `error.reason` in your code needs a case for each. Both carry
+    wallet-api2's or the gateway's code in `details.code` (and `hint`, `status`,
+    `retryAfter`); `WaltIdWalletError` gains `code`, `hint` and `retryAfter`.
+    `no-matching-credential` under an address token names the credential access list. A
+    Hanko token keeps its reasons (`wallet-setup` for a 401/403), whatever the body.
+  - **401s** are retried at most once: a new sign-in after `token_invalid`/`token_expired`, a
+    fresh proof after `dpop_invalid`, nothing else. Refused and replaced address tokens are
+    revoked in the background. `AddressSignIn` takes `signInTimeoutMs` (default 60 s, covering
+    `signMessage`) and an `AbortSignal` on `getToken()`, `authorize()` and `check()`.
+  - **Legacy walt.id client.** `WaltIdHttpWallet.authenticate()` signs only a one-line login
+    nonce (trimmed), never a Sign-In with Ethereum message, a JWS signing input
+    (`header.payload`, as `Eip191VcSigner` signs) or other text.
+  - **Redaction.** Address tokens (`pxa_…`), `DPoP` credentials and DPoP proofs are not
+    printed at any `NAUTILUS_DEBUG` level, and are redacted from error text. After `Bearer`,
+    `Basic` and `DPoP` only credential-shaped values are redacted in error text, so "the DPoP
+    proof is invalid" keeps its words.
+  - **`FetchedText.wwwAuthenticate`**: the `WWW-Authenticate` header of a `401`.
+  
+  Docs: the guide "Sign in from scripts and CI", `AddressSignIn` (with every error code, its
+  cause and who fixes it) and `WalletApi2VcSigner` reference pages, and the migration entry
+  "Replace a copied Hanko token".
+
 ## 2.0.0-beta.3
 
 ### Minor Changes
