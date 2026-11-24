@@ -6,7 +6,10 @@ import {
   WaltIdCredentialProvider,
   type WaltIdCredentialProviderOptions
 } from '../../src/identity/WaltIdProvider.js'
-import type { WaltIdWallet } from '../../src/identity/waltid/client.js'
+import {
+  assertLegacyNonce,
+  type WaltIdWallet
+} from '../../src/identity/waltid/client.js'
 import {
   type OceanNodeClient,
   PolicyServerAction
@@ -625,5 +628,26 @@ describe('MemorySessionStore', () => {
     expect(
       store.get({ ...key, nodeUri: 'https://node-b.test.invalid' })
     ).to.equal(undefined)
+  })
+})
+
+describe('legacy login nonce formats', () => {
+  it('refuses URLs, commands and compact tokens without a nonce claim', () => {
+    const b64 = (value: unknown) =>
+      Buffer.from(JSON.stringify(value)).toString('base64url')
+    for (const input of [
+      'https://example.org/document',
+      '/usr/bin/reboot',
+      'authorize:transfer',
+      'Sign in: https://example.org/document',
+      `${b64({ alg: 'EdDSA' })}.${b64({ action: 'transfer' })}.c2ln`,
+      `${b64({ alg: 'none' })}.${b64({ nonce: '1' })}.c2ln`,
+      `${b64({ alg: 'garbage' })}.${b64({ nonce: '1' })}.c2ln`,
+      `${b64({ alg: 'EdDSA' })}.${b64({ nonce: '1' })}.x`,
+      `${b64({ alg: 'EdDSA' })}.${b64({ nonce: '1', action: 'transfer' })}.c2ln`
+    ])
+      expect(() => assertLegacyNonce(input)).to.throw(/not a login nonce/)
+    const signedNonce = `${b64({ alg: 'EdDSA' })}.${b64({ nonce: `0x${'ab'.repeat(32)}`, exp: 1800000300 })}.c2ln`
+    expect(assertLegacyNonce(signedNonce)).to.equal(signedNonce)
   })
 })

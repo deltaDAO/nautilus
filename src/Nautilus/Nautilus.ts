@@ -923,6 +923,7 @@ export class Nautilus {
     await resolvePublisherTrustedAlgorithms(this.node, services)
     await this.assertServicesPublishable(services)
     const preflight = await this.assertValidBeforeSpend({
+      ddoSigner,
       asset,
       create: true,
       nftAddress: PLACEHOLDER_ADDRESS,
@@ -1100,6 +1101,7 @@ export class Nautilus {
       await resolvePublisherTrustedAlgorithms(this.node, services)
       await this.assertServicesPublishable(services)
       const preflight = await this.assertValidBeforeSpend({
+        ddoSigner,
         asset,
         create: true,
         nftAddress,
@@ -1458,6 +1460,7 @@ export class Nautilus {
       await this.assertServicesPublishable(asset.ddo.services)
       // The NFT is real on an edit; only the datatokens of newly priced services are not.
       const preflight = await this.assertValidBeforeSpend({
+        ddoSigner,
         asset,
         create: false,
         nftAddress,
@@ -1963,24 +1966,55 @@ export class Nautilus {
     asset: NautilusAsset
     create: boolean
     nftAddress: string
+    ddoSigner: DdoSigner
     issuer: string
   }): Promise<Record<string, unknown>> {
-    const preflight = params.asset.ddo.getPreflightDDO({
+    const projected = params.asset.ddo.getPreflightDDO({
       create: params.create,
       chainId: this.config.chainId as number,
       nftAddress: params.nftAddress,
       datatokenAddress: PLACEHOLDER_ADDRESS
     })
 
-    if (!preflight.issuer) preflight.issuer = params.issuer
-
-    await assertValid(preflight)
+    const preflight = await this.prepareAndValidateDdo(projected, params)
 
     // The node accepts decrypt requests up to 100 KB, so a DDO whose envelope does not fit
     // would go on chain without being indexed. The preflight document is as large as the
     // published one, so this checks the largest envelope its signature can give.
     assertDdoFitsDecryptLimit(preflight, params.issuer)
     return preflight
+  }
+
+  private async prepareAndValidateDdo(
+    projected: Record<string, unknown>,
+    params: { ddoSigner: DdoSigner; issuer: string; nftAddress: string }
+  ): Promise<Record<string, unknown>> {
+    const { ddoSigner, nftAddress } = params
+    // A signer that accepts only some fields (wallet-api2 with an address token) shapes
+    // the document first, so the document validated, signed and returned is one document.
+    const ddo = ddoSigner.prepareDocument
+      ? ddoSigner.prepareDocument(projected)
+      : projected
+
+    /**
+     * The signer's identity is the *default* for `issuer`, stamped before validating,
+     * signing or returning the document, so SHACL checks the exact document that gets
+     * signed and `PublishResponse.ddo` reports the issuer the credential carries. Only the
+     * unset case is stamped (`project()` emits `''` when no issuer was declared): a
+     * deliberately declared issuer — `setIssuer()`, or the one seeded from a resolved asset
+     * on edit — must reach `toCredential()`, whose mismatch guard rejects signing for
+     * somebody else. Overwriting unconditionally here made that guard unreachable, so
+     * `setIssuer()` looked like it worked while the signed claims said something else.
+     */
+    if (!ddo.issuer) ddo.issuer = params.issuer
+
+    // The node derives the DID itself and drops a DDO whose id differs (step 16).
+    assertDid(ddo.id, nftAddress, this.config.chainId)
+
+    // Local SHACL validation, before anything is signed or written. Cheap, and it names the
+    // exact failing field — the node never sees this document, so nothing else would.
+    await assertValid(ddo)
+    return ddo
   }
 
   /**
@@ -2010,30 +2044,12 @@ export class Nautilus {
       log
     } = params
 
-    const ddo = await asset.ddo.getDDO(this.node, {
+    const projected = await asset.ddo.getDDO(this.node, {
       create,
       chainId: this.config.chainId,
       nftAddress
     })
-
-    /**
-     * The signer's identity is the *default* for `issuer`, stamped before validating,
-     * signing or returning the document, so SHACL checks the exact document that gets
-     * signed and `PublishResponse.ddo` reports the issuer the credential carries. Only the
-     * unset case is stamped (`project()` emits `''` when no issuer was declared): a
-     * deliberately declared issuer — `setIssuer()`, or the one seeded from a resolved asset
-     * on edit — must reach `toCredential()`, whose mismatch guard rejects signing for
-     * somebody else. Overwriting unconditionally here made that guard unreachable, so
-     * `setIssuer()` looked like it worked while the signed claims said something else.
-     */
-    if (!ddo.issuer) ddo.issuer = params.issuer
-
-    // The node derives the DID itself and drops a DDO whose id differs (step 16).
-    assertDid(ddo.id, nftAddress, this.config.chainId)
-
-    // Local SHACL validation, before anything is signed or written. Cheap, and it names the
-    // exact failing field — the node never sees this document, so nothing else would.
-    await assertValid(ddo)
+    const ddo = await this.prepareAndValidateDdo(projected, params)
 
     if (create)
       await waitForMetadataPermission({

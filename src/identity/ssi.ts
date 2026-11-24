@@ -308,6 +308,20 @@ export function readRegoValidation(
   }
 }
 
+/** `https://Host:443` or `host:443` as `host`: the lower-case host, the port if not 443. */
+export function normalizeVerifierHost(value: string): string {
+  const text = value.trim().toLowerCase()
+  try {
+    const origin = /^[a-z][a-z0-9+.-]*:\/\//.test(text)
+      ? text
+      : `https://${text}`
+    if (!/^https?:\/\/[^/@?#\\]+\/?$/.test(origin)) return text
+    return new URL(origin).host
+  } catch {
+    return text
+  }
+}
+
 /**
  * The host the wallet fetches an OpenID4VP request from (`request_uri` of an
  * `openid4vp://` URL), lower-cased; `undefined` when there is none or it is not a URL.
@@ -315,7 +329,8 @@ export function readRegoValidation(
 export function requestUriHost(requestUri: string): string | undefined {
   try {
     const target = new URL(requestUri).searchParams.get('request_uri')
-    return target ? new URL(target).host.toLowerCase() : undefined
+    if (!target) return undefined
+    return new URL(target).host.toLowerCase() || undefined
   } catch {
     return undefined
   }

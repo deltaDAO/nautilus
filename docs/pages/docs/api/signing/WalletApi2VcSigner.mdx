@@ -1,0 +1,104 @@
+---
+description: WalletApi2VcSigner signs the DDO with a walt.id wallet-api2 key over an address sign-in (scope sign-ddo), so scripts can publish with a DID issuer. Options and the DDO shape wallet-api2 accepts.
+---
+
+# WalletApi2VcSigner
+
+Sign the DDO with a key held in walt.id wallet-api2 (`POST /wallet/{walletId}/keys/{keyId}/sign`),
+authenticated by an [address sign-in](/docs/api/identity/AddressSignIn) with the `sign-ddo`
+scope. The asset's `issuer` is then a DID of the address's wallet, as when the market
+publishes.
+
+## Usage
+
+```ts twoslash
+import { readFileSync } from 'node:fs'
+import { JsonRpcProvider, Wallet } from 'ethers'
+import type { JWK } from 'jose'
+import {
+  Nautilus,
+  WalletApi2CredentialProvider,
+  WalletApi2VcSigner
+} from '@deltadao/nautilus'
+
+const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const config = { oceanNodeUri: 'https://node.example.org' }
+// ---cut---
+const credentials = WalletApi2CredentialProvider.withAddressSignIn({
+  gateway: 'https://wallet.example.org/api/address-gateway',
+  signer,
+  scopes: ['present', 'sign-ddo']
+})
+
+// Trusted public JWKs keyed by their full DID verification method IDs.
+const trustedMethods: Record<string, JWK> = JSON.parse(
+  readFileSync('./issuer-verification-methods.json', 'utf8')
+)
+const methods = new Map(Object.entries(trustedMethods))
+
+const ddoSigner = new WalletApi2VcSigner({ // [!code focus]
+  signIn: credentials.signIn, // [!code focus]
+  keyId: 'publisher-key', // [!code focus]
+  issuer: 'did:web:example.org', // [!code focus]
+  resolveVerificationKey: (kid) => methods.get(kid) // [!code focus]
+}) // [!code focus]
+
+const nautilus = await Nautilus.create(signer, { config, credentials, ddoSigner })
+```
+
+An organisation admin turns on "Sign asset descriptions (DDOs)" for the address in the wallet
+UI. Signing as the organisation's did:web also needs "Present as …".
+
+## Options
+
+| Option | Type | Purpose |
+| --- | --- | --- |
+| `signIn` | `WalletApi2TokenSource` | `credentials.signIn`, or an `AddressSignIn`, with the scope `sign-ddo`. Required. |
+| `keyId` | `string` | The wallet-api2 key to sign with. Required. |
+| `issuer` | `string` | The DID the credential is issued as; `keyId`'s key must be one of its verification methods. Required. |
+| `resolveVerificationKey` | Function | Required. Return the trusted public JWK authorised by the issuer for this exact verification method DID URL, or `undefined` for an unknown or unauthorised method. Throw or reject if the lookup fails. |
+| `walletId` | `string` | Default: the address's wallet. |
+| `walletApi` | `string` | Default: the sign-in's gateway. |
+| `allowInsecureTransport`, `timeoutMs`, `fetchImpl` | | As for `AddressSignIn`. |
+
+## The document it signs
+
+For address tokens wallet-api2 signs only the market's DDO credential: top-level `@context`,
+`id`, `type` (`['VerifiableCredential']`), `issuer`, `version`, `credentialSubject` and
+`additionalDdos`, and in `credentialSubject` only `chainId`, `nftAddress`, `metadata`,
+`services`, `credentials`, `license`, `dataspace` and `stats`. So, unlike the other signers,
+it adds no `iss`, `sub` or `jti`.
+
+`prepareDocument(ddo)` returns the DDO in that shape (it leaves out `credentialSubject.id`,
+`credentialSubject.version` and indexer fields). `publish()` and `edit()` call it before they
+validate, so the document that is validated, signed and returned in `PublishResponse.ddo` is
+one document. `sign()` refuses a DDO with other fields before sending it.
+
+The answer must be a compact JWS of exactly the posted credential, with a `kid` of the
+issuer's DID document (`<issuer>#…`), a signature that verifies with that method's trusted public key, and a header and signature within
+`JWS_SIGNING_ALLOWANCE` (1024 characters); the publish flow then checks the payload against
+the validated DDO, as for every signer.
+
+The field lists are exported as `WALLET_API2_DDO_FIELDS` and `WALLET_API2_DDO_SUBJECT_FIELDS`,
+for code that builds such a document itself.
+
+## Errors
+
+Every error is a `WaltIdWalletError` with `code` and a `hint` that says who fixes it:
+
+- `code: 'scope_not_enabled'`: the sign-in has no `sign-ddo` scope (refused before anything
+  is sent), or DDO signing is off for the address;
+- `code: 'not_a_ddo'`: the DDO has fields wallet-api2 does not sign (call `prepareDocument()`
+  first; refused before anything is sent), or wallet-api2 refused the body's shape;
+- `code: 'issuer_mismatch'`: the DDO declares another issuer than `issuer`;
+- A thrown or rejected key lookup produces `code: 'verification_key_lookup_failed'`.
+- `code: 'signature_invalid'`: the answer is not a JWS nautilus accepts: a header with members
+  other than `alg`, `kid` and `typ` (no `crit`, `b64`, `jwk`), an algorithm that is not a JOSE
+  signature algorithm (`none`, `HS256`), a `kid` outside the issuer's DID document, a payload
+  with a duplicate key or other than the posted credential, or a header and signature over
+  `JWS_SIGNING_ALLOWANCE`;
+- no `code`, `status` 400 or 404: wallet-api2's own refusal ("Key not found", "The DDO issuer
+  is not a DID of this wallet"), with a hint to check `keyId`, `walletId` and the issuer;
+- `code: 'did_web_holder_disabled'`: the issuer is the organisation's did:web and "Present
+  as …" is off;
+- the sign-in codes of [`AddressSignIn`](/docs/api/identity/AddressSignIn#errors).

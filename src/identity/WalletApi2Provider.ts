@@ -35,14 +35,25 @@ import {
   assertPresentationRequest,
   presentationUrlProblem
 } from './requestChecks.js'
-import { ASSET_ACCESS_TRANSACTION_DATA_TYPE, requestUriHost } from './ssi.js'
+import {
+  ASSET_ACCESS_TRANSACTION_DATA_TYPE,
+  normalizeVerifierHost,
+  requestUriHost
+} from './ssi.js'
 import { CredentialPresentationError } from './WaltIdProvider.js'
+import { addressCodeReason } from './waltid/addressErrors.js'
+import {
+  AddressSignIn,
+  type AddressSignInOptions
+} from './waltid/addressSignIn.js'
 import { WaltIdWalletError } from './waltid/client.js'
 import {
+  type AddressSignInAccount,
   type WalletApi2,
   type WalletApi2CredentialOption,
   WalletApi2HttpClient,
-  type WalletApi2Preview
+  type WalletApi2Preview,
+  type WalletApi2TokenSource
 } from './waltid/wallet2.js'
 
 /** How much of the wallet's message goes into a `CredentialPresentationError`. */
@@ -56,9 +67,10 @@ export interface WalletApi2CredentialProviderOptions {
   walletApi?: string
   /**
    * The account's wallet-api2 session token (a Hanko session JWT on the platform), or a
-   * function returning a current one. Required with `walletApi`. Never logged.
+   * function returning a current one, or a `WalletApi2TokenSource` (an `AddressSignIn`:
+   * see `withAddressSignIn`). Required with `walletApi`. Never logged.
    */
-  token?: string | (() => string | Promise<string>)
+  token?: string | (() => string | Promise<string>) | WalletApi2TokenSource
   /** A custom wallet-api2 implementation, e.g. a backend-for-frontend, or for tests. */
   wallet?: WalletApi2
   /**
@@ -93,9 +105,103 @@ export interface WalletApi2CredentialProviderOptions {
   ) => Promise<CredentialSelection>
 }
 
+/** What `withAddressSignIn` takes: the sign-in, and the provider's own options. */
+export type WalletApi2AddressSignInOptions = AddressSignInOptions &
+  Omit<WalletApi2CredentialProviderOptions, 'walletApi' | 'token' | 'wallet'>
+
+/** A token source that can say what its address may do (`AddressSignIn`). */
+type AddressTokenSource = WalletApi2TokenSource & {
+  check(signal?: AbortSignal): Promise<AddressSignInAccount>
+}
+
+function isAddressSource(
+  source: WalletApi2TokenSource | undefined
+): source is AddressTokenSource {
+  return (
+    !!source &&
+    typeof (source as Partial<AddressTokenSource>).check === 'function'
+  )
+}
+
+function isTokenSource(value: unknown): value is WalletApi2TokenSource {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as WalletApi2TokenSource).getToken === 'function' &&
+    typeof (value as WalletApi2TokenSource).invalidate === 'function'
+  )
+}
+
+/** The note added to `no-matching-credential` when presenting with an address token. */
+const ACCESS_LIST_HINT =
+  'Organisation credentials appear only if an admin put this address on their access list (Wallet UI → Credentials).'
+
 export class WalletApi2CredentialProvider implements CredentialProvider {
-  private readonly wallet: WalletApi2
-  private readonly options: WalletApi2CredentialProviderOptions
+  /**
+   * Sign-in with an organisation address, for scripts, backends and CI jobs: the provider
+   * presents with a short-lived, DPoP-bound address token (`AddressSignIn`) from the wallet
+   * UI's address gateway, instead of a Hanko session token. The gateway URL is given once;
+   * `credentials.signIn` is the sign-in, to share with a `WalletApi2VcSigner` or to call
+   * `check()` on.
+   */
+  static withAddressSignIn(
+    options: WalletApi2AddressSignInOptions
+  ): WalletApi2CredentialProvider & { readonly signIn: AddressSignIn } {
+    const {
+      gateway,
+      signer,
+      chainId,
+      smartAccount,
+      scopes,
+      timeoutMs,
+      signInTimeoutMs,
+      fetchImpl,
+      ...rest
+    } = options
+    const signIn = new AddressSignIn({
+      gateway,
+      signer,
+      chainId,
+      smartAccount,
+      scopes,
+      timeoutMs,
+      signInTimeoutMs,
+      fetchImpl,
+      allowInsecureTransport: rest.allowInsecureTransport
+    })
+    const provider = new WalletApi2CredentialProvider({
+      ...rest,
+      walletApi: signIn.gateway,
+      wallet: new WalletApi2HttpClient({
+        apiUrl: signIn.gateway,
+        token: signIn,
+        allowInsecureTransport: rest.allowInsecureTransport,
+        timeoutMs,
+        fetchImpl
+      }),
+      token: signIn
+    })
+    return provider as WalletApi2CredentialProvider & {
+      readonly signIn: AddressSignIn
+    }
+  }
+
+  readonly #wallet: WalletApi2
+  readonly #options: WalletApi2CredentialProviderOptions
+  /** The token source, when `token` is one (an `AddressSignIn`). */
+  readonly #source?: WalletApi2TokenSource
+  /** The address sign-in, when the provider presents with an address token. */
+  readonly signIn?: AddressSignIn
+  /**
+   * The pre-flight of the address token, kept for the token it ran with and at most
+   * `PREFLIGHT_TTL_MS`; dropped whenever `prepare()` fails from it, so an admin's fix takes
+   * effect at the next call.
+   */
+  #preflight?: {
+    token: string
+    at: number
+    account: Promise<AddressSignInAccount>
+  }
 
   constructor(options: WalletApi2CredentialProviderOptions) {
     if (!options.wallet && !(options.walletApi && options.token))
@@ -103,8 +209,10 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
         'WalletApi2CredentialProvider needs a walletApi URL and its session token, or a wallet implementation.'
       )
 
-    this.options = options
-    this.wallet =
+    this.#options = options
+    if (isTokenSource(options.token)) this.#source = options.token
+    if (options.token instanceof AddressSignIn) this.signIn = options.token
+    this.#wallet =
       options.wallet ??
       new WalletApi2HttpClient({
         apiUrl: options.walletApi as string,
@@ -117,12 +225,122 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
    * Resolves the consumer's wallet before nautilus opens a session at the node, so a wallet
    * account without a wallet for the consumer's address (or a rejected token) fails with
    * `wallet-setup` and no pending session is left behind.
+   *
+   * With an address token: signs in (a refusal is `sign-in`), checks that the address
+   * signed in is the consumer and that a pinned `walletId` is its wallet, and runs the
+   * pre-flight (`check()`, once per provider): an address that may present to no verifier
+   * (or not to this node's), or that holds nothing it may present, fails here.
    */
   async prepare(context: CredentialPreparation): Promise<void> {
-    await this.resolveWallet(context.consumerAddress)
+    const source = this.#source
+    if (!isAddressSource(source)) {
+      await this.resolveWallet(context.consumerAddress)
+      return
+    }
+    await this.addressWallet(context.consumerAddress)
+    try {
+      await this.checkAccount(source, context)
+    } catch (error) {
+      this.#preflight = undefined
+      throw error
+    }
   }
 
+  /** The pre-flight's verdict for `context`; throws when the address cannot present. */
+  private async checkAccount(
+    source: AddressTokenSource,
+    context: CredentialPreparation
+  ): Promise<void> {
+    const token = await source.getToken()
+    const cached = this.#preflight
+    if (
+      !cached ||
+      cached.token !== token ||
+      Date.now() - cached.at > PREFLIGHT_TTL_MS
+    )
+      this.#preflight = { token, at: Date.now(), account: source.check() }
+    let account: AddressSignInAccount
+    try {
+      account = await (
+        this.#preflight as { account: Promise<AddressSignInAccount> }
+      ).account
+    } catch (error) {
+      throw walletError(
+        'The address sign-in pre-flight failed',
+        error,
+        (t) => t,
+        true
+      )
+    }
+
+    const address = sanitize(account.address, 42, null)
+    const where =
+      'Wallet UI → Addresses → the address → Sign-in for scripts and servers'
+    if (account.scopes.length && !account.scopes.includes('present'))
+      throw new CredentialPresentationError(
+        'This address token was signed in without the scope present, so it cannot present. Sign in with scopes including present.',
+        { code: 'scope_not_enabled' },
+        'not-permitted'
+      )
+    if (!account.verifiers.length)
+      throw new CredentialPresentationError(
+        `The address ${address} may present to no verifier. Admin: add the node's verifier (${where}).`,
+        { code: 'verifier_not_allowed' },
+        'not-permitted'
+      )
+
+    let announced: string | undefined
+    try {
+      announced = (await context.node.getSsiCapabilities?.())
+        ?.verifierPublicHost
+    } catch {
+      announced = undefined
+    }
+    const allowed = new Set(
+      account.verifiers.map((verifier) =>
+        normalizeVerifierHost(verifier.responseUriOrigin)
+      )
+    )
+    const verifierHost = announced ?? this.#options.expectedVerifierHost
+    if (verifierHost) {
+      const host = normalizeVerifierHost(verifierHost)
+      if (!allowed.has(host))
+        throw new CredentialPresentationError(
+          `The address ${address} may present to ${[...allowed].map((h) => sanitize(h, 100, null)).join(', ')}, not to the verifier of ${context.node.nodeUri} (${sanitize(host, 100, null)}). Admin: add that verifier (${where}).`,
+          { code: 'verifier_not_allowed', verifierHost: host },
+          'not-permitted'
+        )
+    }
+
+    if (!account.presentableCredentials.length)
+      throw new CredentialPresentationError(
+        `The address ${address} has no credentials it may present. ${ACCESS_LIST_HINT}`,
+        { code: 'no_presentable_credentials', hint: ACCESS_LIST_HINT },
+        'no-matching-credential'
+      )
+  }
+
+  /**
+   * Presents for one session. With an address token, a preview that newer previews of the
+   * same token replaced (`handle_evicted`) is made again once, which asks
+   * `onSelectCredentials` again.
+   */
   async present(challenge: CredentialChallenge): Promise<void> {
+    try {
+      await this.presentOnce(challenge)
+    } catch (error) {
+      // The handle was replaced by newer previews of the same token: preview again, once.
+      if (
+        error instanceof CredentialPresentationError &&
+        (error.details as { code?: unknown } | undefined)?.code ===
+          'handle_evicted'
+      )
+        return this.presentOnce(challenge)
+      throw error
+    }
+  }
+
+  private async presentOnce(challenge: CredentialChallenge): Promise<void> {
     if (challenge.protocol !== 'oid4vp')
       throw new CredentialPresentationError(
         `${challenge.node.nodeUri} has a policy server, whose presentation requests walt.id's wallet-api2 cannot answer. Use a WaltIdCredentialProvider.`,
@@ -133,12 +351,12 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
     const requestUri = challenge.redirectUri
     assertPresentationRequest(
       requestUri,
-      this.options.allowInsecureTransport === true
+      this.#options.allowInsecureTransport === true
     )
 
-    const verifierHost = (
-      challenge.verifierHost ?? this.options.expectedVerifierHost
-    )?.toLowerCase()
+    const expected =
+      challenge.verifierHost ?? this.#options.expectedVerifierHost
+    const verifierHost = expected && normalizeVerifierHost(expected)
     const requestHost = requestUriHost(requestUri)
     if (verifierHost && requestHost !== verifierHost)
       throw new CredentialPresentationError(
@@ -147,23 +365,21 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
         'request-invalid'
       )
 
-    const walletId =
-      this.options.walletId ||
-      this.wallets.get(challenge.consumerAddress.toLowerCase()) ||
-      (await this.resolveWallet(challenge.consumerAddress))
+    const walletId = await this.walletFor(challenge.consumerAddress)
     const remove = sessionIdRemover(challenge.sessionId)
 
     let opened: Awaited<ReturnType<WalletApi2['previewPresentation']>>
     try {
-      opened = await this.wallet.previewPresentation(walletId, {
+      opened = await this.#wallet.previewPresentation(walletId, {
         requestUrl: requestUri,
-        ...(this.options.holderDid ? { did: this.options.holderDid } : {})
+        ...(this.#options.holderDid ? { did: this.#options.holderDid } : {})
       })
     } catch (error) {
       throw walletError(
         'The wallet could not read the presentation request',
         error,
-        remove
+        remove,
+        isAddressSource(this.#source)
       )
     }
 
@@ -173,13 +389,26 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
       error: unknown
     ): Promise<never> => {
       try {
-        await this.wallet.rejectPresentation(walletId, { handle, errorCode })
+        await this.#wallet.rejectPresentation(walletId, { handle, errorCode })
       } catch (rejectError) {
         if (debugEnabled('sensitive', 'wallet'))
           debugRaw('wallet', 'reject-handle failed', rejectError)
       }
       throw error
     }
+
+    // wallet-api2 answers an invalid preview with `access_denied` when no credential combination
+    // of the wallet satisfies the request (for an address token: also when the organisation
+    // credentials it would need are not on the address's access list).
+    if (!preview.valid && preview.error?.code === 'access_denied')
+      return decline(
+        'access_denied',
+        new CredentialPresentationError(
+          `The wallet holds no credential combination that satisfies the presentation request${preview.error.message ? ` (${remove(sanitize(remove(preview.error.message), MAX_PRESENTATION_ERROR_LENGTH, null))})` : ''}.${isAddressSource(this.#source) ? ` ${ACCESS_LIST_HINT}` : ''}`,
+          { errorCode: 'access_denied' },
+          'no-matching-credential'
+        )
+      )
 
     if (!preview.valid)
       return decline(
@@ -195,7 +424,7 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
       preview,
       challenge,
       verifierHost,
-      this.options.allowInsecureTransport === true
+      this.#options.allowInsecureTransport === true
     )
     if (problem)
       return decline(
@@ -212,9 +441,9 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
     }
 
     let selection: CredentialSelection
-    if (this.options.onSelectCredentials) {
+    if (this.#options.onSelectCredentials) {
       try {
-        selection = await this.options.onSelectCredentials(matches, preview)
+        selection = await this.#options.onSelectCredentials(matches, preview)
       } catch (error) {
         return decline('access_denied', error)
       }
@@ -230,7 +459,7 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
         return decline(
           'access_denied',
           new CredentialPresentationError(
-            `The wallet holds no credentials for ${chosen.missing.map((ids) => ids.join(' + ')).join(', or ')}, which the presentation requires.`,
+            `The wallet holds no credentials for ${chosen.missing.map((ids) => ids.join(' + ')).join(', or ')}, which the presentation requires.${isAddressSource(this.#source) ? ` ${ACCESS_LIST_HINT}` : ''}`,
             { missing: chosen.missing },
             'no-matching-credential'
           )
@@ -281,7 +510,7 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
     const keyId = preview.holder?.keyId ?? preview.keyId
     let result: Awaited<ReturnType<WalletApi2['submitPresentation']>>
     try {
-      result = await this.wallet.submitPresentation(walletId, {
+      result = await this.#wallet.submitPresentation(walletId, {
         handle,
         selectedCredentialOptions,
         ...(keyId ? { keyId } : {}),
@@ -291,7 +520,8 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
       throw walletError(
         'The wallet could not present the credentials',
         error,
-        remove
+        remove,
+        isAddressSource(this.#source)
       )
     }
 
@@ -306,12 +536,31 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
   /** Wallet ids already resolved, by lower-cased address. */
   private readonly wallets = new Map<string, string>()
 
+  /** The wallet to present from: the address token's, the pinned one, or the organisation's for `address`. */
+  private async walletFor(address: string): Promise<string> {
+    if (isAddressSource(this.#source)) return this.addressWallet(address)
+    return (
+      this.#options.walletId ||
+      this.wallets.get(address.toLowerCase()) ||
+      (await this.resolveWallet(address))
+    )
+  }
+
   /** Resolve the pinned or address-matched wallet against the current account. */
   private async resolveWallet(address: string): Promise<string> {
     let wallets: Awaited<ReturnType<WalletApi2['listWallets']>>
     try {
-      wallets = await this.wallet.listWallets()
+      wallets = await this.#wallet.listWallets()
     } catch (error) {
+      if (
+        error instanceof WaltIdWalletError &&
+        error.code === 'hanko_token_not_accepted'
+      )
+        throw walletError(
+          "Could not list the organisation's wallets",
+          error,
+          (t) => t
+        )
       throw new CredentialPresentationError(
         `Could not list the organisation's wallets (${error instanceof Error ? error.message : String(error)}).`,
         undefined,
@@ -319,7 +568,7 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
       )
     }
 
-    const pinned = this.options.walletId
+    const pinned = this.#options.walletId
     if (pinned) {
       if (!wallets.some((wallet) => wallet.walletId === pinned))
         throw new CredentialPresentationError(
@@ -342,6 +591,45 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
 
     this.wallets.set(address.toLowerCase(), own.walletId)
     return own.walletId
+  }
+
+  /**
+   * The wallet of an address token: the one it was issued for. Signs in when needed; the
+   * address signed in must be `consumer`, and a pinned `walletId` must be its wallet.
+   */
+  private async addressWallet(consumer: string): Promise<string> {
+    const source = this.#source as AddressTokenSource
+    try {
+      await source.getToken()
+    } catch (error) {
+      throw walletError(
+        'Could not sign in with the address',
+        error,
+        (t) => t,
+        true
+      )
+    }
+    const signedIn = source.address
+    if (signedIn && signedIn.toLowerCase() !== consumer.toLowerCase())
+      throw new CredentialPresentationError(
+        `Signed in as ${signedIn}, but the order is for ${consumer}. Sign in with the consumer's key, or order with the signed-in address.`,
+        { code: 'signer_mismatch' },
+        'sign-in'
+      )
+    const walletId = source.walletId
+    if (!walletId)
+      throw new CredentialPresentationError(
+        'The address sign-in named no wallet.',
+        { code: 'wrong_endpoint' },
+        'sign-in'
+      )
+    if (this.#options.walletId && this.#options.walletId !== walletId)
+      throw new CredentialPresentationError(
+        `walletId ${this.#options.walletId} is not the wallet of ${signedIn ?? consumer} (${walletId}). Address tokens present from their address's wallet only: leave walletId out.`,
+        { code: 'wallet_mismatch' },
+        'not-permitted'
+      )
+    return walletId
   }
 }
 
@@ -503,7 +791,8 @@ function defaultSelection(
 function walletError(
   what: string,
   error: unknown,
-  remove: (text: string) => string
+  remove: (text: string) => string,
+  addressToken = false
 ): CredentialPresentationError {
   if (error instanceof CredentialPresentationError) return error
   const message =
@@ -512,10 +801,33 @@ function walletError(
     sanitize(remove(message), MAX_PRESENTATION_ERROR_LENGTH, null)
   )
   const status = error instanceof WaltIdWalletError ? error.status : undefined
+  const code = error instanceof WaltIdWalletError ? error.code : undefined
+  const hint = error instanceof WaltIdWalletError ? error.hint : undefined
+  const retryAfter =
+    error instanceof WaltIdWalletError ? error.retryAfter : undefined
 
+  const missingGrant = addressToken && code === 'credential_not_on_access_list'
   return new CredentialPresentationError(
-    `${what}: ${errorMessage}`,
-    { errorMessage, ...(status ? { status } : {}) },
-    status === 401 || status === 403 ? 'wallet-setup' : 'wallet-failed'
+    `${what}: ${errorMessage}${missingGrant ? ` ${ACCESS_LIST_HINT}` : ''}`,
+    {
+      errorMessage,
+      ...(status ? { status } : {}),
+      ...(code ? { code } : {}),
+      ...(hint
+        ? { hint: remove(hint) }
+        : missingGrant
+          ? { hint: ACCESS_LIST_HINT }
+          : {}),
+      ...(retryAfter !== undefined ? { retryAfter } : {})
+    },
+    // The gateway also returns hanko_token_not_accepted to a Bearer request.
+    code && (addressToken || code === 'hanko_token_not_accepted')
+      ? addressCodeReason(code)
+      : status === 401 || status === 403
+        ? 'wallet-setup'
+        : 'wallet-failed'
   )
 }
+
+/** How long a pre-flight answer is reused for the same token. */
+const PREFLIGHT_TTL_MS = 60_000

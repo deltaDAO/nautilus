@@ -372,6 +372,26 @@ describe('publish pre-transaction validation', () => {
     expect(vi.mocked(prepareMetadataForWrite)).not.toHaveBeenCalled()
   })
 
+  it('validates the projection prepared by the signer before minting', async () => {
+    const { nautilus } = await createNautilus()
+    const sign = vi.fn()
+    const ddoSigner = {
+      getIssuer: async () => SIGNER_ADDRESS,
+      prepareDocument(ddo: Record<string, unknown>) {
+        const subject = ddo.credentialSubject as Record<string, unknown>
+        return { ...ddo, credentialSubject: { ...subject, metadata: {} } }
+      },
+      sign
+    }
+
+    await expectThrowsAsync(
+      () => nautilus.publish(validAsset(), { ddoSigner }),
+      /metadata|providedBy/i
+    )
+    expect(createNftWithService).not.toHaveBeenCalled()
+    expect(sign).not.toHaveBeenCalled()
+  })
+
   it('publishes a valid asset, encrypting each service exactly once', async () => {
     // The pre-transaction pass projects with a stand-in for the ciphertext precisely so it
     // does not have to encrypt: doing it the obvious way would send every file object to

@@ -109,6 +109,32 @@ The SSI commands (`ssiInitiate`, `ssiStatus`, `validateRego`) go over HTTP only 
 on their own: a P2P node URI or a pre-computed signature is refused with an `OceanNodeError`.
 Use the node's HTTP URL, and a Signer or a node auth token.
 
+### Replace a copied Hanko token
+
+A script, backend or CI job that presents with a Hanko session token copied from a browser
+(valid at most 12 hours) can sign in with the key of an organisation address instead, once an
+organisation admin turned on "Sign-in for scripts and servers" for that address in the wallet
+UI:
+
+```ts
+// Before: a copied browser session
+credentials: new WalletApi2CredentialProvider({
+  walletApi: 'https://wallet-api.example.org',
+  token: process.env.HANKO_TOKEN
+})
+
+// After: the address key signs in (short-lived DPoP-bound tokens, renewed by nautilus)
+credentials: WalletApi2CredentialProvider.withAddressSignIn({
+  gateway: 'https://wallet.example.org/api/address-gateway',
+  signer
+})
+```
+
+The gateway is the wallet UI's URL plus `/api/address-gateway`, not the wallet-api2 URL (a
+Hanko token sent there is refused with `hanko_token_not_accepted`, an address token sent to
+wallet-api2 with `wrong_endpoint`). Remove the copied token from the pipeline's secrets.
+Setup, the admin's steps and CI guidance: [Sign in from scripts and CI](/docs/guides/sign-in-scripts).
+
 ### Publishing: `SSIpolicyV2` in place of `SSIpolicy`
 
 To publish for such a node, gate with

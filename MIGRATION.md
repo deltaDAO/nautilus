@@ -60,6 +60,30 @@ credentials: new WalletApi2CredentialProvider({
 })
 ```
 
+### Replace a copied Hanko token
+
+A script, backend or CI job that presents with a Hanko session token copied from a browser
+(valid at most 12 hours) can sign in with the key of an organisation address instead, once an
+organisation admin turned on "Sign-in for scripts and servers" for that address in the wallet
+UI:
+
+```ts
+// Before: a copied browser session
+credentials: new WalletApi2CredentialProvider({
+  walletApi: 'https://wallet-api.example.org',
+  token: process.env.HANKO_TOKEN
+})
+
+// After: the address key signs in (short-lived DPoP-bound tokens, renewed by nautilus)
+credentials: WalletApi2CredentialProvider.withAddressSignIn({
+  gateway: 'https://wallet.example.org/api/address-gateway',
+  signer
+})
+```
+
+The gateway is the wallet UI's URL plus `/api/address-gateway`, not the wallet-api2 URL. Remove
+the copied token from the pipeline's secrets. See "Sign in from scripts and CI" in the docs.
+
 To publish for such a node, gate with `addSsiPolicyV2()` in place of `addRequestCredentials()`,
 `setVcPolicies()` and `setVpPolicies()`:
 

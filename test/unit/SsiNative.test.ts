@@ -57,6 +57,7 @@ import {
 } from '../../src/identity/WaltIdProvider.js'
 import { WaltIdWalletError } from '../../src/identity/waltid/client.js'
 import {
+  staticTokenSource,
   type WalletApi2,
   WalletApi2HttpClient,
   type WalletApi2Preview
@@ -665,7 +666,10 @@ describe('OceanNodeClient SSI commands', () => {
     })
     expect(body.consumerAddress).to.equal(undefined)
     expect(body.policy).to.deep.equal(LEGAL_PERSON)
-    expect(result).to.deep.equal({ valid: false, errors: ['rego_parse_error'] })
+    expect(result).to.deep.equal({
+      valid: false,
+      errors: ['rego_parse_error']
+    })
   })
 
   it('sends the session to initialize as the policyServer query parameter', async () => {
@@ -750,7 +754,10 @@ function ssiNode(options: SsiNodeOptions = {}) {
             requestUri: REQUEST_URI,
             dcql: LEGAL_PERSON.dcql
           } as SsiInitiateResult)
-      return { ...result, consumerAddress: request.consumerAddress ?? CONSUMER }
+      return {
+        ...result,
+        consumerAddress: request.consumerAddress ?? CONSUMER
+      }
     },
     async ssiStatus(request: SsiStatusRequest) {
       calls.push(`ssiStatus:${request.sessionId}`)
@@ -945,22 +952,30 @@ describe('PolicySessionResolver on a node with the native SSI module', () => {
     expect(challenges).to.have.length(0)
   })
 
-  it('refuses a request that does not point at the announced verifier, before presenting', async () => {
-    const { client } = ssiNode({
-      initiate: async () => ({
-        required: true,
-        sessionId: SESSION,
-        requestUri: `openid4vp://authorize?request_uri=${encodeURIComponent('https://evil.test/r')}`
+  it.each([
+    ['https://evil.test/r', VERIFIER_HOST],
+    [`https://${VERIFIER_HOST}:8443/r`, VERIFIER_HOST],
+    ['file:///request', ' ']
+  ])(
+    'refuses a request for %s with announced host "%s" before presenting',
+    async (target, announced) => {
+      const { client } = ssiNode({
+        capabilities: { ...CAPABILITIES, verifierPublicHost: announced },
+        initiate: async () => ({
+          required: true,
+          sessionId: SESSION,
+          requestUri: `openid4vp://authorize?request_uri=${encodeURIComponent(target)}`
+        })
       })
-    })
-    const { provider, challenges } = recordingProvider()
-    const thrown = await resolver(provider)
-      .resolve(request(client))
-      .catch((e) => e)
-    expect(thrown).to.be.instanceOf(CredentialPresentationError)
-    expect(thrown.reason).to.equal('request-invalid')
-    expect(challenges).to.have.length(0)
-  })
+      const { provider, challenges } = recordingProvider()
+      const thrown = await resolver(provider)
+        .resolve(request(client))
+        .catch((e) => e)
+      expect(thrown).to.be.instanceOf(CredentialPresentationError)
+      expect(thrown.reason).to.equal('request-invalid')
+      expect(challenges).to.have.length(0)
+    }
+  )
 
   it('warns once when the node does not announce its verifier', async () => {
     const { client } = ssiNode({
@@ -1121,8 +1136,13 @@ describe('PolicySessionResolver on a node with the native SSI module', () => {
 })
 
 describe('access() on a node with the native SSI module', () => {
-  it('verifies before the fee request and the order, and downloads with { sessionId }', async () => {
-    const { client, calls } = ssiNode()
+  it('verifies before the fee request and the order, and downloads with { sessionId } when the verifier announces :443', async () => {
+    const { client, calls } = ssiNode({
+      capabilities: {
+        ...CAPABILITIES,
+        verifierPublicHost: `${VERIFIER_HOST}:443`
+      }
+    })
 
     await access(
       { assetDid: ASSET_DID },
@@ -1203,8 +1223,14 @@ describe('compute() on a node with the native SSI module', () => {
     policySessions: resolver(recordingProvider().provider)
   })
 
-  it('sends { sessionId, sessionIds } keyed by DID to initializeCompute and computeStart', async () => {
-    const { client } = ssiNode({ assets: assets() })
+  it('sends { sessionId, sessionIds } keyed by DID to initializeCompute and computeStart when the verifier announces :443', async () => {
+    const { client } = ssiNode({
+      assets: assets(),
+      capabilities: {
+        ...CAPABILITIES,
+        verifierPublicHost: `${VERIFIER_HOST}:443`
+      }
+    })
 
     await compute(job, context(client))
 
@@ -1348,7 +1374,10 @@ describe('WalletApi2CredentialProvider', () => {
     const request = challenge({
       dcql: {
         credentials: ids.map((id) => ({ id, format: 'jwt_vc_json' })),
-        credential_sets: ids.map((id) => ({ options: [[id]], required: false }))
+        credential_sets: ids.map((id) => ({
+          options: [[id]],
+          required: false
+        }))
       }
     })
     const { wallet, calls } = fakeWallet({
@@ -1358,7 +1387,10 @@ describe('WalletApi2CredentialProvider', () => {
       })),
       credentialRequirements: []
     })
-    const provider = new WalletApi2CredentialProvider({ wallet, walletId: 'w' })
+    const provider = new WalletApi2CredentialProvider({
+      wallet,
+      walletId: 'w'
+    })
     for (const input of [request, challenge({ dcql: undefined })]) {
       await expect(provider.present(input)).rejects.toMatchObject({
         reason: 'none-selected'
@@ -1635,6 +1667,28 @@ describe('WalletApi2CredentialProvider', () => {
     expect(calls.map((call) => call.name)).to.include('reject')
   })
 
+  it('declines with no-matching-credential when wallet-api2 finds no credential combination (access_denied)', async () => {
+    const { wallet, calls } = fakeWallet({
+      valid: false,
+      error: {
+        code: 'access_denied',
+        message:
+          'The wallet has no credential combination that satisfies this request'
+      }
+    })
+    const thrown = await new WalletApi2CredentialProvider({
+      wallet,
+      walletId: 'w-own'
+    })
+      .present(challenge())
+      .catch((e) => e)
+    expect(thrown.reason).to.equal('no-matching-credential')
+    expect(thrown.details).to.deep.equal({ errorCode: 'access_denied' })
+    expect(thrown.message).to.contain('no credential combination')
+    expect(thrown.message).not.to.contain('access list')
+    expect(calls.map((call) => call.name)).to.deep.equal(['preview', 'reject'])
+  })
+
   it('selects credentials for query IDs that name Object properties', async () => {
     const ids = ['toString', '__proto__']
     const { wallet, calls } = fakeWallet({
@@ -1761,6 +1815,24 @@ describe('WalletApi2HttpClient', () => {
     )
   }
 
+  it('refuses address tokens supplied without a proof before sending any request', async () => {
+    const value = 'pxa_test_address_token'
+    const fetchImpl = stub(200, [])
+    for (const token of [value, async () => value, staticTokenSource(value)]) {
+      const client = new WalletApi2HttpClient({
+        apiUrl: 'https://wallet-api.test.invalid',
+        token,
+        fetchImpl
+      })
+      const refused = await client.listWallets().catch((error) => error)
+      expect(refused).to.be.instanceOf(WaltIdWalletError)
+      expect(refused.code).to.equal('dpop_invalid')
+      expect(refused.message).to.include('Pass the AddressSignIn object')
+      expect(refused.message).not.to.include(value)
+    }
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   it('sends the bearer token, previews and reads the answer', async () => {
     const fetchImpl = stub(200, {
       handle: 'handle-0123456789abcdef',
@@ -1799,6 +1871,43 @@ describe('WalletApi2HttpClient', () => {
     expect(opened.preview.credentialOptions).to.deep.equal([
       { queryId: 'q', credentialId: 'c', multiple: false }
     ])
+  })
+
+  it('includes every credential in bounded account and preview responses', async () => {
+    const ids = Array.from({ length: 501 }, (_, i) => `vc-${i}`)
+    const options = { apiUrl: 'https://wallet-api.test.invalid', token: 't' }
+    const account = new WalletApi2HttpClient({
+      ...options,
+      fetchImpl: stub(200, {
+        method: 'evm-address',
+        address: CONSUMER,
+        walletId: 'w',
+        presentableCredentials: ids.map((id) => ({ id }))
+      })
+    })
+    expect(
+      (await account.account()).presentableCredentials.map((c) => c.id)
+    ).to.deep.equal(ids)
+
+    const client = new WalletApi2HttpClient({
+      ...options,
+      fetchImpl: stub(200, {
+        handle: 'h',
+        preview: {
+          ...PREVIEW,
+          credentialOptions: ids.map((credentialId) => ({
+            queryId: credentialId === ids.at(-1) ? 'required' : 'optional',
+            credentialId
+          }))
+        }
+      })
+    })
+    const { preview } = await client.previewPresentation('w', {
+      requestUrl: REQUEST_URI
+    })
+    expect(preview.credentialOptions.map((c) => c.credentialId)).to.deep.equal(
+      ids
+    )
   })
 
   it('selects a required query whose only credential follows 500 other options', async () => {

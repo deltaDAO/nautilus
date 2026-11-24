@@ -7,6 +7,7 @@
  * implementation of `WaltIdWallet`, not a rewrite of the exchange logic.
  */
 import type { Signer } from 'ethers'
+import { maskAddressTokens } from '../../log/credentials.js'
 import { debugEnabled, debugRaw } from '../../log/debug.js'
 import { sanitize } from '../../node/messages.js'
 
@@ -110,12 +111,110 @@ export interface WaltIdWallet {
 
 export class WaltIdWalletError extends Error {
   readonly status?: number
+  /**
+   * The machine-readable code of a wallet-api2 address sign-in or address token refusal
+   * (`{ error, message, hint }`: `sign_in_disabled`, `verifier_not_allowed`, …), of the
+   * wallet UI's address gateway (`hanko_token_not_accepted`, `not_found`, …), or one of
+   * nautilus's own checks before anything is signed (`message_unexpected`,
+   * `wrong_endpoint`, `smart_account_not_deployed`, `signer_mismatch`).
+   */
+  readonly code?: string
+  /** What to do, and who fixes it, as the server said it (redacted, bounded). */
+  readonly hint?: string
+  /** Seconds to wait, from a `429` answer's `Retry-After`. */
+  readonly retryAfter?: number
 
-  constructor(operation: string, message: string, status?: number) {
-    super(`[walt.id] ${operation}: ${message}`)
+  constructor(
+    operation: string,
+    message: string,
+    status?: number,
+    extra: { code?: string; hint?: string; retryAfter?: number } = {}
+  ) {
+    super(maskAddressTokens(`[walt.id] ${operation}: ${message}`))
     this.name = 'WaltIdWalletError'
     this.status = status
+    if (extra.code !== undefined) this.code = maskAddressTokens(extra.code)
+    if (extra.hint !== undefined) this.hint = maskAddressTokens(extra.hint)
+    if (extra.retryAfter !== undefined) this.retryAfter = extra.retryAfter
   }
+}
+
+/**
+ * The longest nonce the legacy web3 login signs. walt.id answers `Sign in: 0x` and 64 hex
+ * characters (ktor-authnz), older versions a UUID or a signed nonce token (a JWT).
+ */
+const MAX_LEGACY_NONCE_LENGTH = 1024
+
+const HEX_NONCE = /^(?:Sign in: 0x|0x)?[0-9a-fA-F]{64}$/
+const UUID_NONCE = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
+
+/** The first line of an EIP-4361 (Sign-In with Ethereum) message. */
+const SIWE_MARKER = /wants you to sign in with your ethereum account/i
+
+function decodeNoncePart(part: string): string {
+  const encoded = part.replace(/-/g, '+').replace(/_/g, '/')
+  const decoded = atob(encoded)
+  if (!part || btoa(decoded).replace(/=+$/, '') !== encoded)
+    throw new Error('Invalid unpadded base64url')
+  return decoded
+}
+
+/** The legacy signed challenge carries a hex nonce and optionally its expiry. */
+function isSignedNonce(text: string): boolean {
+  const parts = text.split('.')
+  if (
+    parts.length !== 3 ||
+    !parts.every((part) => /^[A-Za-z0-9_-]+$/.test(part))
+  )
+    return false
+  try {
+    const [headerText, payloadText] = parts.map(decodeNoncePart)
+    const header = JSON.parse(headerText)
+    const payload = JSON.parse(payloadText)
+    return (
+      (header.alg === 'EdDSA' || header.alg === 'HS256') &&
+      (header.typ === undefined || header.typ === 'JWT') &&
+      (header.kid === undefined || typeof header.kid === 'string') &&
+      Object.keys(header).every((key) => ['alg', 'typ', 'kid'].includes(key)) &&
+      typeof payload.nonce === 'string' &&
+      /^(?:0x)?[0-9a-f]+$/i.test(payload.nonce) &&
+      (payload.exp === undefined || Number.isSafeInteger(payload.exp)) &&
+      Object.keys(payload).every((key) => key === 'nonce' || key === 'exp')
+    )
+  } catch {
+    return false
+  }
+}
+
+/** Check the legacy challenge before using the wallet key to sign it. */
+export function assertLegacyNonce(nonce: unknown): string {
+  if (typeof nonce !== 'string')
+    throw new WaltIdWalletError(
+      'auth/account/web3/nonce',
+      'the wallet answered no nonce to sign'
+    )
+  const trimmed = nonce.trim()
+  if (SIWE_MARKER.test(trimmed))
+    throw new WaltIdWalletError(
+      'auth/account/web3/nonce',
+      'the wallet asked nautilus to sign a Sign-In with Ethereum message instead of a nonce. Refused: this is how a token for another service would be obtained with your key. Check the walletApi URL.',
+      undefined,
+      { code: 'message_unexpected' }
+    )
+  if (
+    trimmed.length <= MAX_LEGACY_NONCE_LENGTH &&
+    (HEX_NONCE.test(trimmed) ||
+      UUID_NONCE.test(trimmed) ||
+      isSignedNonce(trimmed))
+  )
+    return trimmed
+
+  throw new WaltIdWalletError(
+    'auth/account/web3/nonce',
+    `the wallet asked nautilus to sign text that is not a login nonce (${trimmed.length} characters). Refused: nautilus signs only a login challenge with this key, never a JWS signing input or other document.`,
+    undefined,
+    { code: 'message_unexpected' }
+  )
 }
 
 export interface WaltIdHttpWalletOptions {
@@ -145,12 +244,13 @@ export class WaltIdHttpWallet implements WaltIdWallet {
       { raw: true }
     )
 
-    const signed = await signer.signMessage(nonce)
+    const challenge = assertLegacyNonce(nonce)
+    const signed = await signer.signMessage(challenge)
 
     return this.request<WaltIdSession>('auth/account/web3/signed', {
       method: 'POST',
       body: JSON.stringify({
-        challenge: nonce,
+        challenge,
         signed,
         publicKey: await signer.getAddress()
       })

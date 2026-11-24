@@ -12,12 +12,16 @@
  * values returned here are the same with it on or off.
  */
 
+import { isCredentialShaped } from '../log/credentials.js'
 import { type DebugTopic, debugEnabled, debugRaw } from '../log/debug.js'
 import { isErrorCode, SECRET_KEYS } from '../log/keys.js'
 import { redactKeyValues } from '../log/keyValues.js'
 import {
+  ADDRESS_TOKEN,
+  DOTTED_RUN,
   INVISIBLE_CHARACTERS,
   QUOTED_USER_INFO,
+  redactJwts,
   SCHEMELESS_URL,
   trailingPunctuation,
   URL_AUTHORITY,
@@ -64,46 +68,13 @@ const JSON_ESCAPE = /(?<!\\)\\+(?:\/|u([0-9a-fA-F]{4}))/g
  */
 const DECODABLE = /^[A-Za-z0-9_\-.:/@~+]$/
 
-/** A `Bearer` or `Basic` credential, wherever it stands. */
-const BEARER = /((?:Bearer|Basic)\s+)[\w.~+/=-]+/gi
 /**
- * A run of base64url words joined by dots (`a.b.c`), whole: where `redactJwts` looks for
- * JWTs. It starts only where no such character stands before it, so each run is read once
- * and hostile text costs linear time; a rule for the JWT itself without a word boundary in
- * front would rescan the run from each `eyJ`.
+ * Mask Bearer and Basic credentials wherever they stand. DPoP also occurs in prose,
+ * so only mask the following word when it looks like a credential.
  */
-const DOTTED_RUN = /(?<![\w.-])[\w-]*\.[\w.-]*/g
+const BEARER = /((?:Bearer|Basic|DPoP)\s+)([\w.~+/=-]+)/gi
 /** A JSON object's start in base64url, at least 10 characters: `{"`, `{ ` or `{\n`. */
 const JSON_OBJECT = /e[wy][\w-]{8}/
-
-/**
- * A dotted run (`DOTTED_RUN`) with each JWT in it (header, payload and signature,
- * base64url) replaced by `<redacted>`. A JWT's header is a JSON object: `eyJ…` (`{"`), or
- * `ew…`/`eyA…` when its JSON has whitespace, which counts only when the payload does too.
- *
- * It is found also right after a letter, as one is when `stripControlCharacters` deletes
- * an escape that ended in a letter in front of it (`Evil\u001b[2JeyJ…`): from the first
- * header start in its word, so what stood before it in that word may go with it.
- */
-function redactJwts(run: string): string {
-  const parts = run.split('.')
-  const kept: string[] = []
-  let index = 0
-  while (index < parts.length) {
-    const start =
-      index + 2 < parts.length
-        ? headerStart(parts[index], parts[index + 1])
-        : -1
-    if (start < 0) {
-      kept.push(parts[index])
-      index += 1
-    } else {
-      kept.push(`${parts[index].slice(0, start)}<redacted>`)
-      index += 3
-    }
-  }
-  return kept.join('.')
-}
 
 /** Where a JWT's header starts in `word`, with `payload` after it, or `-1`. */
 function headerStart(word: string, payload: string): number {
@@ -180,7 +151,8 @@ const ANSI_ESCAPE =
  *   A quoted, bracketed or `Bearer`/`Basic` value is redacted whole. As for fields, a
  *   `…token` holding an EVM address is kept, and so is a `…code` that reads as an error
  *   code (`code=SERVER_ERROR`, `"code": -32005`), so RPC failures stay legible;
- * - `Bearer` and `Basic` credentials, JWTs, 65-byte hex signatures, raw signed
+ * - `Bearer`, `Basic` and `DPoP` credentials, wallet-api2 address tokens (`pxa_…`), JWTs
+ *   (a DPoP proof is one), 65-byte hex signatures, raw signed
  *   transactions and policy-server session ids (`<64 hex>-<64 hex>`) anywhere.
  *
  * A URL keeps its origin only: its path and query (an openid4vp `request_uri`, a policy
@@ -231,8 +203,13 @@ function redactPatterns(text: string): string {
       .replace(SCHEMELESS_URL, hostOnly),
     SECRET_KEYS
   )
-    .replace(BEARER, '$1<redacted>')
-    .replace(DOTTED_RUN, redactJwts)
+    .replace(BEARER, (match, scheme: string, value: string) =>
+      !/^dpop/i.test(scheme) || isCredentialShaped(value)
+        ? `${scheme}<redacted>`
+        : match
+    )
+    .replace(ADDRESS_TOKEN, '<redacted>')
+    .replace(DOTTED_RUN, (run) => redactJwts(run, headerStart))
     .replace(HEX_SIGNATURE, '<redacted>')
     .replace(SIGNED_TRANSACTION, (hex) =>
       isSignedTransaction(hex) ? '<redacted>' : hex

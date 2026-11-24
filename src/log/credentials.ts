@@ -39,6 +39,8 @@
  *
  * The signer's private key and mnemonic are never shown at any tier (nautilus never holds
  * them; a key named so is still replaced, in objects and in text, also at `secrets`).
+ * Neither are wallet-api2 address tokens (`pxa_…`), `DPoP` credentials and DPoP proofs
+ * (`maskAddressTokens`), nor a `dpop` key.
  */
 import {
   isLongLivedCredential,
@@ -48,8 +50,11 @@ import {
 } from './keys.js'
 import { redactKeyValues } from './keyValues.js'
 import {
+  ADDRESS_TOKEN,
+  DOTTED_RUN,
   INVISIBLE_CHARACTERS,
   QUOTED_USER_INFO,
+  redactJwts,
   SCHEMELESS_URL,
   trailingPunctuation,
   withEscapesUndone
@@ -80,6 +85,65 @@ const URL_PATTERN =
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const IPFS_CID = /^(?:Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{50,})$/
 const TOKEN_LIKE = /^[A-Za-z0-9_-]{20,}$/
+
+/**
+ * What no debug tier shows, wherever it stands: wallet-api2 address tokens (`pxa_…`), the
+ * `DPoP` authorization scheme's credential, and DPoP proofs (a compact JWS whose header has
+ * `typ: dpop+jwt`). They are short-lived, but a token with its proof is a working session
+ * for the organisation address.
+ */
+const DPOP_SCHEME = /\b(DPoP)(\s+)([^\s"',;\\]+)/g
+
+/**
+ * Whether the word after an authorization scheme (`Bearer`, `Basic`, `DPoP`) looks like a
+ * credential rather than prose: a `pxa_` token, 20 characters or more, anything with a
+ * digit or a base64/JWT character (`.`, `_`, `-`, `+`, `/`, `=`), or mixed case other than
+ * a capitalised word. So "The DPoP proof is invalid" keeps its words.
+ */
+export function isCredentialShaped(value: string): boolean {
+  if (value.startsWith('pxa_') || value.length >= 20) return true
+  if (/[^A-Za-z]/.test(value)) return true
+  return (
+    /[a-z]/.test(value) && /[A-Z]/.test(value) && !/^[A-Z][a-z]+$/.test(value)
+  )
+}
+
+/** `text` without address tokens, DPoP credentials and DPoP proofs (`ADDRESS_TOKEN`). */
+export function maskAddressTokens(text: string): string {
+  if (!/pxa_|dpop|eyJ/i.test(text)) return text
+  return text
+    .replace(
+      DPOP_SCHEME,
+      (match, scheme: string, space: string, value: string) =>
+        isCredentialShaped(value) ? `${scheme}${space}${REDACTED}` : match
+    )
+    .replace(DOTTED_RUN, (run) => redactJwts(run, dpopHeaderStart))
+    .replace(ADDRESS_TOKEN, REDACTED)
+}
+
+/** A proof may follow an identifier that itself contains `eyJ`. Candidate headers
+ * four characters apart decode with the same byte alignment, so checking the first
+ * candidate at each alignment covers every suffix in at most four decodes.
+ */
+function dpopHeaderStart(word: string, payload: string): number {
+  if (!payload) return -1
+  const first = word.indexOf('eyJ')
+  if (first < 0) return -1
+  const tried = new Set<number>()
+  for (let i = first; i >= 0; i = word.indexOf('eyJ', i + 3)) {
+    const alignment = i % 4
+    if (tried.has(alignment)) continue
+    tried.add(alignment)
+    try {
+      const header = word.slice(i).replace(/-/g, '+').replace(/_/g, '/')
+      if (/dpop\+jwt/i.test(atob(header))) return first
+    } catch {
+      // A prefix can leave this alignment with an invalid base64 length.
+    }
+    if (tried.size === 4) break
+  }
+  return -1
+}
 
 /** How many levels of URLs nested in query values are masked. */
 const MAX_URL_NESTING = 3
@@ -133,8 +197,10 @@ function mask(
   known: readonly string[] | undefined,
   hidden: (key: string, value: unknown) => boolean
 ): unknown {
-  if (typeof value === 'string')
-    return known ? maskText(value, known) : maskNeverShownText(value)
+  if (typeof value === 'string') {
+    const text = maskAddressTokens(value)
+    return known ? maskText(text, known) : maskNeverShownText(text)
+  }
   if (value instanceof CutText)
     return new CutText(mask(value.text, known, hidden) as string, value.total)
   if (Array.isArray(value))
@@ -149,7 +215,7 @@ function mask(
         ? REDACTED
         : mask(entry, known, hidden)
     // A `__proto__` own key (from `JSON.parse`) is kept as a key, not as the prototype.
-    Object.defineProperty(out, key, {
+    Object.defineProperty(out, maskAddressTokens(key), {
       value: masked,
       enumerable: true,
       writable: true,
