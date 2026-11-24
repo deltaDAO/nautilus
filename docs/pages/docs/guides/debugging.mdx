@@ -108,6 +108,72 @@ during a call shows the call and its `opId` after the time (`[access 3f9a2c1b07e
 `opId` as the call's log events and as `error.opId` on the error it throws, so the raw data
 of one failing call can be picked out of a busy log.
 
+## Nodes with the native SSI module
+
+On a node with the native SSI module
+([`status.ssi`](/docs/guides/identity#nodes-with-the-native-ssi-module)), most problems show
+in the thrown error and in nautilus's log events; the debug channel is not needed.
+
+### Who refused
+
+A `PolicyDeniedError` has a `source`: `'policy-server'` for a node with a policy server,
+`'ssi'` for the native SSI module. With `source: 'ssi'` it comes from one of:
+
+- `ssiInitiate` answering 403 (the asset's or service's address lists refuse the consumer)
+  or 422 (an SSI policy the node cannot satisfy); `code` is the status;
+- a session that `ssiStatus` reports `failed` or `expired`; `code` is `undefined` and
+  `policyResults` lists the node's checks.
+
+Each entry of `policyResults` has a `scope` (`vc`, `vp`, `gaiax`, `rego` or `binding`), the
+`policy`, `success`, an `error` and, for a per-credential check, `credential`: the DCQL query
+id the credential was presented for. verifier-api2 runs rego as the credential policy
+`dynamic`, so a rego deny reads:
+
+```ts
+{ scope: 'vc', credential: '<query id>', policy: 'dynamic', success: false, error: 'rego policy "<name>" denied' }
+```
+
+A session the node does not know, or one opened for another consumer, asset or service,
+shows as a failed `binding` check named `session`.
+
+### Why the wallet did not present
+
+A `CredentialPresentationError` comes from the credential provider, and its `reason` says
+which step failed. With [`WalletApi2CredentialProvider`](/docs/api/identity/WalletApi2CredentialProvider):
+
+| `reason` | What it means |
+| --- | --- |
+| `wallet-setup` | wallet-api2 has no wallet for the consumer's address, or refused the token (401/403). Thrown from `prepare()`, before any node session is opened. |
+| `request-invalid` | The request failed a check: not on the node's announced verifier host, a DCQL query the node did not ask for, `transaction_data` that is not the node's asset-access item for this consumer, asset and service, or a policy-server challenge. |
+| `no-matching-credential` | The wallet holds nothing for a required combination (`details.missing`). |
+| `none-selected` | `onSelectCredentials` chose nothing, or something that was not offered. |
+| `wallet-failed` | wallet-api2 failed. |
+| `verifier-rejected` | The verifier refused the presentation. nautilus then reads `ssiStatus` and, when it names failed checks, throws a `PolicyDeniedError` with this error as `cause`. |
+
+### Too many pending sessions
+
+The node allows a consumer only 5 pending SSI sessions. A session that is opened and never
+presented stays pending until its presentation window closes, and `ssiInitiate` answers
+further requests with an `OceanNodeError` with `status` 429. A provider's `prepare()` runs
+before `ssiInitiate`, so a provider that can already tell it will not present (no wallet, a
+rejected token) fails there and leaves no session behind. On a 429, wait for the pending
+sessions to expire.
+
+A node whose native SSI module has no verifier configured (`status.ssi.enabled` is `false`) is
+refused with an `OceanNodeError` before any session, since it denies every consumer.
+
+### Log events
+
+| Event | Level | When |
+| --- | --- | --- |
+| `identity.ssi.legacy_policy` | `warn` | The node opened a session for an asset gated with the deprecated `SSIpolicy` format, which it translates for now. Once per node and asset. |
+| `identity.ssi.verifier_unannounced` | `warn` | The node does not announce its verifier host (`status.ssi.verifierPublicHost`), so nautilus cannot check that the request comes from that node's verifier. Once per node. |
+| `publish.preflight.ssi_v2_unsupported`, `ssi_disabled`, `ssi_legacy`, `gaiax_unsupported` | `warn` | A service's node will not check its SSI entries as published; see [publishing](/docs/guides/publish#what-the-node-supports). |
+
+With `NAUTILUS_DEBUG=sensitive` and the `policy` topic, the debug channel also shows the
+`ssiInitiate` answer (`SSI session opened (ssiInitiate)`), with the session id and the
+request URI.
+
 ## The warnings
 
 Turning a tier on prints a warning on stderr, once per tier, that no log level or log sink

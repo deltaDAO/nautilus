@@ -103,10 +103,123 @@ export interface SsiPolicyValue {
   vp_policies?: VpPolicy[]
 }
 
+/**
+ * SSI gating for nodes with the native SSI module (pontusx-node / ocean-node with
+ * verifier-api2, OpenID4VP 1.0 and DCQL), which replaced the policy server. The node asks
+ * the consumer for the presentation described by `dcql`, and the verifier and the node
+ * check the policies. Every entry of the asset and of the requested service must be
+ * satisfied (AND).
+ *
+ * Only valid in `credentials.allow`: the node rejects SSI entries in `deny`.
+ */
+export interface SsiPolicyV2Credential {
+  type: 'SSIpolicyV2'
+  values: SsiPolicyV2Value[]
+}
+
+/** A DCQL credential format the node accepts. */
+export type SsiCredentialFormat = 'jwt_vc_json' | 'dc+sd-jwt' | 'vc+sd-jwt'
+
+/** One DCQL claims query: a path into the credential and, optionally, accepted values. */
+export interface DcqlClaimsQuery {
+  id?: string
+  path: (string | number | null)[]
+  values?: (string | number | boolean)[]
+}
+
+/**
+ * One DCQL credential query (OpenID4VP 1.0 §6.1). `id` matches `[A-Za-z0-9_-]{1,64}`; the
+ * ids `gx_compliance`, `gx_legal_person` and `gx_service_offering` are reserved for the
+ * node's Gaia-X queries.
+ */
+export interface DcqlCredentialQuery {
+  id: string
+  format: SsiCredentialFormat
+  /**
+   * Format-specific filters: `{ type_values: [["gx:LegalPerson"]] }` for `jwt_vc_json`,
+   * `{ vct_values: ["…"] }` for SD-JWT VCs.
+   */
+  meta?: Record<string, unknown>
+  claims?: DcqlClaimsQuery[]
+  claim_sets?: string[][]
+  multiple?: boolean
+  trusted_authorities?: { type: string; values: string[] }[]
+  /** Holder binding is mandatory: the node refuses `false`. */
+  require_cryptographic_holder_binding?: true
+}
+
+/** Alternatives of credential query ids, one of which must be presented. */
+export interface DcqlCredentialSet {
+  options: string[][]
+  required?: boolean
+}
+
+export interface DcqlQuery {
+  credentials: DcqlCredentialQuery[]
+  credential_sets?: DcqlCredentialSet[]
+}
+
+/**
+ * A VC policy of an `SSIpolicyV2` value, by the node's contract name. The node maps each
+ * to verifier-api2's wire name and refuses anything else (`regex` and `webhook` included).
+ */
+export type SsiVcPolicy =
+  | 'signature'
+  | 'expiration'
+  | 'not_before'
+  | 'revocation'
+  | 'vct_integrity'
+  | { policy: 'allowed_issuer'; allowed_issuer: string | string[] }
+  | { policy: 'json_schema'; schema: Record<string, unknown> }
+  | { policy: 'status'; argument: Record<string, unknown> }
+
+/** A Gaia-X label level the node can check, lowest first. */
+export type GaiaXLabelLevel = 'SC' | 'L1' | 'L2' | 'L3'
+
+/** One inline rego policy, evaluated by the verifier's OPA for each presented credential. */
+export interface SsiRegoPolicy {
+  name: string
+  /** Inline rego source, at most 64 KiB, exactly one leading `package` statement. */
+  code: string
+  /** Passed to the policy as `input.parameter`. */
+  argument?: Record<string, unknown>
+  /** Evaluate only against the credentials presented for this DCQL query id. */
+  credentialId?: string
+}
+
+/** One value of an `SSIpolicyV2` entry. */
+export interface SsiPolicyV2Value {
+  version: '2'
+  /**
+   * What the consumer must present. May be empty (`{ credentials: [] }`) for a Gaia-X-only
+   * value: the node adds the Gaia-X queries itself.
+   */
+  dcql: DcqlQuery
+  /** Policies run on every credential of this value; `signature` is always added. */
+  vcPolicies?: SsiVcPolicy[]
+  /** Policies run on the credentials of one DCQL query id. */
+  specificVcPolicies?: Record<string, SsiVcPolicy[]>
+  /**
+   * Gaia-X compliance of the presenting organisation. A level alone implies the
+   * requirement; `requireCompliance: true` without one means `SC`. Cannot be combined with
+   * `jwt_vc_json` queries applying to the same service (use `dc+sd-jwt` for other credentials).
+   */
+  gaiax?: { requireCompliance?: boolean; minLabelLevel?: GaiaXLabelLevel }
+  rego?: SsiRegoPolicy[]
+  /**
+   * Require every presented credential to be bound to the consumer's EVM address: a
+   * `jwt_vc_json` holder must be `did:pkh`/`did:ethr` of the consumer, a `dc+sd-jwt` is bound
+   * by the node's transaction data (sent for `dc+sd-jwt` either way), a `vc+sd-jwt` cannot be
+   * bound and fails. Default `false`.
+   */
+  consumerBinding?: boolean
+}
+
 export type DdoCredential =
   | AddressCredential
   | AccessListCredential
   | SsiPolicyCredential
+  | SsiPolicyV2Credential
 
 export type MatchRule = 'any' | 'all'
 
@@ -206,6 +319,24 @@ export interface PolicyServerPayload {
 export interface PolicyServerComputePayload extends PolicyServerPayload {
   documentId: string
   serviceId: string
+}
+
+/**
+ * The `policyServer` field for a node with the native SSI module: the id of a verified SSI
+ * session (`ssiInitiate`). The field keeps its name for ocean.js compatibility.
+ */
+export interface SsiSessionPayload {
+  sessionId: string
+}
+
+/**
+ * The `policyServer` field of a compute job on a node with the native SSI module: one
+ * session per input with an SSI requirement, keyed by its DID. `sessionId` is the first of
+ * them, for nodes that read only that.
+ */
+export interface SsiComputePayload {
+  sessionId: string
+  sessionIds: Record<string, string>
 }
 
 // #endregion

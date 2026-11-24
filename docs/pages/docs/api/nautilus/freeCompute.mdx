@@ -29,6 +29,22 @@ still restrict who can use it — an environment without one throws, naming it.
 Policy-server sessions are still opened for every input, as for
 [`compute`](/docs/api/nautilus/compute): free of charge is not the same as ungated.
 
+On a node with the native SSI module, nautilus opens and verifies an SSI session for every
+input whose asset or service has an `SSIpolicyV2` (or deprecated `SSIpolicy`) entry,
+algorithm included, before it sends the job. The job start carries them as
+`{ sessionId, sessionIds: { <did>: <sessionId> } }`. The node consumes them when it starts
+the job, so each job opens its own and none is cached. A refusal is a `PolicyDeniedError`
+with `source: 'ssi'` and the node's `policyResults` (`scope`, and the DCQL query id as
+`credential`; see [`access`](/docs/api/nautilus/access#throws)), thrown before the job is
+sent. Two inputs that
+are services of the same asset and each need their own session are refused with an `Error`,
+since the node looks sessions up by DID.
+
+A free job settles like a paid one: once the algorithm has stopped, the node reports `71`
+(`JobSettle`) until its payment-claim run moves the job on to `70`, although nothing is
+claimed. Wait for `dateFinished`, as [`getComputeResult`](/docs/api/nautilus/getComputeResult)
+does, rather than for status `70`.
+
 ## Returns
 
 - Type: `{ jobs: NodeComputeJob[]; environment: ComputeEnvironment }`

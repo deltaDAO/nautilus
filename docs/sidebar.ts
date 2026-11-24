@@ -144,6 +144,14 @@ export const sidebar = {
             },
             { text: 'getSigner', link: '/docs/api/nautilus/getSigner' },
             {
+              text: 'getSsiCapabilities',
+              link: '/docs/api/nautilus/getSsiCapabilities'
+            },
+            {
+              text: 'validateRego',
+              link: '/docs/api/nautilus/validateRego'
+            },
+            {
               text: 'setCredentialProvider',
               link: '/docs/api/nautilus/setCredentialProvider'
             }
@@ -279,6 +287,10 @@ export const sidebar = {
               link: '/docs/api/assetbuilder/addRequestCredentials'
             },
             { text: 'addService', link: '/docs/api/assetbuilder/addService' },
+            {
+              text: 'addSsiPolicyV2',
+              link: '/docs/api/assetbuilder/addSsiPolicyV2'
+            },
             { text: 'addTags', link: '/docs/api/assetbuilder/addTags' },
             {
               text: 'removeCredentialAddresses',
@@ -379,6 +391,10 @@ export const sidebar = {
               link: '/docs/api/servicebuilder/addRequestCredentials'
             },
             {
+              text: 'addSsiPolicyV2',
+              link: '/docs/api/servicebuilder/addSsiPolicyV2'
+            },
+            {
               text: 'addTrustedAlgorithmPublisher',
               link: '/docs/api/servicebuilder/addTrustedAlgorithmPublisher'
             },
@@ -471,6 +487,10 @@ export const sidebar = {
             {
               text: 'CredentialProvider',
               link: '/docs/api/identity/CredentialProvider'
+            },
+            {
+              text: 'WalletApi2CredentialProvider',
+              link: '/docs/api/identity/WalletApi2CredentialProvider'
             },
             {
               text: 'WaltIdCredentialProvider',

@@ -28,10 +28,18 @@ import {
   getServiceCredentials,
   hasCredentials
 } from '../ddo/read.js'
-import type { PolicyServerPayload } from '../ddo/types.js'
+import type {
+  DdoCredentials,
+  PolicyServerPayload,
+  SsiSessionPayload
+} from '../ddo/types.js'
 import { debugEnabled, debugRaw } from '../log/debug.js'
 import { type Logger, log } from '../log/logger.js'
-import { MAX_NODE_MESSAGE_LENGTH, sanitize } from '../node/messages.js'
+import {
+  MAX_NODE_MESSAGE_LENGTH,
+  sanitize,
+  sessionIdRemover
+} from '../node/messages.js'
 import {
   type OceanNodeClient,
   OceanNodeError,
@@ -51,6 +59,14 @@ import {
   type SessionKey,
   type SessionStore
 } from './session.js'
+import {
+  hasSsiEntries,
+  isSsiPolicyV2Credential,
+  requestUriHost,
+  type SsiCapabilities,
+  type SsiResult,
+  type SsiStatusResult
+} from './ssi.js'
 import { CredentialPresentationError } from './WaltIdProvider.js'
 
 /**
@@ -68,6 +84,17 @@ export const DEFAULT_SESSION_TTL_MS = 2 * 60 * 1000
 /** What a refusal's reason starts with; the failed policies follow in parentheses. */
 const REFUSED =
   'the node reports that the verifier did not accept the presentation'
+/** The reason of a native SSI session still pending after the last `ssiStatus`. */
+const PENDING =
+  'the node still reports the SSI session pending: the verifier has not received or not finished checking the presentation'
+/** The reason of a native SSI session whose presentation window closed. */
+const EXPIRED =
+  'the node reports the SSI session expired before a presentation was verified'
+
+/** `ssiStatus` attempts after a presentation, by default. */
+export const DEFAULT_SSI_STATUS_ATTEMPTS = 5
+/** Milliseconds between `ssiStatus` attempts, by default. */
+export const DEFAULT_SSI_STATUS_INTERVAL_MS = 2_000
 /** How much of one failed policy goes into a refusal's reason. */
 const MAX_DESCRIBED_FAILURE = 80
 
@@ -101,7 +128,32 @@ export interface PolicySessionResolverOptions {
   sessionTtlMs?: number
   /** Where this resolver's log events go. Default: the process-wide logger. */
   logger?: Logger
+  /**
+   * Nodes with the native SSI module: how often, and how far apart, `ssiStatus` is asked
+   * after the wallet presented, while the node still reports the session `pending`.
+   * Default 5 attempts, 2 s apart. Every attempt is a signed command (one nonce, and one
+   * signature: a prompt with an interactive wallet).
+   */
+  ssiStatusPolling?: { attempts?: number; intervalMs?: number }
 }
+
+/** A session `resolveSession` opened, and which protocol it belongs to. */
+export type ResolvedPolicySession =
+  | {
+      /** A node with a policy server. */
+      protocol: 'policy-server'
+      sessionId: string
+      payload: PolicyServerPayload
+    }
+  | {
+      /** A node with the native SSI module (`ssiInitiate`). */
+      protocol: 'ssi'
+      sessionId: string
+      payload: SsiSessionPayload
+    }
+
+/** What `resolve` hands the node's `policyServer` slot. */
+export type PolicySessionPayload = PolicyServerPayload | SsiSessionPayload
 
 /** One service a session is needed for. */
 export interface PolicySessionRequest {
@@ -131,6 +183,9 @@ export class PolicySessionResolver {
   /** Presented sessions: `sessions` when persisted, else memory only. */
   private readonly presentedSessions: SessionStore
   private readonly sessionTtlMs: number
+  private readonly logger: Logger
+  private readonly statusAttempts: number
+  private readonly statusIntervalMs: number
 
   constructor(options: PolicySessionResolverOptions = {}) {
     const sessionTtlMs = options.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS
@@ -147,6 +202,22 @@ export class PolicySessionResolver {
         ? this.sessions
         : new MemorySessionStore()
     this.sessionTtlMs = sessionTtlMs
+    this.logger = options.logger ?? log
+
+    const attempts =
+      options.ssiStatusPolling?.attempts ?? DEFAULT_SSI_STATUS_ATTEMPTS
+    const intervalMs =
+      options.ssiStatusPolling?.intervalMs ?? DEFAULT_SSI_STATUS_INTERVAL_MS
+    if (!Number.isInteger(attempts) || attempts < 1 || attempts > 60)
+      throw new Error(
+        `ssiStatusPolling.attempts must be a whole number from 1 to 60; got ${attempts}.`
+      )
+    if (!Number.isFinite(intervalMs) || intervalMs < 0 || intervalMs > 60_000)
+      throw new Error(
+        `ssiStatusPolling.intervalMs must be from 0 to 60000 milliseconds; got ${intervalMs}.`
+      )
+    this.statusAttempts = attempts
+    this.statusIntervalMs = intervalMs
 
     if (options.sessionStore && options.persistPresentedSessions)
       (options.logger ?? log).emit(
@@ -192,7 +263,34 @@ export class PolicySessionResolver {
    */
   async resolve(
     request: PolicySessionRequest
-  ): Promise<PolicyServerPayload | null> {
+  ): Promise<PolicySessionPayload | null> {
+    return (await this.resolveSession(request))?.payload ?? null
+  }
+
+  /**
+   * As `resolve`, with the protocol of the session: `'policy-server'` for a node with a
+   * policy server, `'ssi'` for a node with the native SSI module. A compute job needs it to
+   * shape its `policyServer` field (`{ sessionId, sessionIds }` for the native module).
+   *
+   * Which protocol a node speaks is read from its status (`getSsiCapabilities`): a node that
+   * announces an `ssi` block, or whose status cannot be read for a service with an
+   * `SSIpolicyV2` entry, gets the native flow:
+   *
+   *   1. no session when neither the asset nor the service has an SSI entry: the node checks
+   *      addresses and access lists itself;
+   *   2. `ssiInitiate` (a refusal throws a `PolicyDeniedError`, `source: 'ssi'`);
+   *   3. the credential provider presents the OpenID4VP 1.0 request (`protocol: 'oid4vp'`),
+   *      which must point at the node's announced verifier host;
+   *   4. `ssiStatus` until the session is no longer `pending` (`ssiStatusPolling`): only
+   *      `verified` passes; `failed` and `expired` throw a `PolicyDeniedError` whose
+   *      `policyResults` carry the node's results (`scope`, `credential` = DCQL query id).
+   *
+   * Native sessions are never cached: the node consumes one on the download (for one order)
+   * or on the compute start (for one job), so each flow opens its own.
+   */
+  async resolveSession(
+    request: PolicySessionRequest
+  ): Promise<ResolvedPolicySession | null> {
     const { node, asset, serviceId } = request
 
     const service = getService(asset, serviceId)
@@ -200,6 +298,37 @@ export class PolicySessionResolver {
       throw new Error(`Asset ${asset.id} has no service with id ${serviceId}.`)
 
     if (!hasCredentials(asset, service)) return null
+
+    const assetCredentials = getCredentials(asset)
+    const serviceCredentials = getServiceCredentials(service)
+
+    const ssi = await node.getSsiCapabilities()
+    if (
+      ssi ||
+      (ssi === undefined &&
+        (hasV2Entries(assetCredentials) || hasV2Entries(serviceCredentials)))
+    )
+      return this.resolveSsi(
+        request,
+        assetCredentials,
+        serviceCredentials,
+        ssi ?? undefined
+      )
+
+    const payload = await this.resolvePolicyServer(request)
+    return payload
+      ? { protocol: 'policy-server', sessionId: payload.sessionId, payload }
+      : null
+  }
+
+  /** The policy-server flow of `resolveSession`. */
+  private async resolvePolicyServer(
+    request: PolicySessionRequest
+  ): Promise<PolicyServerPayload | null> {
+    const { node, asset, serviceId } = request
+    const service = getService(asset, serviceId) as NonNullable<
+      ReturnType<typeof getService>
+    >
 
     const consumerAddress = node.policySessionAddress(request.consumerAddress)
     const key: SessionKey = {
@@ -300,6 +429,143 @@ export class PolicySessionResolver {
       })
 
     return emptyPolicyServerPayload(sessionId)
+  }
+
+  /** The native SSI flow of `resolveSession`. */
+  private async resolveSsi(
+    request: PolicySessionRequest,
+    assetCredentials: DdoCredentials | undefined,
+    serviceCredentials: DdoCredentials | undefined,
+    capabilities: SsiCapabilities | undefined
+  ): Promise<ResolvedPolicySession | null> {
+    const { node, asset, serviceId } = request
+
+    // The node checks addresses and access lists itself, on every request.
+    if (!hasSsiEntries(assetCredentials) && !hasSsiEntries(serviceCredentials))
+      return null
+
+    if (capabilities && !capabilities.enabled)
+      throw new OceanNodeError(
+        'ssiInitiate',
+        `service ${serviceId} of ${asset.id} asks for verifiable credentials, and ${node.nodeUri} has no SSI verifier configured, so it denies every consumer. Nothing was ordered or paid.`
+      )
+
+    const credentials = this.credentials
+    if (!credentials)
+      throw new Error(
+        `Service ${serviceId} of ${asset.id} requires a verifiable presentation, and no credential provider is set to make one. Pass a WalletApi2CredentialProvider as \`credentials\` to Nautilus.create(), or call setCredentialProvider(). Nothing was ordered or paid.`
+      )
+
+    const sessionAddress = node.policySessionAddress(request.consumerAddress)
+    // Before the session: one opened and never presented stays pending at the node, and
+    // counts against the consumer's few pending sessions.
+    await credentials.prepare?.({
+      asset,
+      serviceId,
+      consumerAddress: sessionAddress,
+      node
+    })
+
+    const opened = await node.ssiInitiate({
+      documentId: asset.id,
+      serviceId,
+      consumerAddress: sessionAddress
+    })
+    if (!opened.required) return null
+
+    const { sessionId, consumerAddress } = opened
+    if (debugEnabled('sensitive', 'policy'))
+      debugRaw('policy', 'SSI session opened (ssiInitiate)', opened)
+
+    if (opened.deprecated)
+      this.logger.emit(
+        'identity.ssi.legacy_policy',
+        `${asset.id} gates service ${serviceId} with the deprecated SSIpolicy format; the node translates it for now. Ask the publisher to move it to SSIpolicyV2.`,
+        { did: asset.id, serviceId, nodeUri: node.nodeUri },
+        { once: JSON.stringify(['ssi-legacy', node.nodeUri, asset.id]) }
+      )
+
+    const verifierHost = capabilities?.verifierPublicHost
+    const requestHost = requestUriHost(opened.requestUri)
+    if (!verifierHost)
+      this.logger.emit(
+        'identity.ssi.verifier_unannounced',
+        `${node.nodeUri} does not announce its verifier host, so nautilus cannot check that the presentation request (${requestHost ?? 'no request_uri'}) comes from this node's verifier.`,
+        { nodeUri: node.nodeUri, requestHost },
+        { once: JSON.stringify(['ssi-verifier', node.nodeUri]) }
+      )
+    else if (requestHost !== verifierHost)
+      throw new CredentialPresentationError(
+        `The presentation request points at ${requestHost ?? 'no request_uri'}, not at the verifier ${node.nodeUri} announces (${verifierHost}). It was not created by this node's verifier, so nothing was presented, ordered or paid.`,
+        undefined,
+        'request-invalid'
+      )
+
+    const statusRequest = {
+      sessionId,
+      documentId: asset.id,
+      serviceId,
+      consumerAddress
+    }
+    const denied = (status: SsiStatusResult, cause?: unknown) =>
+      new PolicyDeniedError({
+        nodeUri: node.nodeUri,
+        did: asset.id,
+        serviceId,
+        consumerAddress,
+        reason: refusalReason(
+          toPolicyResults(status.results, sessionId),
+          status.status === 'pending'
+            ? PENDING
+            : status.status === 'expired'
+              ? EXPIRED
+              : REFUSED
+        ),
+        policyResults: toPolicyResults(status.results, sessionId),
+        source: 'ssi',
+        cause
+      })
+
+    try {
+      await credentials.present({
+        protocol: 'oid4vp',
+        asset,
+        serviceId,
+        consumerAddress,
+        node,
+        sessionId,
+        redirectUri: opened.requestUri,
+        ...(opened.dcql ? { dcql: opened.dcql } : {}),
+        ...(opened.expiresAt ? { expiresAt: opened.expiresAt } : {}),
+        ...(verifierHost ? { verifierHost } : {})
+      })
+    } catch (error) {
+      if (reachedVerifier(error)) {
+        const status = await boundedStatus(node, statusRequest, error)
+        if (
+          status &&
+          (status.status === 'failed' ||
+            status.status === 'expired' ||
+            status.results.some((result) => !result.success))
+        )
+          throw denied(status, error)
+      }
+      throw error
+    }
+
+    let status = await node.ssiStatus(statusRequest)
+    for (
+      let attempt = 1;
+      attempt < this.statusAttempts && status.status === 'pending';
+      attempt++
+    ) {
+      await sleep(this.statusIntervalMs)
+      status = await node.ssiStatus(statusRequest)
+    }
+
+    if (status.status !== 'verified') throw denied(status)
+
+    return { protocol: 'ssi', sessionId, payload: { sessionId } }
   }
 
   /**
@@ -417,6 +683,83 @@ async function failedPolicies(
     : undefined
 }
 
+/** Whether the `allow` list of a credentials block has an `SSIpolicyV2` entry. */
+function hasV2Entries(credentials: DdoCredentials | undefined): boolean {
+  return (
+    Array.isArray(credentials?.allow) &&
+    credentials.allow.some(isSsiPolicyV2Credential)
+  )
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** How long an error result of an SSI result may be in a `PolicyCheckResult`. */
+const MAX_SSI_RESULT_ERROR = 100
+
+/**
+ * The node's SSI results as `PolicyCheckResult`s: the scope and the DCQL query id kept, the
+ * texts bounded and without the session id.
+ */
+function toPolicyResults(
+  results: SsiResult[],
+  sessionId: string
+): PolicyCheckResult[] {
+  const remove = sessionIdRemover(sessionId)
+  const clean = (text: string, max: number) =>
+    remove(sanitize(remove(text), max, null))
+
+  return results.map((result) => ({
+    scope: clean(result.scope, 40),
+    ...(result.credentialId
+      ? { credential: clean(result.credentialId, 80) }
+      : {}),
+    policy: clean(result.name, 80),
+    success: result.success,
+    ...(result.error
+      ? { error: clean(result.error, MAX_SSI_RESULT_ERROR) }
+      : {})
+  }))
+}
+
+/**
+ * After a presentation that may have reached the verifier: the session's status, read once
+ * and cut after 15 s, or `undefined` when the read fails (the presentation's error then
+ * stands). As `failedPolicies` does for the policy server.
+ */
+async function boundedStatus(
+  node: OceanNodeClient,
+  request: Parameters<OceanNodeClient['ssiStatus']>[0],
+  error: unknown
+): Promise<SsiStatusResult | undefined> {
+  if (debugEnabled('sensitive', 'policy'))
+    debugRaw('policy', 'presentation failed (SSI)', {
+      sessionId: request.sessionId,
+      error
+    })
+
+  const signal = AbortSignal.timeout(FAILED_PRESENTATION_READ_TIMEOUT_MS)
+  try {
+    return await Promise.race<SsiStatusResult>([
+      node.ssiStatus(request, signal),
+      new Promise<never>((_, reject) => {
+        if (signal.aborted) reject(signal.reason)
+        signal.addEventListener('abort', () => reject(signal.reason), {
+          once: true
+        })
+      })
+    ])
+  } catch (statusError) {
+    if (debugEnabled('sensitive', 'policy'))
+      debugRaw('policy', 'ssiStatus after the failed presentation failed', {
+        sessionId: request.sessionId,
+        error: statusError
+      })
+    return undefined
+  }
+}
+
 // #region reply shapes
 
 /**
@@ -450,23 +793,29 @@ function readInitiateReply(reply: PolicyServerReply): {
  * `token=<redacted>`), and the closing parenthesis is never cut: each failure is cut at 80
  * characters, as many as fit are listed, and the rest counted (`; 2 more in policyResults`).
  */
-function refusalReason(results: PolicyCheckResult[]): string {
+function refusalReason(
+  results: PolicyCheckResult[],
+  lead: string = REFUSED
+): string {
   const failures = results
     .filter((result) => !result.success)
     .map((result) => {
-      const text = [result.policy, result.error].filter(Boolean).join(': ')
+      const name = [result.scope, result.policy].filter(Boolean).join('/')
+      const target =
+        result.scope && result.credential ? ` (${result.credential})` : ''
+      const text = [`${name}${target}`, result.error].filter(Boolean).join(': ')
       return text.length > MAX_DESCRIBED_FAILURE
         ? `${text.slice(0, MAX_DESCRIBED_FAILURE)}…`
         : text
     })
-  if (!failures.length) return REFUSED
+  if (!failures.length) return lead
 
   const listing = (shown: number) => {
     const more = failures.length - shown
     const counted = more
       ? `${more}${shown ? ' more' : ''} in policyResults`
       : ''
-    return `${REFUSED} (${[...failures.slice(0, shown), counted].filter(Boolean).join('; ')})`
+    return `${lead} (${[...failures.slice(0, shown), counted].filter(Boolean).join('; ')})`
   }
   const fits = (reason: string) =>
     sanitize(reason, Number.MAX_SAFE_INTEGER, null).length <=

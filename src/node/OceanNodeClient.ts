@@ -62,7 +62,22 @@ import {
   assertResultIndex,
   withQualifiedJobId
 } from '../compute/jobs.js'
-import type { PolicyServerPayload } from '../ddo/types.js'
+import type {
+  PolicyServerPayload,
+  SsiComputePayload,
+  SsiSessionPayload
+} from '../ddo/types.js'
+import {
+  type RegoValidationResult,
+  readRegoValidation,
+  readSsiCapabilities,
+  readSsiInitiate,
+  readSsiStatus,
+  SSI_COMMANDS,
+  type SsiCapabilities,
+  type SsiInitiateResult,
+  type SsiStatusResult
+} from '../identity/ssi.js'
 import { debugEnabled, debugRaw } from '../log/debug.js'
 import { type Logger, log } from '../log/logger.js'
 import {
@@ -88,17 +103,43 @@ import {
   describeAnswer,
   describeError,
   endSentence,
+  nodeText,
   sanitize,
   sanitizedError,
   sessionIdRemover
 } from './messages.js'
 
-/** Payload accepted by the `policyServer` slots: one entry, or one per compute asset. */
+/**
+ * Payload accepted by the `policyServer` slots: for a node with a policy server, one entry
+ * or one per compute asset; for a node with the native SSI module, `{ sessionId }`, or
+ * `{ sessionId, sessionIds }` for a compute job.
+ */
 export type PolicyServerArg =
   | PolicyServerPayload
   | PolicyServerPayload[]
+  | SsiSessionPayload
+  | SsiComputePayload
   | null
   | undefined
+
+/** The request of `ssiInitiate`. */
+export interface SsiInitiateRequest {
+  documentId: string
+  serviceId: string
+  /**
+   * The consumer the session is bound to. With a Signer the signer's address is sent
+   * instead, with a JWT the token's (the node requires the request to name it).
+   */
+  consumerAddress?: string
+}
+
+/** The request of `ssiStatus`: the session and what it was opened for. */
+export interface SsiStatusRequest extends SsiInitiateRequest {
+  sessionId: string
+}
+
+/** What `ssiInitiate` resolves with: the node's answer and the address it was signed for. */
+export type SsiInitiateAnswer = SsiInitiateResult & { consumerAddress: string }
 
 export interface OceanNodeClientOptions {
   /** The ocean-node URI. An HTTP URL, or a peerId/multiaddr to use the libp2p transport. */
@@ -249,8 +290,17 @@ export enum PolicyServerAction {
 
 /** One VC or VP policy the verifier ran on a presentation, without its data. */
 export interface PolicyCheckResult {
-  /** The credential type it ran on (`VerifiablePresentation` for a VP policy). */
+  /**
+   * The credential it ran on: for the policy server, the credential type
+   * (`VerifiablePresentation` for a VP policy); for the native SSI module, the DCQL query id
+   * the credential was presented for.
+   */
   credential?: string
+  /**
+   * Native SSI module only: what was checked, `vc`, `vp`, `gaiax`, `rego` or `binding`
+   * (the node's `ssiStatus` result scope).
+   */
+  scope?: string
   /** The policy's name, e.g. `signature` or `holder-binding`. */
   policy: string
   success: boolean
@@ -271,6 +321,8 @@ export interface PolicyCheckResult {
  * `OceanNodeError`.
  */
 export class PolicyDeniedError extends Error {
+  /** Who refused: the node's policy server, or its native SSI module. */
+  readonly source: 'policy-server' | 'ssi'
   readonly did: string
   readonly serviceId: string
   /** The address the policy server checked, as it was sent. */
@@ -304,15 +356,22 @@ export class PolicyDeniedError extends Error {
     reason: string
     policyResults?: PolicyCheckResult[]
     cause?: unknown
+    /**
+     * Who refused: the node's policy server (default), or the node's native SSI module
+     * (`ssiInitiate` / `ssiStatus`).
+     */
+    source?: 'policy-server' | 'ssi'
   }) {
     const reason =
       boundedNodeMessage(params.reason, 'policy') || 'no reason given'
+    const ssi = params.source === 'ssi'
 
     super(
-      `The policy server of ${params.nodeUri} refused service ${params.serviceId} of ${params.did} for ${params.consumerAddress}${params.code ? ` (${params.code})` : ''}: ${endSentence(reason)} Nothing was ordered or paid. Check the asset's credentials (its address allow list and SSIpolicy) with the publisher.`,
+      `${ssi ? 'The SSI module' : 'The policy server'} of ${params.nodeUri} refused service ${params.serviceId} of ${params.did} for ${params.consumerAddress}${params.code ? ` (${params.code})` : ''}: ${endSentence(reason)} Nothing was ordered or paid. Check the asset's credentials (${ssi ? 'its address allow list and SSIpolicyV2 entries' : 'its address allow list and SSIpolicy'}) with the publisher.`,
       params.cause === undefined ? undefined : { cause: params.cause }
     )
     this.name = 'PolicyDeniedError'
+    this.source = params.source ?? 'policy-server'
     this.did = params.did
     this.serviceId = params.serviceId
     this.consumerAddress = params.consumerAddress
@@ -764,6 +823,21 @@ function normalizeStateQuery(query: IndexingStateQuery): [string, string] {
 /** The node's answer when a signed command reuses a nonce it has already seen. */
 const NONCE_REJECTED = /not a valid nonce/i
 
+/** How long a node's SSI capabilities are kept: 5 minutes. */
+const SSI_CAPABILITIES_TTL_MS = 5 * 60 * 1000
+
+/** The largest SSI answer read: an `ssiInitiate` answer carries the DCQL query. */
+const MAX_SSI_REPLY_BYTES = 512 * 1024
+
+/** The JSON in a text, or `undefined` when it is not JSON. */
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * How long a `getComputeLogs` request holds this client's signed-call queue while it waits
  * for the node's answer. The node stores the request's nonce before it opens the log
@@ -1152,6 +1226,9 @@ export class OceanNodeClient {
    * until when that holds. See `hasPolicyServer`.
    */
   private policyServerAnswer?: { configured: boolean; until: number }
+
+  /** The node's SSI capabilities, once read, and until when they hold. */
+  private ssiAnswer?: { value: SsiCapabilities | null; until: number }
 
   /**
    * The clients `forEndpoint` hands out, keyed by normalised node URI, shared by every
@@ -2267,6 +2344,13 @@ export class OceanNodeClient {
       userdata?: UserCustomParameters
       computeEnv?: string
       validUntil?: number
+      /**
+       * The verified SSI session of a node with the native SSI module (`{ sessionId }`):
+       * its `initialize` checks the session (without consuming it) before it quotes. Sent
+       * over HTTP only, as the node's `policyServer` query parameter (JSON); ocean.js's
+       * P2P `initialize` has no slot for it.
+       */
+      policyServer?: PolicyServerArg
       signal?: AbortSignal
     } = {}
   ): Promise<ProviderInitialize> {
@@ -2285,6 +2369,8 @@ export class OceanNodeClient {
       if (options.computeEnv) query.set('environment', options.computeEnv)
       if (options.validUntil)
         query.set('validUntil', String(options.validUntil))
+      if (options.policyServer)
+        query.set('policyServer', JSON.stringify(options.policyServer))
 
       const response = await this.get(
         'initialize',
@@ -2728,6 +2814,306 @@ export class OceanNodeClient {
       )
 
     return answer.response
+  }
+
+  // #endregion
+
+  // #region SSI (native module)
+
+  /**
+   * The node's native SSI module, as its `status` answer announces it (`ssi`): `null` when
+   * the node has none (it predates the module, and may have a policy server instead, see
+   * `hasPolicyServer`), `undefined` when the status cannot be read. The answer is kept for
+   * 5 minutes (the node's operator can change its SSI configuration at run time); a failed
+   * read is not kept. Rejects with the signal's reason when `signal` aborts.
+   */
+  async getSsiCapabilities(
+    signal?: AbortSignal
+  ): Promise<SsiCapabilities | null | undefined> {
+    const known = this.ssiAnswer
+    if (known && Date.now() < known.until) return known.value
+
+    let status: unknown
+    try {
+      status = await this.getNodeStatus(signal)
+    } catch (error) {
+      if (signal?.aborted) throw signal.reason
+      this.log.emit(
+        'node.status.unreadable',
+        `Could not read the status of ${this.nodeUri}.`,
+        { nodeUri: this.nodeUri, error }
+      )
+      return undefined
+    }
+
+    const value = readSsiCapabilities(status) ?? null
+    this.ssiAnswer = { value, until: Date.now() + SSI_CAPABILITIES_TTL_MS }
+
+    return value
+  }
+
+  /**
+   * Opens an SSI session for one service (`ssiInitiate`, `POST /api/services/ssi/initiate`):
+   * the node checks the consumer's address against the asset's and the service's
+   * credentials, turns their `SSIpolicyV2` (and deprecated `SSIpolicy`) entries into a DCQL
+   * query and creates a verifier-api2 session. Resolves with `{ required: false }` when the
+   * asset asks for no credentials, else with the session, the OpenID4VP request
+   * (`requestUri`) the wallet answers, and the address the request was signed for.
+   *
+   * Throws a `PolicyDeniedError` (`source: 'ssi'`) when the node refuses the consumer: 403
+   * for an address its allow or deny lists refuse, 422 for an SSI policy it cannot satisfy
+   * (invalid, unsupported, Gaia-X mixed with W3C queries, an unbound asset on a node that
+   * requires consumer binding). Everything else is an `OceanNodeError` with the status:
+   * 400, 401 (a rejected nonce is retried once with a Signer), 404 (asset or service), 429
+   * (a cap of pending sessions), 503 (the verifier or the Gaia-X anchors are unavailable),
+   * a network error or a timeout.
+   *
+   * Needs a Signer or a JWT: every SSI command is signed on its own
+   * (`consumerAddress + nonce + "ssiInitiate"`), so a pre-computed signature cannot sign it.
+   * HTTP only: ocean.js 9.2 has no P2P command for it.
+   */
+  async ssiInitiate(
+    request: SsiInitiateRequest,
+    signal?: AbortSignal
+  ): Promise<SsiInitiateAnswer> {
+    const operation = 'ssiInitiate'
+
+    const { response, consumerAddress } = await this.sendSsiCommand(
+      operation,
+      SSI_COMMANDS.INITIATE,
+      '/api/services/ssi/initiate',
+      { documentId: request.documentId, serviceId: request.serviceId },
+      request.consumerAddress,
+      'consumerAddress',
+      signal
+    )
+
+    if (!response.ok) {
+      if (response.status === 403 || response.status === 422)
+        throw new PolicyDeniedError({
+          nodeUri: this.nodeUri,
+          did: request.documentId,
+          serviceId: request.serviceId,
+          consumerAddress,
+          code: response.status,
+          reason: nodeText(response.body, 'policy'),
+          source: 'ssi'
+        })
+      throw new OceanNodeError(
+        operation,
+        describeAnswer(response, 'policy'),
+        undefined,
+        response.status
+      )
+    }
+
+    const result = readSsiInitiate(parseJson(response.body))
+    if (!result)
+      throw new OceanNodeError(
+        operation,
+        `the node answered with something other than an SSI session: ${boundedNodeMessage(response.body, 'policy')}`
+      )
+
+    if (
+      result.required &&
+      response.deprecation?.trim().toLowerCase() === 'true'
+    )
+      result.deprecated = true
+
+    return { ...result, consumerAddress }
+  }
+
+  /**
+   * The state of an SSI session (`ssiStatus`, `POST /api/services/ssi/status`): `verified`
+   * only when the verifier accepted the presentation and the node's own checks (holder and
+   * consumer binding, Gaia-X, rego) pass. The node re-reads the verifier on every call, and
+   * learns of a presentation only when it is asked, so a client polls this after the
+   * wallet presented.
+   *
+   * A session the node does not know, or one opened for another consumer, asset or service,
+   * is reported as `failed` with a `binding` result: the node answers those with 404. Other
+   * failures throw an `OceanNodeError`, as for `ssiInitiate`. Signed like `ssiInitiate`.
+   */
+  async ssiStatus(
+    request: SsiStatusRequest,
+    signal?: AbortSignal
+  ): Promise<SsiStatusResult> {
+    const operation = 'ssiStatus'
+
+    const { response } = await this.sendSsiCommand(
+      operation,
+      SSI_COMMANDS.STATUS,
+      '/api/services/ssi/status',
+      {
+        sessionId: request.sessionId,
+        documentId: request.documentId,
+        serviceId: request.serviceId
+      },
+      request.consumerAddress,
+      'consumerAddress',
+      signal
+    )
+
+    if (response.status === 404)
+      return {
+        status: 'failed',
+        results: [
+          {
+            scope: 'binding',
+            name: 'session',
+            success: false,
+            error:
+              'the node does not know the session, or it was opened for another consumer, asset or service'
+          }
+        ]
+      }
+
+    if (!response.ok)
+      throw new OceanNodeError(
+        operation,
+        withoutSession(
+          describeAnswer(response, 'policy'),
+          sessionIdRemover(request.sessionId),
+          boundedNodeMessage
+        ),
+        undefined,
+        response.status
+      )
+
+    const result = readSsiStatus(parseJson(response.body))
+    if (!result)
+      throw new OceanNodeError(
+        operation,
+        `the node answered with something other than an SSI status: ${boundedNodeMessage(response.body, 'policy')}`
+      )
+
+    return result
+  }
+
+  /**
+   * Compiles rego on the node (`validateRego`, `POST /api/services/ssi/validateRego`): the
+   * node's static checks, then a compile in verifier-api2's OPA. `policy`, the
+   * `SSIpolicyV2` value the code belongs to, is checked too. Resolves with
+   * `{ valid, errors }`.
+   *
+   * Only an authorized publisher or an admin of the node may call it; anyone else gets an
+   * `OceanNodeError` with status 403, as does everyone on a node with neither list. 503
+   * when the node has no verifier or its OPA is unavailable. Signed with
+   * `publisherAddress + nonce + "validateRego"`.
+   */
+  async validateRego(
+    code: string,
+    policy?: unknown,
+    signal?: AbortSignal
+  ): Promise<RegoValidationResult> {
+    const operation = 'validateRego'
+
+    const { response } = await this.sendSsiCommand(
+      operation,
+      SSI_COMMANDS.VALIDATE_REGO,
+      '/api/services/ssi/validateRego',
+      { code, ...(policy !== undefined ? { policy } : {}) },
+      undefined,
+      'publisherAddress',
+      signal
+    )
+
+    if (!response.ok)
+      throw new OceanNodeError(
+        operation,
+        describeAnswer(response, 'policy'),
+        undefined,
+        response.status
+      )
+
+    const result = readRegoValidation(parseJson(response.body))
+    if (!result)
+      throw new OceanNodeError(
+        operation,
+        `the node answered with something other than a rego validation: ${boundedNodeMessage(response.body, 'policy')}`
+      )
+
+    return result
+  }
+
+  /**
+   * Sends one signed SSI command over HTTP: serialized with this client's other signed
+   * commands, with `requestTimeoutMs`, and once more after a rejected nonce (a Signer only).
+   * Redirects are not followed: the body carries a signature or a token.
+   */
+  private sendSsiCommand(
+    operation: string,
+    command: string,
+    path: string,
+    body: Record<string, unknown>,
+    consumerAddress: string | undefined,
+    addressField: 'consumerAddress' | 'publisherAddress',
+    signal: AbortSignal | undefined
+  ): Promise<{ response: FetchedText; consumerAddress: string }> {
+    if (!isHttpUri(this.nodeUri))
+      return Promise.reject(
+        new OceanNodeError(
+          operation,
+          "the SSI commands are served over HTTP only (ocean.js has no P2P command for them): use the node's HTTP URL"
+        )
+      )
+    if (isCompleteSignature(this.auth))
+      return Promise.reject(
+        new OceanNodeError(
+          operation,
+          `every SSI command is signed on its own (address + nonce + "${command}"), so a pre-computed signature cannot be used: pass a Signer or a node auth token`
+        )
+      )
+
+    return this.serializeSigned(operation, signal, (callSignal) =>
+      this.withNonceRetry(callSignal, async () => {
+        let signed: Awaited<ReturnType<OceanNodeClient['signCommand']>>
+        let response: FetchedText
+        try {
+          signed = await this.signCommand(command, callSignal, consumerAddress)
+          response = await fetchText(
+            fetch,
+            `${this.baseUrl()}${path}`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                ...(signed.authorization
+                  ? { Authorization: signed.authorization }
+                  : {})
+              },
+              body: JSON.stringify({
+                ...body,
+                [addressField]: signed.consumerAddress,
+                ...(signed.nonce !== undefined
+                  ? { nonce: signed.nonce, signature: signed.signature }
+                  : {})
+              })
+            },
+            {
+              timeoutMs: this.requestTimeoutMs,
+              signal: callSignal,
+              maxBodyBytes: MAX_SSI_REPLY_BYTES
+            }
+          )
+        } catch (error) {
+          if (signal?.aborted) throw signal.reason
+          throw new OceanNodeError(operation, errorMessage(error), error)
+        }
+
+        // A rejected nonce: thrown so `withNonceRetry` sends the command once more.
+        if (response.status === 401 && NONCE_REJECTED.test(response.body))
+          throw new OceanNodeError(
+            operation,
+            describeAnswer(response, 'policy'),
+            undefined,
+            response.status
+          )
+
+        return { response, consumerAddress: signed.consumerAddress }
+      })
+    )
   }
 
   // #endregion

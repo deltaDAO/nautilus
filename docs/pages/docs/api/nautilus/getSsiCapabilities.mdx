@@ -1,0 +1,29 @@
+---
+description: Nautilus.getSsiCapabilities reads what a node's native SSI module offers from its status, or null for a node without it.
+---
+
+# getSsiCapabilities
+
+What a node's native SSI module offers, from its `status` (`ssi`): whether it has a verifier,
+the credential formats and VC policies it accepts, rego, the Gaia-X label levels it can check,
+whether it still reads the deprecated `SSIpolicy`, and its public verifier host.
+
+## Usage
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus } from '@deltadao/nautilus'
+
+const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const nautilus = await Nautilus.create(signer, {
+  config: { oceanNodeUri: 'https://node.example.org' }
+})
+// ---cut---
+const ssi = await nautilus.getSsiCapabilities() // [!code focus]
+if (ssi?.enabled) console.log(ssi.gaiaxLevels, ssi.verifierPublicHost)
+```
+
+## Returns
+
+`SsiCapabilities`, `null` for a node without the native SSI module (it may have a policy server),
+or `undefined` when the status cannot be read. Kept for 5 minutes per node.

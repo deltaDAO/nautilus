@@ -41,13 +41,30 @@ import {
   isJobFinished,
   isOutputPending
 } from '../compute/jobs.js'
-import { getLifecycleState, getNftAddress } from '../ddo/read.js'
-import type { DdoCredentials } from '../ddo/types.js'
+import {
+  getCredentials,
+  getLifecycleState,
+  getNftAddress,
+  getServiceCredentials,
+  getServices
+} from '../ddo/read.js'
+import type { DdoCredentials, SsiPolicyV2Value } from '../ddo/types.js'
 import { assertValid } from '../ddo/validate.js'
 import type { CredentialProvider } from '../identity/CredentialProvider.js'
 import { PolicySessionResolver } from '../identity/PolicySessionResolver.js'
 import { isAddressCredential } from '../identity/policy.js'
 import type { SessionStore } from '../identity/session.js'
+import {
+  hasLegacySsiEntries,
+  isSsiEntry,
+  isSsiPolicyV2Credential,
+  type RegoValidationResult,
+  regoProblem,
+  requiredGaiaXLevel,
+  type SsiCapabilities,
+  validateSsiPolicyCombination,
+  validateSsiPolicyV2Value
+} from '../identity/ssi.js'
 import { type OperationName, runOperation } from '../log/context.js'
 import {
   type DebugOptions,
@@ -262,12 +279,20 @@ export interface NautilusOptions
    */
   ddoSigner?: DdoSigner
   /**
-   * Answers the verifiable-presentation request of a service whose `SSIpolicy` asks for
-   * credentials, e.g. a `WaltIdCredentialProvider`. nautilus opens the policy-server
-   * session itself, so a service gated by addresses only needs none; without one, a service
-   * that asks for a presentation is refused before anything is spent.
+   * Answers the verifiable-presentation request of a service whose credentials ask for
+   * one: a `WalletApi2CredentialProvider` for a node with the native SSI module
+   * (`SSIpolicyV2`, OpenID4VP 1.0), a `WaltIdCredentialProvider` for a node with a policy
+   * server (`SSIpolicy`). nautilus opens the session itself, so a service gated by
+   * addresses only needs none; without one, a service that asks for a presentation is
+   * refused before anything is spent.
    */
   credentials?: CredentialProvider
+  /**
+   * Nodes with the native SSI module: how often, and how far apart, `ssiStatus` is asked
+   * after a presentation while the session is still pending. Default 5 attempts, 2 s
+   * apart. Each attempt is a signed command.
+   */
+  ssiStatusPolling?: { attempts?: number; intervalMs?: number }
   /**
    * Where the policy-server sessions of this instance are cached. Defaults to an in-memory
    * store. A session is bound to one (node, asset, service, consumer).
@@ -527,6 +552,7 @@ export class Nautilus {
       sessionStore: options.sessionStore,
       persistPresentedSessions: options.persistPresentedSessions,
       sessionTtlMs: options.sessionTtlMs,
+      ssiStatusPolling: options.ssiStatusPolling,
       logger: this.log
     })
   }
@@ -757,6 +783,59 @@ export class Nautilus {
     this.policySessions.setCredentialProvider(credentials)
   }
 
+  /**
+   * What a node's native SSI module offers (`status.ssi`): the credential formats, VC
+   * policies, rego, the Gaia-X label levels, whether it still reads `SSIpolicy`, and its
+   * verifier host. `null` for a node without the module (it may have a policy server),
+   * `undefined` when its status cannot be read. Default: the configured node.
+   */
+  async getSsiCapabilities(
+    nodeUri?: string
+  ): Promise<SsiCapabilities | null | undefined> {
+    return this.operation('getSsiCapabilities', () =>
+      (nodeUri
+        ? this.node.forEndpoint(nodeUri)
+        : this.node
+      ).getSsiCapabilities()
+    )
+  }
+
+  /**
+   * Checks rego code for an `SSIpolicyV2` value before publishing it. First the node's
+   * static rules, locally (`regoProblem`) and, with `policy`, the value itself
+   * (`validateSsiPolicyV2Value`): a problem there answers `{ valid: false }` without a
+   * request. Then the node compiles the code in its verifier's OPA (`validateRego`, signed
+   * by this instance's signer).
+   *
+   * Only an authorized publisher or an admin of the node may ask it; anyone else gets an
+   * `OceanNodeError` with status 403. Default node: the configured one; pass the node of
+   * the service the policy will gate.
+   */
+  async validateRego(
+    code: string,
+    options: { policy?: SsiPolicyV2Value; nodeUri?: string } = {}
+  ): Promise<RegoValidationResult> {
+    return this.operation('validateRego', async () => {
+      const problem = regoProblem(code)
+      if (problem) return { valid: false, errors: [problem] }
+
+      if (options.policy !== undefined)
+        try {
+          validateSsiPolicyV2Value(options.policy)
+        } catch (error) {
+          return {
+            valid: false,
+            errors: [`policy: ${errorMessage(error)}`]
+          }
+        }
+
+      const node = options.nodeUri
+        ? this.node.forEndpoint(options.nodeUri)
+        : this.node
+      return node.validateRego(code, options.policy)
+    })
+  }
+
   // #endregion
 
   // #region metadata
@@ -843,7 +922,7 @@ export class Nautilus {
 
     await resolvePublisherTrustedAlgorithms(this.node, services)
     await this.assertServicesPublishable(services)
-    await this.assertValidBeforeSpend({
+    const preflight = await this.assertValidBeforeSpend({
       asset,
       create: true,
       nftAddress: PLACEHOLDER_ADDRESS,
@@ -855,6 +934,7 @@ export class Nautilus {
     await remoteStore.check?.()
     await this.warnIfPublisherIsNode(log)
     await this.warnIfPolicyServerDeniesAll(log, asset)
+    await this.checkSsiBeforeSpend(log, asset, preflight)
     await this.assertIndexerNotStuck(options, log)
 
     const published: PublishedService[] = []
@@ -1019,7 +1099,7 @@ export class Nautilus {
 
       await resolvePublisherTrustedAlgorithms(this.node, services)
       await this.assertServicesPublishable(services)
-      await this.assertValidBeforeSpend({
+      const preflight = await this.assertValidBeforeSpend({
         asset,
         create: true,
         nftAddress,
@@ -1028,6 +1108,7 @@ export class Nautilus {
       await remoteStore.check?.()
       await this.warnIfPublisherIsNode(log)
       await this.warnIfPolicyServerDeniesAll(log, asset, nftAddress)
+      await this.checkSsiBeforeSpend(log, asset, preflight, nftAddress)
       await this.assertIndexerNotStuck(options, log)
 
       // Every reused datatoken is on its service before the first transaction, so a retry
@@ -1376,7 +1457,7 @@ export class Nautilus {
       await resolvePublisherTrustedAlgorithms(this.node, asset.ddo.services)
       await this.assertServicesPublishable(asset.ddo.services)
       // The NFT is real on an edit; only the datatokens of newly priced services are not.
-      await this.assertValidBeforeSpend({
+      const preflight = await this.assertValidBeforeSpend({
         asset,
         create: false,
         nftAddress,
@@ -1385,6 +1466,7 @@ export class Nautilus {
       await remoteStore.check?.()
       await this.warnIfPublisherIsNode(log)
       await this.warnIfPolicyServerDeniesAll(log, asset)
+      await this.checkSsiBeforeSpend(log, asset, preflight)
       await this.assertIndexerNotStuck(options, log)
 
       const published: PublishedService[] = []
@@ -1637,6 +1719,124 @@ export class Nautilus {
   }
 
   /**
+   * Checks the SSI policies together for each service. Only the native module translates
+   * legacy entries into native policies and applies its limits to them.
+   * Warns when a service's node will not be able to check the asset's or the service's SSI
+   * entries, so nobody (or everybody) could get access:
+   *
+   *   - `publish.preflight.ssi_v2_unsupported`: an `SSIpolicyV2` entry on a node without the
+   *     native SSI module (no `status.ssi`): it does not gate on it;
+   *   - `publish.preflight.ssi_disabled`: an SSI entry on a node whose SSI module has no
+   *     verifier: it denies every consumer;
+   *   - `publish.preflight.ssi_legacy`: a deprecated `SSIpolicy` entry on a node with the
+   *     native module: translated while the node keeps `legacyFormat`, refused otherwise;
+   *   - `publish.preflight.gaiax_unsupported`: a Gaia-X label level the node cannot check.
+   *
+   * Capability warnings are best effort, once per node, asset and kind.
+   */
+  private async checkSsiBeforeSpend(
+    log: Logger,
+    asset: NautilusAsset,
+    preflight: Record<string, unknown>,
+    nftAddress?: string
+  ): Promise<void> {
+    const assetCredentials = getCredentials(preflight)
+    const subject =
+      asset.ddo.id ||
+      (nftAddress ? expectedDid(nftAddress, this.config.chainId) : undefined) ||
+      JSON.stringify([
+        await this.signer.getAddress().catch(() => ''),
+        asset.ddo.metadata.name ?? ''
+      ])
+
+    for (const service of getServices(preflight)) {
+      const credentials = getServiceCredentials(service)
+      const blocks = [assetCredentials, credentials]
+      if (
+        !blocks.some(
+          (block) =>
+            block.allow?.some(isSsiEntry) || block.deny?.some(isSsiEntry)
+        )
+      )
+        continue
+
+      const endpoint = (service.serviceEndpoint || this.node.nodeUri).replace(
+        /\/+$/,
+        ''
+      )
+      let capabilities: Awaited<
+        ReturnType<OceanNodeClient['getSsiCapabilities']>
+      >
+      try {
+        capabilities = await this.node
+          .forEndpoint(endpoint)
+          .getSsiCapabilities()
+      } catch {
+        capabilities = undefined
+      }
+      const policies = capabilities
+        ? blocks
+        : blocks.map((block) => ({
+            allow: block.allow?.filter(isSsiPolicyV2Credential),
+            deny: block.deny?.filter(isSsiPolicyV2Credential)
+          }))
+      validateSsiPolicyCombination(...policies)
+      if (capabilities === undefined) continue
+
+      const fields = { endpoint, serviceId: service.id }
+      const once = (kind: string) => ({
+        once: JSON.stringify([kind, endpoint, subject, service.id])
+      })
+      const v2 = blocks.some(
+        (block) =>
+          Array.isArray(block?.allow) &&
+          block.allow.some(isSsiPolicyV2Credential)
+      )
+
+      if (capabilities === null) {
+        if (v2)
+          log.emit(
+            'publish.preflight.ssi_v2_unsupported',
+            `${endpoint} has no native SSI module, so it does not check the SSIpolicyV2 entries of service ${service.id}. Publish the service on a node with the SSI module (status.ssi), or gate it with SSIpolicy for a node with a policy server.`,
+            fields,
+            once('ssi-v2-unsupported')
+          )
+        continue
+      }
+
+      if (!capabilities.enabled)
+        log.emit(
+          'publish.preflight.ssi_disabled',
+          `${endpoint} has the SSI module but no verifier configured, and service ${service.id} asks for verifiable credentials: the node will deny every consumer.`,
+          fields,
+          once('ssi-disabled')
+        )
+
+      if (
+        hasLegacySsiEntries(assetCredentials) ||
+        hasLegacySsiEntries(credentials)
+      )
+        log.emit(
+          'publish.preflight.ssi_legacy',
+          capabilities.legacyFormat
+            ? `Service ${service.id} is gated with the deprecated SSIpolicy format, which ${endpoint} translates for now. Use addSsiPolicyV2() instead.`
+            : `Service ${service.id} is gated with the deprecated SSIpolicy format, which ${endpoint} no longer reads: it will deny every consumer. Use addSsiPolicyV2() instead.`,
+          { ...fields, legacyFormat: capabilities.legacyFormat },
+          once('ssi-legacy')
+        )
+
+      const level = requiredGaiaXLevel(assetCredentials, credentials)
+      if (level && !capabilities.gaiaxLevels.includes(level))
+        log.emit(
+          'publish.preflight.gaiax_unsupported',
+          `Service ${service.id} requires Gaia-X compliance at level ${level}, which ${endpoint} cannot check (${capabilities.gaiaxLevels.length ? `it checks ${capabilities.gaiaxLevels.join(', ')}` : 'it has no Gaia-X trust anchors'}): it will deny every consumer.`,
+          { ...fields, level, levels: capabilities.gaiaxLevels },
+          once('gaiax-unsupported')
+        )
+    }
+  }
+
+  /**
    * Refuses to publish onto a node whose indexer nonce is stuck
    * (`IndexerNonceState.stuck`), before the first transaction.
    * Best effort: when the node does not answer (P2P, no `providerAddress`, an older node,
@@ -1764,7 +1964,7 @@ export class Nautilus {
     create: boolean
     nftAddress: string
     issuer: string
-  }): Promise<void> {
+  }): Promise<Record<string, unknown>> {
     const preflight = params.asset.ddo.getPreflightDDO({
       create: params.create,
       chainId: this.config.chainId as number,
@@ -1780,6 +1980,7 @@ export class Nautilus {
     // would go on chain without being indexed. The preflight document is as large as the
     // published one, so this checks the largest envelope its signature can give.
     assertDdoFitsDecryptLimit(preflight, params.issuer)
+    return preflight
   }
 
   /**

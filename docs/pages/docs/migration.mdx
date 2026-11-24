@@ -15,6 +15,122 @@ New to nautilus rather than upgrading? Start with
 [Getting Started](/docs/getting-started) instead — this page assumes you know v1.
 :::
 
+## Nodes with the native SSI module (pontusx-node)
+
+Nodes that replaced the policy server with the native SSI module (ocean-node with walt.id
+verifier-api2, OpenID4VP 1.0 and DCQL) are supported next to policy-server nodes. nautilus tells
+them apart by the `ssi` block in the node's status, so code for policy-server nodes needs no
+change. See [credential-gated assets](/docs/guides/identity#nodes-with-the-native-ssi-module)
+for the flow.
+
+### Consuming: swap the credential provider
+
+To consume an asset gated on such a node, pass a
+[`WalletApi2CredentialProvider`](/docs/api/identity/WalletApi2CredentialProvider) (walt.id
+wallet-api2) in place of a
+[`WaltIdCredentialProvider`](/docs/api/identity/WaltIdCredentialProvider) (walt.id wallet API
+v1):
+
+```ts
+// Before (policy server, walt.id v1 wallet)
+credentials: new WaltIdCredentialProvider(node, { walletApi: 'https://wallet.example.org' })
+
+// After (native SSI module, walt.id wallet-api2)
+credentials: new WalletApi2CredentialProvider({
+  walletApi: 'https://wallet-api.example.org',
+  token: () => getHankoSessionToken() // the account's session token
+})
+```
+
+Each provider speaks one protocol: `WaltIdCredentialProvider` refuses a request from a node
+with the native SSI module, and `WalletApi2CredentialProvider` a policy server's, both with a
+`CredentialPresentationError` whose `reason` is `request-invalid`. wallet-api2 accepts the
+account's session token only (a Hanko session JWT on the pontusx platform); nautilus cannot
+derive it from the EVM key. By default the provider presents from the organisation wallet of
+the consumer's address.
+
+`access()`, `compute()` and `freeCompute()` keep their signatures. On these nodes nautilus
+opens one SSI session per gated service on every call (none is cached: the node consumes it),
+and polls `ssiStatus` after the presentation. Tune the polling with `ssiStatusPolling` on
+`Nautilus.create` (default 5 attempts, 2 s apart):
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus, WalletApi2CredentialProvider } from '@deltadao/nautilus'
+
+const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const config = { oceanNodeUri: 'https://node.example.org' }
+declare function hankoSessionToken(): Promise<string>
+// ---cut---
+const nautilus = await Nautilus.create(signer, {
+  config,
+  credentials: new WalletApi2CredentialProvider({
+    walletApi: 'https://wallet-api.example.org',
+    token: hankoSessionToken
+  }),
+  ssiStatusPolling: { attempts: 10, intervalMs: 1_000 } // [!code focus]
+})
+```
+
+The SSI commands (`ssiInitiate`, `ssiStatus`, `validateRego`) go over HTTP only and are signed
+on their own: a P2P node URI or a pre-computed signature is refused with an `OceanNodeError`.
+Use the node's HTTP URL, and a Signer or a node auth token.
+
+### Publishing: `SSIpolicyV2` in place of `SSIpolicy`
+
+To publish for such a node, gate with
+[`addSsiPolicyV2()`](/docs/api/assetbuilder/addSsiPolicyV2) (on `AssetBuilder` and
+`ServiceBuilder`, with `removeSsiPolicyV2()`) in place of `addRequestCredentials()`,
+`setVcPolicies()` and `setVpPolicies()`:
+
+| `SSIpolicy` (policy server) | `SSIpolicyV2` (native SSI module) |
+| --- | --- |
+| `request_credentials: [{ type, format }]` | `dcql.credentials: [{ id, format, meta: { type_values: [[type]] } }]` (`vct_values` for SD-JWT) |
+| `vc_policies: ['signature', 'expired', 'not-before', 'revoked-status-list']` | `vcPolicies: ['signature', 'expiration', 'not_before', 'revocation']` |
+| per-credential `allowed-issuer` | `specificVcPolicies: { <id>: [{ policy: 'allowed_issuer', allowed_issuer: [...] }] }` |
+| `vp_policies` | dropped: the verifier checks the presentation itself |
+| `dynamic` / OPA server | `rego: [{ name, code, argument? }]`, checked with [`validateRego()`](/docs/api/nautilus/validateRego) |
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+const builder = new AssetBuilder()
+// ---cut---
+// Before (policy server)
+// builder.addRequestCredentials({ type: 'gx:LegalPerson', format: 'jwt_vc_json' })
+
+// After (native SSI module)
+builder.addSsiPolicyV2({
+  version: '2',
+  dcql: {
+    credentials: [
+      { id: 'legal_person', format: 'jwt_vc_json', meta: { type_values: [['gx:LegalPerson']] } }
+    ]
+  },
+  vcPolicies: ['signature', 'expiration', 'not_before', 'revocation']
+})
+```
+
+The value is checked against the node's rules as it is added; one the node would refuse
+throws an `SsiPolicyValidationError` before anything is published. A node with the native
+SSI module still reads `SSIpolicy` entries while its operator keeps `SSI_LEGACY_FORMAT` on, and
+translates them: nautilus then logs `identity.ssi.legacy_policy` on consumption and
+`publish.preflight.ssi_legacy` on publication. Move such assets to `SSIpolicyV2`.
+
+### Type changes
+
+- **`PolicySessionResolver.resolve()`** returns `PolicyServerPayload | SsiSessionPayload`
+  (`{ sessionId }`) instead of `PolicyServerPayload`. The new
+  [`resolveSession()`](/docs/api/identity/PolicySessionResolver) returns the session with its
+  `protocol` (`'policy-server'` or `'ssi'`).
+- **`CredentialChallenge`** gains `protocol` (`'policy-server'` | `'oid4vp'`), and, for
+  `'oid4vp'`, `dcql`, `expiresAt` and `verifierHost`. A challenge without `protocol` is a
+  policy-server one. A custom `CredentialProvider` that speaks one protocol should refuse the
+  other; it can also implement the optional `prepare()`, which runs before a native SSI
+  session is opened (see [`CredentialProvider`](/docs/api/identity/CredentialProvider)).
+- **`PolicyDeniedError.source`** says who refused: `'policy-server'` or `'ssi'`. From a node
+  with the native SSI module, `policyResults` carry a `scope` (`vc`, `vp`, `gaiax`, `rego` or `binding`) and the
+  DCQL query id as `credential`. A rego deny shows as `scope: 'vc'`, `policy: 'dynamic'`.
+
 ## Upgrading from 2.0.0-beta.2
 
 ### The signer is wrapped in a nonce guard
@@ -1007,6 +1123,10 @@ const { url } = await nautilus.access({ assetDid: 'did:ope:…' })
   `startCompute`); its publish-time actions (`newDDO`, `updateDDO`, `validateDDO`,
   `encrypt`, `decrypt`) allow every request.
 :::
+
+For a node with the native SSI module (pontusx-node), use a `WalletApi2CredentialProvider`
+and `addSsiPolicyV2()`: see
+[nodes with the native SSI module](#nodes-with-the-native-ssi-module-pontusx-node).
 
 See [credential-gated assets](/docs/guides/identity) for the full picture.
 

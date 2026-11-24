@@ -82,12 +82,13 @@ export async function access(
   //    policy server and the asset or service has `credentials`, the download is checked
   //    against a session, and a service gated by addresses only needs one as much as an
   //    SSI-gated one does. A refusal throws a `PolicyDeniedError` here, with nothing paid.
-  const policyServer = await policySessions.resolve({
+  const session = await policySessions.resolveSession({
     node: serviceNode,
     asset,
     serviceId: service.id,
     consumerAddress
   })
+  const policyServer = session?.payload ?? null
 
   // 2. Ask the service's node for provider fees and whether a previous order can be
   //    reused. The datatoken verifies each fee's signature, so it is checked locally first
@@ -101,7 +102,11 @@ export async function access(
       serviceNode.initialize(asset.id, service.id, {
         fileIndex: config.fileIndex,
         consumerAddress,
-        userdata
+        userdata,
+        // A node with the native SSI module checks the session before it quotes too.
+        ...(session?.protocol === 'ssi'
+          ? { policyServer: session.payload }
+          : {})
       }),
     (result) => [providerFeeToSend(result)],
     Number(service.timeout) === 0 ? { attempts: 1 } : {}

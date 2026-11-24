@@ -55,7 +55,7 @@ Prefer running code to reading it? Every flow above is a command in [`examples/`
 
 ## What's new in 2.0.0
 
-nautilus v1 targeted `@oceanprotocol/lib` 3.4.6, ethers v5, Aquarius, Provider and DDO v4.1.0 — none of which a current Ocean deployment runs. v2 targets `@oceanprotocol/lib` 9.x, ethers v6, ocean-node and DDO v5, and adds first-class support for the policy server and the walt.id identity stack.
+nautilus v1 targeted `@oceanprotocol/lib` 3.4.6, ethers v5, Aquarius, Provider and DDO v4.1.0 — none of which a current Ocean deployment runs. v2 targets `@oceanprotocol/lib` 9.x, ethers v6, ocean-node and DDO v5, and adds first-class support for credential-gated assets: the policy server with walt.id's wallet-api, and nodes with the native SSI module (pontusx-node: walt.id verifier-api2, OpenID4VP and DCQL) with walt.id's wallet-api2.
 
 The builder pattern is unchanged as the primary API: `AssetBuilder`, `ServiceBuilder` and `ConsumerParameterBuilder` keep their fluent shape, and every v1 capability still has a method. This is a breaking major because the DDO model, the transport and the signer library all changed underneath.
 
@@ -63,7 +63,7 @@ The builder pattern is unchanged as the primary API: `AssetBuilder`, `ServiceBui
 - **The subgraph is gone.** Pricing comes from chain reads and the DDO's indexed stats, so `urql`, `graphql` and graphql-codegen are no longer dependencies.
 - **DDO v5.** Assets are W3C Verifiable Credentials: everything moved under `credentialSubject`, DIDs use the `did:ope:` prefix, `description` and `displayTitle` are language-tagged, `license` is structured, and `providedBy` is required.
 - **DDOs are signed, encrypted and stored off chain.** The remote store (IPFS via `IpfsRemoteStore`, or S3 via `S3RemoteStore`) holds a node-encrypted envelope, and only a node-encrypted `{remote}` pointer is written on chain. There is no plaintext mode.
-- **Credential-gated access.** nautilus resolves policy-server challenges through the walt.id wallet and verifier, headless by default with optional selection callbacks.
+- **Credential-gated access.** nautilus resolves policy-server challenges through the walt.id wallet and verifier, and, on nodes with the native SSI module, opens an SSI session per service (`ssiInitiate` / `ssiStatus`) and presents through wallet-api2, headless by default with optional selection callbacks. Publishers write `SSIpolicyV2` entries with `addSsiPolicyV2()` and check rego with `validateRego()`.
 - **Compute is C2D v2.** Explicit resource requests, escrow payment, free compute, streamable logs and results.
 - **Local DDO validation** via ddo-js SHACL, before any gas is spent.
 - **`strict` TypeScript** is enabled, and ethers v6 is required.
@@ -198,10 +198,12 @@ is rejected as the DDO store. See [remote stores](https://nautilus.delta-dao.com
 
 ### 5. Credential-gated assets
 
-nautilus opens the policy-server session itself, before anything is ordered, so an asset
-gated by addresses needs no setup. If an asset requires a verifiable credential, configure a
-credential provider once to answer the presentation request from your wallet — nothing
-changes at the call site.
+nautilus opens the session itself, before anything is ordered, so an asset gated by addresses
+needs no setup. If an asset requires a verifiable credential, configure a credential provider
+once to answer the presentation request from your wallet — nothing changes at the call site.
+nautilus reads from the node's status which protocol it speaks: a node with a policy server
+takes `WaltIdCredentialProvider` (walt.id wallet-api), a node with the native SSI module
+(`SSIpolicyV2` assets, OpenID4VP) takes `WalletApi2CredentialProvider` (walt.id wallet-api2).
 
 ```ts twoslash
 import { JsonRpcProvider, Wallet } from 'ethers'
@@ -221,6 +223,32 @@ const nautilus = await Nautilus.create(signer, {
 
 const { url } = await nautilus.access({ assetDid: 'did:ope:12345' })
 ```
+
+With a node that has the native SSI module:
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus, WalletApi2CredentialProvider } from '@deltadao/nautilus'
+
+const provider = new JsonRpcProvider('https://rpc.dev.pontus-x.eu')
+const signer = new Wallet('0x...', provider)
+const config = { oceanNodeUri: 'https://node.example.org' }
+declare function hankoSessionToken(): Promise<string>
+
+const nautilus = await Nautilus.create(signer, {
+  config,
+  // presents from the organisation wallet of the signer's address
+  credentials: new WalletApi2CredentialProvider({
+    walletApi: 'https://wallet-api.example.org',
+    token: hankoSessionToken
+  })
+})
+
+const { url } = await nautilus.access({ assetDid: 'did:ope:12345' })
+```
+
+See [credential-gated assets](https://nautilus.delta-dao.com/docs/guides/identity) for both stacks,
+publishing `SSIpolicyV2` assets and Compute-to-Data on them.
 
 ## Examples
 

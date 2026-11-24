@@ -1,0 +1,66 @@
+---
+description: AssetBuilder.addSsiPolicyV2 requires verifiable credentials on nodes with the native SSI module, as an SSIpolicyV2 value with a DCQL query, VC policies, Gaia-X and rego.
+---
+
+# addSsiPolicyV2
+
+Require verifiable credentials for every service of the asset, on a node with the native SSI
+module (pontusx-node: OpenID4VP 1.0 with DCQL, walt.id verifier-api2). Adds an `SSIpolicyV2`
+value to `credentials.allow`. Every value of the asset and of the service must be satisfied (AND).
+
+## Usage
+
+```ts twoslash
+import { AssetBuilder } from '@deltadao/nautilus'
+
+const assetBuilder = new AssetBuilder()
+// ---cut---
+assetBuilder.addSsiPolicyV2({ // [!code focus]
+  version: '2', // [!code focus]
+  dcql: { // [!code focus]
+    credentials: [ // [!code focus]
+      { // [!code focus]
+        id: 'legal_person', // [!code focus]
+        format: 'jwt_vc_json', // [!code focus]
+        meta: { type_values: [['gx:LegalPerson']] }, // [!code focus]
+        claims: [{ path: ['credentialSubject', 'gx:legalName'] }] // [!code focus]
+      } // [!code focus]
+    ] // [!code focus]
+  }, // [!code focus]
+  vcPolicies: ['signature', 'expiration', 'not_before', 'revocation'], // [!code focus]
+  specificVcPolicies: { // [!code focus]
+    legal_person: [{ policy: 'allowed_issuer', allowed_issuer: ['did:web:issuer.example'] }] // [!code focus]
+  } // [!code focus]
+}) // [!code focus]
+```
+
+A Gaia-X-only value asks the node to check the presenting organisation's compliance; the node
+adds the Gaia-X queries itself:
+
+```ts
+{ version: '2', dcql: { credentials: [] }, gaiax: { requireCompliance: true, minLabelLevel: 'L1' } }
+```
+
+## Checked before anything is published
+
+The value is checked against the node's own rules (`validateSsiPolicyV2Value`), and an
+`SsiPolicyValidationError` names the first problem:
+
+- formats `jwt_vc_json`, `dc+sd-jwt`, `vc+sd-jwt`; query ids `[A-Za-z0-9_-]{1,64}`, and not
+  `gx_compliance`, `gx_legal_person` or `gx_service_offering`;
+- VC policies `signature`, `expiration`, `not_before`, `revocation`, `status`
+  (`argument`), `allowed_issuer`, `json_schema` (inline `schema` only), `vct_integrity`:
+  `regex` and `webhook` are refused;
+- `require_cryptographic_holder_binding` cannot be `false`;
+- Gaia-X cannot be combined with `jwt_vc_json` queries in one value (use `dc+sd-jwt`);
+- rego: inline, 64 KiB, one leading `package`, no `data`, no `http.send`, `net.lookup_ip_addr`,
+  `opa.runtime`, `print` or `trace`. Compile it on the node with
+  [`validateRego`](/docs/api/nautilus/validateRego).
+
+Set `consumerBinding: true` to require that every presented credential is bound to the
+consumer's address: a `jwt_vc_json` holder must be the consumer's `did:pkh`/`did:ethr`, a
+`dc+sd-jwt` credential is bound by the node's `transaction_data` (which the node sends for
+`dc+sd-jwt` either way), and a `vc+sd-jwt` credential cannot be bound and fails.
+
+`removeSsiPolicyV2()` removes every `SSIpolicyV2` entry. For a node with a policy
+server, use [`addRequestCredentials`](/docs/api/assetbuilder/addRequestCredentials).

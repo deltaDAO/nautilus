@@ -291,6 +291,171 @@ const asset = new AssetBuilder()
   .build()
 ```
 
+## Requiring verifiable credentials
+
+On a node with the native SSI module (pontusx-node, announced as `status.ssi`), gate an
+asset or a single service with
+[`addSsiPolicyV2()`](/docs/api/assetbuilder/addSsiPolicyV2). It writes an `SSIpolicyV2`
+value, a DCQL query plus the policies the node runs, into `credentials.allow`. Every value of
+the asset and of the service must be satisfied. `SSIpolicyV2` entries go into the allow list
+only: the node rejects them in `deny`.
+
+```ts twoslash
+import {
+  AssetBuilder,
+  FileTypes,
+  ServiceBuilder,
+  ServiceTypes
+} from '@deltadao/nautilus'
+// ---cut---
+// Service level: an SD-JWT VC, picked by its type (`vct`).
+const service = new ServiceBuilder<ServiceTypes.ACCESS, FileTypes.URL>({
+  serviceType: ServiceTypes.ACCESS
+})
+  .setServiceEndpoint('https://node.example.org')
+  .addFile({ type: 'url', url: 'https://data.example/x.csv', method: 'GET' })
+  .setPricing({ type: 'free' })
+  .addSsiPolicyV2({ // [!code focus]
+    version: '2', // [!code focus]
+    dcql: { // [!code focus]
+      credentials: [ // [!code focus]
+        { id: 'pid', format: 'dc+sd-jwt', meta: { vct_values: ['urn:eu.europa.ec.eudi:pid:1'] } } // [!code focus]
+      ] // [!code focus]
+    }, // [!code focus]
+    vcPolicies: ['signature', 'expiration', 'revocation'] // [!code focus]
+  }) // [!code focus]
+  .build()
+
+// Asset level: a W3C VC (`jwt_vc_json`), picked by its types, from a trusted issuer.
+const asset = new AssetBuilder()
+  .setType('dataset')
+  .setName('Weather Observations')
+  .setProvidedBy('deltaDAO AG')
+  .addSsiPolicyV2({ // [!code focus]
+    version: '2', // [!code focus]
+    dcql: { // [!code focus]
+      credentials: [ // [!code focus]
+        { id: 'legal_person', format: 'jwt_vc_json', meta: { type_values: [['gx:LegalPerson']] } } // [!code focus]
+      ] // [!code focus]
+    }, // [!code focus]
+    vcPolicies: ['signature', 'expiration', 'not_before', 'revocation'], // [!code focus]
+    specificVcPolicies: { // [!code focus]
+      legal_person: [{ policy: 'allowed_issuer', allowed_issuer: ['did:web:issuer.example'] }] // [!code focus]
+    }, // [!code focus]
+    consumerBinding: true // [!code focus]
+  }) // [!code focus]
+  .addService(service)
+  .build()
+```
+
+`consumerBinding: true` binds a `jwt_vc_json` credential to the consumer's address; a
+`dc+sd-jwt` credential is bound by the node's transaction data either way. See
+[Credential-gated assets](/docs/guides/identity#nodes-with-the-native-ssi-module).
+
+### Checked as you add it
+
+`addSsiPolicyV2()` checks the value against the node's own rules
+(`validateSsiPolicyV2Value`) and throws an `SsiPolicyValidationError` naming the first
+problem, before anything is published: an unsupported format, a reserved or malformed query
+id, a VC policy the node refuses (`regex`, `webhook`), holder binding turned off, rego that
+breaks the node's static rules, or Gaia-X combined with `jwt_vc_json` (W3C) queries in one
+value. For Gaia-X plus other credentials, ask for the others as `dc+sd-jwt`.
+
+```ts twoslash
+import { AssetBuilder, SsiPolicyValidationError } from '@deltadao/nautilus'
+const builder = new AssetBuilder()
+// ---cut---
+try {
+  builder.addSsiPolicyV2({
+    version: '2',
+    dcql: {
+      credentials: [
+        { id: 'legal_person', format: 'jwt_vc_json', meta: { type_values: [['gx:LegalPerson']] } }
+      ]
+    },
+    gaiax: { minLabelLevel: 'L1' } // with a jwt_vc_json query: refused
+  })
+} catch (error) {
+  if (error instanceof SsiPolicyValidationError) console.log(error.message) // [!code focus]
+  else throw error
+}
+```
+
+The full list of rules is on [`addSsiPolicyV2`](/docs/api/assetbuilder/addSsiPolicyV2).
+
+### Rego
+
+`addSsiPolicyV2()` runs only the local static checks on rego policies
+(`rego: [{ name, code, argument? }]`); only the node can compile them. Before you publish,
+call [`validateRego()`](/docs/api/nautilus/validateRego): it runs the local checks, then has
+the node compile the code in its verifier's OPA. Only an authorized publisher or an admin of
+the node may call it; anyone else gets an `OceanNodeError` with status 403.
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus, type SsiPolicyV2Value } from '@deltadao/nautilus'
+
+const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const nautilus = await Nautilus.create(signer, {
+  config: { oceanNodeUri: 'https://node.example.org' }
+})
+// ---cut---
+const code =
+  'package x\nimport rego.v1\nallow if input.credentialData.credentialSubject.employees >= input.parameter.min'
+
+const policy: SsiPolicyV2Value = {
+  version: '2',
+  dcql: { credentials: [{ id: 'company', format: 'dc+sd-jwt', meta: { vct_values: ['https://issuer.example/company'] } }] },
+  rego: [{ name: 'min_employees', code, argument: { min: 10 } }]
+}
+
+const { valid, errors } = await nautilus.validateRego(code, { // [!code focus]
+  policy, // [!code focus]
+  nodeUri: 'https://node.example.org' // the node of the service it gates // [!code focus]
+}) // [!code focus]
+```
+
+### What the node supports
+
+[`getSsiCapabilities()`](/docs/api/nautilus/getSsiCapabilities) reads a node's `status.ssi`:
+whether it has a verifier, the formats and VC policies it accepts, rego, the Gaia-X label
+levels it can check and whether it still reads the deprecated `SSIpolicy`. It returns `null`
+for a node without the native SSI module.
+
+```ts twoslash
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { Nautilus } from '@deltadao/nautilus'
+
+const signer = new Wallet('0x...', new JsonRpcProvider('https://rpc.dev.pontus-x.eu'))
+const nautilus = await Nautilus.create(signer, {
+  config: { oceanNodeUri: 'https://node.example.org' }
+})
+// ---cut---
+const ssi = await nautilus.getSsiCapabilities('https://node.example.org') // [!code focus]
+if (ssi?.enabled) console.log(ssi.formats, ssi.gaiaxLevels, ssi.rego)
+```
+
+`publish()`, `completePublish()` and `edit()` read the same status for every service with
+an SSI entry, at its `serviceEndpoint`, and warn (they do not refuse) when the node will not
+check it as published:
+
+| Event | When |
+| --- | --- |
+| `publish.preflight.ssi_v2_unsupported` | The service has an `SSIpolicyV2` entry, but its node has no native SSI module to check it. |
+| `publish.preflight.ssi_disabled` | The node's SSI module has no verifier configured: it denies every consumer. |
+| `publish.preflight.ssi_legacy` | The service is gated with the deprecated `SSIpolicy` format: translated while the node announces `legacyFormat`; otherwise the node denies every consumer. |
+| `publish.preflight.gaiax_unsupported` | The service requires a Gaia-X label level the node cannot check: it denies every consumer. |
+
+Each is logged once per node, asset and service. A node whose status cannot be read is
+skipped.
+
+:::warning
+[`addRequestCredentials()`](/docs/api/assetbuilder/addRequestCredentials) writes the policy
+server's `SSIpolicy` format, and is deprecated for nodes with the native SSI module: they
+read it only while their operator keeps `SSI_LEGACY_FORMAT` on. Use `addSsiPolicyV2()` for
+those nodes, and `addRequestCredentials()` for nodes with a policy server.
+:::
+
 ## Try it
 
 Every shape above is a runnable command in [`examples/`](/docs/examples):

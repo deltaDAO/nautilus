@@ -7,6 +7,7 @@ import type {
   MatchRule,
   RemoteObject,
   RequestCredential,
+  SsiPolicyV2Value,
   VcPolicy,
   VpPolicy
 } from '../ddo/types.js'
@@ -100,6 +101,8 @@ export interface IAssetBuilder extends IBuilder<NautilusAsset> {
     list: CredentialListTypesAlias,
     accessList: { chainId: number; accessList: string }
   ) => IAssetBuilder
+  addSsiPolicyV2: (value: SsiPolicyV2Value) => IAssetBuilder
+  removeSsiPolicyV2: () => IAssetBuilder
   addRequestCredentials: (
     list: CredentialListTypesAlias,
     requestCredentials: RequestCredential[]
@@ -162,6 +165,8 @@ export interface IServiceBuilder<S extends ServiceTypes, F extends FileTypes>
     list: CredentialListTypesAlias,
     addresses: string[]
   ) => IServiceBuilder<S, F>
+  addSsiPolicyV2: (value: SsiPolicyV2Value) => IServiceBuilder<S, F>
+  removeSsiPolicyV2: () => IServiceBuilder<S, F>
   addRequestCredentials: (
     list: CredentialListTypesAlias,
     requestCredentials: RequestCredential[]

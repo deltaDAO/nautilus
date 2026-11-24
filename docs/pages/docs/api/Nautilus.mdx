@@ -66,8 +66,9 @@ and builds a client; it sends no transaction. The remote store needs no bootstra
 | `config` | `Partial<Config>` | Overrides merged over the chain config resolved from the signer's network. `oceanNodeUri` is effectively required. |
 | `remoteStore` | `RemoteStore` | Where the encrypted DDO envelope is stored. **Required to publish** — nautilus writes an encrypted `{remote}` pointer on chain, not the document. Use `IpfsRemoteStore` or `S3RemoteStore`; `NodePersistentRemoteStore` is rejected. See [remote stores](/docs/guides/remote-stores). |
 | `ddoSigner` | `DdoSigner` | Signs the DDO as a verifiable credential. Defaults to the Ethereum key (`ETH-EIP191`). See [signing](/docs/guides/signing). |
-| `credentials` | `CredentialProvider` | Answers the presentation request of an asset whose `SSIpolicy` asks for credentials. Not needed for address-only gates. See [credential-gated assets](/docs/guides/identity). |
-| `sessionStore` | `SessionStore` | Where policy-server sessions are cached. Defaults to a `MemorySessionStore`. Gets only sessions opened without a presentation, unless `persistPresentedSessions`. |
+| `credentials` | `CredentialProvider` | Answers the presentation request of an asset whose credentials ask for one: a [`WalletApi2CredentialProvider`](/docs/api/identity/WalletApi2CredentialProvider) for a node with the native SSI module (`SSIpolicyV2`), a [`WaltIdCredentialProvider`](/docs/api/identity/WaltIdCredentialProvider) for a node with a policy server (`SSIpolicy`). Not needed for address-only gates. See [credential-gated assets](/docs/guides/identity). |
+| `ssiStatusPolling` | `{ attempts?, intervalMs? }` | Nodes with the native SSI module: how many times, and how far apart, nautilus asks `ssiStatus` while a presented session is still pending. Default 5 attempts, 2 s apart. See [`create`](/docs/api/nautilus/create#ssistatuspolling). |
+| `sessionStore` | `SessionStore` | Where policy-server sessions are cached (sessions of the native SSI module never are). Defaults to a `MemorySessionStore`. Gets only sessions opened without a presentation, unless `persistPresentedSessions`. |
 | `persistPresentedSessions` | `boolean` | Also keep presented sessions in `sessionStore`. Default `false`: their ids give read access to the presentation. |
 | `sessionTtlMs` | `number` | How long a cached policy-server session is reused, in ms. Defaults to 2 minutes; `0` caches nothing. |
 | `allowInsecureTransport` | `boolean` | Accept a plain `http://` `oceanNodeUri` on a host other than `localhost`, `127.0.0.0/8`, `::1` or `*.localhost`. Default `false`. See [`create`](/docs/api/nautilus/create#allowinsecuretransport). |
@@ -102,6 +103,11 @@ There is no `encrypt` option: the pointer and the stored envelope are always nod
 [`getNodeClient`](/docs/api/nautilus/getNodeClient) ·
 [`getSigner`](/docs/api/nautilus/getSigner) ·
 [`setCredentialProvider`](/docs/api/nautilus/setCredentialProvider)
+
+### Identity
+
+[`getSsiCapabilities`](/docs/api/nautilus/getSsiCapabilities) ·
+[`validateRego`](/docs/api/nautilus/validateRego)
 
 ### Metadata
 

@@ -28,6 +28,10 @@ nautilus 2.0.0-beta.1 works with
 **4.2.x**, unmodified. Upstream `oceanprotocol/ocean-node` 4.0 and 4.2 do not resolve remote
 DDOs, so they do not index assets published with nautilus.
 
+nautilus also works with nodes that check credentials with the native SSI module
+(pontusx-node: ocean-node with walt.id verifier-api2) instead of a policy server; see
+[SSI commands](#ssi-commands).
+
 With an IPFS remote store, the node also needs an IPFS gateway (`IPFS_GATEWAY`) that can
 fetch your store's content — see [remote stores](/docs/guides/remote-stores#storage-options).
 
@@ -190,6 +194,52 @@ declare const ddo: Record<string, unknown>
 // ---cut---
 const result = await node.validateRemote(ddo) // [!code focus]
 ```
+
+## SSI commands
+
+A node checks verifiable credentials either with a policy server or with the native SSI
+module. nautilus tells them apart from the node's status:
+
+- a node whose status has an `ssi` block gets the native flow (`ssiInitiate`, `ssiStatus`);
+- a node without one gets the policy-server flow, unchanged;
+- when the status cannot be read, a service whose asset or service has an `SSIpolicyV2`
+  entry gets the native flow.
+
+`getSsiCapabilities()` returns what the `ssi` block announces, `null` for a node without
+one, and `undefined` when the status cannot be read. An answer is kept for 5 minutes.
+
+```ts twoslash
+import { Nautilus } from '@deltadao/nautilus'
+import { Wallet } from 'ethers'
+const nautilus = await Nautilus.create(new Wallet('0x1234'))
+const node = nautilus.getNodeClient()
+// ---cut---
+const ssi = await node.getSsiCapabilities() // [!code focus]
+
+if (ssi) console.log('native SSI module', ssi.enabled, ssi.verifierPublicHost)
+else if (ssi === null) console.log('no SSI module; policy server:', await node.hasPolicyServer())
+```
+
+`access()`, `compute()`, `freeCompute()` and `validateRego()` call these commands; the client
+exposes them directly:
+
+| Method | Endpoint | Does |
+| --- | --- | --- |
+| `ssiInitiate({ documentId, serviceId })` | `POST /api/services/ssi/initiate` | Checks the consumer's address and opens a verifier session: `{ required: false }`, or the `sessionId` and the OpenID4VP `requestUri` the wallet answers. 403 and 422 are a `PolicyDeniedError` with `source: 'ssi'`. |
+| `ssiStatus({ sessionId, documentId, serviceId })` | `POST /api/services/ssi/status` | The session's `status` (`pending`, `verified`, `failed`, `expired`) and the `results` of each check. |
+| `validateRego(code, policy?)` | `POST /api/services/ssi/validateRego` | Compiles rego in the verifier's OPA. Authorized publishers and admins only. |
+
+Each command is signed on its own, `address + nonce + command` (for example
+`consumerAddress + nonce + "ssiInitiate"`), or sent with a node auth token. nautilus sends
+them over HTTP only, since ocean.js has no P2P command for them: a client with a pre-computed
+signature, or one built on a peerId or multiaddr, refuses them before anything is sent.
+
+`initialize` takes the verified session too (`policyServer: { sessionId }`, sent as the
+node's `policyServer` query parameter, over HTTP only). The node checks it before it quotes,
+without consuming it. The download or the compute start then consumes it, so a session
+serves one order or one job. See
+[Credential-gated assets](/docs/guides/identity#nodes-with-the-native-ssi-module) for the
+whole flow.
 
 ## Errors
 

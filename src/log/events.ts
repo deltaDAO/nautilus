@@ -146,6 +146,38 @@ export const LOG_EVENTS = {
     fields: ['endpoint', 'did', 'name'],
     once: true
   },
+  'publish.preflight.ssi_v2_unsupported': {
+    level: 'warn',
+    component: 'publish',
+    description:
+      "A service (or the asset) has an SSIpolicyV2 entry, and the service's node has no native SSI module (no status.ssi), so it does not check it. Once per node, asset and service.",
+    fields: ['endpoint', 'serviceId'],
+    once: true
+  },
+  'publish.preflight.ssi_disabled': {
+    level: 'warn',
+    component: 'publish',
+    description:
+      "A service asks for verifiable credentials, and its node's SSI module has no verifier configured (status.ssi.enabled false): the node denies every consumer. Once per node, asset and service.",
+    fields: ['endpoint', 'serviceId'],
+    once: true
+  },
+  'publish.preflight.ssi_legacy': {
+    level: 'warn',
+    component: 'publish',
+    description:
+      'A service is gated with the deprecated SSIpolicy format on a node with the native SSI module: translated while the node keeps legacyFormat, refused (every consumer denied) otherwise. Once per node, asset and service.',
+    fields: ['endpoint', 'serviceId', 'legacyFormat'],
+    once: true
+  },
+  'publish.preflight.gaiax_unsupported': {
+    level: 'warn',
+    component: 'publish',
+    description:
+      'A service requires a Gaia-X label level its node cannot check (status.ssi.gaiax.levels): the node denies every consumer. Once per node, asset and service.',
+    fields: ['endpoint', 'serviceId', 'level', 'levels'],
+    once: true
+  },
   'publish.preflight.policy_server_unknown': {
     level: 'debug',
     component: 'publish',
@@ -477,7 +509,7 @@ export const LOG_EVENTS = {
     level: 'debug',
     component: 'node',
     description:
-      "A call of getAsset(), getAssets() or query() started; the event's operation names the call, and its opId is on every event of the call."
+      "A call of getAsset(), getAssets(), query(), getSsiCapabilities() or validateRego() started; the event's operation names the call, and its opId is on every event of the call."
   },
   'node.query.finished': {
     level: 'debug',
@@ -512,6 +544,22 @@ export const LOG_EVENTS = {
   },
 
   // identity
+  'identity.ssi.legacy_policy': {
+    level: 'warn',
+    component: 'identity',
+    description:
+      'The node opened an SSI session for an asset gated with the deprecated SSIpolicy format (its ssiInitiate answer carries `Deprecation: true`); the node translates it for now. Once per node and asset.',
+    fields: ['did', 'serviceId', 'nodeUri'],
+    once: true
+  },
+  'identity.ssi.verifier_unannounced': {
+    level: 'warn',
+    component: 'identity',
+    description:
+      "The node does not announce its verifier host (status.ssi.verifierPublicHost), so nautilus cannot check that an OpenID4VP request comes from this node's verifier. Once per node.",
+    fields: ['nodeUri', 'requestHost'],
+    once: true
+  },
   'identity.sessions.presented_persisted': {
     level: 'warn',
     component: 'identity',

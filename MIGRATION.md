@@ -6,6 +6,42 @@ Provider, and DDO v5 instead of v4.1.0.
 
 This is a call-by-call map. If something is not listed, it did not change.
 
+## Nodes with the native SSI module (pontusx-node)
+
+Nodes that replaced the policy server with the native SSI module (ocean-node with walt.id
+verifier-api2, OpenID4VP 1.0 and DCQL) are supported next to policy-server nodes. nautilus tells
+them apart by the `ssi` block in the node's status, so code for policy-server nodes needs no
+change.
+
+To consume an asset gated on such a node, pass a `WalletApi2CredentialProvider` in place of a
+`WaltIdCredentialProvider`:
+
+```ts
+// Before (policy server, walt.id v1 wallet)
+credentials: new WaltIdCredentialProvider(node, { walletApi: 'https://wallet.example.org' })
+
+// After (native SSI module, walt.id wallet-api2)
+credentials: new WalletApi2CredentialProvider({
+  walletApi: 'https://wallet-api.example.org',
+  token: () => getHankoSessionToken() // the account's session token
+})
+```
+
+To publish for such a node, gate with `addSsiPolicyV2()` in place of `addRequestCredentials()`,
+`setVcPolicies()` and `setVpPolicies()`:
+
+| `SSIpolicy` (policy server) | `SSIpolicyV2` (native SSI module) |
+| --- | --- |
+| `request_credentials: [{ type, format }]` | `dcql.credentials: [{ id, format, meta: { type_values: [[type]] } }]` (`vct_values` for SD-JWT) |
+| `vc_policies: ['signature', 'expired', 'not-before', 'revoked-status-list']` | `vcPolicies: ['signature', 'expiration', 'not_before', 'revocation']` |
+| per-credential `allowed-issuer` | `specificVcPolicies: { <id>: [{ policy: 'allowed_issuer', allowed_issuer: [...] }] }` |
+| `vp_policies` | dropped: the verifier checks the presentation itself |
+| `dynamic` / OPA server | `rego: [{ name, code, argument? }]`, checked with `validateRego()` |
+
+A `PolicyDeniedError` from such a node has `source: 'ssi'`, and its `policyResults` carry a
+`scope` and the DCQL query id as `credential`. `PolicySessionResolver.resolve()` now returns
+`PolicyServerPayload | SsiSessionPayload`; `resolveSession()` says which.
+
 ## Upgrading from 2.0.0-beta.2
 
 ### The signer is wrapped in a nonce guard

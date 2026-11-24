@@ -98,7 +98,8 @@ const signer = {
 const chainConfig = { chainId: CHAIN_ID } as unknown as Config
 /** Opens no session; a refused request must never get this far. */
 const policySessions = {
-  resolve: vi.fn(async () => undefined)
+  resolve: vi.fn(async () => undefined),
+  resolveSession: vi.fn(async () => null)
 } as unknown as PolicySessionResolver
 
 /** The download fixture with one parameter of each type; `surname` is required. */
@@ -111,6 +112,7 @@ function accessAsset(): AssetV5 {
 
 function expectNothingSent(calls: string[]) {
   expect(vi.mocked(policySessions.resolve)).not.toHaveBeenCalled()
+  expect(vi.mocked(policySessions.resolveSession)).not.toHaveBeenCalled()
   expect(calls).to.deep.equal([])
   expect(vi.mocked(order)).not.toHaveBeenCalled()
   expect(vi.mocked(reuseOrder)).not.toHaveBeenCalled()
@@ -232,7 +234,7 @@ describe('access() pre-order checks', () => {
 
     expect((await rejection(accessing)).message).to.equal(PASSED)
     expect(calls).to.deep.equal(['forEndpoint', 'initialize'])
-    expect(vi.mocked(policySessions.resolve)).toHaveBeenCalledOnce()
+    expect(vi.mocked(policySessions.resolveSession)).toHaveBeenCalledOnce()
     expect(args.initialize[2]).to.deep.include({ userdata })
   })
 
@@ -451,7 +453,7 @@ describe('compute() consumer parameters', () => {
 
     expect((await rejection(running)).message).to.equal(PASSED)
     expect(calls).to.deep.equal(['getComputeEnvironments', 'initializeCompute'])
-    expect(vi.mocked(policySessions.resolve)).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(policySessions.resolveSession)).toHaveBeenCalledTimes(2)
 
     const [request] = args.initializeCompute as [
       {

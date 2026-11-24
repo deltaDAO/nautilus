@@ -5,8 +5,8 @@ description: Known limitations of the current nautilus release, including creden
 # Known limitations [What this release does not handle yet, and what to do instead]
 
 These are the limits we know of in this release. Each one names what happens, whether money is
-at risk, and what to do until it is fixed. Most are fixed in the next beta; the first one
-needs a change outside nautilus.
+at risk, and what to do until it is fixed. Most are fixed in the next beta; some need a
+change outside nautilus.
 
 | Limitation | Money at risk? | Workaround |
 | --- | --- | --- |
@@ -19,6 +19,11 @@ needs a change outside nautilus.
 | [A stuck fee approval gives an unclear error](#a-stuck-fee-approval-gives-an-unclear-error) | No | None needed |
 | [`getAssets` returns nothing on ocean-node 4.2](#getassets-returns-nothing-on-ocean-node-42) | No | Use `getAsset(did)` per asset |
 | [Revoking after deprecating](#revoking-after-deprecating) | No | Revoke directly, or keep the asset object from before deprecating |
+| [SSI commands are HTTP only](#ssi-commands-are-http-only) | No | Use the node's HTTP URL, with a Signer or a node auth token |
+| [Compute on native SSI nodes was verified on one C2D setup](#compute-on-native-ssi-nodes-was-verified-on-one-c2d-setup) | No | Test against your own C2D environment first |
+| [Legacy `SSIpolicy` assets on native SSI nodes](#legacy-ssipolicy-assets-on-native-ssi-nodes) | No, but the gate depends on the node's translation | Republish with `addSsiPolicyV2` |
+| [A node that does not announce its verifier host](#a-node-that-does-not-announce-its-verifier-host) | No, but a request from another verifier is not caught | Set `expectedVerifierHost` |
+| [Every `ssiStatus` read is signed](#every-ssistatus-read-is-signed) | No | Tune `ssiStatusPolling` |
 
 ## The credential type alone is not a reliable gate
 
@@ -174,3 +179,64 @@ deprecating it first. If you deprecate, keep the asset object you read before
 `setAssetLifecycleState` can still revoke with it.
 
 **Fixed by:** the next beta (lifecycle changes by NFT address).
+
+## SSI commands are HTTP only
+
+On a node with the native SSI module, nautilus opens and checks sessions with the node's
+`ssiInitiate`, `ssiStatus` and `validateRego` commands. ocean.js 9.2.1 has no generic P2P
+command, so nautilus sends them over HTTP only: with a P2P node URI they fail with an
+`OceanNodeError` before anything is sent. Each command is also signed on its own
+(`address + nonce + command`), so a client set up with a pre-computed signature cannot send
+them either. Nothing is ordered or paid before the session is verified.
+
+**Workaround:** for assets gated on a node with the native SSI module, use the node's HTTP
+URL and a Signer or a node auth token.
+
+**Fixed by:** ocean.js (a generic P2P command), outside nautilus.
+
+## Compute on native SSI nodes was verified on one C2D setup
+
+[`compute()`](/docs/api/nautilus/compute) and
+[`freeCompute()`](/docs/api/nautilus/freeCompute) on an SSI-gated dataset and algorithm (one
+session per input, a rego deny refused before any job) were verified end to end against the
+pontusx stack with a docker-in-docker Compute-to-Data environment only. Other C2D
+environments behind a node with the native SSI module have not been tested.
+
+**Workaround:** run a free job against your own environment before you publish paid compute
+services there.
+
+## Legacy SSIpolicy assets on native SSI nodes
+
+A node with the native SSI module reads a deprecated `SSIpolicy` entry only while its
+operator keeps `SSI_LEGACY_FORMAT` on, and then translates it into a DCQL query itself. It
+marks such an answer with a `Deprecation: true` header; nautilus logs
+`identity.ssi.legacy_policy` (once per node and asset) on consumption, and the publish
+preflight warns with `publish.preflight.ssi_legacy`. What the consumer has to present then
+depends on the node's translation, not on a value you wrote and nautilus checked.
+
+**Workaround:** republish the gate with
+[`addSsiPolicyV2()`](/docs/api/assetbuilder/addSsiPolicyV2) (see
+[migrating](/docs/migration#nodes-with-the-native-ssi-module-pontusx-node)).
+
+## A node that does not announce its verifier host
+
+nautilus checks that a presentation request comes from the node's own verifier by comparing
+the host of its `request_uri` with `status.ssi.verifierPublicHost`. A node that does not
+announce that host leaves nothing to compare with: nautilus logs
+`identity.ssi.verifier_unannounced` (once per node) and presents without the check.
+
+**Workaround:** pass `expectedVerifierHost` to
+[`WalletApi2CredentialProvider`](/docs/api/identity/WalletApi2CredentialProvider): the
+provider then requires that host itself.
+
+**Fixed by:** the node operator (announce `verifierPublicHost`).
+
+## Every ssiStatus read is signed
+
+After the wallet presented, nautilus reads `ssiStatus` while the session is `pending`: up to 5
+times, 2 seconds apart, by default. Every read is a signed command with its own nonce, so a
+signer that asks the user to approve each signature prompts once per read.
+
+**Workaround:** set `ssiStatusPolling` on [`Nautilus.create`](/docs/api/nautilus/create)
+(`attempts` 1 to 60, `intervalMs` 0 to 60,000), for example fewer attempts further apart. A
+session still `pending` after the last read is a `PolicyDeniedError`.

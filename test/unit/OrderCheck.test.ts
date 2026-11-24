@@ -146,6 +146,7 @@ function accessNode() {
   const client = {
     nodeUri: 'https://node.test.invalid',
     policySessionAddress: (address: string) => address,
+    getSsiCapabilities: async () => null,
     hasPolicyServer: async () => false,
     forEndpoint: () => client,
     resolve: async () => asset,
@@ -998,6 +999,7 @@ describe('compute() and the previous-order lookup', () => {
     const node = {
       nodeUri: 'https://node.test.invalid',
       policySessionAddress: (address: string) => address,
+      getSsiCapabilities: async () => null,
       hasPolicyServer: async () => false,
       resolve: async (did: string) => assets[did],
       getComputeEnvironments: async () => [

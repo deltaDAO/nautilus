@@ -57,6 +57,19 @@ What happens in order:
    [credential-gated assets](/docs/guides/identity)). A refusal aborts the whole job with
    nothing spent — the reason this comes first. The same sessions go to `initializeCompute`
    and `computeStart`.
+
+   On a node with the native SSI module, nautilus opens one SSI session for every input
+   whose asset or service has an `SSIpolicyV2` (or deprecated `SSIpolicy`) entry, algorithm
+   included, one input after the other, and verifies each as for
+   [`access`](/docs/api/nautilus/access) (`ssiInitiate`, the credential provider's
+   presentation, `ssiStatus` until `verified`). They go to `initializeCompute` and the job
+   start as one `policyServer` value, `{ sessionId, sessionIds: { <did>: <sessionId> } }`,
+   where `sessionId` is the first input's. The node looks up each input's session by DID,
+   checks them at `initializeCompute` and consumes them all when the job starts, so nautilus
+   caches none and each job opens its own. Because the lookup is by DID, two inputs that are
+   services of the same asset and each need their own session cannot be told apart: nautilus
+   refuses that job with an `Error` before anything is spent. See
+   [nodes with the native SSI module](/docs/guides/identity#nodes-with-the-native-ssi-module).
 3. `initializeCompute` quotes the job: provider fees, reusable orders and the escrow amount.
    The provider fee of every input that will be ordered is checked locally, as for
    [`access`](/docs/api/nautilus/access): a fee that is missing, lacks a field, or that the
@@ -94,6 +107,12 @@ What happens in order:
    job** (see [the pricing guide](/docs/guides/pricing#downloads-the-order-on-chain) and
    [known limitations](/docs/known-limitations#every-compute-buys-its-paid-inputs-again)).
 7. The job starts. The node locks the job's payment in escrow when it accepts the job.
+
+Once the algorithm has stopped, the node sets the job to `71` (`JobSettle`) and writes its
+`outputs.tar`; only the node's payment-claim run moves it on to `70` (`JobFinished`), so a
+job can stay at `71` for up to that interval. Wait for `dateFinished` rather than a status
+(see [`getComputeStatus`](/docs/api/nautilus/getComputeStatus) and
+[`getComputeResult`](/docs/api/nautilus/getComputeResult)).
 
 Steps 5 to 7, with the escrow reads they depend on, run one job at a time per chain, payer,
 payment token and environment account within one `Nautilus` instance (see
@@ -153,7 +172,7 @@ What the node quoted: per-input provider fees and reusable orders, plus the escr
 
 - Type: `Record<string, string>`
 
-The order transaction backing each input, keyed by `did#serviceId` so two inputs on the same asset keep separate orders.
+The order transaction backing each input, keyed by `<did>#<serviceId>` so two inputs on the same asset keep separate orders.
 
 ## Parameters
 
@@ -354,7 +373,13 @@ lock as `context.escrowLock`.
   `ProviderFeeNotAllowedError`, as for [`access`](/docs/api/nautilus/access#throws), and an
   `Error` when an input asks for a verifiable presentation and no credential provider is
   set. A refused presentation names the failed policies of the input whose session it was
-  (`error.did`, `error.serviceId`).
+  (`error.did`, `error.serviceId`). On a node with the native SSI module the
+  `PolicyDeniedError` has `source: 'ssi'` and `policyResults` with `scope` and the DCQL query
+  id as `credential`; a rego deny shows as scope `vc`, policy `dynamic` (see
+  [`access`](/docs/api/nautilus/access#throws)). So do the native SSI module's
+  `OceanNodeError`s.
+- An `Error` when two inputs are services of the same asset and each needs its own SSI
+  session (native SSI module only).
 - `EscrowPaymentNotAllowedError`, with `error.reason`:
   - `'unknown-escrow'`: no escrow contract is pinned for the chain: no `config.escrow`, and
     no `EnterpriseEscrow` or `Escrow` in Ocean's address data. Set the chain's

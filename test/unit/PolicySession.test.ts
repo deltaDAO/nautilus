@@ -40,6 +40,7 @@ import {
   type SessionEntry,
   type SessionKey
 } from '../../src/identity/session.js'
+import { CredentialPresentationError } from '../../src/identity/WaltIdProvider.js'
 import {
   OceanNodeClient,
   OceanNodeError,
@@ -145,6 +146,9 @@ function policyNode(
     },
     policySessionAddress(address: string) {
       return address
+    },
+    async getSsiCapabilities() {
+      return null
     },
     async hasPolicyServer() {
       calls.push('hasPolicyServer')
@@ -1068,6 +1072,65 @@ describe('PolicySessionResolver', () => {
     })
   }
 
+  function nativeNode() {
+    const { client } = policyNode()
+    client.getSsiCapabilities = async () => ({
+      enabled: true,
+      formats: [],
+      vcPolicies: [],
+      rego: false,
+      gaiaxLevels: [],
+      legacyFormat: true,
+      verifierPublicHost: 'verifier.test'
+    })
+    client.ssiInitiate = async () => ({
+      required: true,
+      sessionId: SESSION,
+      consumerAddress: CONSUMER,
+      requestUri: 'openid4vp://authorize?request_uri=https://verifier.test/r'
+    })
+    client.ssiStatus = async () => ({ status: 'verified', results: [] })
+    return client
+  }
+
+  it('presents a native SSI session with the provider that prepared it', async () => {
+    const client = nativeNode()
+    const replacement = recordingProvider()
+    const original = recordingProvider()
+    const resolver = new PolicySessionResolver({
+      credentials: {
+        async prepare() {
+          resolver.setCredentialProvider(replacement.provider)
+        },
+        present: original.provider.present
+      }
+    })
+
+    await resolve(client, resolver, ssiAsset())
+    expect(original.challenges).to.have.length(1)
+    expect(replacement.challenges).to.have.length(0)
+  })
+
+  it.each(['failed', 'expired'] as const)(
+    'surfaces the %s native session status with empty results after verifier rejection',
+    async (status) => {
+      const client = nativeNode()
+      client.ssiStatus = async () => ({ status, results: [] })
+      const rejection = new CredentialPresentationError(
+        'The verifier rejected the presentation.',
+        undefined,
+        'verifier-rejected'
+      )
+      const resolver = new PolicySessionResolver({
+        credentials: { present: vi.fn().mockRejectedValue(rejection) }
+      })
+
+      const error = await resolve(client, resolver, ssiAsset()).catch((e) => e)
+      expect(error).to.be.instanceOf(PolicyDeniedError)
+      expect(error).to.include({ source: 'ssi', cause: rejection })
+    }
+  )
+
   it('uses message.sessionId for an address-only asset, with no wallet', async () => {
     const { client, calls } = policyNode()
     const { provider, challenges } = recordingProvider()
@@ -1721,6 +1784,9 @@ describe('compute() with a policy server', () => {
       },
       policySessionAddress(address: string) {
         return address
+      },
+      async getSsiCapabilities() {
+        return null
       },
       async hasPolicyServer() {
         return true

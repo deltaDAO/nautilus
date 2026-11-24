@@ -187,6 +187,9 @@ function createComputeNodeMock(
     policySessionAddress(address: string) {
       return address
     },
+    async getSsiCapabilities() {
+      return null
+    },
     async hasPolicyServer() {
       return false
     },
