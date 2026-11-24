@@ -28,7 +28,8 @@ import type {
   DdoCredentials,
   GaiaXLabelLevel,
   SsiPolicyV2Credential,
-  SsiPolicyV2Value
+  SsiPolicyV2Value,
+  SsiVcPolicy
 } from '../ddo/types.js'
 import { CredentialListTypes } from '../ddo/types.js'
 
@@ -90,6 +91,7 @@ const QUERY_ID = /^[A-Za-z0-9_-]{1,64}$/
 const MAX_CREDENTIAL_QUERIES = 20
 const MAX_REGO_POLICIES = 10
 const MAX_POLICIES_PER_LIST = 20
+const MAX_VC_POLICY_ARGUMENT_LENGTH = 16 * 1024
 const MAX_REGO_BYTES = 64 * 1024
 const MAX_ENTRY_BYTES = 256 * 1024
 const MAX_SETS = 20
@@ -404,6 +406,279 @@ export function requiredGaiaXLevel(
   return highest >= 0 ? GAIAX_LABEL_LEVELS[highest] : undefined
 }
 
+// The node compares parsed policies. Omitted defaults and fields ignored by its
+// parser must not turn equivalent DDO and service requirements into two sessions' worth.
+function sessionPolicyKey(value: SsiPolicyV2Value): string {
+  const vcPolicyKey = (policy: SsiVcPolicy) => {
+    if (typeof policy === 'string') return policy
+    switch (policy.policy) {
+      case 'allowed_issuer':
+        return {
+          policy: policy.policy,
+          issuers: [policy.allowed_issuer].flat()
+        }
+      case 'json_schema':
+        return { policy: policy.policy, schema: policy.schema }
+      case 'status':
+        return { policy: policy.policy, argument: policy.argument }
+      default:
+        // The node also accepts a simple policy name in object form.
+        return (policy as { policy: string }).policy
+    }
+  }
+  return canonicalJson({
+    credentials: (value.dcql?.credentials ?? []).map((query) => ({
+      id: query.id,
+      format: query.format,
+      meta: query.meta,
+      claims: query.claims?.map(({ id, path, values }) => ({
+        id,
+        path,
+        values
+      })),
+      claim_sets: query.claim_sets,
+      multiple: query.multiple,
+      require_cryptographic_holder_binding:
+        query.require_cryptographic_holder_binding,
+      trusted_authorities: query.trusted_authorities?.map(
+        ({ type, values }) => ({ type, values })
+      )
+    })),
+    credential_sets: value.dcql?.credential_sets?.map(
+      ({ options, required }) => ({ options, required })
+    ),
+    vcPolicies: (value.vcPolicies ?? []).map(vcPolicyKey),
+    specificVcPolicies: Object.fromEntries(
+      Object.entries(value.specificVcPolicies ?? {}).map(([id, policies]) => [
+        id,
+        policies.map(vcPolicyKey)
+      ])
+    ),
+    gaiax:
+      value.gaiax?.minLabelLevel ??
+      (value.gaiax?.requireCompliance ? 'SC' : undefined),
+    rego: (value.rego ?? []).map(({ name, code, argument, credentialId }) => ({
+      name,
+      code,
+      argument: argument ?? {},
+      credentialId
+    })),
+    consumerBinding: value.consumerBinding === true
+  })
+}
+
+interface SessionCounts {
+  queries: number
+  targetedRego: number
+  globalRego: number
+}
+
+function legacyList(value: unknown): unknown[] {
+  return value == null ? [] : Array.isArray(value) ? value : [value]
+}
+
+// The legacy market JSON-encoded requests and policies, sometimes repeatedly.
+function parseLegacy(value: unknown): unknown {
+  for (let i = 0; i < 3 && typeof value === 'string'; i++) {
+    if (!/^["{[]/.test(value.trim())) break
+    try {
+      value = JSON.parse(value)
+    } catch {
+      break
+    }
+  }
+  return value
+}
+
+function decodeLegacy(value: unknown): unknown {
+  const decoded = parseLegacy(value)
+  assertSafeJson(decoded)
+  return decoded
+}
+
+const legacyAliases = new Map([
+  ['expired', 'expiration'],
+  ['not-before', 'not_before'],
+  ['revoked-status-list', 'revocation'],
+  ['revoked_status_list', 'revocation'],
+  ['allowed-issuer', 'allowed_issuer'],
+  ['schema', 'json_schema'],
+  ['json-schema', 'json_schema'],
+  ['credential-status', 'status'],
+  ['vct-integrity', 'vct_integrity']
+])
+
+// Project the fields kept by the node's v1Translator. The merge deduplicates
+// translated policies, so ignored fields and legacy spellings must compare equal.
+function legacySessionPolicy(
+  value: Record<string, unknown>,
+  level?: GaiaXLabelLevel
+) {
+  const rego: unknown[] = []
+  const vcPolicies = (list: unknown, target?: number) => {
+    const policies: unknown[] = []
+    for (const raw of legacyList(list)) {
+      const policy = decodeLegacy(raw)
+      const name = isRecord(policy) ? policy.policy : policy
+      const args = isRecord(policy) ? decodeLegacy(policy.args) : undefined
+      if (typeof name !== 'string') continue
+      const mapped = legacyAliases.get(name) ?? name
+      if (mapped === 'dynamic' && isRecord(args)) {
+        const rules = decodeLegacy(args.rules)
+        if (!isRecord(rules)) continue
+        const code = rules.rego
+        const url =
+          typeof rules.policy_url === 'string' && URL.canParse(rules.policy_url)
+            ? new URL(rules.policy_url).href
+            : rules.policy_url
+        rego.push({
+          target,
+          name:
+            typeof args.policy_name === 'string' && args.policy_name
+              ? args.policy_name.slice(0, 128)
+              : 'dynamic',
+          argument: decodeLegacy(args.argument ?? {}),
+          ...(typeof code === 'string' && code ? { code } : { url })
+        })
+      } else if (mapped === 'allowed_issuer') {
+        policies.push([mapped, legacyList(args)])
+      } else if (mapped === 'json_schema') {
+        policies.push([
+          mapped,
+          isRecord(args) && isRecord(args.schema) ? args.schema : args
+        ])
+      } else if (mapped === 'status') {
+        policies.push([mapped, args])
+      } else policies.push(mapped)
+    }
+    return policies
+  }
+  const rawRequests = legacyList(value.request_credentials)
+  if (rawRequests.length > MAX_CREDENTIAL_QUERIES)
+    fail('too many credential queries for one session')
+  const requests = rawRequests.map((raw, index) => {
+    const request = parseLegacy(raw)
+    if (!isRecord(request)) return {}
+    const { type, format: rawFormat, policies } = request
+    assertSafeJson({ type, format: rawFormat, policies })
+    const format = rawFormat === 'jwt_vc' ? 'jwt_vc_json' : rawFormat
+    if (level && format === 'jwt_vc_json')
+      failGaiaXMixing(String(rawFormat), String(type))
+    return {
+      type,
+      format,
+      policies: vcPolicies(policies, index)
+    }
+  })
+  const targetedRego = rego.length
+  const globalPolicies = vcPolicies(value.vc_policies)
+  const sets = []
+  for (const raw of legacyList(value.vp_policies)) {
+    const vp = decodeLegacy(raw)
+    if (!isRecord(vp) || vp.policy !== 'vp_required_credentials') continue
+    const args = decodeLegacy(vp.args)
+    if (!isRecord(args)) continue
+    for (const requirement of legacyList(args.required)) {
+      if (!isRecord(requirement)) continue
+      const types =
+        'credential_type' in requirement
+          ? [requirement.credential_type]
+          : legacyList(requirement.any_of)
+      // For identical requests each type maps to the same ordered query IDs.
+      sets.push(types)
+    }
+  }
+  return {
+    key: canonicalJson({
+      source: 'legacy',
+      requests,
+      globalPolicies,
+      sets,
+      rego
+    }),
+    queries: requests.length,
+    targetedRego,
+    globalRego: rego.length - targetedRego
+  }
+}
+
+/** Check whole SSI entries and count their values before merging sessions. */
+function assertSsiEntryLimits(entries: DdoCredential[]): void {
+  let count = 0
+  for (const entry of entries) {
+    if (!isSsiEntry(entry)) continue
+    assertSafeJson(entry)
+    if (
+      !('values' in entry) ||
+      !Array.isArray(entry.values) ||
+      entry.values.length === 0
+    )
+      fail(`an ${entry.type} entry needs at least one value`)
+    count += entry.values.length
+  }
+  if (count > MAX_CREDENTIAL_QUERIES)
+    fail('too many SSI policies in one credentials block')
+}
+
+/** Checks limits and incompatible query formats after merging a service's policies. */
+export function validateSsiPolicyCombination(
+  ...blocks: (DdoCredentials | undefined)[]
+): void {
+  const level = requiredGaiaXLevel(...blocks)
+  const policies = new Map<string, SessionCounts>()
+  for (const block of blocks) {
+    if (block?.deny?.some(isSsiEntry))
+      fail(
+        'SSI entries are only allowed in credentials.allow, not credentials.deny'
+      )
+    const entries = block?.allow ?? []
+    assertSsiEntryLimits(entries)
+    for (const entry of entries) {
+      if (isSsiPolicyV2Credential(entry)) {
+        for (const value of entry.values) {
+          validateSsiPolicyV2Value(value)
+          if (level) checkGaiaXQueries(value.dcql?.credentials ?? [])
+          const rego = value.rego ?? []
+          const targetedRego = rego.filter((rule) => rule.credentialId).length
+          policies.set(sessionPolicyKey(value), {
+            queries: value.dcql?.credentials.length ?? 0,
+            targetedRego,
+            globalRego: rego.length - targetedRego
+          })
+        }
+      } else if (isSsiEntry(entry) && 'values' in entry) {
+        for (const value of entry.values) {
+          if (!isRecord(value)) continue
+          const policy = legacySessionPolicy(value, level)
+          policies.set(policy.key, policy)
+        }
+      }
+    }
+  }
+  // Gaia-X adds compliance and legal-person queries, plus a service offering from L1.
+  let queryCount = level === undefined ? 0 : level === 'SC' ? 2 : 3
+  let regoCount = 0
+  for (const { queries, targetedRego, globalRego } of policies.values()) {
+    queryCount += queries
+    regoCount += targetedRego + globalRego * (policies.size === 1 ? 1 : queries)
+  }
+  if (queryCount > MAX_CREDENTIAL_QUERIES)
+    fail('too many credential queries for one session')
+  if (regoCount > MAX_REGO_POLICIES * 4)
+    fail('too many rego policies for one session')
+}
+
+function checkGaiaXQueries(queries: { id: string; format: string }[]): void {
+  const w3c = queries.find(({ format }) => W3C_FORMATS.includes(format))
+  if (w3c) failGaiaXMixing(w3c.format, w3c.id)
+}
+
+function failGaiaXMixing(format: string, id: string): never {
+  fail(
+    `Gaia-X compliance cannot be combined with the ${format} query "${id}": the wallet signs all W3C credentials of one presentation with the organisation's did:web. Use dc+sd-jwt for the other credentials required by this service.`
+  )
+}
+
 /**
  * Adds an `SSIpolicyV2` value to the `allow` list, after checking it as the node will
  * (`validateSsiPolicyV2Value`). Values are appended to the list's one `SSIpolicyV2` entry,
@@ -428,18 +703,19 @@ export function addSsiPolicyV2(
   const index = entries.findIndex(isSsiPolicyV2Credential)
   const copy = structuredClone(value)
 
-  if (index === -1) entries.push({ type: 'SSIpolicyV2', values: [copy] })
-  else {
-    const existing = entries[index] as SsiPolicyV2Credential
-    const values = Array.isArray(existing.values) ? existing.values : []
-    const key = canonicalJson(copy)
-    entries[index] = {
-      type: 'SSIpolicyV2',
-      values: values.some((stored) => canonicalJson(stored) === key)
-        ? values
-        : [...values, copy]
-    }
+  const existing = entries[index] as SsiPolicyV2Credential | undefined
+  const values = Array.isArray(existing?.values) ? existing.values : []
+  const key = canonicalJson(copy)
+  const entry: SsiPolicyV2Credential = {
+    type: 'SSIpolicyV2',
+    values: values.some((stored) => canonicalJson(stored) === key)
+      ? values
+      : [...values, copy]
   }
+  entries[index === -1 ? entries.length : index] = entry
+  assertSsiEntryLimits(entries)
+  if (JSON.stringify(entry).length > MAX_ENTRY_BYTES)
+    fail('the SSIpolicyV2 entry is larger than 256 KiB')
 
   return { ...credentials, allow: entries }
 }
@@ -544,15 +820,55 @@ function checkVcPolicy(input: unknown, field: string): void {
         fail(
           `${field}: json_schema needs an inline "schema" object (no schemaUrl)`
         )
+      if (JSON.stringify(args.schema).length > MAX_VC_POLICY_ARGUMENT_LENGTH)
+        fail(`${field}: json_schema.schema exceeds the 16 KiB serialized limit`)
       return
     case 'status':
       if (!isRecord(args.argument))
         fail(`${field}: status needs an "argument" object`)
+      if (JSON.stringify(args.argument).length > MAX_VC_POLICY_ARGUMENT_LENGTH)
+        fail(`${field}: status.argument exceeds the 16 KiB serialized limit`)
       return
     default:
       if (Object.keys(args).some((key) => key !== 'policy'))
         fail(`${field}: the policy "${name}" takes no arguments`)
   }
+}
+
+function checkClaim(claim: unknown, credentialId: string): string | undefined {
+  if (
+    !isRecord(claim) ||
+    !Array.isArray(claim.path) ||
+    !claim.path.length ||
+    claim.path.length > 16 ||
+    !claim.path.every(
+      (segment) =>
+        segment === null ||
+        (typeof segment === 'string' &&
+          segment.length > 0 &&
+          segment.length <= 256) ||
+        (typeof segment === 'number' &&
+          Number.isInteger(segment) &&
+          segment >= 0)
+    )
+  )
+    fail(`the dcql query "${credentialId}" has an invalid claims.path`)
+
+  if (
+    claim.values !== undefined &&
+    (!Array.isArray(claim.values) ||
+      !claim.values.length ||
+      claim.values.length > 50 ||
+      !claim.values.every(
+        (value) =>
+          (typeof value === 'string' && value.length <= 1024) ||
+          (typeof value === 'number' && Number.isFinite(value)) ||
+          typeof value === 'boolean'
+      ))
+  )
+    fail(`the dcql query "${credentialId}" has invalid claims.values`)
+
+  return claim.id === undefined ? undefined : queryId(claim.id, 'claims.id')
 }
 
 function checkCredentialQuery(input: unknown): {
@@ -568,31 +884,58 @@ function checkCredentialQuery(input: unknown): {
     fail(
       `the dcql query "${id}" has a format the node does not accept (${SSI_FORMATS.join(', ')})`
     )
-  if (input.meta !== undefined && !isRecord(input.meta))
+  if (
+    input.meta !== undefined &&
+    (!isRecord(input.meta) || JSON.stringify(input.meta).length > 8 * 1024)
+  )
     fail(`the dcql query "${id}" has an invalid meta`)
+  if (
+    input.trusted_authorities !== undefined &&
+    (!Array.isArray(input.trusted_authorities) ||
+      input.trusted_authorities.length > 10 ||
+      !input.trusted_authorities.every(
+        (authority) =>
+          isRecord(authority) &&
+          typeof authority.type === 'string' &&
+          Array.isArray(authority.values) &&
+          authority.values.length > 0 &&
+          authority.values.length <= 50 &&
+          authority.values.every(
+            (value: unknown) =>
+              typeof value === 'string' && value.length <= 2048
+          )
+      ))
+  )
+    fail(`the dcql query "${id}" has invalid trusted_authorities`)
+  const claimIds = new Set<string>()
   if (input.claims !== undefined) {
     if (
       !Array.isArray(input.claims) ||
       !input.claims.length ||
-      input.claims.length > 50 ||
-      !input.claims.every(
-        (claim) =>
-          isRecord(claim) &&
-          Array.isArray(claim.path) &&
-          claim.path.length > 0 &&
-          claim.path.length <= 16 &&
-          claim.path.every(
-            (segment) =>
-              segment === null ||
-              typeof segment === 'string' ||
-              (typeof segment === 'number' &&
-                Number.isInteger(segment) &&
-                segment >= 0)
-          )
-      )
+      input.claims.length > 50
     )
       fail(`the dcql query "${id}" has invalid claims`)
+    for (const claim of input.claims) {
+      const claimId = checkClaim(claim, id)
+      if (claimId !== undefined) claimIds.add(claimId)
+    }
   }
+  if (
+    input.claim_sets !== undefined &&
+    (!Array.isArray(input.claim_sets) ||
+      input.claim_sets.length > MAX_SETS ||
+      !input.claim_sets.every(
+        (set) =>
+          Array.isArray(set) &&
+          set.length > 0 &&
+          set.every(
+            (claimId) => typeof claimId === 'string' && claimIds.has(claimId)
+          )
+      ))
+  )
+    fail(
+      `the dcql query "${id}" has invalid claim_sets: each set must name claims of this query`
+    )
   if (input.multiple !== undefined && typeof input.multiple !== 'boolean')
     fail(`the dcql query "${id}" has an invalid multiple`)
   if (
@@ -702,13 +1045,7 @@ export function validateSsiPolicyV2Value(value: unknown): void {
       `the dcql credential id "${reserved.id}" is reserved for the node's Gaia-X queries`
     )
 
-  if (requireGaiaX) {
-    const w3c = queries.find(({ format }) => W3C_FORMATS.includes(format))
-    if (w3c)
-      fail(
-        `Gaia-X compliance cannot be combined with the ${w3c.format} query "${w3c.id}": the wallet signs all W3C credentials of one presentation with the organisation's did:web. Use dc+sd-jwt for the other credentials, or another SSIpolicyV2 value.`
-      )
-  }
+  if (requireGaiaX) checkGaiaXQueries(queries)
 
   checkPolicyList(value.vcPolicies, 'vcPolicies')
 

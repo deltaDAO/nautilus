@@ -41,7 +41,13 @@ import {
   isJobFinished,
   isOutputPending
 } from '../compute/jobs.js'
-import { getLifecycleState, getNftAddress } from '../ddo/read.js'
+import {
+  getCredentials,
+  getLifecycleState,
+  getNftAddress,
+  getServiceCredentials,
+  getServices
+} from '../ddo/read.js'
 import type { DdoCredentials, SsiPolicyV2Value } from '../ddo/types.js'
 import { assertValid } from '../ddo/validate.js'
 import type { CredentialProvider } from '../identity/CredentialProvider.js'
@@ -50,12 +56,13 @@ import { isAddressCredential } from '../identity/policy.js'
 import type { SessionStore } from '../identity/session.js'
 import {
   hasLegacySsiEntries,
-  hasSsiEntries,
+  isSsiEntry,
   isSsiPolicyV2Credential,
   type RegoValidationResult,
   regoProblem,
   requiredGaiaXLevel,
   type SsiCapabilities,
+  validateSsiPolicyCombination,
   validateSsiPolicyV2Value
 } from '../identity/ssi.js'
 import { type OperationName, runOperation } from '../log/context.js'
@@ -915,7 +922,7 @@ export class Nautilus {
 
     await resolvePublisherTrustedAlgorithms(this.node, services)
     await this.assertServicesPublishable(services)
-    await this.assertValidBeforeSpend({
+    const preflight = await this.assertValidBeforeSpend({
       ddoSigner,
       asset,
       create: true,
@@ -928,7 +935,7 @@ export class Nautilus {
     await remoteStore.check?.()
     await this.warnIfPublisherIsNode(log)
     await this.warnIfPolicyServerDeniesAll(log, asset)
-    await this.warnIfSsiUnsupported(log, asset)
+    await this.checkSsiBeforeSpend(log, asset, preflight)
     await this.assertIndexerNotStuck(options, log)
 
     const published: PublishedService[] = []
@@ -1093,7 +1100,7 @@ export class Nautilus {
 
       await resolvePublisherTrustedAlgorithms(this.node, services)
       await this.assertServicesPublishable(services)
-      await this.assertValidBeforeSpend({
+      const preflight = await this.assertValidBeforeSpend({
         ddoSigner,
         asset,
         create: true,
@@ -1103,7 +1110,7 @@ export class Nautilus {
       await remoteStore.check?.()
       await this.warnIfPublisherIsNode(log)
       await this.warnIfPolicyServerDeniesAll(log, asset, nftAddress)
-      await this.warnIfSsiUnsupported(log, asset, nftAddress)
+      await this.checkSsiBeforeSpend(log, asset, preflight, nftAddress)
       await this.assertIndexerNotStuck(options, log)
 
       // Every reused datatoken is on its service before the first transaction, so a retry
@@ -1452,7 +1459,7 @@ export class Nautilus {
       await resolvePublisherTrustedAlgorithms(this.node, asset.ddo.services)
       await this.assertServicesPublishable(asset.ddo.services)
       // The NFT is real on an edit; only the datatokens of newly priced services are not.
-      await this.assertValidBeforeSpend({
+      const preflight = await this.assertValidBeforeSpend({
         ddoSigner,
         asset,
         create: false,
@@ -1462,7 +1469,7 @@ export class Nautilus {
       await remoteStore.check?.()
       await this.warnIfPublisherIsNode(log)
       await this.warnIfPolicyServerDeniesAll(log, asset)
-      await this.warnIfSsiUnsupported(log, asset)
+      await this.checkSsiBeforeSpend(log, asset, preflight)
       await this.assertIndexerNotStuck(options, log)
 
       const published: PublishedService[] = []
@@ -1715,6 +1722,8 @@ export class Nautilus {
   }
 
   /**
+   * Checks the SSI policies together for each service. Only the native module translates
+   * legacy entries into native policies and applies its limits to them.
    * Warns when a service's node will not be able to check the asset's or the service's SSI
    * entries, so nobody (or everybody) could get access:
    *
@@ -1726,14 +1735,15 @@ export class Nautilus {
    *     native module: translated while the node keeps `legacyFormat`, refused otherwise;
    *   - `publish.preflight.gaiax_unsupported`: a Gaia-X label level the node cannot check.
    *
-   * Best effort, once per node, asset and kind; never throws.
+   * Capability warnings are best effort, once per node, asset and kind.
    */
-  private async warnIfSsiUnsupported(
+  private async checkSsiBeforeSpend(
     log: Logger,
     asset: NautilusAsset,
+    preflight: Record<string, unknown>,
     nftAddress?: string
   ): Promise<void> {
-    const assetCredentials = asset.ddo.credentials
+    const assetCredentials = getCredentials(preflight)
     const subject =
       asset.ddo.id ||
       (nftAddress ? expectedDid(nftAddress, this.config.chainId) : undefined) ||
@@ -1742,10 +1752,16 @@ export class Nautilus {
         asset.ddo.metadata.name ?? ''
       ])
 
-    for (const service of asset.ddo.services) {
-      const credentials = service.credentials as DdoCredentials | undefined
-      const ssi = hasSsiEntries(assetCredentials) || hasSsiEntries(credentials)
-      if (!ssi) continue
+    for (const service of getServices(preflight)) {
+      const credentials = getServiceCredentials(service)
+      const blocks = [assetCredentials, credentials]
+      if (
+        !blocks.some(
+          (block) =>
+            block.allow?.some(isSsiEntry) || block.deny?.some(isSsiEntry)
+        )
+      )
+        continue
 
       const endpoint = (service.serviceEndpoint || this.node.nodeUri).replace(
         /\/+$/,
@@ -1759,15 +1775,22 @@ export class Nautilus {
           .forEndpoint(endpoint)
           .getSsiCapabilities()
       } catch {
-        continue
+        capabilities = undefined
       }
+      const policies = capabilities
+        ? blocks
+        : blocks.map((block) => ({
+            allow: block.allow?.filter(isSsiPolicyV2Credential),
+            deny: block.deny?.filter(isSsiPolicyV2Credential)
+          }))
+      validateSsiPolicyCombination(...policies)
       if (capabilities === undefined) continue
 
       const fields = { endpoint, serviceId: service.id }
       const once = (kind: string) => ({
         once: JSON.stringify([kind, endpoint, subject, service.id])
       })
-      const v2 = [assetCredentials, credentials].some(
+      const v2 = blocks.some(
         (block) =>
           Array.isArray(block?.allow) &&
           block.allow.some(isSsiPolicyV2Credential)
@@ -1945,7 +1968,7 @@ export class Nautilus {
     nftAddress: string
     ddoSigner: DdoSigner
     issuer: string
-  }): Promise<void> {
+  }): Promise<Record<string, unknown>> {
     const projected = params.asset.ddo.getPreflightDDO({
       create: params.create,
       chainId: this.config.chainId as number,
@@ -1959,6 +1982,7 @@ export class Nautilus {
     // would go on chain without being indexed. The preflight document is as large as the
     // published one, so this checks the largest envelope its signature can give.
     assertDdoFitsDecryptLimit(preflight, params.issuer)
+    return preflight
   }
 
   private async prepareAndValidateDdo(

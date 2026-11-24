@@ -31,7 +31,10 @@ import type {
   CredentialPreparation,
   CredentialProvider
 } from './CredentialProvider.js'
-import { assertPresentationRequest } from './requestChecks.js'
+import {
+  assertPresentationRequest,
+  presentationUrlProblem
+} from './requestChecks.js'
 import {
   ASSET_ACCESS_TRANSACTION_DATA_TYPE,
   normalizeVerifierHost,
@@ -229,9 +232,12 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
    * (or not to this node's), or that holds nothing it may present, fails here.
    */
   async prepare(context: CredentialPreparation): Promise<void> {
-    await this.walletFor(context.consumerAddress)
     const source = this.#source
-    if (!isAddressSource(source)) return
+    if (!isAddressSource(source)) {
+      await this.resolveWallet(context.consumerAddress)
+      return
+    }
+    await this.addressWallet(context.consumerAddress)
     try {
       await this.checkAccount(source, context)
     } catch (error) {
@@ -378,13 +384,16 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
     }
 
     const { handle, preview } = opened
-    const decline = async (errorCode: string, error: Error): Promise<never> => {
-      await this.#wallet
-        .rejectPresentation(walletId, { handle, errorCode })
-        .catch((rejectError) => {
-          if (debugEnabled('sensitive', 'wallet'))
-            debugRaw('wallet', 'reject-handle failed', rejectError)
-        })
+    const decline = async (
+      errorCode: string,
+      error: unknown
+    ): Promise<never> => {
+      try {
+        await this.#wallet.rejectPresentation(walletId, { handle, errorCode })
+      } catch (rejectError) {
+        if (debugEnabled('sensitive', 'wallet'))
+          debugRaw('wallet', 'reject-handle failed', rejectError)
+      }
       throw error
     }
 
@@ -411,14 +420,20 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
         )
       )
 
-    const problem = requestProblem(preview, challenge, verifierHost)
+    const problem = requestProblem(
+      preview,
+      challenge,
+      verifierHost,
+      this.#options.allowInsecureTransport === true
+    )
     if (problem)
       return decline(
         'invalid_request',
         new CredentialPresentationError(problem, undefined, 'request-invalid')
       )
 
-    const matches: Record<string, WalletApi2CredentialOption[]> = {}
+    const matches: Record<string, WalletApi2CredentialOption[]> =
+      Object.create(null)
     for (const option of preview.credentialOptions) {
       const list = matches[option.queryId] ?? []
       list.push(option)
@@ -427,7 +442,11 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
 
     let selection: CredentialSelection
     if (this.#options.onSelectCredentials) {
-      selection = await this.#options.onSelectCredentials(matches, preview)
+      try {
+        selection = await this.#options.onSelectCredentials(matches, preview)
+      } catch (error) {
+        return decline('access_denied', error)
+      }
       const invalid = selectionProblem(selection, matches)
       if (invalid)
         return decline(
@@ -461,6 +480,33 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
         )
       )
 
+    const sdQueries = new Set(
+      challenge.dcql?.credentials
+        .filter((query) => query?.format === 'dc+sd-jwt')
+        .map((query) => query.id)
+    )
+    const boundQueries = new Set(
+      preview.transactionData.flatMap((item) => item.credentialQueryIds ?? [])
+    )
+    for (const { queryId, credentialId } of selectedCredentialOptions) {
+      const isSdJwt =
+        sdQueries.has(queryId) ||
+        matches[queryId].some(
+          (option) =>
+            option.credentialId === credentialId &&
+            option.format === 'dc+sd-jwt'
+        )
+      if (isSdJwt && !boundQueries.has(queryId))
+        return decline(
+          'invalid_request',
+          new CredentialPresentationError(
+            `The selected dc+sd-jwt query "${queryId.slice(0, 64)}" has no asset-access transaction data.`,
+            undefined,
+            'request-invalid'
+          )
+        )
+    }
+
     const keyId = preview.holder?.keyId ?? preview.keyId
     let result: Awaited<ReturnType<WalletApi2['submitPresentation']>>
     try {
@@ -490,13 +536,18 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
   /** Wallet ids already resolved, by lower-cased address. */
   private readonly wallets = new Map<string, string>()
 
-  /** The wallet to present from: the pinned one, or the organisation's for `address`. */
+  /** The wallet to present from: the address token's, the pinned one, or the organisation's for `address`. */
   private async walletFor(address: string): Promise<string> {
     if (isAddressSource(this.#source)) return this.addressWallet(address)
-    if (this.#options.walletId) return this.#options.walletId
-    const known = this.wallets.get(address.toLowerCase())
-    if (known) return known
+    return (
+      this.#options.walletId ||
+      this.wallets.get(address.toLowerCase()) ||
+      (await this.resolveWallet(address))
+    )
+  }
 
+  /** Resolve the pinned or address-matched wallet against the current account. */
+  private async resolveWallet(address: string): Promise<string> {
     let wallets: Awaited<ReturnType<WalletApi2['listWallets']>>
     try {
       wallets = await this.#wallet.listWallets()
@@ -511,10 +562,21 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
           (t) => t
         )
       throw new CredentialPresentationError(
-        `Could not list the organisation's wallets (${error instanceof Error ? error.message : String(error)}). Pass walletId to pick one.`,
+        `Could not list the organisation's wallets (${error instanceof Error ? error.message : String(error)}).`,
         undefined,
         'wallet-setup'
       )
+    }
+
+    const pinned = this.#options.walletId
+    if (pinned) {
+      if (!wallets.some((wallet) => wallet.walletId === pinned))
+        throw new CredentialPresentationError(
+          'The wallet account has no access to the configured walletId.',
+          undefined,
+          'wallet-setup'
+        )
+      return pinned
     }
 
     const own = wallets.find(
@@ -579,8 +641,17 @@ export class WalletApi2CredentialProvider implements CredentialProvider {
 function requestProblem(
   preview: WalletApi2Preview,
   challenge: CredentialChallenge,
-  verifierHost: string | undefined
+  verifierHost: string | undefined,
+  allowInsecure: boolean
 ): string | undefined {
+  if (preview.responseUri !== undefined) {
+    const problem = presentationUrlProblem(
+      preview.responseUri,
+      'response_uri',
+      allowInsecure
+    )
+    if (problem) return problem
+  }
   if (verifierHost) {
     let responseHost: string | undefined
     try {
@@ -605,6 +676,28 @@ function requestProblem(
     if (unasked !== undefined)
       return `The presentation request asks for the credential query "${unasked.slice(0, 64)}", which the node's session does not.`
   }
+
+  const sets = challenge.dcql?.credential_sets
+  if (
+    !preview.credentialRequirements.length &&
+    sets !== undefined &&
+    (!Array.isArray(sets) ||
+      sets.length === 0 ||
+      !sets.every(
+        (set) =>
+          set &&
+          (set.required === undefined || typeof set.required === 'boolean') &&
+          Array.isArray(set.options) &&
+          set.options.length > 0 &&
+          set.options.every(
+            (option) =>
+              Array.isArray(option) &&
+              option.length > 0 &&
+              option.every((id) => asked?.has(id))
+          )
+      ))
+  )
+    return 'The session has invalid DCQL credential sets.'
 
   for (const item of preview.transactionData) {
     const details = { ...(item.rawJson ?? {}), ...(item.details ?? {}) }
@@ -662,25 +755,22 @@ function selectionProblem(
 
 /**
  * The default selection: every required combination satisfied with its first option the
- * wallet holds credentials for, the first match of each of its queries. Without listed
- * requirements, every query of the DCQL query (or every query with matches) is required.
+ * wallet holds credentials for, the first match of each of its queries. When the preview
+ * omits requirements, use the node's DCQL. Optional sets need explicit selection.
  */
 function defaultSelection(
   preview: WalletApi2Preview,
   matches: Record<string, WalletApi2CredentialOption[]>,
   dcql: DcqlQuery | undefined
 ): { selection: CredentialSelection } | { missing: string[][] } {
-  const requirements = preview.credentialRequirements.length
-    ? preview.credentialRequirements
-    : [
-        {
-          options: [
-            [...(queryIds(dcql) ?? new Set(Object.keys(matches)))]
-          ].filter((option) => option.length > 0)
-        }
-      ]
+  let requirements = preview.credentialRequirements
+  if (!requirements.length && dcql) {
+    requirements = dcql.credential_sets
+      ? dcql.credential_sets.filter((set) => set.required !== false)
+      : [{ options: [[...(queryIds(dcql) ?? [])]] }]
+  }
 
-  const selection: CredentialSelection = {}
+  const selection: CredentialSelection = Object.create(null)
   const missing: string[][] = []
 
   for (const requirement of requirements) {

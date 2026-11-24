@@ -451,7 +451,8 @@ export class PolicySessionResolver {
         `service ${serviceId} of ${asset.id} asks for verifiable credentials, and ${node.nodeUri} has no SSI verifier configured, so it denies every consumer. Nothing was ordered or paid.`
       )
 
-    if (!this.credentials)
+    const credentials = this.credentials
+    if (!credentials)
       throw new Error(
         `Service ${serviceId} of ${asset.id} requires a verifiable presentation, and no credential provider is set to make one. Pass a WalletApi2CredentialProvider as \`credentials\` to Nautilus.create(), or call setCredentialProvider(). Nothing was ordered or paid.`
       )
@@ -459,7 +460,7 @@ export class PolicySessionResolver {
     const sessionAddress = node.policySessionAddress(request.consumerAddress)
     // Before the session: one opened and never presented stays pending at the node, and
     // counts against the consumer's few pending sessions.
-    await this.credentials.prepare?.({
+    await credentials.prepare?.({
       asset,
       serviceId,
       consumerAddress: sessionAddress,
@@ -527,7 +528,7 @@ export class PolicySessionResolver {
       })
 
     try {
-      await (this.credentials as CredentialProvider).present({
+      await credentials.present({
         protocol: 'oid4vp',
         asset,
         serviceId,
@@ -542,7 +543,12 @@ export class PolicySessionResolver {
     } catch (error) {
       if (reachedVerifier(error)) {
         const status = await boundedStatus(node, statusRequest, error)
-        if (status?.results.some((result) => !result.success))
+        if (
+          status &&
+          (status.status === 'failed' ||
+            status.status === 'expired' ||
+            status.results.some((result) => !result.success))
+        )
           throw denied(status, error)
       }
       throw error

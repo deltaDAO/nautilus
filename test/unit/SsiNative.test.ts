@@ -666,7 +666,10 @@ describe('OceanNodeClient SSI commands', () => {
     })
     expect(body.consumerAddress).to.equal(undefined)
     expect(body.policy).to.deep.equal(LEGAL_PERSON)
-    expect(result).to.deep.equal({ valid: false, errors: ['rego_parse_error'] })
+    expect(result).to.deep.equal({
+      valid: false,
+      errors: ['rego_parse_error']
+    })
   })
 
   it('sends the session to initialize as the policyServer query parameter', async () => {
@@ -751,7 +754,10 @@ function ssiNode(options: SsiNodeOptions = {}) {
             requestUri: REQUEST_URI,
             dcql: LEGAL_PERSON.dcql
           } as SsiInitiateResult)
-      return { ...result, consumerAddress: request.consumerAddress ?? CONSUMER }
+      return {
+        ...result,
+        consumerAddress: request.consumerAddress ?? CONSUMER
+      }
     },
     async ssiStatus(request: SsiStatusRequest) {
       calls.push(`ssiStatus:${request.sessionId}`)
@@ -1363,6 +1369,97 @@ describe('WalletApi2CredentialProvider', () => {
     ])
   })
 
+  it('requires explicit selection for an optional-only presentation', async () => {
+    const ids = ['legal_person', 'company']
+    const request = challenge({
+      dcql: {
+        credentials: ids.map((id) => ({ id, format: 'jwt_vc_json' })),
+        credential_sets: ids.map((id) => ({
+          options: [[id]],
+          required: false
+        }))
+      }
+    })
+    const { wallet, calls } = fakeWallet({
+      credentialOptions: ids.map((queryId) => ({
+        queryId,
+        credentialId: queryId
+      })),
+      credentialRequirements: []
+    })
+    const provider = new WalletApi2CredentialProvider({
+      wallet,
+      walletId: 'w'
+    })
+    for (const input of [request, challenge({ dcql: undefined })]) {
+      await expect(provider.present(input)).rejects.toMatchObject({
+        reason: 'none-selected'
+      })
+    }
+    expect(calls.map((call) => call.name)).to.deep.equal([
+      'preview',
+      'reject',
+      'preview',
+      'reject'
+    ])
+
+    const submit = vi.spyOn(wallet, 'submitPresentation')
+    await new WalletApi2CredentialProvider({
+      wallet,
+      walletId: 'w',
+      onSelectCredentials: async () => ({ company: ['company'] })
+    }).present(request)
+    expect(submit.mock.calls[0][1].selectedCredentialOptions).to.deep.equal([
+      { queryId: 'company', credentialId: 'company' }
+    ])
+  })
+
+  it('uses only the first satisfiable option from each required DCQL set when preview requirements are empty', async () => {
+    const ids = ['missing', 'company', 'legal_person', 'optional']
+    const { wallet } = fakeWallet({
+      credentialOptions: ids
+        .slice(1)
+        .map((queryId) => ({ queryId, credentialId: queryId })),
+      credentialRequirements: []
+    })
+    const submit = vi.spyOn(wallet, 'submitPresentation')
+    await new WalletApi2CredentialProvider({ wallet, walletId: 'w' }).present(
+      challenge({
+        dcql: {
+          credentials: ids.map((id) => ({ id, format: 'jwt_vc_json' })),
+          credential_sets: [
+            { options: [['missing'], ['company'], ['legal_person']] },
+            { options: [['optional']], required: false }
+          ]
+        }
+      })
+    )
+    expect(submit.mock.calls[0][1].selectedCredentialOptions).to.deep.equal([
+      { queryId: 'company', credentialId: 'company' }
+    ])
+  })
+
+  it('rejects malformed fallback DCQL sets before selecting a credential', async () => {
+    const { wallet, calls } = fakeWallet({ credentialRequirements: [] })
+    const request = challenge({
+      dcql: {
+        credentials: [{ id: 'legal_person', format: 'jwt_vc_json' }],
+        credential_sets: [
+          {
+            options: [['legal_person']],
+            required: 'false' as unknown as boolean
+          }
+        ]
+      }
+    })
+    await expect(
+      new WalletApi2CredentialProvider({ wallet, walletId: 'w' }).present(
+        request
+      )
+    ).rejects.toMatchObject({ reason: 'request-invalid' })
+    expect(calls.map((call) => call.name)).to.deep.equal(['preview', 'reject'])
+  })
+
   it('prepare() resolves the wallet once, before any session', async () => {
     const { wallet, calls } = fakeWallet()
     const provider = new WalletApi2CredentialProvider({ wallet })
@@ -1382,6 +1479,33 @@ describe('WalletApi2CredentialProvider', () => {
     expect(thrown.reason).to.equal('wallet-setup')
   })
 
+  it.each([undefined, 'w-other'])(
+    'opens no session after wallet access expires (walletId %s)',
+    async (walletId) => {
+      const { wallet } = fakeWallet()
+      const provider = new WalletApi2CredentialProvider({ wallet, walletId })
+      await provider.prepare(challenge())
+      vi.spyOn(wallet, 'listWallets').mockRejectedValue(new Error('401'))
+
+      const { client, calls } = ssiNode()
+      await expect(
+        resolver(provider).resolve(request(client))
+      ).rejects.toMatchObject({ reason: 'wallet-setup' })
+      expect(calls).to.deep.equal([])
+    }
+  )
+
+  it('requires the configured wallet to be accessible during preparation', async () => {
+    const { wallet } = fakeWallet()
+    const provider = new WalletApi2CredentialProvider({
+      wallet,
+      walletId: 'missing'
+    })
+    await expect(provider.prepare(challenge())).rejects.toMatchObject({
+      reason: 'wallet-setup'
+    })
+  })
+
   it('refuses a wallet account without a wallet for the consumer', async () => {
     const { wallet } = fakeWallet()
     const thrown = await new WalletApi2CredentialProvider({ wallet })
@@ -1399,6 +1523,10 @@ describe('WalletApi2CredentialProvider', () => {
       [
         { valid: false, error: { code: 'invalid_request', message: 'bad' } },
         /refused the presentation request/
+      ],
+      [
+        { responseUri: `http://${VERIFIER_HOST}/response` },
+        /response_uri must be https/
       ],
       [{ responseUri: 'https://evil.test/response' }, /posted to evil.test/],
       [
@@ -1478,6 +1606,54 @@ describe('WalletApi2CredentialProvider', () => {
     expect(calls.map((call) => call.name)).to.deep.equal(['preview', 'submit'])
   })
 
+  it('requires asset-access data covering every selected dc+sd-jwt query', async () => {
+    const ids = ['pid', 'company']
+    const request = challenge({
+      dcql: { credentials: ids.map((id) => ({ id, format: 'dc+sd-jwt' })) }
+    })
+    for (const covered of [[], ['pid'], ids]) {
+      const { wallet, calls } = fakeWallet({
+        credentialOptions: ids.map((queryId) => ({
+          queryId,
+          credentialId: 'cred'
+        })),
+        credentialRequirements: [{ options: [ids] }],
+        transactionData: covered.length
+          ? [
+              {
+                type: 'org.oceanenterprise.transaction-data.asset-access',
+                credentialQueryIds: covered,
+                details: {
+                  consumer_address: CONSUMER,
+                  document_id: ASSET_DID,
+                  service_id: SERVICE_ID
+                }
+              }
+            ]
+          : []
+      })
+      const result = await new WalletApi2CredentialProvider({
+        wallet,
+        walletId: 'w'
+      })
+        .present(request)
+        .catch((e) => e)
+      if (covered.length === ids.length) {
+        expect(result).to.equal(undefined)
+        expect(calls.map((call) => call.name)).to.deep.equal([
+          'preview',
+          'submit'
+        ])
+      } else {
+        expect(result.reason).to.equal('request-invalid')
+        expect(calls.map((call) => call.name)).to.deep.equal([
+          'preview',
+          'reject'
+        ])
+      }
+    }
+  })
+
   it('declines with no-matching-credential when a requirement cannot be met', async () => {
     const { wallet, calls } = fakeWallet({ credentialOptions: [] })
     const thrown = await new WalletApi2CredentialProvider({
@@ -1513,6 +1689,23 @@ describe('WalletApi2CredentialProvider', () => {
     expect(calls.map((call) => call.name)).to.deep.equal(['preview', 'reject'])
   })
 
+  it('selects credentials for query IDs that name Object properties', async () => {
+    const ids = ['toString', '__proto__']
+    const { wallet, calls } = fakeWallet({
+      credentialOptions: ids.map((queryId) => ({ queryId, credentialId: 'c' })),
+      credentialRequirements: [{ options: [ids] }]
+    })
+    await new WalletApi2CredentialProvider({ wallet, walletId: 'w' }).present(
+      challenge({
+        dcql: { credentials: ids.map((id) => ({ id, format: 'jwt_vc_json' })) }
+      })
+    )
+    expect(
+      (calls[1].args[1] as { selectedCredentialOptions: unknown[] })
+        .selectedCredentialOptions
+    ).to.deep.equal(ids.map((queryId) => ({ queryId, credentialId: 'c' })))
+  })
+
   it('takes an onSelectCredentials choice, and refuses one that was not offered', async () => {
     const chosen = fakeWallet()
     await new WalletApi2CredentialProvider({
@@ -1545,6 +1738,28 @@ describe('WalletApi2CredentialProvider', () => {
         'reject'
       ])
     }
+  })
+
+  it('rejects the handle on selection failure and preserves the original error', async () => {
+    const { wallet, calls } = fakeWallet()
+    const cancelled = new Error('selection cancelled')
+    const reject = vi
+      .spyOn(wallet, 'rejectPresentation')
+      .mockRejectedValue(new Error('handle expired'))
+    const error = await new WalletApi2CredentialProvider({
+      wallet,
+      walletId: 'w',
+      onSelectCredentials: async () => {
+        throw cancelled
+      }
+    })
+      .present(challenge())
+      .catch((e) => e)
+    expect(error).to.equal(cancelled)
+    expect(reject.mock.calls).to.deep.equal([
+      ['w', { handle: 'handle-0123456789abcdef', errorCode: 'access_denied' }]
+    ])
+    expect(calls.map((call) => call.name)).to.deep.equal(['preview'])
   })
 
   it('reports a verifier refusal as verifier-rejected', async () => {
@@ -1693,6 +1908,100 @@ describe('WalletApi2HttpClient', () => {
     expect(preview.credentialOptions.map((c) => c.credentialId)).to.deep.equal(
       ids
     )
+  })
+
+  it('selects a required query whose only credential follows 500 other options', async () => {
+    const first = Array.from({ length: 500 }, (_, i) => ({
+      queryId: 'legal_person',
+      credentialId: `cred-${i}`
+    }))
+    const last = { queryId: 'company', credentialId: 'company-cred' }
+    const ids = ['legal_person', 'company']
+    const wallet = new WalletApi2HttpClient({
+      apiUrl: 'https://wallet-api.test.invalid',
+      token: 't',
+      fetchImpl: stub(200, {
+        handle: 'handle-0123456789abcdef',
+        preview: {
+          ...PREVIEW,
+          credentialOptions: [...first, last],
+          credentialRequirements: [{ options: [ids] }]
+        }
+      })
+    })
+    const submit = vi
+      .spyOn(wallet, 'submitPresentation')
+      .mockResolvedValue({ transmissionSuccess: true })
+    await new WalletApi2CredentialProvider({ wallet, walletId: 'w' }).present(
+      challenge({
+        dcql: { credentials: ids.map((id) => ({ id, format: 'jwt_vc_json' })) }
+      })
+    )
+    expect(submit.mock.calls[0][1].selectedCredentialOptions).to.deep.equal([
+      first[0],
+      last
+    ])
+  })
+
+  it('rejects handles with oversized or malformed transaction data', async () => {
+    const item = {
+      type: 'org.oceanenterprise.transaction-data.asset-access',
+      details: {
+        consumer_address: CONSUMER,
+        document_id: ASSET_DID,
+        service_id: SERVICE_ID
+      }
+    }
+    for (const transactionData of [Array(51).fill(item), [null], {}]) {
+      const fetchImpl = stub(200, {
+        handle: 'handle-0123456789abcdef',
+        preview: { ...PREVIEW, transactionData }
+      })
+      const wallet = new WalletApi2HttpClient({
+        apiUrl: 'https://wallet-api.test.invalid',
+        token: 't',
+        fetchImpl
+      })
+      const error = await new WalletApi2CredentialProvider({
+        wallet,
+        walletId: 'w'
+      })
+        .present(challenge())
+        .catch((e) => e)
+      expect(error.reason).to.equal('request-invalid')
+      expect(
+        (fetchImpl.mock.calls as unknown as [string][]).map(([url]) =>
+          url.split('/').pop()
+        )
+      ).to.deep.equal(['preview-handle', 'reject-handle'])
+    }
+  })
+
+  it('declines an unreadable response URI without an announced verifier', async () => {
+    const fetchImpl = stub(200, {
+      handle: 'handle-0123456789abcdef',
+      preview: {
+        ...PREVIEW,
+        responseUri: `http://wallet.test/${'x'.repeat(2048)}`
+      }
+    })
+    const wallet = new WalletApi2HttpClient({
+      apiUrl: 'https://wallet-api.test.invalid',
+      token: 't',
+      fetchImpl
+    })
+    const error = await new WalletApi2CredentialProvider({
+      wallet,
+      walletId: 'w'
+    })
+      .present(challenge({ verifierHost: undefined }))
+      .catch((e) => e)
+    expect(error.reason).to.equal('request-invalid')
+    expect(
+      (fetchImpl.mock.calls as unknown as [string][]).map(([url]) =>
+        url.split('/').pop()
+      )
+    ).to.deep.equal(['preview-handle', 'reject-handle'])
   })
 
   it('reads the snake_case submit answer and the org wallets', async () => {

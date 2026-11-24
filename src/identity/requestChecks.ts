@@ -58,40 +58,45 @@ export function assertPresentationRequest(
     const value = request.searchParams.get(param)
     if (value === null) continue
 
-    let url: URL
-    try {
-      url = new URL(value)
-    } catch {
+    const problem = presentationUrlProblem(value, param, allowInsecure)
+    if (problem)
       throw new CredentialPresentationError(
-        `The presentation request's ${param} is not a URL.`,
-        undefined,
-        'request-invalid'
-      )
-    }
-
-    const host = url.hostname
-      .toLowerCase()
-      .replace(/^\[|\]$/g, '')
-      .replace(/\.$/, '')
-
-    const allowedScheme =
-      url.protocol === 'https:' ||
-      (url.protocol === 'http:' && (allowInsecure || isLoopbackHost(host)))
-
-    if (!allowedScheme)
-      throw new CredentialPresentationError(
-        `The presentation request's ${param} must be https:// (http:// only on a loopback host, or with allowInsecureTransport), not ${url.protocol}//${host}.`,
-        undefined,
-        'request-invalid'
-      )
-
-    if (METADATA_HOSTS.has(host) || isLinkLocal(host))
-      throw new CredentialPresentationError(
-        `The presentation request's ${param} points at a link-local or metadata address (${host}).`,
+        problem,
         undefined,
         'request-invalid'
       )
   }
+}
+
+/** Checks one URL carried by the request or resolved by the wallet. */
+export function presentationUrlProblem(
+  value: string,
+  param: string,
+  allowInsecure: boolean
+): string | undefined {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return `The presentation request's ${param} is not a URL.`
+  }
+
+  const host = url.hostname
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '')
+    .replace(/\.$/, '')
+
+  const allowedScheme =
+    url.protocol === 'https:' ||
+    (url.protocol === 'http:' && (allowInsecure || isLoopbackHost(host)))
+
+  if (!allowedScheme)
+    return `The presentation request's ${param} must be https:// (http:// only on a loopback host, or with allowInsecureTransport), not ${url.protocol}//${host}.`
+
+  if (METADATA_HOSTS.has(host) || isLinkLocal(host))
+    return `The presentation request's ${param} points at a link-local or metadata address (${host}).`
+
+  return undefined
 }
 
 /** `169.254.0.0/16` and `fe80::/10`. */
